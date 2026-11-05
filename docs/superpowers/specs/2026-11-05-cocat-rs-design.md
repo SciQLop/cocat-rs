@@ -212,7 +212,13 @@ against the Rust binary.
    read-only catalogue API.
 3. **Web UI.** Server-rendered `askama` + htmx, same pages as the NiceGUI UI. Starts
    with a new HTTP-level acceptance suite, because the NiceGUI tests cannot be reused.
-4. **Import tool**, run as the cutover step, then the Rust server ships.
+4. **Security campaign, then the import tool**, then the Rust server ships. Against a
+   local Rust instance with accounts in every role, SMTP to a sink, ORCID faked:
+   two or three agents on different (cheap) models with the same attacker brief (enter
+   a foreign room, take over an account, write as a viewer, exhaust the server, steal
+   tokens), plus schemathesis over the OpenAPI document, a websocket frame fuzzer, and a
+   role × route access matrix test. Every claimed finding is verified with a reproducing
+   test before it is fixed; the reproducers stay in the suite.
 5. **Rust client + `cocat-py`.**
    - **5a:** the document/catalogue API SciQLop uses, plus array-returning queries for
      plotting. This is the phase that removes the `pycrdt` pin.
