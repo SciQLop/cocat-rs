@@ -234,7 +234,7 @@ fn drain(commands: &Option<Receiver<RoomCommand>>, backlog: &mut VecDeque<RoomCo
     }
 }
 
-/// Returns true when a command arrived while the registry was locked, so the room must
+/// Returns true when a client is still queued under the registry lock, so the room must
 /// keep serving; false when it removed itself and dropped its command receiver.
 fn close_room(
     room_id: &str,
@@ -245,18 +245,35 @@ fn close_room(
     match registry.lock() {
         Ok(mut rooms) => {
             drain(commands, backlog);
-            if !backlog.is_empty() {
+            if backlog
+                .iter()
+                .any(|command| matches!(command, RoomCommand::Attach { .. }))
+            {
                 return true;
             }
             rooms.remove(room_id);
             // Dropping the receiver under the registry lock turns every later attach into
             // `RoomGone`, so a handle from `get_or_open` cannot target a dying room.
             commands.take();
+            settle(backlog);
             false
         }
         Err(_) => {
             tracing::error!(room = %room_id, "the room registry is poisoned");
             false
+        }
+    }
+}
+
+/// Acks the commands a closing room will not process, so their callers do not wait for a
+/// room that is already gone (the file was flushed just before `close_room`).
+fn settle(backlog: &mut VecDeque<RoomCommand>) {
+    for command in backlog.drain(..) {
+        match command {
+            RoomCommand::Flush { done } | RoomCommand::Detach { done, .. } => {
+                let _ = done.send(());
+            }
+            RoomCommand::Attach { .. } | RoomCommand::Frame { .. } => {}
         }
     }
 }
@@ -406,5 +423,24 @@ mod tests {
         assert!(room.registry.lock().unwrap().is_empty());
         let (out, _frames) = unbounded_channel();
         assert_eq!(room.handle.attach(1, Role::Editor, out), Err(RoomGone));
+    }
+
+    #[test]
+    fn a_queued_flush_does_not_keep_a_dying_room_open() {
+        let mut room = dying_room();
+        let (done, mut flushed) = oneshot::channel();
+        room.handle
+            .commands
+            .send(RoomCommand::Flush { done })
+            .unwrap();
+
+        assert!(!close_room(
+            "room",
+            &room.registry,
+            &mut room.commands,
+            &mut room.backlog
+        ));
+        assert!(room.registry.lock().unwrap().is_empty());
+        assert!(flushed.try_recv().is_ok());
     }
 }
