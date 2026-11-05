@@ -279,6 +279,7 @@ def run_room(
     duration: float,
     rate: float,
     closed_loop: bool,
+    in_flight: int,
     results,
 ) -> None:
     started_cpu = self_cpu_seconds()
@@ -304,7 +305,7 @@ def run_room(
     tick = 0
     while time.perf_counter() - started < duration:
         if closed_loop:
-            if sent - counters[0] >= IN_FLIGHT:
+            if sent - counters[0] >= in_flight:
                 time.sleep(0.001)
                 continue
             send_edit(opened[0], tick, pending, written)
@@ -374,6 +375,7 @@ def run_rooms(
     duration: float,
     rate: float,
     closed_loop: bool,
+    in_flight: int,
 ) -> dict:
     context = multiprocessing.get_context("fork")
     running = []
@@ -390,6 +392,7 @@ def run_rooms(
                 duration,
                 rate,
                 closed_loop,
+                in_flight,
                 sender,
             ),
             daemon=True,
@@ -447,7 +450,9 @@ def scaleout_rooms(count: int) -> list[str]:
     return [f"{SMALL_ROOM}-{index}" for index in range(count)]
 
 
-def measure(name: str, server: Server, scenario: Scenario, cookie: str) -> dict:
+def measure(
+    name: str, server: Server, scenario: Scenario, cookie: str, in_flight: int
+) -> dict:
     metrics = {key: None for key in METRICS}
     metrics["scenario"] = name
     if name == "open":
@@ -464,6 +469,7 @@ def measure(name: str, server: Server, scenario: Scenario, cookie: str) -> dict:
                 scenario.duration,
                 scenario.rate,
                 closed_loop=False,
+                in_flight=in_flight,
             )
         )
     elif name == "soak":
@@ -476,6 +482,7 @@ def measure(name: str, server: Server, scenario: Scenario, cookie: str) -> dict:
                 scenario.duration,
                 scenario.rate,
                 closed_loop=False,
+                in_flight=in_flight,
             )
         )
     elif name == "scaleout":
@@ -487,6 +494,7 @@ def measure(name: str, server: Server, scenario: Scenario, cookie: str) -> dict:
             scenario.duration,
             scenario.rate,
             closed_loop=True,
+            in_flight=in_flight,
         )
         many = run_rooms(
             server,
@@ -496,6 +504,7 @@ def measure(name: str, server: Server, scenario: Scenario, cookie: str) -> dict:
             scenario.duration,
             scenario.rate,
             closed_loop=True,
+            in_flight=in_flight,
         )
         metrics.update(many)
         metrics["single_room_updates_per_s"] = single["updates_per_s"]
@@ -525,6 +534,12 @@ def main() -> None:
     parser.add_argument("--password", required=True)
     parser.add_argument("--json", type=Path)
     parser.add_argument(
+        "--in-flight",
+        type=int,
+        default=IN_FLIGHT,
+        help="closed-loop scale-out: updates outstanding per room",
+    )
+    parser.add_argument(
         "--smoke", action="store_true", help="seconds of traffic, tiny rooms"
     )
     arguments = parser.parse_args()
@@ -540,7 +555,9 @@ def main() -> None:
     server.start()
     try:
         cookie = login(server, arguments.email, arguments.password)
-        metrics = measure(arguments.scenario, server, scenario, cookie)
+        metrics = measure(
+            arguments.scenario, server, scenario, cookie, arguments.in_flight
+        )
     finally:
         server.stop()
     text = json.dumps(metrics)

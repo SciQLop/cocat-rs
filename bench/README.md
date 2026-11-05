@@ -48,6 +48,11 @@ editor sends the next edit only after the broadcast of an earlier one comes back
 `updates_per_s` is what the server delivered, not what the harness tried to send, and
 the two servers can actually differ.
 
+`--in-flight` sets how many updates a room keeps outstanding (default 4). The gate uses
+4: one round trip is in flight while the next is on the wire, so a server's per-update
+cost shows up in throughput, while a deeper queue would only measure how much work the
+server buffers before the client notices.
+
 An edit is a real cocat change: the client sets one event's `stop` and sends the
 resulting `sync update`, so the room grows the way it grows under a user.
 

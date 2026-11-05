@@ -3,9 +3,10 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use cocat_core::role::Role;
@@ -19,6 +20,9 @@ use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, Transact, Update};
 
 pub type ClientId = u64;
+
+// simplify: a one-second timer instead of a durability policy; phase 1 owns fsync policy.
+const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 type Rooms = Arc<Mutex<HashMap<String, RoomHandle>>>;
 
@@ -172,10 +176,18 @@ fn room_loop(
     }
 
     'serving: loop {
+        let mut schedule = SyncSchedule::new(Instant::now());
         let unloaded = loop {
-            let Some(command) = next_command(&commands, &mut backlog) else {
-                break None;
-            };
+            let command =
+                match next_command(&commands, &mut backlog, schedule.remaining(Instant::now())) {
+                    Next::Command(command) => command,
+                    Next::Idle => {
+                        sync(&mut store, &room_id);
+                        schedule.advance(Instant::now());
+                        continue;
+                    }
+                    Next::Closed => break None,
+                };
             let mut broadcast = None;
             match command {
                 RoomCommand::Attach { client, role, out } => {
@@ -197,8 +209,10 @@ fn room_loop(
                 }
             }
             drain(&commands, &mut backlog);
+            // Written before the broadcast so a client that sees an update can read it
+            // back from the file; the fsync follows on the timer.
             if backlog.is_empty() {
-                flush(&mut store, &room_id);
+                write(&mut store, &room_id);
             }
             if let Some(frame) = broadcast {
                 broadcast_to(&clients, frame);
@@ -216,14 +230,49 @@ fn room_loop(
     }
 }
 
+/// When the room thread should fsync next. It only arms while records are unsynced.
+struct SyncSchedule {
+    next: Instant,
+}
+
+impl SyncSchedule {
+    fn new(now: Instant) -> Self {
+        Self {
+            next: now + SYNC_INTERVAL,
+        }
+    }
+
+    fn remaining(&self, now: Instant) -> Duration {
+        self.next.saturating_duration_since(now)
+    }
+
+    fn advance(&mut self, now: Instant) {
+        self.next = now + SYNC_INTERVAL;
+    }
+}
+
+enum Next {
+    Command(RoomCommand),
+    Idle,
+    Closed,
+}
+
 fn next_command(
     commands: &Option<Receiver<RoomCommand>>,
     backlog: &mut VecDeque<RoomCommand>,
-) -> Option<RoomCommand> {
+    timeout: Duration,
+) -> Next {
     if let Some(command) = backlog.pop_front() {
-        return Some(command);
+        return Next::Command(command);
     }
-    commands.as_ref()?.recv().ok()
+    match commands {
+        Some(receiver) => match receiver.recv_timeout(timeout) {
+            Ok(command) => Next::Command(command),
+            Err(RecvTimeoutError::Timeout) => Next::Idle,
+            Err(RecvTimeoutError::Disconnected) => Next::Closed,
+        },
+        None => Next::Closed,
+    }
 }
 
 fn drain(commands: &Option<Receiver<RoomCommand>>, backlog: &mut VecDeque<RoomCommand>) {
@@ -275,6 +324,21 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             }
             RoomCommand::Attach { .. } | RoomCommand::Frame { .. } => {}
         }
+    }
+}
+
+fn write(store: &mut FileRoomStore, room_id: &str) {
+    if let Err(error) = store.write() {
+        tracing::warn!(room = %room_id, %error, "cannot write the room");
+    }
+}
+
+fn sync(store: &mut FileRoomStore, room_id: &str) {
+    if !store.needs_sync() {
+        return;
+    }
+    if let Err(error) = store.sync() {
+        tracing::warn!(room = %room_id, %error, "cannot sync the room");
     }
 }
 
@@ -372,7 +436,23 @@ fn apply(doc: &Doc, payload: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{Duration, Instant};
     use tokio::sync::mpsc::unbounded_channel;
+    use tokio::time::{sleep, timeout};
+    use yrs::{Map, ReadTxn, StateVector, Transact};
+
+    use cocat_core::store::sync_count;
+
+    const WAIT: Duration = Duration::from_secs(10);
+
+    fn update_with(key: &str, value: &str) -> Vec<u8> {
+        let doc = Doc::new();
+        doc.get_or_insert_map("content")
+            .insert(&mut doc.transact_mut(), key, value);
+        doc.transact()
+            .encode_state_as_update_v1(&StateVector::default())
+    }
 
     struct DyingRoom {
         handle: RoomHandle,
@@ -442,5 +522,32 @@ mod tests {
         ));
         assert!(room.registry.lock().unwrap().is_empty());
         assert!(flushed.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_quiet_room_syncs_within_a_second() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_owned());
+        let room = manager.get_or_open("room-quiet").unwrap();
+        let (out, mut frames) = unbounded_channel();
+        room.attach(1, Role::Editor, out).unwrap();
+        timeout(WAIT, frames.recv()).await.unwrap().unwrap();
+
+        let payload = update_with("key", "value");
+        room.frame(
+            1,
+            Bytes::from(Message::Sync(SyncMessage::Update(payload)).encode_v1()),
+        );
+        timeout(WAIT, frames.recv()).await.unwrap().unwrap();
+        let written = sync_count();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while sync_count() == written && Instant::now() < deadline {
+            sleep(Duration::from_millis(20)).await;
+        }
+        assert!(sync_count() > written, "the quiet room never synced");
+        let bytes = fs::read(dir.path().join("room-quiet.y")).unwrap();
+        assert!(bytes.len() > cocat_core::store::HEADER.len());
+        room.detach(1).await;
     }
 }

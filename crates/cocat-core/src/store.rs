@@ -4,6 +4,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -13,6 +14,14 @@ use crate::room_id::{InvalidRoomId, validate_room_id};
 pub const HEADER: &[u8] = b"0.0.1\0";
 
 const MAX_VARUINT_BYTES: usize = 10;
+
+static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// How many `sync` calls returned successfully in this process; the room timer is the only
+/// caller, so tests can observe it without waiting on the filesystem.
+pub fn sync_count() -> u64 {
+    SYNC_COUNT.load(Ordering::Relaxed)
+}
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -35,9 +44,9 @@ pub struct FileRoomStore {
     path: PathBuf,
     file: File,
     truncated_at: Option<u64>,
-    // simplify: appended records wait here until an explicit flush; no Drop flush and
-    // no background flusher. Phase 1 gets a durability policy with timed fsyncs.
+    /// Appended records wait here until `write`; the caller owns when they reach the disk.
     pending: Vec<u8>,
+    needs_sync: bool,
 }
 
 impl FileRoomStore {
@@ -71,6 +80,7 @@ impl FileRoomStore {
             file,
             truncated_at,
             pending: Vec::new(),
+            needs_sync: false,
         };
         Ok((store, updates))
     }
@@ -89,7 +99,9 @@ impl FileRoomStore {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), StoreError> {
+    /// Writes the pending records, without waiting for the disk. A failed write is rolled
+    /// back and the records stay pending for a retry.
+    pub fn write(&mut self) -> Result<(), StoreError> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -98,25 +110,40 @@ impl FileRoomStore {
             .metadata()
             .map_err(|source| io_error(&self.path, source))?
             .len();
-        if let Err(source) = self.write_and_sync() {
+        if let Err(source) = self.file.write_all(&self.pending) {
             // Half a record defeats tail recovery, so cut it back and keep the records
             // in `pending` for a retry.
             if let Err(error) = self.file.set_len(start) {
                 tracing::error!(
                     path = %self.path.display(),
                     %error,
-                    "cannot roll a partial flush back, the next open must recover the tail"
+                    "cannot roll a partial write back, the next open must recover the tail"
                 );
             }
             return Err(io_error(&self.path, source));
         }
         self.pending.clear();
+        self.needs_sync = true;
         Ok(())
     }
 
-    fn write_and_sync(&mut self) -> io::Result<()> {
-        self.file.write_all(&self.pending)?;
-        self.file.sync_data()
+    /// Waits for the records written so far to reach the disk.
+    pub fn sync(&mut self) -> Result<(), StoreError> {
+        self.file
+            .sync_data()
+            .map_err(|source| io_error(&self.path, source))?;
+        self.needs_sync = false;
+        SYNC_COUNT.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn needs_sync(&self) -> bool {
+        self.needs_sync
+    }
+
+    pub fn flush(&mut self) -> Result<(), StoreError> {
+        self.write()?;
+        self.sync()
     }
 }
 
@@ -200,6 +227,32 @@ fn write_varuint(mut value: u64, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_reaches_the_file_without_a_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        let record = Bytes::from_static(b"update-bytes");
+        store.append(record.clone()).unwrap();
+
+        store.write().unwrap();
+        assert!(store.needs_sync());
+        let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert_eq!(updates, [record]);
+    }
+
+    #[test]
+    fn a_sync_clears_the_dirty_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        store.append(Bytes::from_static(b"update-bytes")).unwrap();
+        store.write().unwrap();
+        let before = sync_count();
+
+        store.sync().unwrap();
+        assert!(sync_count() > before);
+        assert!(!store.needs_sync());
+    }
 
     // A unit test because this failure needs a file handle the public API never opens.
     #[test]

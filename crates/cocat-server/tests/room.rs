@@ -262,10 +262,12 @@ async fn an_editor_update_is_on_disk_while_the_client_is_attached() {
     let room = manager.get_or_open("room-durable").unwrap();
     let mut client = attach(&room, 1, Role::Editor);
     next(&mut client).await;
+    let mut reader = attach(&room, 2, Role::Viewer);
+    next(&mut reader).await;
 
     let payload = update_with("key", "value");
     room.frame(1, update_frame(&payload));
-    next(&mut client).await;
+    next(&mut reader).await;
 
     let (_, updates) = FileRoomStore::open(dir.path(), "room-durable").unwrap();
     assert_eq!(updates, [Bytes::from(payload)]);
