@@ -11,7 +11,7 @@ async fn seeded() -> (TempDir, SqlitePool) {
 }
 
 async fn user(pool: &SqlitePool, email: &str) -> Uuid {
-    db::create_user(pool, email, "hunter2", false)
+    db::create_user(pool, email, "hunter2", false, true)
         .await
         .unwrap()
 }
@@ -132,12 +132,12 @@ async fn set_owner_moves_the_owner_role() {
 #[tokio::test]
 async fn emails_match_case_insensitively() {
     let (_dir, pool) = seeded().await;
-    let id = db::create_user(&pool, "Alice@X.org", "hunter2", false)
+    let id = db::create_user(&pool, "Alice@X.org", "hunter2", false, true)
         .await
         .unwrap();
 
     let found = db::user_by_email(&pool, "alice@x.org").await.unwrap();
-    let again = db::create_user(&pool, "alice@x.org", "hunter2", false).await;
+    let again = db::create_user(&pool, "alice@x.org", "hunter2", false, true).await;
 
     assert_eq!(found.map(|user| user.id), Some(id));
     assert!(

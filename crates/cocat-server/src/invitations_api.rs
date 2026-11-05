@@ -1,19 +1,16 @@
 //! The invitation routes, kept out of `api` so neither file grows past its one job:
 //! `api` owns rooms and members, `invitations` owns the rules, this module the HTTP shape.
 
-use std::str::FromStr;
-
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
-use email_address::EmailAddress;
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, RoomOut};
 use crate::lifecycle::LifecycleError;
-use crate::mail::is_placeholder;
+use crate::mail::{Address, is_placeholder};
 use crate::{AppState, invitations};
 
 const INVITATION_LIFETIME_DAYS: u32 = 14;
@@ -34,7 +31,7 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 struct InvitationCreate {
-    email: Option<InviteEmail>,
+    email: Option<Address>,
     #[serde(default = "default_role")]
     role: AssignableRole,
     #[serde(default = "default_expiry")]
@@ -80,28 +77,6 @@ impl TryFrom<u32> for MaxUses {
             0 => Err("max_uses must be at least 1"),
             uses => Ok(Self(uses)),
         }
-    }
-}
-
-/// FastAPI's `EmailStr`: a malformed address is refused while the body is deserialized, so it
-/// is the same 422 as any other schema error, and (like `email-validator`) the address is
-/// trimmed of the whitespace around it. A period-less domain is refused because
-/// `email-validator`, which Python validates with, requires one.
-#[derive(Debug, Deserialize)]
-#[serde(try_from = "String")]
-struct InviteEmail(String);
-
-impl TryFrom<String> for InviteEmail {
-    type Error = &'static str;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let trimmed = value.trim();
-        let address = EmailAddress::from_str(trimmed)
-            .map_err(|_| "the invitation email must be an email address")?;
-        if !address.domain().contains('.') {
-            return Err("the invitation email must be an email address");
-        }
-        Ok(Self(trimmed.to_owned()))
     }
 }
 
@@ -211,7 +186,7 @@ async fn accept_invitation(
 /// Python's `actions._address` once `EmailStr` has accepted the address: the only address it
 /// still refuses is a placeholder of ours, which exists to stand in for an account but must
 /// never receive an invitation.
-fn address(email: InviteEmail) -> Result<String, ApiError> {
+fn address(email: Address) -> Result<String, ApiError> {
     if is_placeholder(&email.0) {
         return Err(LifecycleError::Invalid("Enter a valid email address").into());
     }

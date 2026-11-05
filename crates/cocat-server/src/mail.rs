@@ -7,11 +7,13 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use email_address::EmailAddress;
 use lettre::message::Mailbox;
 use lettre::transport::file::AsyncFileTransport;
 use lettre::transport::smtp::AsyncSmtpTransport;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncTransport, Message, Tokio1Executor};
+use serde::Deserialize;
 use thiserror::Error;
 
 const PLACEHOLDER_DOMAIN: &str = "placeholder.cocat.org";
@@ -189,6 +191,27 @@ pub fn is_placeholder(email: &str) -> bool {
     };
     domain == PLACEHOLDER_DOMAIN || domain.ends_with(&format!(".{PLACEHOLDER_DOMAIN}"))
 }
+
+/// An address as Python's schema accepts it: trimmed, syntactically valid, and with a period
+/// in the domain, which is the one rule `email-validator` adds to the grammar.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Address(pub String);
+
+impl TryFrom<String> for Address {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        let address = EmailAddress::from_str(trimmed).map_err(|_| NOT_AN_ADDRESS)?;
+        if !address.domain().contains('.') {
+            return Err(NOT_AN_ADDRESS);
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+}
+
+const NOT_AN_ADDRESS: &str = "the email must be an email address";
 
 pub fn verification_mail(link: &str) -> (&'static str, String) {
     (

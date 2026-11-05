@@ -111,7 +111,7 @@ impl Fixture {
     }
 
     async fn user(&self, email: &str) -> Uuid {
-        db::create_user(&self.pool, email, "hunter2", false)
+        db::create_user(&self.pool, email, "hunter2", false, true)
             .await
             .unwrap()
     }
@@ -430,13 +430,13 @@ async fn an_accepted_socket_has_nagle_disabled() {
 async fn a_downgrade_between_handshake_and_attach_is_honoured() {
     const ROOM: &str = "room-downgrade";
     let fixture = Fixture::start_with(|pool| async move {
-        let owner = db::create_user(&pool, "owner@example.org", "hunter2", false)
+        let owner = db::create_user(&pool, "owner@example.org", "hunter2", false, true)
             .await
             .unwrap();
         db::create_room(&pool, owner, ROOM, "Downgrade")
             .await
             .unwrap();
-        let editor = db::create_user(&pool, "editor@example.org", "hunter2", false)
+        let editor = db::create_user(&pool, "editor@example.org", "hunter2", false, true)
             .await
             .unwrap();
         db::add_member(&pool, ROOM, editor, Role::Editor)

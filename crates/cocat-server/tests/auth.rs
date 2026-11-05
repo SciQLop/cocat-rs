@@ -180,7 +180,7 @@ fn a_missing_secret_file_is_created_once_and_reused() {
 #[tokio::test]
 async fn login_sets_a_cookie_for_the_right_password() {
     let (dir, pool) = seeded_db().await;
-    let id = db::create_user(&pool, "user@example.org", "hunter2", false)
+    let id = db::create_user(&pool, "user@example.org", "hunter2", false, true)
         .await
         .unwrap();
     let state = AppState {
@@ -218,7 +218,7 @@ async fn login_sets_a_cookie_for_the_right_password() {
 #[tokio::test]
 async fn login_rejects_a_wrong_password_and_an_inactive_user() {
     let (dir, pool) = seeded_db().await;
-    db::create_user(&pool, "user@example.org", "hunter2", false)
+    db::create_user(&pool, "user@example.org", "hunter2", false, true)
         .await
         .unwrap();
     let state = AppState {
@@ -231,13 +231,13 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         links: Links::default(),
     };
 
-    let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2").await;
+    let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2", false).await;
     assert!(matches!(unknown.unwrap_err(), AuthError::BadCredentials));
 
     let wrong = auth::login_handler(State(state.clone()), form("user@example.org", "wrong")).await;
     assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
 
-    let token = auth::login(&pool, &state.secret, "user@example.org", "hunter2")
+    let token = auth::login(&pool, &state.secret, "user@example.org", "hunter2", false)
         .await
         .unwrap();
     sqlx::query(r#"UPDATE "user" SET is_active = FALSE WHERE email = ?"#)

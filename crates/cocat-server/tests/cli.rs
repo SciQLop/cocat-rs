@@ -17,7 +17,7 @@ async fn seeded_db() -> (TempDir, SqlitePool) {
 async fn create_user_then_read_it_back() {
     let (_dir, pool) = seeded_db().await;
 
-    let id = db::create_user(&pool, "user@example.org", "hunter2", false)
+    let id = db::create_user(&pool, "user@example.org", "hunter2", false, true)
         .await
         .unwrap();
     let user = db::user_by_email(&pool, "user@example.org")
@@ -40,7 +40,7 @@ async fn create_user_then_read_it_back() {
 #[tokio::test]
 async fn create_room_assigns_the_owner() {
     let (_dir, pool) = seeded_db().await;
-    let owner = db::create_user(&pool, "owner@example.org", "hunter2", false)
+    let owner = db::create_user(&pool, "owner@example.org", "hunter2", false, true)
         .await
         .unwrap();
 
@@ -57,10 +57,10 @@ async fn create_room_assigns_the_owner() {
 #[tokio::test]
 async fn add_user_to_room_sets_the_role() {
     let (_dir, pool) = seeded_db().await;
-    let owner = db::create_user(&pool, "owner@example.org", "hunter2", false)
+    let owner = db::create_user(&pool, "owner@example.org", "hunter2", false, true)
         .await
         .unwrap();
-    let viewer = db::create_user(&pool, "viewer@example.org", "hunter2", false)
+    let viewer = db::create_user(&pool, "viewer@example.org", "hunter2", false, true)
         .await
         .unwrap();
     db::create_room(&pool, owner, "room-1", "Room one")

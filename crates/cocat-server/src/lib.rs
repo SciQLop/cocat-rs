@@ -1,5 +1,7 @@
 //! The cocat server: room websockets, authentication and the seeding CLI.
 
+pub mod accounts;
+pub mod accounts_api;
 pub mod api;
 pub mod auth;
 pub mod cli;

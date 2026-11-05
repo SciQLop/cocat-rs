@@ -42,7 +42,7 @@ impl Server {
         let update_dir = dir.path().join("rooms");
 
         let pool = db::open(&db_path).await.unwrap();
-        let owner = db::create_user(&pool, "owner@example.org", "hunter2", false)
+        let owner = db::create_user(&pool, "owner@example.org", "hunter2", false, true)
             .await
             .unwrap();
         db::create_room(&pool, owner, ROOM_ID, "Serve")

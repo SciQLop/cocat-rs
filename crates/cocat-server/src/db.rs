@@ -27,6 +27,8 @@ pub enum DbError {
     InvalidRoomId(#[from] InvalidRoomId),
     #[error("{user_id} is not a member of room {room_id}")]
     NoSuchMembership { room_id: String, user_id: Uuid },
+    #[error("{email} already has an account")]
+    EmailTaken { email: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +148,7 @@ pub async fn create_user(
     email: &str,
     password: &str,
     is_superuser: bool,
+    is_verified: bool,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::new_v4();
     let hashed_password = Argon2::default()
@@ -153,15 +156,28 @@ pub async fn create_user(
         .to_string();
     sqlx::query(
         r#"INSERT INTO "user" (id, email, hashed_password, is_active, is_verified, is_superuser)
-           VALUES (?, ?, ?, TRUE, TRUE, ?)"#,
+           VALUES (?, ?, ?, TRUE, ?, ?)"#,
     )
     .bind(id.to_string())
     .bind(email)
     .bind(hashed_password)
+    .bind(is_verified)
     .bind(is_superuser)
     .execute(pool)
-    .await?;
+    .await
+    .map_err(|error| taken_email(error, email))?;
     Ok(id)
+}
+
+/// The address column is unique, case-insensitively: a second account for the same person is
+/// a request-level conflict, not an internal failure.
+fn taken_email(error: sqlx::Error, email: &str) -> DbError {
+    match &error {
+        sqlx::Error::Database(source) if source.is_unique_violation() => DbError::EmailTaken {
+            email: email.to_owned(),
+        },
+        _ => DbError::Sqlx(error),
+    }
 }
 
 pub async fn create_room(

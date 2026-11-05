@@ -29,6 +29,10 @@ pub const COOKIE_NAME: &str = "fastapiusersauth";
 pub const SECRET_ENV: &str = "COCAT_SECRET";
 
 const AUDIENCE: &str = "fastapi-users:auth";
+
+/// fastapi-users' error codes, which its login route sends as `{"detail": "<code>"}`.
+const BAD_CREDENTIALS: &str = "LOGIN_BAD_CREDENTIALS";
+const NOT_VERIFIED: &str = "LOGIN_USER_NOT_VERIFIED";
 const LIFETIME_SECONDS: u64 = 3600;
 const DUMMY_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$YGXUcrLDsAk2cwaSUXo9kg$kDCnwbFPV9Go5Cw1ADnZFM0j/t7ythVDk0kxfS6Ve+Q";
 
@@ -42,6 +46,8 @@ pub enum AuthError {
     InactiveUser,
     #[error("bad credentials")]
     BadCredentials,
+    #[error("the account is not verified")]
+    NotVerified,
     #[error("cannot read the token secret at {path}: {source}")]
     Secret {
         path: PathBuf,
@@ -189,11 +195,18 @@ pub async fn authenticate(
     Ok(user.id)
 }
 
+/// Check the password and hand out a session token.
+///
+/// `requires_verification` is Python's `requires_verification=mail is not None`: a deployment
+/// that cannot mail a confirmation must not lock out the accounts it cannot confirm. The
+/// verification is checked after the password, so a wrong password reads as bad credentials
+/// for a verified and an unverified account alike.
 pub async fn login(
     pool: &SqlitePool,
     secret: &str,
     email: &str,
     password: &str,
+    requires_verification: bool,
 ) -> Result<String, AuthError> {
     let Some(user) = db::user_by_email(pool, email).await? else {
         // fastapi-users hashes on a miss too, so an unknown email costs one argon2 run.
@@ -203,6 +216,9 @@ pub async fn login(
     verify_password(password, &user.hashed_password)?;
     if !user.is_active {
         return Err(AuthError::InactiveUser);
+    }
+    if requires_verification && !user.is_verified {
+        return Err(AuthError::NotVerified);
     }
     mint_token(user.id, secret, SystemTime::now())
 }
@@ -220,21 +236,68 @@ pub fn set_cookie(token: &str) -> String {
     format!("{COOKIE_NAME}={token}; Path=/; Secure; HttpOnly; SameSite=lax")
 }
 
+/// The same attributes the login cookie sets, with the empty value and `Max-Age=0` that
+/// Starlette's `CookieTransport` sends on logout.
+pub fn clear_cookie() -> String {
+    format!("{COOKIE_NAME}=\"\"; HttpOnly; Max-Age=0; Path=/; SameSite=lax; Secure")
+}
+
+fn refused(code: &'static str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        axum::Json(serde_json::json!({ "detail": code })),
+    )
+        .into_response()
+}
+
 pub async fn login_handler(State(state): State<AppState>, Form(form): Form<LoginForm>) -> Response {
-    match login(&state.pool, &state.secret, &form.username, &form.password).await {
+    match login(
+        &state.pool,
+        &state.secret,
+        &form.username,
+        &form.password,
+        state.mailer.is_some(),
+    )
+    .await
+    {
         Ok(token) => (
             StatusCode::NO_CONTENT,
             [(header::SET_COOKIE, set_cookie(&token))],
         )
             .into_response(),
-        Err(AuthError::BadCredentials | AuthError::InactiveUser) => {
-            StatusCode::BAD_REQUEST.into_response()
-        }
+        Err(AuthError::BadCredentials | AuthError::InactiveUser) => refused(BAD_CREDENTIALS),
+        Err(AuthError::NotVerified) => refused(NOT_VERIFIED),
         Err(error) => {
             tracing::warn!(%error, "login failed");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// Drop the session cookie.
+///
+/// Python gates this route on the same verification rule as login (`verified=mail is not
+/// None`), and its authenticator answers 403 when the cookie is good but the account is
+/// unverified, so the two refusals are kept apart.
+pub async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Ok(user_id) = authenticate(&state.pool, &headers, &state.secret).await else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if state.mailer.is_some() {
+        match db::user_by_id(&state.pool, user_id).await {
+            Ok(Some(user)) if user.is_verified => {}
+            Ok(_) => return StatusCode::FORBIDDEN.into_response(),
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the user who is logging out");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
+    }
+    (
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, clear_cookie())],
+    )
+        .into_response()
 }
 
 fn secret_path(db_path: &Path) -> PathBuf {

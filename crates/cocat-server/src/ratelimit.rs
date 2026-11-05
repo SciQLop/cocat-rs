@@ -140,9 +140,9 @@ pub fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>, trusted_proxies
     }
 }
 
-/// Refuses the eleventh login in a minute from one client. Every route keeps its own budget:
-/// a flood of logins must not lock a client out of the rest of the API.
-pub async fn limit_login(State(state): State<AppState>, request: Request, next: Next) -> Response {
+/// Refuses the eleventh call in a minute from one client. Every route keeps its own budget:
+/// a flood of logins must not lock a client out of registration, or the other way round.
+pub async fn limit(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let limit = &state.login_limit;
     let peer = request
         .extensions()

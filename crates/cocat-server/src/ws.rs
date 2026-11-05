@@ -19,7 +19,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
-use crate::{AppState, api, auth, db, ratelimit};
+use crate::{AppState, accounts_api, api, auth, db, ratelimit};
 
 pub const INTERNAL_ERROR: u16 = 1011;
 
@@ -51,10 +51,16 @@ enum AttachError {
 pub fn router(state: AppState) -> Router {
     let login = post(auth::login_handler).layer(middleware::from_fn_with_state(
         state.clone(),
-        ratelimit::limit_login,
+        ratelimit::limit,
+    ));
+    let register = post(accounts_api::register).layer(middleware::from_fn_with_state(
+        state.clone(),
+        ratelimit::limit,
     ));
     Router::new()
         .route("/auth/jwt/login", login)
+        .route("/auth/jwt/logout", post(auth::logout_handler))
+        .route("/auth/register", register)
         .route("/room/{room_id}", get(room_socket))
         .route("/rooms", get(api::legacy_rooms))
         .route("/room/{room_id}/users", get(api::legacy_room_users))

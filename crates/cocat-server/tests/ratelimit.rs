@@ -40,7 +40,7 @@ impl Fixture {
     }
 
     async fn user(&self, email: &str) -> uuid::Uuid {
-        db::create_user(&self.state.pool, email, "hunter2", false)
+        db::create_user(&self.state.pool, email, "hunter2", false, true)
             .await
             .unwrap()
     }

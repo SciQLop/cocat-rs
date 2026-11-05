@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::accounts::AccountError;
 use crate::db::{self, DbError, RoomRow};
 use crate::lifecycle::{self, LifecycleError};
 use crate::{AppState, auth};
@@ -33,7 +34,7 @@ pub fn router() -> Router<AppState> {
 }
 
 #[derive(Debug, Serialize)]
-struct UserRead {
+pub(crate) struct UserRead {
     id: Uuid,
     email: String,
     is_active: bool,
@@ -107,6 +108,23 @@ impl From<DbError> for ApiError {
     fn from(error: DbError) -> Self {
         tracing::error!(%error, "the database failed an API request");
         Self::Internal
+    }
+}
+
+impl From<AccountError> for ApiError {
+    fn from(error: AccountError) -> Self {
+        match error {
+            AccountError::Duplicate => Self::BadRequest("REGISTER_USER_ALREADY_EXISTS".to_owned()),
+            AccountError::Db(error) => Self::from(error),
+            AccountError::Clock => {
+                tracing::error!("the clock is before the unix epoch");
+                Self::Internal
+            }
+            AccountError::Token(error) => {
+                tracing::error!(%error, "cannot sign a verification token");
+                Self::Internal
+            }
+        }
     }
 }
 
