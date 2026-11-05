@@ -30,6 +30,10 @@ const UI_POSTS: &[&str] = &[
     "/ui/verify",
     "/ui/account/password",
     "/ui/confirm-email",
+    "/ui/rooms",
+    "/ui/rooms/00000000000000000000000000000000/rename",
+    "/ui/rooms/00000000000000000000000000000000/delete",
+    "/ui/rooms/00000000000000000000000000000000/leave",
 ];
 
 struct Fixture {

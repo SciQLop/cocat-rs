@@ -35,6 +35,11 @@ header form {
   color: #b00020;
 }
 
+.notice {
+  border-left: 3px solid currentColor;
+  padding-left: 0.75rem;
+}
+
 label {
   display: block;
   margin-top: 0.75rem;

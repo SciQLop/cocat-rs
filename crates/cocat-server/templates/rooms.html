@@ -1,5 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>My rooms</h1>
-<p>No rooms page yet</p>
+<form method="post" action="{{ action }}">
+  <label for="new-room-name">New room name</label>
+  <input id="new-room-name" name="name" type="text" required>
+  <button type="submit">Create</button>
+</form>
+<ul class="rooms">
+{% for room in rooms %}
+  <li class="room">
+    <a href="{{ room.href }}">{{ room.name }}</a>
+    <span class="role">{{ room.role }}</span>
+    {% match room.owner %}
+    {% when Some with (owner) %}
+    <form method="post" action="{{ owner.rename_action }}">
+      <label for="rename-{{ room.id }}">New name</label>
+      <input id="rename-{{ room.id }}" name="name" type="text" value="{{ room.name }}">
+      <button type="submit">Rename</button>
+    </form>
+    <form method="post" action="{{ owner.delete_action }}" data-confirm="{{ owner.delete_confirm }}">
+      <button type="submit">Delete</button>
+    </form>
+    {% when None %}
+    {% match room.leave %}
+    {% when Some with (leave) %}
+    <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
+      <button type="submit">Leave</button>
+    </form>
+    {% when None %}
+    {% endmatch %}
+    {% endmatch %}
+  </li>
+{% endfor %}
+</ul>
 {% endblock %}

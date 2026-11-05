@@ -2,14 +2,15 @@
 //! rule that refuses a form post another site started.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use askama::Template;
 use axum::extract::{FromRequestParts, OriginalUri, Path, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-
+use cookie::{Cookie, SameSite};
 use url::Url;
 
 use crate::db::User;
@@ -18,9 +19,13 @@ use crate::{AppState, auth, db};
 
 const STYLE: &str = include_str!("../../static/style.css");
 const FRAGMENT: &str = include_str!("../../static/fragment.js");
-const ASSETS: [(&str, &str, &str); 2] = [
+const CONFIRM: &str = include_str!("../../static/confirm.js");
+const COPY: &str = include_str!("../../static/copy.js");
+const ASSETS: [(&str, &str, &str); 4] = [
     ("style.css", STYLE, "text/css; charset=utf-8"),
     ("fragment.js", FRAGMENT, "text/javascript; charset=utf-8"),
+    ("confirm.js", CONFIRM, "text/javascript; charset=utf-8"),
+    ("copy.js", COPY, "text/javascript; charset=utf-8"),
 ];
 
 /// Python's `ui/auth.py::MESSAGES`, which pages look up by query flag.
@@ -65,6 +70,7 @@ pub(crate) fn message(query: &HashMap<String, String>) -> &'static str {
 pub(crate) struct Header {
     pub email: String,
     pub rooms_href: String,
+    pub groups_href: String,
     pub account_href: String,
     pub logout_action: String,
 }
@@ -73,8 +79,9 @@ pub(crate) struct Header {
 pub(crate) struct Frame {
     pub title: &'static str,
     pub style_href: String,
-    pub script_href: String,
+    pub scripts: Vec<String>,
     pub header: Option<Header>,
+    pub flash: Option<String>,
 }
 
 impl Frame {
@@ -82,13 +89,99 @@ impl Frame {
         Self {
             title,
             style_href: links.path("/static/style.css"),
-            script_href: links.path("/static/fragment.js"),
+            scripts: ["fragment.js", "confirm.js", "copy.js"]
+                .into_iter()
+                .map(|script| links.path(&format!("/static/{script}")))
+                .collect(),
             header: user.map(|user| Header {
                 email: user.email.clone(),
                 rooms_href: links.path("/rooms"),
+                groups_href: links.path("/groups"),
                 account_href: links.path("/account"),
                 logout_action: links.path("/logout"),
             }),
+            flash: None,
+        }
+    }
+
+    /// Carry the one-shot message the page shows and then clears.
+    pub(crate) fn flashing(mut self, flash: Option<String>) -> Self {
+        self.flash = flash;
+        self
+    }
+}
+
+/// The one-shot message cookie: a rule action answers a 303 and the page it lands on shows
+/// the message once, then clears the cookie.
+const FLASH: &str = "cocat_flash";
+
+/// Attach `text` to the redirect, for the page the browser asks for next.
+pub(crate) fn flash(links: &Links, response: Response, text: &str) -> Response {
+    let cookie = flash_cookie(links, text, Some(cookie::time::Duration::minutes(1)));
+    with_cookie(response, &cookie)
+}
+
+/// The message the request carries, if any.
+pub(crate) struct Flash(pub Option<String>);
+
+impl FromRequestParts<AppState> for Flash {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(flash_value(&parts.headers)))
+    }
+}
+
+/// Clear the cookie on the answer to the request that showed it. A request arriving without
+/// the cookie — the POST that set it, or a second visit — is left alone.
+pub(crate) async fn clear_flash(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let carried = flash_value(request.headers()).is_some();
+    let response = next.run(request).await;
+    if !carried {
+        return response;
+    }
+    with_cookie(
+        response,
+        &flash_cookie(&state.links, "", Some(cookie::time::Duration::seconds(0))),
+    )
+}
+
+fn flash_value(headers: &HeaderMap) -> Option<String> {
+    let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
+    Cookie::split_parse_encoded(cookies)
+        .filter_map(Result::ok)
+        .find(|cookie| cookie.name() == FLASH)
+        .map(|cookie| cookie.value().to_owned())
+}
+
+fn flash_cookie(links: &Links, text: &str, max_age: Option<cookie::time::Duration>) -> String {
+    let mut builder = Cookie::build((FLASH, text.to_owned()))
+        .path(links.path(""))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax);
+    if let Some(age) = max_age {
+        builder = builder.max_age(age);
+    }
+    builder.build().encoded().to_string()
+}
+
+fn with_cookie(mut response: Response, cookie: &str) -> Response {
+    match HeaderValue::from_str(cookie) {
+        Ok(value) => {
+            response.headers_mut().append(header::SET_COOKIE, value);
+            response
+        }
+        Err(error) => {
+            tracing::warn!(%error, "cannot write a response cookie");
+            response
         }
     }
 }
@@ -219,17 +312,18 @@ pub(crate) async fn index(State(state): State<AppState>) -> Response {
 }
 
 #[derive(Template)]
-#[template(path = "rooms.html")]
-struct RoomsPage {
+#[template(path = "groups.html")]
+struct GroupsPage {
     frame: Frame,
 }
 
-pub(crate) async fn rooms(
+/// Until the group pages land, the header's link still answers.
+pub(crate) async fn groups(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
-    page(RoomsPage {
-        frame: Frame::new(&state.links, Some(&user), "My rooms"),
+    page(GroupsPage {
+        frame: Frame::new(&state.links, Some(&user), "My groups"),
     })
 }
 

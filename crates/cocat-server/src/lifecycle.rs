@@ -12,6 +12,8 @@ const OWNER_KEEPS_OWNER_ROLE: &str = "The owner keeps the owner role";
 const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave or be removed";
 const EMPTY_ROOM_NAME: &str = "Enter a room name";
 const CONTROL_CHARACTERS_IN_ROOM_NAME: &str = "Enter a room name without control characters";
+const LONG_ROOM_NAME: &str = "Enter a name of at most 200 characters";
+const MAX_NAME: usize = 200;
 
 #[derive(Debug, Error)]
 pub enum LifecycleError {
@@ -78,6 +80,9 @@ fn room_name(name: &str) -> Result<String, LifecycleError> {
         .any(|character| character < ' ' || character == '\x7f')
     {
         return Err(LifecycleError::Invalid(CONTROL_CHARACTERS_IN_ROOM_NAME));
+    }
+    if trimmed.chars().count() > MAX_NAME {
+        return Err(LifecycleError::Invalid(LONG_ROOM_NAME));
     }
     Ok(trimmed.to_owned())
 }

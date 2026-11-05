@@ -4,15 +4,17 @@ mod account;
 mod frame;
 mod login;
 mod reset;
+mod rooms;
 mod signup;
 mod verify;
 
 use axum::Router;
+use axum::middleware;
 use axum::routing::{get, post};
 
 use crate::AppState;
 
-pub fn router(_state: &AppState) -> Router<AppState> {
+pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/", get(frame::index))
         .route("/login", get(login::page).post(login::login))
@@ -25,7 +27,11 @@ pub fn router(_state: &AppState) -> Router<AppState> {
         )
         .route("/reset-password", get(reset::reset_page).post(reset::reset))
         .route("/verify", get(verify::page).post(verify::submit))
-        .route("/rooms", get(frame::rooms))
+        .route("/rooms", get(rooms::page).post(rooms::create))
+        .route("/rooms/{room_id}/rename", post(rooms::rename))
+        .route("/rooms/{room_id}/delete", post(rooms::delete))
+        .route("/rooms/{room_id}/leave", post(rooms::leave))
+        .route("/groups", get(frame::groups))
         .route("/account", get(account::page))
         .route("/account/password", post(account::password))
         .route(
@@ -33,6 +39,10 @@ pub fn router(_state: &AppState) -> Router<AppState> {
             get(account::confirm_page).post(account::confirm),
         )
         .route("/static/{file}", get(frame::static_asset))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            frame::clear_flash,
+        ))
 }
 
 pub(crate) use frame::same_site;

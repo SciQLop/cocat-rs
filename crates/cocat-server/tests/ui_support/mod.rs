@@ -134,11 +134,17 @@ impl Fixture {
     }
 
     pub async fn get(&self, path: &str, token: Option<&str>) -> Response {
-        self.send(Method::GET, path, token, None).await
+        self.send(Method::GET, path, token, &[], None).await
+    }
+
+    /// A GET that carries a cookie the previous response set, such as the flash.
+    pub async fn get_with(&self, path: &str, token: &str, cookie: &str) -> Response {
+        self.send(Method::GET, path, Some(token), &[cookie], None)
+            .await
     }
 
     pub async fn post(&self, path: &str, token: Option<&str>, form: &str) -> Response {
-        self.send(Method::POST, path, token, Some(form)).await
+        self.send(Method::POST, path, token, &[], Some(form)).await
     }
 
     async fn send(
@@ -146,11 +152,17 @@ impl Fixture {
         method: Method,
         path: &str,
         token: Option<&str>,
+        cookies: &[&str],
         form: Option<&str>,
     ) -> Response {
         let mut request = Request::builder().method(method).uri(path);
-        if let Some(token) = token {
-            request = request.header(header::COOKIE, format!("fastapiusersauth={token}"));
+        let mut jar: Vec<String> = token
+            .map(|token| format!("fastapiusersauth={token}"))
+            .into_iter()
+            .collect();
+        jar.extend(cookies.iter().map(|cookie| (*cookie).to_owned()));
+        if !jar.is_empty() {
+            request = request.header(header::COOKIE, jar.join("; "));
         }
         if form.is_some() {
             request = request.header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
@@ -269,6 +281,27 @@ pub fn set_cookie(response: &Response) -> Option<String> {
         .headers()
         .get(header::SET_COOKIE)
         .map(|value| value.to_str().unwrap().to_owned())
+}
+
+/// The `name=value` pair of the flash cookie a page sets, ready to send back.
+pub fn flash_cookie(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter(|value| value.starts_with("cocat_flash="))
+        .find_map(|value| value.split(';').next().map(str::to_owned))
+}
+
+/// Whether the response clears the flash cookie, as the page that showed it must.
+pub fn flash_cleared(response: &Response) -> bool {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| value.starts_with("cocat_flash=") && value.contains("Max-Age=0"))
 }
 
 /// The session token a Set-Cookie header carries.

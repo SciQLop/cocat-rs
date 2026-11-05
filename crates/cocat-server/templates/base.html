@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ frame.title }}</title>
   <link rel="stylesheet" href="{{ frame.style_href }}">
-  <script src="{{ frame.script_href }}" defer></script>
+  {% for script in frame.scripts %}<script src="{{ script }}" defer></script>
+  {% endfor %}
 </head>
 <body>
 {% match frame.header %}
@@ -13,6 +14,7 @@
 <header>
   <span class="brand">cocat</span>
   <a href="{{ header.rooms_href }}">My rooms</a>
+  <a href="{{ header.groups_href }}">My groups</a>
   <a href="{{ header.account_href }}">Account</a>
   <span class="email">{{ header.email }}</span>
   <form method="post" action="{{ header.logout_action }}">
@@ -22,6 +24,11 @@
 {% when None %}
 {% endmatch %}
 <main>
+{% match frame.flash %}
+{% when Some with (flash) %}
+<p class="notice">{{ flash }}</p>
+{% when None %}
+{% endmatch %}
 {% block content %}{% endblock %}
 </main>
 </body>
