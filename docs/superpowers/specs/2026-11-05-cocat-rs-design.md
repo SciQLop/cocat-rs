@@ -71,9 +71,20 @@ The Rust server must be a drop-in replacement for the same deployment:
 - **Same routes and behaviour:** `/room/{id}` websocket, `/auth/*`, `/api/*`, `/ui/*`,
   `COCAT_PROXY_PREFIX`, `COCAT_PUBLIC_URL`, SMTP and OAuth env vars, rate limits,
   viewer write-blocking, kick on removal/role change.
-- **The Python test suite is the specification.** Its server tests start a real
-  `cocat serve`; pointing them at the Rust binary turns them into the compatibility
-  suite. A phase is done when its slice of that suite passes against Rust.
+- **The Python test suite is the specification** (decided with the team). Two kinds
+  of tests exist in the Python repo:
+  - *Subprocess tests* (`tests/test_server.py`, `tests/test_api.py`) start a real
+    `cocat serve` through `tests/conftest.py`/`tests/utils.py`. A `COCAT_SERVER_CMD`
+    environment variable selects the binary; set to the Rust server, they run
+    unchanged.
+  - *In-process tests* (`tests/test_routes.py`, `tests/test_ui_*.py`, ...) use
+    Starlette's `TestClient` on the Python app and sometimes inspect internals
+    (DB session, `Connections`). A `COCAT_TEST_SERVER_URL` mode makes the `client`
+    fixture an `httpx` client against a live server; tests that need Python internals
+    are marked `python_only` and their behaviour is ported as Rust tests.
+  The Python repo runs the suite against Rust in CI (Rust binary built from a pinned
+  `cocat-rs` revision). A phase is done when its slice of that suite passes against
+  Rust.
 
 ## Phases
 
