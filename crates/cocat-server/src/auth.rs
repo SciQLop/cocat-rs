@@ -4,8 +4,9 @@
 //! phase 1 replaces this module with Rust auth.
 
 use std::env;
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -30,6 +31,7 @@ pub const SECRET_ENV: &str = "COCAT_SECRET";
 
 const AUDIENCE: &str = "fastapi-users:auth";
 const LIFETIME_SECONDS: u64 = 3600;
+const DUMMY_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$YGXUcrLDsAk2cwaSUXo9kg$kDCnwbFPV9Go5Cw1ADnZFM0j/t7ythVDk0kxfS6Ve+Q";
 
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -69,15 +71,68 @@ pub fn load_secret(db_path: &Path) -> Result<String, AuthError> {
 }
 
 pub fn resolve_secret(environment: Option<String>, db_path: &Path) -> Result<String, AuthError> {
-    if let Some(secret) = environment {
-        return Ok(secret);
+    match environment.filter(|secret| !secret.is_empty()) {
+        Some(secret) => Ok(secret),
+        None => file_secret(&secret_path(db_path)),
     }
-    let path = secret_path(db_path);
-    let secret = fs::read_to_string(&path).map_err(|source| AuthError::Secret {
-        path: path.clone(),
+}
+
+fn file_secret(path: &Path) -> Result<String, AuthError> {
+    let secret = match fs::read_to_string(path) {
+        Ok(secret) => secret,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            create_secret(path)?;
+            fs::read_to_string(path).map_err(|source| secret_error(path, source))?
+        }
+        Err(source) => return Err(secret_error(path, source)),
+    };
+    let secret = secret.trim();
+    if secret.is_empty() {
+        let source = io::Error::new(io::ErrorKind::InvalidData, "secret file is empty");
+        return Err(secret_error(path, source));
+    }
+    Ok(secret.to_owned())
+}
+
+fn create_secret(path: &Path) -> Result<(), AuthError> {
+    let temporary = temporary_secret_path(path);
+    let written = write_secret(&temporary, path, &new_secret());
+    let _ = fs::remove_file(&temporary);
+    written.map_err(|source| secret_error(path, source))
+}
+
+fn write_secret(temporary: &Path, path: &Path, secret: &str) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(temporary)?;
+    file.write_all(secret.as_bytes())?;
+    file.sync_all()?;
+    match fs::hard_link(temporary, path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+// simplify: two v4 UUIDs (244 bits) instead of a base64 32-byte token; the file is opaque
+// to Python, which only reads it back and signs with it.
+fn new_secret() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+fn temporary_secret_path(path: &Path) -> PathBuf {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(format!(".{}.tmp", Uuid::new_v4().simple()));
+    PathBuf::from(temporary)
+}
+
+fn secret_error(path: &Path, source: io::Error) -> AuthError {
+    AuthError::Secret {
+        path: path.to_owned(),
         source,
-    })?;
-    Ok(secret.trim().to_owned())
+    }
 }
 
 pub fn mint_token(user_id: Uuid, secret: &str, now: SystemTime) -> Result<String, AuthError> {
@@ -141,17 +196,25 @@ pub async fn login(
     email: &str,
     password: &str,
 ) -> Result<String, AuthError> {
-    let user = db::user_by_email(pool, email)
-        .await?
-        .ok_or(AuthError::BadCredentials)?;
-    let hash = PasswordHash::new(&user.hashed_password).map_err(|_| AuthError::BadCredentials)?;
-    Argon2::default()
-        .verify_password(password.as_bytes(), &hash)
-        .map_err(|_| AuthError::BadCredentials)?;
+    let Some(user) = db::user_by_email(pool, email).await? else {
+        // fastapi-users hashes on a miss too, so an unknown email costs one argon2 run.
+        verify_password(password, DUMMY_HASH)?;
+        return Err(AuthError::BadCredentials);
+    };
+    verify_password(password, &user.hashed_password)?;
     if !user.is_active {
         return Err(AuthError::InactiveUser);
     }
     mint_token(user.id, secret, SystemTime::now())
+}
+
+// simplify: only argon2 PHC hashes verify; bcrypt rows from older Python accounts fail
+// PasswordHash::new and read as bad credentials. Phase 1 supports bcrypt or forces a reset.
+fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
+    let hash = PasswordHash::new(hashed).map_err(|_| AuthError::BadCredentials)?;
+    Argon2::default()
+        .verify_password(password.as_bytes(), &hash)
+        .map_err(|_| AuthError::BadCredentials)
 }
 
 pub fn set_cookie(token: &str) -> String {

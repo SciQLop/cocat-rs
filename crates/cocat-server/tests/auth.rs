@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -131,12 +132,49 @@ fn the_secret_is_read_next_to_the_database() {
     fs::write(secret_path(&db_path), "file-secret\n").unwrap();
 
     assert_eq!(auth::resolve_secret(None, &db_path).unwrap(), "file-secret");
+}
 
-    fs::remove_file(secret_path(&db_path)).unwrap();
-    assert!(matches!(
-        auth::resolve_secret(None, &db_path).unwrap_err(),
-        AuthError::Secret { .. }
-    ));
+#[test]
+fn an_empty_environment_secret_falls_back_to_the_file() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    fs::write(secret_path(&db_path), "file-secret").unwrap();
+
+    let secret = auth::resolve_secret(Some(String::new()), &db_path).unwrap();
+
+    assert_eq!(secret, "file-secret");
+}
+
+#[test]
+fn an_empty_secret_file_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    fs::write(secret_path(&db_path), "  \n").unwrap();
+
+    match auth::resolve_secret(None, &db_path).unwrap_err() {
+        AuthError::Secret { source, .. } => {
+            assert!(
+                source.to_string().contains("secret file is empty"),
+                "{source}"
+            )
+        }
+        other => panic!("expected a secret error, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_missing_secret_file_is_created_once_and_reused() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let path = secret_path(&db_path);
+
+    let created = auth::resolve_secret(None, &db_path).unwrap();
+
+    assert!(!created.is_empty());
+    assert_eq!(fs::read_to_string(&path).unwrap().trim(), created);
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert_eq!(auth::resolve_secret(None, &db_path).unwrap(), created);
 }
 
 #[tokio::test]
@@ -182,6 +220,9 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         pool: pool.clone(),
         secret: "secret".to_owned(),
     };
+
+    let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2").await;
+    assert!(matches!(unknown.unwrap_err(), AuthError::BadCredentials));
 
     let wrong = auth::login_handler(State(state.clone()), form("user@example.org", "wrong")).await;
     assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
