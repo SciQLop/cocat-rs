@@ -1,65 +1,101 @@
-# The spike benchmark
+# Benchmark harness
 
-`make_room.py` writes a room file the way the Python server does, and
-`harness.py` measures a server binary on the five gate scenarios. Both servers
-are measured with the same client stack and the same scenario parameters.
+Same client stack and the same scenario parameters for the Python baseline and the
+Rust spike, so the two JSON files can be compared field by field.
+
+The harness lives with the Rust code because the plan and the docs are here, but it is
+a Python client: run it with a venv that has `pycrdt`, `websockets` and `cocat`
+installed (`/home/jeandet/Documents/prog/cocat-ui/.venv` at the time of the spike).
 
 ## Rooms
 
+`make_room.py` writes a room through cocat's own model (`cocat.DB`, `create_catalogue`,
+`create_event` with tags/products/rating), one update per catalogue, so the files hold
+what a real session holds rather than a flat map of strings:
+
 ```sh
-.venv/bin/python bench/make_room.py --dir /tmp/spike/updates --room bench100k --catalogues 100 --events 1000
-.venv/bin/python bench/make_room.py --dir /tmp/spike/updates --room bench1k --catalogues 10 --events 100
-for room in bench1k-0 bench1k-1 bench1k-2 bench1k-3 bench1k-4 bench1k-5 bench1k-6 bench1k-7; do
-  .venv/bin/python bench/make_room.py --dir /tmp/spike/updates --room "$room" --catalogues 10 --events 100
+python bench/make_room.py --dir updates --room bench100k --catalogues 100 --events 1000
+python bench/make_room.py --dir updates --room bench1k --catalogues 10 --events 100
+for index in 0 1 2 3 4 5 6 7; do
+  python bench/make_room.py --dir updates --room "bench1k-$index" --catalogues 10 --events 100
 done
 ```
 
-The 100 × 1000 room prints a size near 38 MB. The rooms also need rows in the
-database, seeded with either CLI:
+`bench100k` is about 38 MB; the harness refuses to run a non-smoke scenario when the
+file is outside 35-40 MB, because every gate number is about that room.
+
+Seed the database with either CLI (owner `bench@test.org`, password `pwd`, member of
+every room):
 
 ```sh
-cocat create-user --email bench@test.org --password pwd --db_path /tmp/spike/python.db
-cocat create-room --owner bench@test.org --room-id bench100k --db_path /tmp/spike/python.db
+cocat create-user --email bench@test.org --password pwd --db_path bench.db
+cocat create-room --owner bench@test.org --room-id bench100k --db_path bench.db
 ```
 
 ## Scenarios
 
-| Scenario | Load |
-| --- | --- |
-| `open` | 20 cold connects to `bench100k` |
-| `fanout` | 50 clients and one editor on `bench1k`, 1 update/s for 300 s |
-| `scaleout` | 8 clients per room at 10 updates/s, one room then 8 rooms, 60 s each |
-| `soak` | 50 clients on `bench1k`, 1 update/s for 3600 s |
-| `openclose` | 20 connect / receive / disconnect cycles on `bench100k` |
+| scenario | clients | duration | traffic |
+| --- | --- | --- | --- |
+| `open` | - | - | 20 cold connects to `bench100k`, latency to the first frame |
+| `fanout` | 50 in one room | 300 s | every client edits one event of its own once per second, staggered; every client receives every edit |
+| `scaleout` | 8 per room | 60 s per phase | closed loop: each room's editor keeps 4 updates in flight, 1 room then 8 rooms |
+| `soak` | 50 in one room | 3600 s | same traffic as `fanout`, long enough to see memory drift |
+| `openclose` | - | - | 20 connect / receive / disconnect cycles on `bench100k` |
 
-`--smoke` shrinks every scenario to 2 clients and 2 s (2 connects, 2 cycles,
-2 rooms for the scale-out shape).
+`fanout` and `soak` are open loop: the offered rate is 50 edits/s in total, one edit per
+client per second, one client every 20 ms. `scaleout` is closed loop on purpose: the
+editor sends the next edit only after the broadcast of an earlier one comes back, so
+`updates_per_s` is what the server delivered, not what the harness tried to send, and
+the two servers can actually differ.
+
+An edit is a real cocat change: the client sets one event's `stop` and sends the
+resulting `sync update`, so the room grows the way it grows under a user.
+
+## Running
 
 ```sh
-COCAT_PUBLIC_URL= .venv/bin/python bench/harness.py fanout --smoke \
-  --server-cmd ".venv/bin/cocat serve" \
-  --db /tmp/spike/python.db --update-dir /tmp/spike/updates \
-  --email bench@test.org --password pwd --json bench/results/python-fanout.json
+python bench/harness.py fanout \
+  --server-cmd "/path/to/cocat serve" \
+  --db bench.db --update-dir updates \
+  --email bench@test.org --password pwd \
+  --json results/fanout-python.json
 ```
 
-The server command is the binary plus its `serve` subcommand; the harness adds
-`--host 127.0.0.1 --port <free port> --update_dir <dir> --db_path <db>`.
+The command already contains the `serve` subcommand; the harness appends `--host
+--port --update_dir --db_path`. It starts the server on a free port, logs in over HTTP,
+runs the scenario, stops the server with SIGINT and prints one JSON object.
 
-## Measurements
+`--smoke` replaces every duration with two seconds and two clients/connects and skips
+the room-size check; it is there to prove the harness works, not to produce numbers.
 
-Clients are raw websockets that keep no document, so 50 replicas of the 100k
-room never fit in memory. A frame is timed by matching the bytes the server
-broadcasts against the bytes the editor sent in the same process.
+## Processes and clocks
 
-| Key | Meaning |
+Each room's clients run in their own process (`multiprocessing`, fork), so 50 receivers
+in one room are not fighting one Python GIL; a scale-out run uses one process per room.
+Senders and receivers of a room share the process, so `time.perf_counter()` is the same
+clock for the send and the receive of an update, even though it is per-process: it is
+monotonic and, on Linux, backed by the same system clock in every process.
+
+The JSON reports the harness's own cost:
+
+- `harness_cpu_seconds` - CPU used by all room processes together.
+- `harness_peak_core_fraction` - CPU of the busiest room process divided by the run
+  duration. Above ~0.7 the harness process is close to a full core and the latencies
+  may describe the client rather than the server: say so instead of quoting them.
+
+## Metrics
+
+| key | meaning |
 | --- | --- |
-| `rss_start_mb`, `rss_end_mb`, `rss_peak_mb` | server RSS at start, at the end, and its high-water mark |
-| `cpu_seconds` | server user + system time for the scenario |
-| `open_p50_ms`, `open_p95_ms` | cold connect until the first sync frame |
-| `fanout_p50_ms`, `fanout_p99_ms` | editor send until a receiver got the broadcast |
-| `updates_per_s` | updates sent / seconds elapsed |
-| `single_room_updates_per_s` | the one-room shape of `scaleout`, for the scale-out ratio |
-| `lost_updates` | tokens sent minus tokens present in the final room state |
-| `duration_s` | wall time of the measured loop |
+| `rss_start_mb`, `rss_end_mb`, `rss_peak_mb` | server RSS from `/proc`, start / end / high-water mark |
+| `cpu_seconds` | server CPU time from `/proc`, start to stop |
+| `open_p50_ms`, `open_p95_ms` | cold connect to first frame |
+| `fanout_p50_ms`, `fanout_p99_ms` | send to local receive, per client |
+| `updates_per_s` | delivered update frames per second, one designated receiver |
+| `per_room_updates_per_s` | the same divided by the number of rooms |
+| `single_room_updates_per_s` | scale-out only: the 1-room phase, same metric |
+| `lost_updates` | edits written by the harness that a fresh client does not find in the room at the end |
+| `duration_s` | measured traffic window |
+| `harness_cpu_seconds`, `harness_peak_core_fraction` | see above |
 
-Every key is always present; the ones a scenario does not produce are `null`.
+A key a scenario does not produce is `null`.
