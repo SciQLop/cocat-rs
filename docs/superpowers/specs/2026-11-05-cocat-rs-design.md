@@ -128,8 +128,8 @@ and has no paging. We take the routes' intent, not the code:
   read-only into a short-lived `Doc` that is dropped after the request (never registered
   as an open room), so REST reads cannot pin rooms in memory. Large rooms hit the memory
   budget like any other open.
-- The fork's tests (`tests/test_rest_catalogues.py`) are the starting acceptance cases,
-  adapted to these routes; credit the author in the changelog.
+- Only the routes' intent is taken from the fork; no code or tests from it. Acceptance
+  tests are written for these routes from scratch.
 
 ## How the Python suite drives Rust
 
