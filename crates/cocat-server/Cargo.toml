@@ -1,0 +1,21 @@
+[package]
+name = "cocat-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+argon2 = "0.6"
+clap = { version = "4", features = ["derive"] }
+cocat-core = { path = "../cocat-core" }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
+thiserror.workspace = true
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
+tracing.workspace = true
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
