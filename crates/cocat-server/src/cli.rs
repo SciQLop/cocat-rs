@@ -181,8 +181,8 @@ async fn add_user_to_room(
     let user = db::user_by_email(&pool, email)
         .await?
         .ok_or_else(|| CliError::NoSuchUser(email.to_owned()))?;
-    db::add_member(&pool, room_id, user.id, role).await?;
-    println!("User {email} is {} in room {room_id}", role.as_str());
+    let granted = db::add_member(&pool, room_id, user.id, role).await?;
+    println!("User {email} is {} in room {room_id}", granted.as_str());
     Ok(())
 }
 

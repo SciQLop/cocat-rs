@@ -27,6 +27,16 @@ impl Role {
             Role::Viewer => "viewer",
         }
     }
+
+    /// Higher wins when one user is granted a role twice, as in the Python server:
+    /// a member is never demoted by an add, only promoted.
+    pub fn rank(&self) -> u8 {
+        match self {
+            Role::Owner => 3,
+            Role::Editor => 2,
+            Role::Viewer => 1,
+        }
+    }
 }
 
 impl FromStr for Role {
@@ -58,6 +68,12 @@ mod tests {
         assert!(Role::Owner.can_write());
         assert!(Role::Editor.can_write());
         assert!(!Role::Viewer.can_write());
+    }
+
+    #[test]
+    fn owners_rank_above_editors_above_viewers() {
+        assert!(Role::Owner.rank() > Role::Editor.rank());
+        assert!(Role::Editor.rank() > Role::Viewer.rank());
     }
 
     #[test]

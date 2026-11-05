@@ -56,6 +56,53 @@ async fn a_second_owner_is_rejected_by_the_schema() {
 }
 
 #[tokio::test]
+async fn add_member_never_lowers_a_role() {
+    let (_dir, pool) = seeded().await;
+    let owner = user(&pool, "owner@example.org").await;
+    let other = user(&pool, "other@example.org").await;
+    db::create_room(&pool, owner, "room-1", "Room one")
+        .await
+        .unwrap();
+
+    let kept = db::add_member(&pool, "room-1", owner, Role::Editor)
+        .await
+        .unwrap();
+    let editor = db::add_member(&pool, "room-1", other, Role::Editor)
+        .await
+        .unwrap();
+    let kept_viewer = db::add_member(&pool, "room-1", other, Role::Viewer)
+        .await
+        .unwrap();
+
+    assert_eq!(kept, Role::Owner, "an owner stays the owner");
+    assert_eq!(editor, Role::Editor);
+    assert_eq!(kept_viewer, Role::Editor, "an editor stays an editor");
+    assert_eq!(role(&pool, "room-1", owner).await, Some(Role::Owner));
+    assert_eq!(role(&pool, "room-1", other).await, Some(Role::Editor));
+}
+
+#[tokio::test]
+async fn add_member_raises_a_role() {
+    let (_dir, pool) = seeded().await;
+    let owner = user(&pool, "owner@example.org").await;
+    let other = user(&pool, "other@example.org").await;
+    db::create_room(&pool, owner, "room-1", "Room one")
+        .await
+        .unwrap();
+
+    let viewer = db::add_member(&pool, "room-1", other, Role::Viewer)
+        .await
+        .unwrap();
+    let editor = db::add_member(&pool, "room-1", other, Role::Editor)
+        .await
+        .unwrap();
+
+    assert_eq!(viewer, Role::Viewer);
+    assert_eq!(editor, Role::Editor);
+    assert_eq!(role(&pool, "room-1", other).await, Some(Role::Editor));
+}
+
+#[tokio::test]
 async fn set_owner_moves_the_owner_role() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;

@@ -78,9 +78,7 @@ pub async fn role_in(
             .await?
             .map(|row| row.try_get("role"))
             .transpose()?;
-    role.map(|role| Role::from_str(&role).map_err(|error| sqlx::Error::Decode(Box::new(error))))
-        .transpose()
-        .map_err(DbError::from)
+    Ok(role.as_deref().map(role_from_name).transpose()?)
 }
 
 pub async fn create_user(
@@ -138,11 +136,22 @@ pub async fn add_member(
     room_id: &str,
     user_id: Uuid,
     role: Role,
-) -> Result<(), DbError> {
+) -> Result<Role, DbError> {
     let mut tx = pool.begin().await?;
-    insert_membership(&mut tx, room_id, user_id, role).await?;
+    let current = membership_role(&mut tx, room_id, user_id).await?;
+    let resulting = match current {
+        Some(existing) if existing.rank() >= role.rank() => existing,
+        Some(_) => {
+            set_membership_role(&mut tx, room_id, user_id, role).await?;
+            role
+        }
+        None => {
+            insert_membership(&mut tx, room_id, user_id, role).await?;
+            role
+        }
+    };
     tx.commit().await?;
-    Ok(())
+    Ok(resulting)
 }
 
 pub async fn remove_member(
@@ -206,16 +215,48 @@ async fn insert_membership(
     user_id: Uuid,
     role: Role,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO membership (room_id, user_id, role) VALUES (?, ?, ?)
-         ON CONFLICT (room_id, user_id) DO UPDATE SET role = excluded.role",
-    )
-    .bind(room_id)
-    .bind(user_id.to_string())
-    .bind(role.as_str())
-    .execute(&mut **tx)
-    .await?;
+    sqlx::query("INSERT INTO membership (room_id, user_id, role) VALUES (?, ?, ?)")
+        .bind(room_id)
+        .bind(user_id.to_string())
+        .bind(role.as_str())
+        .execute(&mut **tx)
+        .await?;
     Ok(())
+}
+
+async fn membership_role(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    room_id: &str,
+    user_id: Uuid,
+) -> Result<Option<Role>, DbError> {
+    let role: Option<String> =
+        sqlx::query("SELECT role FROM membership WHERE room_id = ? AND user_id = ?")
+            .bind(room_id)
+            .bind(user_id.to_string())
+            .fetch_optional(&mut **tx)
+            .await?
+            .map(|row| row.try_get("role"))
+            .transpose()?;
+    Ok(role.as_deref().map(role_from_name).transpose()?)
+}
+
+async fn set_membership_role(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    room_id: &str,
+    user_id: Uuid,
+    role: Role,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE membership SET role = ? WHERE room_id = ? AND user_id = ?")
+        .bind(role.as_str())
+        .bind(room_id)
+        .bind(user_id.to_string())
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+fn role_from_name(name: &str) -> Result<Role, sqlx::Error> {
+    Role::from_str(name).map_err(|error| sqlx::Error::Decode(Box::new(error)))
 }
 
 fn user_from_row(row: &SqliteRow) -> Result<User, sqlx::Error> {
