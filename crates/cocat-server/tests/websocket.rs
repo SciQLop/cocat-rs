@@ -1,6 +1,6 @@
 use std::fs;
 use std::net::SocketAddr;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use bytes::Bytes;
 use cocat_core::role::Role;
@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
@@ -29,11 +29,17 @@ const WAIT: Duration = Duration::from_secs(10);
 const SLOW_PADDING: usize = 4096;
 const SLOW_UPDATES: usize = OUTBOUND_FRAMES + 4096;
 
+/// 16 KB frames fill a loopback send buffer in a few hundred frames, leaving the 1024-frame
+/// queue as the bound that drops the client.
+const PIN_PADDING: usize = 16 * 1024;
+const PIN_UPDATES: usize = OUTBOUND_FRAMES + 1024;
+
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 struct Fixture {
     addr: SocketAddr,
     pool: SqlitePool,
+    rooms: RoomManager,
     _dir: TempDir,
     _server: JoinHandle<()>,
 }
@@ -44,10 +50,11 @@ impl Fixture {
         let rooms_dir = dir.path().join("rooms");
         fs::create_dir_all(&rooms_dir).unwrap();
         let pool = db::open(&dir.path().join("test.db")).await.unwrap();
+        let rooms = RoomManager::new(rooms_dir);
         let state = AppState {
             pool: pool.clone(),
             secret: SECRET.to_owned(),
-            rooms: RoomManager::new(rooms_dir),
+            rooms: rooms.clone(),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -57,6 +64,7 @@ impl Fixture {
         Self {
             addr,
             pool,
+            rooms,
             _dir: dir,
             _server: server,
         }
@@ -323,6 +331,46 @@ async fn a_client_that_does_not_read_is_closed_1013() {
             );
             break;
         }
+    }
+}
+
+#[tokio::test]
+async fn a_client_that_stops_reading_does_not_pin_the_room() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-pinned", "Pinned")
+        .await
+        .unwrap();
+    let (mut sink, _never_read) = fixture
+        .connect("room-pinned", Some(&fixture.token(owner)))
+        .await
+        .split();
+
+    // The only client floods its own room and never reads a byte back: its outbox fills,
+    // its writer blocks on a socket the kernel will not accept more bytes for, and the
+    // bridge has no reason left to live. A single client is enough, because the race is
+    // between the writer and the read loop, not between two clients.
+    let padding = "x".repeat(PIN_PADDING);
+    for tick in 0..PIN_UPDATES {
+        let update = update_with(&format!("key-{tick}"), &padding);
+        sink.send(sync_frame(Message::Sync(SyncMessage::Update(update))))
+            .await
+            .unwrap();
+    }
+
+    wait_for_unload(&fixture).await;
+}
+
+/// The room registry has no event to await when a room leaves it, so poll it; the bounded
+/// deadline still fails loudly when a stuck bridge pins its room.
+async fn wait_for_unload(fixture: &Fixture) {
+    let deadline = Instant::now() + WAIT + ws::WRITE_TIMEOUT;
+    while fixture.rooms.open_rooms() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the client that stopped reading still pins its room"
+        );
+        sleep(Duration::from_millis(25)).await;
     }
 }
 

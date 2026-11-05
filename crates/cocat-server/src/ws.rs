@@ -2,6 +2,7 @@
 //! then bridge the socket to the room's actor thread.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -13,12 +14,17 @@ use cocat_core::role::Role;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
+use tokio::time::timeout;
 
 use crate::AppState;
 use crate::room::{ClientId, Inbox, RoomError, RoomGone, RoomHandle, outbox};
 use crate::{auth, db};
 
 pub const INTERNAL_ERROR: u16 = 1011;
+
+/// A client that stopped reading leaves the socket's send buffer full forever; aborting the
+/// pending write after this long drops the socket, which closes TCP and lets the room unload.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const ATTACH_TRIES: usize = 3;
 
@@ -87,32 +93,61 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role)
     };
 
     let (mut sink, mut stream) = socket.split();
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         if let Err(error) = write_until_closed(&mut sink, inbox).await {
             tracing::debug!(%error, "the socket stopped accepting frames");
         }
     });
 
-    while let Some(Ok(frame)) = stream.next().await {
-        match frame {
-            Message::Binary(bytes) => room.frame(client, bytes),
-            Message::Close(_) => break,
-            _ => {}
+    let mut writer_finished = false;
+    loop {
+        tokio::select! {
+            finished = &mut writer => {
+                writer_finished = true;
+                if let Err(error) = finished {
+                    tracing::warn!(%error, "the writer task failed");
+                }
+                break;
+            }
+            frame = stream.next() => match frame {
+                Some(Ok(Message::Binary(bytes))) => room.frame(client, bytes),
+                Some(Ok(Message::Close(_))) | None => break,
+                Some(Err(error)) => {
+                    tracing::debug!(%error, "the socket failed");
+                    break;
+                }
+                Some(Ok(_)) => {}
+            },
         }
     }
 
+    // The writer is the only one that knows when the socket stopped working, and it must
+    // not outlive this bridge: a client that neither reads nor closes would otherwise keep
+    // the room loaded forever.
+    drop(stream);
     room.detach(client).await;
-    let _ = writer.await;
+    if !writer_finished {
+        writer.abort();
+        let _ = writer.await;
+    }
+}
+
+#[derive(Debug, Error)]
+enum WriterError {
+    #[error(transparent)]
+    Socket(#[from] axum::Error),
+    #[error("the client accepted no frame within {0:?}")]
+    Timeout(Duration),
 }
 
 /// Writes the room's frames until it closes the client or the socket fails, then sends the
-/// close frame. A reason that arrives while a write is blocked reaches the client as soon
-/// as it reads again: aborting the pending write could truncate a frame, and the socket
-/// buffers already hold frames that cannot be recalled.
+/// close frame. Every write is bounded: a client that stopped reading leaves `send` pending
+/// forever, and dropping the sink when the write times out closes TCP, which is what frees
+/// the room (the close code is lost, but that client is not reading it anyway).
 async fn write_until_closed(
     sink: &mut SplitSink<WebSocket, Message>,
     mut inbox: Inbox,
-) -> Result<(), axum::Error> {
+) -> Result<(), WriterError> {
     let reason = loop {
         let frame = tokio::select! {
             biased;
@@ -122,13 +157,23 @@ async fn write_until_closed(
                 None => break None,
             },
         };
-        sink.send(Message::Binary(frame)).await?;
+        write(sink, Message::Binary(frame)).await?;
     };
     let frame = reason.map(|reason| CloseFrame {
         code: reason.code(),
         reason: reason.reason().into(),
     });
-    sink.send(Message::Close(frame)).await
+    write(sink, Message::Close(frame)).await
+}
+
+async fn write(
+    sink: &mut SplitSink<WebSocket, Message>,
+    message: Message,
+) -> Result<(), WriterError> {
+    match timeout(WRITE_TIMEOUT, sink.send(message)).await {
+        Ok(sent) => Ok(sent?),
+        Err(_) => Err(WriterError::Timeout(WRITE_TIMEOUT)),
+    }
 }
 
 async fn attach(

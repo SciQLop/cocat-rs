@@ -320,6 +320,40 @@ async fn a_client_whose_queue_is_full_is_dropped_with_too_slow() {
 }
 
 #[tokio::test]
+async fn frames_from_a_dropped_client_are_ignored() {
+    let (_dir, manager) = manager();
+    let room = manager.get_or_open("room-dropped").unwrap();
+    let silent = attach(&room, 1, Role::Editor);
+    let mut reader = attach(&room, 2, Role::Editor);
+    next(&mut reader).await;
+
+    let payload = update_with("key", "value");
+    for _ in 0..OUTBOUND_FRAMES + 1 {
+        room.frame(2, update_frame(&payload));
+        next(&mut reader).await;
+    }
+    timeout(WAIT, silent.close)
+        .await
+        .expect("the room never dropped the silent client")
+        .expect("the room never sent a close reason");
+
+    // The dropped client keeps talking: nothing of it may reach the document, and a frame
+    // must not re-attach it.
+    room.frame(1, update_frame(&update_with("dropped", "yes")));
+    room.frame(1, sync_step1());
+    room.frame(2, sync_step1());
+
+    let reply = match next(&mut reader).await {
+        Message::Sync(SyncMessage::SyncStep2(update)) => update,
+        other => panic!("expected a step2, got {other:?}"),
+    };
+    let doc = apply(&reply);
+    assert_eq!(content(&doc, "dropped"), None);
+    assert_eq!(content(&doc, "key").as_deref(), Some("value"));
+    room.detach(2).await;
+}
+
+#[tokio::test]
 async fn a_detach_and_an_attach_racing_keep_the_room_serving() {
     let (_dir, manager) = manager();
     for _ in 0..200 {
