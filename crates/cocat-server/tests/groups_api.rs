@@ -357,3 +357,27 @@ async fn anonymous_401() {
     let (status, body) = fixture.get("/api/groups", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 }
+
+#[tokio::test]
+async fn a_member_joined_just_before_the_delete_is_revoked() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-late", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let room = fixture.state.rooms.get_or_open("room-late").unwrap();
+    let (out, mut inbox) = outbox();
+    room.attach(1, bob, Role::Editor, out).unwrap();
+
+    join(&fixture.pool, &id, bob, "member").await;
+    grant(&fixture.pool, "room-late", &id, "editor").await;
+
+    let (status, _) = fixture.delete(&format!("/api/groups/{id}"), alice).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let closed = timeout(WAIT, &mut inbox.close)
+        .await
+        .expect("the delete must revoke a member it found in the same transaction");
+    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+}

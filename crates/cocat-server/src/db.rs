@@ -7,7 +7,7 @@ use std::str::FromStr;
 use argon2::Argon2;
 use argon2::password_hash::PasswordHasher;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Executor, Row, Sqlite, SqlitePool, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -58,6 +58,13 @@ pub async fn open(db_path: &Path) -> Result<SqlitePool, DbError> {
     Ok(pool)
 }
 
+/// Starts a transaction that takes the write lock before its first read, so no other
+/// writer can commit between the reads and the writes that depend on them. Dropping it
+/// rolls back.
+pub async fn begin_immediate(pool: &SqlitePool) -> Result<Transaction<'static, Sqlite>, DbError> {
+    Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
+}
+
 pub async fn user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<User>, DbError> {
     let row = sqlx::query(
         r#"SELECT id, email, hashed_password, is_active, is_superuser, is_verified
@@ -82,7 +89,7 @@ pub async fn user_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<User>, DbE
 
 /// The rooms `user_id` belongs to, by name then id, with the role they hold there.
 pub async fn list_user_rooms(
-    pool: &SqlitePool,
+    executor: impl Executor<'_, Database = Sqlite>,
     user_id: Uuid,
 ) -> Result<Vec<(RoomRow, Role)>, DbError> {
     let rows = sqlx::query(
@@ -98,7 +105,7 @@ pub async fn list_user_rooms(
     )
     .bind(user_id.to_string())
     .bind(user_id.to_string())
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     let mut best: BTreeMap<(String, String), Role> = BTreeMap::new();
     for row in &rows {
@@ -231,10 +238,13 @@ pub async fn save_user(pool: &SqlitePool, user: &User) -> Result<(), DbError> {
 
 /// Remove the account. Memberships go with it (the schema cascades) and the rooms' files stay,
 /// like Python's delete, so an owned room survives its last member.
-pub async fn delete_user(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> {
+pub async fn delete_user(
+    executor: impl Executor<'_, Database = Sqlite>,
+    id: Uuid,
+) -> Result<bool, DbError> {
     let deleted = sqlx::query(r#"DELETE FROM "user" WHERE id = ?"#)
         .bind(id.to_string())
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(deleted.rows_affected() > 0)
 }

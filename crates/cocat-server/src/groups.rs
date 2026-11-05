@@ -2,12 +2,12 @@
 //! A room is shared with a group by a grant, and `db::role_in` folds that grant into
 //! the role a member of the group holds on the room.
 
-use sqlx::Row;
+use sqlx::{Row, Sqlite, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::db::DbError;
+use crate::db::{self, DbError};
 use crate::lifecycle::LifecycleError;
 
 pub const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave the group";
@@ -112,8 +112,8 @@ pub async fn rename(
 
 pub async fn delete(state: &AppState, group_id: &str, actor: Uuid) -> Result<(), LifecycleError> {
     require_owner(state, group_id, actor).await?;
-    let pairs = member_rooms(state, group_id).await?;
-    let mut tx = state.pool.begin().await?;
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let pairs = member_rooms(&mut tx, group_id).await?;
     let deleted = sqlx::query("DELETE FROM user_group WHERE id = ?")
         .bind(group_id)
         .execute(&mut *tx)
@@ -121,7 +121,6 @@ pub async fn delete(state: &AppState, group_id: &str, actor: Uuid) -> Result<(),
         .rows_affected()
         > 0;
     if !deleted {
-        tx.rollback().await?;
         return Err(not_found(group_id));
     }
     tx.commit().await?;
@@ -169,17 +168,19 @@ pub async fn remove_member(
     if group_role(state, group_id, member).await? == Some(GroupRole::Owner) {
         return Err(LifecycleError::Conflict(OWNER_CANNOT_LEAVE));
     }
-    let rooms = granted_rooms(state, group_id).await?;
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let rooms = granted_rooms(&mut tx, group_id).await?;
     let removed = sqlx::query("DELETE FROM group_member WHERE group_id = ? AND user_id = ?")
         .bind(group_id)
         .bind(member.to_string())
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected()
         > 0;
     if !removed {
         return Err(not_a_member(group_id, member));
     }
+    tx.commit().await?;
     let pairs = rooms.into_iter().map(|room_id| (room_id, member)).collect();
     revoke_pairs(state, pairs).await;
     Ok(())
@@ -223,7 +224,7 @@ async fn require_owner(
 /// Every (member, room) pair whose access the group carried, read before the delete
 /// because the cascade takes both tables with it.
 async fn member_rooms(
-    state: &AppState,
+    tx: &mut Transaction<'_, Sqlite>,
     group_id: &str,
 ) -> Result<Vec<(String, Uuid)>, LifecycleError> {
     let rows = sqlx::query(
@@ -232,7 +233,7 @@ async fn member_rooms(
          WHERE group_member.group_id = ?",
     )
     .bind(group_id)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut **tx)
     .await?;
     let mut pairs = Vec::new();
     for row in &rows {
@@ -244,10 +245,13 @@ async fn member_rooms(
     Ok(pairs)
 }
 
-async fn granted_rooms(state: &AppState, group_id: &str) -> Result<Vec<String>, LifecycleError> {
+async fn granted_rooms(
+    tx: &mut Transaction<'_, Sqlite>,
+    group_id: &str,
+) -> Result<Vec<String>, LifecycleError> {
     let rooms = sqlx::query_scalar("SELECT room_id FROM room_group WHERE group_id = ?")
         .bind(group_id)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut **tx)
         .await?;
     Ok(rooms)
 }

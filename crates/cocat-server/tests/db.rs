@@ -2,6 +2,7 @@ use cocat_core::role::Role;
 use cocat_server::db;
 use sqlx::{Row, SqlitePool};
 use tempfile::TempDir;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 async fn seeded() -> (TempDir, SqlitePool) {
@@ -216,5 +217,41 @@ async fn the_schema_is_the_phase_one_design() {
     assert!(
         indexes.iter().any(|name| name == "one_owner_per_room"),
         "{indexes:?} has no one-owner index"
+    );
+}
+
+#[tokio::test]
+async fn an_immediate_transaction_waits_for_the_writer() {
+    let (_dir, pool) = seeded().await;
+    let mut held = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("INSERT INTO user_group (id, name) VALUES ('held', 'Held')")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+
+    let blocked = timeout(
+        std::time::Duration::from_millis(200),
+        db::begin_immediate(&pool),
+    )
+    .await;
+    assert!(
+        !matches!(blocked, Ok(Ok(_))),
+        "an immediate transaction must wait for the writer that holds the lock"
+    );
+
+    held.rollback().await.unwrap();
+    let mut late = db::begin_immediate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO user_group (id, name) VALUES ('late', 'Late')")
+        .execute(&mut *late)
+        .await
+        .unwrap();
+    late.commit().await.unwrap();
+    let groups: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_group")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        groups, 1,
+        "the held write rolled back and the immediate one committed"
     );
 }

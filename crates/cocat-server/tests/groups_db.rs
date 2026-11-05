@@ -306,3 +306,26 @@ async fn deleting_a_user_revokes_group_rooms() {
         .expect("the room closed the socket of the deleted account");
     assert_eq!(closed.ok(), Some(CloseReason::Revoked));
 }
+
+#[tokio::test]
+async fn a_room_joined_just_before_the_account_delete_is_revoked() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let member = fixture.user("member@example.org").await;
+    fixture.room("room-late", owner).await;
+
+    let room = fixture.state.rooms.get_or_open("room-late").unwrap();
+    let (out, mut inbox) = outbox();
+    room.attach(1, member, Role::Editor, out).unwrap();
+
+    db::add_member(&fixture.pool, "room-late", member, Role::Editor)
+        .await
+        .unwrap();
+
+    assert!(accounts::delete(&fixture.state, member).await.unwrap());
+
+    let closed = timeout(WAIT, &mut inbox.close)
+        .await
+        .expect("the delete must revoke a room it found in the same transaction");
+    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+}

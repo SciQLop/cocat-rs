@@ -202,8 +202,10 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
 /// run afterwards because a socket that attaches in between must find no membership left to
 /// pass the bridge's post-attach re-read.
 pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, AccountError> {
-    let rooms = db::list_user_rooms(&state.pool, id).await?;
-    let deleted = db::delete_user(&state.pool, id).await?;
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let rooms = db::list_user_rooms(&mut *tx, id).await?;
+    let deleted = db::delete_user(&mut *tx, id).await?;
+    tx.commit().await.map_err(DbError::from)?;
     revoke_sockets(state, id, rooms).await;
     Ok(deleted)
 }
