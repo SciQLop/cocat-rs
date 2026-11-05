@@ -21,6 +21,8 @@ for index in 0 1 2 3 4 5 6 7; do
 done
 ```
 
+`run_gates.sh` does exactly this once into `bench/work/pristine`.
+
 `bench100k` is about 38 MB; the harness refuses to run a non-smoke scenario when the
 file is outside 35-40 MB, because every gate number is about that room.
 
@@ -36,17 +38,22 @@ cocat create-room --owner bench@test.org --room-id bench100k --db_path bench.db
 
 | scenario | clients | duration | traffic |
 | --- | --- | --- | --- |
-| `open` | - | - | 20 cold connects to `bench100k`, latency to the first frame |
-| `fanout` | 50 in one room | 300 s | every client edits one event of its own once per second, staggered; every client receives every edit |
+| `open` | - | - | 20 cold connects to `bench100k`, each after the previous room unloaded; latency to the first frame, RSS while open |
+| `openclose` | - | - | 20 cold connect / receive / disconnect cycles on `bench100k`; RSS after a warm-up cycle and after the last |
+| `fanout` | 50 in `bench100k` | 300 s | every client edits one event of its own once per second, staggered; every client receives every edit |
 | `scaleout` | 8 per room | 60 s per phase | closed loop: each room's editor keeps 4 updates in flight, 1 room then 8 rooms |
-| `soak` | 50 in one room | 3600 s | same traffic as `fanout`, long enough to see memory drift |
-| `openclose` | - | - | 20 connect / receive / disconnect cycles on `bench100k` |
+| `soak` | 8 per room, 8 rooms | 3600 s | same traffic as `fanout`, then SIGINT, restart on the same files, probe every edit |
 
-`fanout` and `soak` are open loop: the offered rate is 50 edits/s in total, one edit per
-client per second, one client every 20 ms. `scaleout` is closed loop on purpose: the
-editor sends the next edit only after the broadcast of an earlier one comes back, so
-`updates_per_s` is what the server delivered, not what the harness tried to send, and
-the two servers can actually differ.
+`fanout` and `soak` are open loop: the offered rate is one edit per client per second,
+one client every 20 ms. `scaleout` is closed loop on purpose: the editor sends the next
+edit only after the broadcast of an earlier one comes back, so `updates_per_s` is what
+the server delivered, not what the harness tried to send, and the two servers can
+actually differ.
+
+A cold open needs the room to be gone, and neither server reports it, so the harness
+waits for RSS to fall back most of the way to the idle baseline (20 s cap). A room too
+small to move RSS by 100 MB cannot be watched that way: `unload_timeouts` is then
+`null`, and the run says nothing about coldness instead of pretending.
 
 `--in-flight` sets how many updates a room keeps outstanding (default 4). The gate uses
 4: one round trip is in flight while the next is on the wire, so a server's per-update
@@ -56,7 +63,7 @@ server buffers before the client notices.
 An edit is a real cocat change: the client sets one event's `stop` and sends the
 resulting `sync update`, so the room grows the way it grows under a user.
 
-## Running
+## Running one scenario by hand
 
 ```sh
 python bench/harness.py fanout \
@@ -97,13 +104,19 @@ The JSON reports the harness's own cost:
 | key | meaning |
 | --- | --- |
 | `rss_start_mb`, `rss_end_mb`, `rss_peak_mb` | server RSS from `/proc`, start / end / high-water mark |
+| `rss_open_mb` | `open`: peak server RSS read while `bench100k` is open |
+| `rss_before_mb`, `rss_after_mb` | `openclose`: RSS after the warm-up cycle and after the last cycle |
+| `rss_5min_mb` | `soak`: server RSS at minute 5 |
+| `rss_drift_pct` | `soak`: minute 5 to end; `openclose`: before to after, in % |
 | `cpu_seconds` | server CPU time from `/proc`, start to stop |
 | `open_p50_ms`, `open_p95_ms` | cold connect to first frame |
+| `unload_timeouts` | `open`/`openclose`: cold-open waits that hit the 20 s cap (`null`: room too small to watch) |
 | `fanout_p50_ms`, `fanout_p99_ms` | send to local receive, per client |
 | `updates_per_s` | delivered update frames per second, one designated receiver |
 | `per_room_updates_per_s` | the same divided by the number of rooms |
 | `single_room_updates_per_s` | scale-out only: the 1-room phase, same metric |
 | `lost_updates` | edits written by the harness that a fresh client does not find in the room at the end |
+| `lost_updates_after_restart` | `soak`: the same probe after SIGINT and a restart on the same files |
 | `duration_s` | measured traffic window |
 | `harness_cpu_seconds`, `harness_peak_core_fraction` | see above |
 

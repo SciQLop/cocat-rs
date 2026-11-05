@@ -36,11 +36,19 @@ COOKIE = "fastapiusersauth"
 BIG_ROOM = "bench100k"
 SMALL_ROOM = "bench1k"
 IN_FLIGHT = 4
+UNLOAD_TIMEOUT = 20.0
+OBSERVABLE_GROWTH_MB = 100.0
+SOAK_SAMPLE_AT = 300.0
 EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
 METRICS = (
     "rss_peak_mb",
     "rss_end_mb",
     "rss_start_mb",
+    "rss_open_mb",
+    "rss_before_mb",
+    "rss_after_mb",
+    "rss_5min_mb",
+    "rss_drift_pct",
     "cpu_seconds",
     "open_p50_ms",
     "open_p95_ms",
@@ -50,6 +58,8 @@ METRICS = (
     "per_room_updates_per_s",
     "single_room_updates_per_s",
     "lost_updates",
+    "lost_updates_after_restart",
+    "unload_timeouts",
     "duration_s",
     "harness_cpu_seconds",
     "harness_peak_core_fraction",
@@ -69,10 +79,22 @@ SCENARIOS = {
     "open": Scenario(clients=0, rooms=0, duration=0, rate=0, connects=20),
     "fanout": Scenario(clients=50, rooms=1, duration=300, rate=1, connects=0),
     "scaleout": Scenario(clients=8, rooms=8, duration=60, rate=1, connects=0),
-    "soak": Scenario(clients=50, rooms=1, duration=3600, rate=1, connects=0),
+    "soak": Scenario(clients=8, rooms=8, duration=3600, rate=1, connects=0),
     "openclose": Scenario(clients=0, rooms=0, duration=0, rate=0, connects=20),
 }
 SMOKE = Scenario(clients=2, rooms=2, duration=2, rate=1, connects=2)
+
+
+def room_set(count: int) -> list[str]:
+    return [f"{SMALL_ROOM}-{index}" for index in range(count)]
+
+
+def scenario_rooms(name: str) -> list[str]:
+    if name in ("open", "openclose", "fanout"):
+        return [BIG_ROOM]
+    if name == "soak":
+        return room_set(8)
+    return [SMALL_ROOM, *room_set(8)]
 
 
 def percentile(values: list[float], fraction: float) -> float | None:
@@ -81,6 +103,12 @@ def percentile(values: list[float], fraction: float) -> float | None:
     ordered = sorted(values)
     index = round(fraction / 100 * (len(ordered) - 1))
     return round(ordered[index], 3)
+
+
+def drift_pct(start: float | None, end: float | None) -> float | None:
+    if not start or end is None:
+        return None
+    return round((end - start) / start * 100, 3)
 
 
 class Server:
@@ -104,6 +132,7 @@ class Server:
         return f"http://{self.host}:{self.port}"
 
     def start(self) -> None:
+        self.port = free_port()
         self.process = subprocess.Popen(
             [
                 *self.command,
@@ -120,8 +149,17 @@ class Server:
         self._wait_ready()
         self.rss_start_mb = self.rss_mb
         self.cpu_start = process_cpu_seconds(self.process.pid)
+        self._rss_mb = 0.0
+        self._rss_peak_mb = 0.0
+        self._cpu_seconds = 0.0
+        self._samples = threading.Event()
         self._sampler = threading.Thread(target=self._sample, daemon=True)
         self._sampler.start()
+
+    def restart(self) -> tuple[float, float, float]:
+        stopped = self.stop()
+        self.start()
+        return stopped
 
     def _wait_ready(self) -> None:
         deadline = time.monotonic() + 30
@@ -165,13 +203,15 @@ class Server:
     def peak_rss_mb(self) -> float:
         return max(self._status("VmHWM") / 1024, self._rss_peak_mb)
 
-    def stop(self) -> tuple[float, float]:
+    def stop(self) -> tuple[float, float, float]:
         self._samples.set()
         if self._sampler is not None:
             self._sampler.join(timeout=1)
         rss = self.rss_mb or self._rss_mb
         peak = self.peak_rss_mb
-        cpu = (process_cpu_seconds(self.process.pid) - self.cpu_start) or self._cpu_seconds
+        cpu = (
+            process_cpu_seconds(self.process.pid) - self.cpu_start
+        ) or self._cpu_seconds
         if self.process is not None and self.process.poll() is None:
             self.process.send_signal(signal.SIGINT)
             self.process.wait(timeout=60)
@@ -219,14 +259,19 @@ def open_socket(host: str, port: int, room: str, cookie: str):
     )
 
 
-def synced_doc(socket) -> Doc:
-    document = Doc()
+def sync_into(document: Doc, socket) -> None:
     socket.send(create_sync_message(document))
     while True:
         frame = socket.recv(timeout=10)
         if frame[0] == YMessageType.SYNC and frame[1] == YSyncMessageType.SYNC_STEP2:
             handle_sync_message(frame[1:], document)
-            return document
+            return
+
+
+def fresh_database(socket) -> DB:
+    document = Doc()
+    sync_into(document, socket)
+    return DB(doc=document)
 
 
 @dataclass
@@ -238,13 +283,25 @@ class Participant:
 
 
 def participants(host: str, port: int, room: str, cookie: str, clients: int) -> list:
-    opened = []
-    for index in range(clients):
-        socket = open_socket(host, port, room, cookie)
-        database = DB(doc=synced_doc(socket))
-        event_ids = sorted(str(event.uuid) for event in database.events)
-        opened.append(Participant(index, socket, database, event_ids[index::clients]))
-    return opened
+    """One socket per client, one `Doc` per room.
+
+    A synced 100k-event room costs ~540 MB in pycrdt, so 50 independent client docs
+    would need ~27 GB; the sockets share the doc while each still edits its own slice
+    and receives every broadcast. The server sees 50 connections, which is what it is
+    measured on.
+    """
+    first = open_socket(host, port, room, cookie)
+    database = fresh_database(first)
+    event_ids = sorted(str(event.uuid) for event in database.events)
+    sockets = [first] + [
+        open_socket(host, port, room, cookie) for _ in range(clients - 1)
+    ]
+    for connection in sockets[1:]:
+        sync_into(database.doc, connection)
+    return [
+        Participant(index, connection, database, event_ids[index::clients])
+        for index, connection in enumerate(sockets)
+    ]
 
 
 def edit(participant: Participant, tick: int) -> tuple[bytes, str, datetime]:
@@ -326,17 +383,16 @@ def run_room(
     for participant in opened:
         participant.socket.close()
 
-    lost = probe_lost(host, port, room, cookie, written)
-    results.send(
-        {
-            "latencies": latencies,
-            "delivered": counters[0],
-            "sent": sent,
-            "lost": lost,
-            "duration": elapsed,
-            "cpu_seconds": self_cpu_seconds() - started_cpu,
-        }
-    )
+    payload = {
+        "room": room,
+        "latencies": latencies,
+        "delivered": counters[0],
+        "sent": sent,
+        "written": written,
+        "duration": elapsed,
+        "cpu_seconds": self_cpu_seconds() - started_cpu,
+    }
+    results.send(payload)
     results.close()
 
 
@@ -354,11 +410,11 @@ def send_edit(
     participant.socket.send(create_update_message(update))
 
 
-def probe_lost(
+def probe_written(
     host: str, port: int, room: str, cookie: str, written: dict[str, datetime]
 ) -> int:
     socket = open_socket(host, port, room, cookie)
-    database = DB(doc=synced_doc(socket))
+    database = fresh_database(socket)
     socket.close()
     return sum(
         1
@@ -367,16 +423,14 @@ def probe_lost(
     )
 
 
-def run_rooms(
-    server: Server,
-    cookie: str,
-    rooms: list[str],
-    clients: int,
-    duration: float,
-    rate: float,
-    closed_loop: bool,
-    in_flight: int,
-) -> dict:
+def probe_rooms(server: Server, cookie: str, written: list[tuple[str, dict]]) -> int:
+    return sum(
+        probe_written(server.host, server.port, room, cookie, values)
+        for room, values in written
+    )
+
+
+def start_rooms(server, cookie, rooms, clients, duration, rate, closed_loop, in_flight):
     context = multiprocessing.get_context("fork")
     running = []
     for room in rooms:
@@ -400,54 +454,157 @@ def run_rooms(
         process.start()
         sender.close()
         running.append((process, receiver))
-    measured = []
+    return running
+
+
+def collect(server, running, duration, sample_at):
+    started = time.monotonic()
+    measured: list = [None] * len(running)
+    sampled = None
+    deadline = started + duration + 120
+    while any(result is None for result in measured):
+        if time.monotonic() > deadline:
+            raise SystemExit("a room process did not report; is the server up?")
+        if (
+            sample_at is not None
+            and sampled is None
+            and time.monotonic() - started >= sample_at
+        ):
+            sampled = server.rss_mb
+        for index, (_, receiver) in enumerate(running):
+            if measured[index] is None and receiver.poll(0.05):
+                measured[index] = receiver.recv()
     for process, receiver in running:
-        measured.append(receiver.recv())
         receiver.close()
         process.join(timeout=30)
+    return measured, sampled
+
+
+def run_rooms(
+    server: Server,
+    cookie: str,
+    rooms: list[str],
+    clients: int,
+    duration: float,
+    rate: float,
+    closed_loop: bool,
+    in_flight: int,
+    sample_at: float | None = None,
+    probe: bool = True,
+) -> dict:
+    running = start_rooms(
+        server, cookie, rooms, clients, duration, rate, closed_loop, in_flight
+    )
+    measured, sampled = collect(server, running, duration, sample_at)
 
     latencies = [latency for room in measured for latency in room["latencies"]]
     elapsed = max(room["duration"] for room in measured)
     delivered = sum(room["delivered"] for room in measured)
     cpu = sum(room["cpu_seconds"] for room in measured)
-    return {
+    written = [(room["room"], room["written"]) for room in measured]
+    metrics = {
         "fanout_p50_ms": percentile(latencies, 50),
         "fanout_p99_ms": percentile(latencies, 99),
         "updates_per_s": round(delivered / elapsed, 3),
         "per_room_updates_per_s": round(delivered / elapsed / len(measured), 3),
-        "lost_updates": sum(room["lost"] for room in measured),
+        "lost_updates": probe_rooms(server, cookie, written) if probe else None,
         "duration_s": round(elapsed, 3),
         "harness_cpu_seconds": round(cpu, 3),
         "harness_peak_core_fraction": round(
             max(room["cpu_seconds"] for room in measured) / elapsed, 3
         ),
     }
+    if not probe:
+        metrics["written"] = written
+    if sampled is not None:
+        metrics["rss_sample_mb"] = sampled
+    return metrics
 
 
-def run_open(server: Server, cookie: str, connects: int) -> dict:
+def wait_unloaded(server: Server, baseline_mb: float, open_mb: float) -> bool | None:
+    """RSS is the only signal a server gives that it dropped a room: wait for most
+    of the growth to go away. Polling, because there is no event to await. A room
+    too small to move RSS by OBSERVABLE_GROWTH_MB cannot be watched this way.
+    """
+    if open_mb - baseline_mb < OBSERVABLE_GROWTH_MB:
+        return None
+    target = baseline_mb + (open_mb - baseline_mb) / 2
+    deadline = time.monotonic() + UNLOAD_TIMEOUT
+    while time.monotonic() < deadline:
+        if server.rss_mb <= target:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def open_cycles(server: Server, cookie: str, cycles: int) -> dict:
+    baseline = server.rss_mb
+    warmup = open_socket(server.host, server.port, BIG_ROOM, cookie)
+    warmup.recv()
+    warmup_open = server.rss_mb
+    warmup.close()
+    wait_unloaded(server, baseline, warmup_open)
+
+    before = server.rss_mb
     latencies = []
-    for _ in range(connects):
-        started = time.perf_counter()
+    open_rss = []
+    timeouts = 0
+    observed = 0
+    started = time.perf_counter()
+    for _ in range(cycles):
+        at = time.perf_counter()
         socket = open_socket(server.host, server.port, BIG_ROOM, cookie)
         socket.recv()
-        latencies.append((time.perf_counter() - started) * 1000)
+        latencies.append((time.perf_counter() - at) * 1000)
+        open_rss.append(server.rss_mb)
         socket.close()
+        waited = wait_unloaded(server, before, open_rss[-1])
+        if waited is not None:
+            observed += 1
+            if not waited:
+                timeouts += 1
     return {
-        "open_p50_ms": percentile(latencies, 50),
-        "open_p95_ms": percentile(latencies, 95),
+        "latencies": latencies,
+        "rss_open_mb": max(open_rss),
+        "rss_before_mb": round(before, 3),
+        "rss_after_mb": round(server.rss_mb, 3),
+        "unload_timeouts": timeouts if observed else None,
+        "duration_s": round(time.perf_counter() - started, 3),
     }
 
 
-def run_openclose(server: Server, cookie: str, cycles: int) -> dict:
-    started = time.perf_counter()
-    run_open(server, cookie, cycles)
-    return {"duration_s": round(time.perf_counter() - started, 3)}
-
-
-def scaleout_rooms(count: int) -> list[str]:
-    if count == 1:
-        return [SMALL_ROOM]
-    return [f"{SMALL_ROOM}-{index}" for index in range(count)]
+def run_soak(server: Server, cookie: str, scenario: Scenario, in_flight: int) -> dict:
+    rss_start = server.rss_start_mb
+    rooms = room_set(scenario.rooms)
+    measured = run_rooms(
+        server,
+        cookie,
+        rooms,
+        scenario.clients,
+        scenario.duration,
+        scenario.rate,
+        closed_loop=False,
+        in_flight=in_flight,
+        sample_at=SOAK_SAMPLE_AT,
+        probe=False,
+    )
+    written = measured.pop("written", [])
+    rss_5min = measured.pop("rss_sample_mb", None)
+    rss_end = server.rss_mb
+    lost = probe_rooms(server, cookie, written)
+    _, peak, cpu = server.restart()
+    lost_after_restart = probe_rooms(server, cookie, written)
+    return {
+        **measured,
+        "rss_start_mb": round(rss_start, 3),
+        "rss_5min_mb": round(rss_5min, 3) if rss_5min is not None else None,
+        "rss_end_mb": round(rss_end, 3),
+        "rss_peak_mb": round(peak, 3),
+        "rss_drift_pct": drift_pct(rss_5min, rss_end),
+        "cpu_seconds": round(cpu, 3),
+        "lost_updates": lost,
+        "lost_updates_after_restart": lost_after_restart,
+    }
 
 
 def measure(
@@ -455,16 +612,26 @@ def measure(
 ) -> dict:
     metrics = {key: None for key in METRICS}
     metrics["scenario"] = name
-    if name == "open":
-        metrics.update(run_open(server, cookie, scenario.connects))
-    elif name == "openclose":
-        metrics.update(run_openclose(server, cookie, scenario.connects))
+    if name in ("open", "openclose"):
+        cycles = open_cycles(server, cookie, scenario.connects)
+        metrics["unload_timeouts"] = cycles["unload_timeouts"]
+        if name == "open":
+            metrics["open_p50_ms"] = percentile(cycles["latencies"], 50)
+            metrics["open_p95_ms"] = percentile(cycles["latencies"], 95)
+            metrics["rss_open_mb"] = round(cycles["rss_open_mb"], 3)
+        else:
+            metrics["duration_s"] = cycles["duration_s"]
+            metrics["rss_before_mb"] = cycles["rss_before_mb"]
+            metrics["rss_after_mb"] = cycles["rss_after_mb"]
+            metrics["rss_drift_pct"] = drift_pct(
+                cycles["rss_before_mb"], cycles["rss_after_mb"]
+            )
     elif name == "fanout":
         metrics.update(
             run_rooms(
                 server,
                 cookie,
-                [SMALL_ROOM],
+                [BIG_ROOM],
                 scenario.clients,
                 scenario.duration,
                 scenario.rate,
@@ -473,23 +640,12 @@ def measure(
             )
         )
     elif name == "soak":
-        metrics.update(
-            run_rooms(
-                server,
-                cookie,
-                [SMALL_ROOM],
-                scenario.clients,
-                scenario.duration,
-                scenario.rate,
-                closed_loop=False,
-                in_flight=in_flight,
-            )
-        )
+        metrics.update(run_soak(server, cookie, scenario, in_flight))
     elif name == "scaleout":
         single = run_rooms(
             server,
             cookie,
-            scaleout_rooms(1),
+            [SMALL_ROOM],
             scenario.clients,
             scenario.duration,
             scenario.rate,
@@ -499,7 +655,7 @@ def measure(
         many = run_rooms(
             server,
             cookie,
-            scaleout_rooms(scenario.rooms),
+            room_set(scenario.rooms),
             scenario.clients,
             scenario.duration,
             scenario.rate,
@@ -509,14 +665,22 @@ def measure(
         metrics.update(many)
         metrics["single_room_updates_per_s"] = single["updates_per_s"]
     rss_end, rss_peak, cpu_end = server.stop()
-    metrics["rss_end_mb"] = round(rss_end, 3)
-    metrics["rss_peak_mb"] = round(rss_peak, 3)
-    metrics["rss_start_mb"] = round(server.rss_start_mb, 3)
-    metrics["cpu_seconds"] = round(cpu_end, 3)
+    for key, value in (
+        ("rss_end_mb", rss_end),
+        ("rss_peak_mb", rss_peak),
+        ("rss_start_mb", server.rss_start_mb),
+        ("cpu_seconds", cpu_end),
+    ):
+        if metrics[key] is None:
+            metrics[key] = round(value, 3)
     return metrics
 
 
-def check_room_size(update_dir: Path) -> None:
+def check_rooms(update_dir: Path, rooms: list[str]) -> None:
+    for room in rooms:
+        path = update_dir / f"{room}.y"
+        if not path.exists():
+            raise SystemExit(f"{path} is missing; run bench/run_gates.sh")
     size = (update_dir / f"{BIG_ROOM}.y").stat().st_size
     if not 35e6 <= size <= 40e6:
         raise SystemExit(f"{BIG_ROOM}.y is {size / 1e6:.1f} MB, expected 35-40 MB")
@@ -546,7 +710,7 @@ def main() -> None:
 
     scenario = SMOKE if arguments.smoke else SCENARIOS[arguments.scenario]
     if not arguments.smoke:
-        check_room_size(arguments.update_dir)
+        check_rooms(arguments.update_dir, scenario_rooms(arguments.scenario))
     server = Server(
         shlex.split(arguments.server_cmd),
         arguments.update_dir,
