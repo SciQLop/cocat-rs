@@ -74,6 +74,7 @@ at a time; nothing else runs in the background.
 ```sh
 SERVER=rust bench/run_gates.sh          # target/release/cocat-server, build it first
 SERVER=python bench/run_gates.sh        # the cocat-ui venv's `cocat`
+SCENARIOS="open openclose" SERVER=rust bench/run_gates.sh   # a subset, in this order
 python bench/compare.py                 # gate table, Rust next to Python
 ```
 

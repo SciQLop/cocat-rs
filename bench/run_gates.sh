@@ -4,8 +4,10 @@
 #
 # Usage: SERVER=rust|python bench/run_gates.sh [--smoke]
 #
-# The pristine room set (bench100k, bench1k, bench1k-0..7) is built once into
-# bench/work/; every scenario gets a fresh copy of it and a freshly seeded database.
+# SCENARIOS selects a subset, e.g. SCENARIOS="open openclose" (default: all five,
+# in gate order). The pristine room set (bench100k, bench1k, bench1k-0..7) is built
+# once into bench/work/; every scenario gets a fresh copy of it and a freshly seeded
+# database.
 set -euo pipefail
 
 bench=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -18,7 +20,7 @@ rust_cli="$repo/target/release/cocat-server"
 email=bench@test.org
 password=pwd
 rooms=(bench100k bench1k bench1k-0 bench1k-1 bench1k-2 bench1k-3 bench1k-4 bench1k-5 bench1k-6 bench1k-7)
-scenarios=(open openclose fanout scaleout soak)
+scenarios=(${SCENARIOS:-open openclose fanout scaleout soak})
 smoke=0
 server=${SERVER:-}
 
