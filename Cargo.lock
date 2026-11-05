@@ -395,6 +395,7 @@ name = "cocat-core"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "quick-xml",
  "serde",
  "serde_json",
  "tempfile",
@@ -415,7 +416,9 @@ dependencies = [
  "bytes",
  "clap",
  "cocat-core",
+ "cookie",
  "email_address",
+ "form_urlencoded",
  "futures-util",
  "getrandom 0.3.4",
  "jsonwebtoken",
@@ -454,6 +457,16 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "cookie"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+dependencies = [
+ "time",
+ "version_check",
+]
 
 [[package]]
 name = "cpufeatures"
@@ -1704,6 +1717,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

@@ -1,8 +1,11 @@
 //! A catalogue as a VOTable, the shape cocat's own importer reads back.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
+use std::io;
 
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use serde_json::Value;
 
 use crate::model::{CatalogueSummary, EventRecord};
@@ -13,10 +16,27 @@ pub enum VotableError {
     MissingAttributes(Vec<String>),
     #[error("Export VOTable: not all value types are identical for all events for attribute {0}")]
     MixedTypes(String),
+    #[error("Export VOTable: cannot write the document: {0}")]
+    Encoding(#[from] io::Error),
 }
 
-const START_FIELD: &str = r#"<FIELD name="Start Time" ID="TimeIntervalStart" ucd="time.start" datatype="char" arraysize="*" xtype="dateTime" utype=""/>"#;
-const STOP_FIELD: &str = r#"<FIELD name="Stop Time" ID="TimeIntervalStop" ucd="time.end" datatype="char" arraysize="*" xtype="dateTime" utype=""/>"#;
+const START_FIELD: [(&str, &str); 6] = [
+    ("ID", "TimeIntervalStart"),
+    ("ucd", "time.start"),
+    ("datatype", "char"),
+    ("arraysize", "*"),
+    ("xtype", "dateTime"),
+    ("utype", ""),
+];
+const STOP_FIELD: [(&str, &str); 6] = [
+    ("ID", "TimeIntervalStop"),
+    ("ucd", "time.end"),
+    ("datatype", "char"),
+    ("arraysize", "*"),
+    ("xtype", "dateTime"),
+    ("utype", ""),
+];
+const CHAR: [(&str, &str); 2] = [("datatype", "char"), ("arraysize", "*")];
 
 pub fn export(
     catalogue: &CatalogueSummary,
@@ -28,60 +48,107 @@ pub fn export(
         (left.start, left.uuid.as_str()).cmp(&(right.start, right.uuid.as_str()))
     });
 
-    let mut xml = String::with_capacity(2048);
-    xml.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-    xml.push_str("<VOTABLE version=\"1.4\" xmlns=\"http://www.ivoa.net/xml/VOTable/v1.3\">\n");
-    let _ = writeln!(
-        xml,
-        "  <DESCRIPTION>Contact:{};Name:{}</DESCRIPTION>",
-        escape(&catalogue.author),
-        escape(&catalogue.name)
-    );
-    xml.push_str("  <RESOURCE>\n");
-    let _ = writeln!(
-        xml,
-        "    <TABLE name=\"{}\">",
-        escape(&catalogue.name.replace(' ', "_"))
-    );
-
-    let mut fields = vec![
-        START_FIELD.to_owned(),
-        STOP_FIELD.to_owned(),
-        char_field("author"),
-        char_field("uuid"),
-        char_field("tags"),
-        char_field("products"),
-        simple_field("rating", "long"),
-    ];
-    fields.extend(attributes.iter().map(|(name, kind)| kind.field(name)));
-    for field in &fields {
-        let _ = writeln!(xml, "      {field}");
+    let mut writer = Writer::new(Vec::with_capacity(2048));
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))?;
+    open(
+        &mut writer,
+        "VOTABLE",
+        &[
+            ("version", "1.4"),
+            ("xmlns", "http://www.ivoa.net/xml/VOTable/v1.3"),
+        ],
+    )?;
+    text(
+        &mut writer,
+        "DESCRIPTION",
+        &format!("Contact:{};Name:{}", catalogue.author, catalogue.name),
+    )?;
+    open(&mut writer, "RESOURCE", &[])?;
+    open(
+        &mut writer,
+        "TABLE",
+        &[("name", &catalogue.name.replace(' ', "_"))],
+    )?;
+    write_fields(&mut writer, &attributes)?;
+    open(&mut writer, "DATA", &[])?;
+    open(&mut writer, "TABLEDATA", &[])?;
+    for event in &ordered {
+        write_row(&mut writer, event, &attributes)?;
     }
+    close(&mut writer, "TABLEDATA")?;
+    close(&mut writer, "DATA")?;
+    close(&mut writer, "TABLE")?;
+    close(&mut writer, "RESOURCE")?;
+    close(&mut writer, "VOTABLE")?;
 
-    xml.push_str("      <DATA>\n        <TABLEDATA>\n");
-    for event in ordered {
-        let _ = writeln!(xml, "          {}", row(event, &attributes));
-    }
-    xml.push_str("        </TABLEDATA>\n      </DATA>\n    </TABLE>\n  </RESOURCE>\n</VOTABLE>\n");
-    Ok(xml)
+    let bytes = writer.into_inner();
+    String::from_utf8(bytes).map_err(|error| VotableError::Encoding(io::Error::other(error)))
 }
 
-fn row(event: &EventRecord, attributes: &[(String, Kind)]) -> String {
-    let mut cells = vec![
+fn open(writer: &mut Writer<Vec<u8>>, name: &str, attributes: &[(&str, &str)]) -> io::Result<()> {
+    let mut element = BytesStart::new(name);
+    for (key, value) in attributes {
+        element.push_attribute((*key, sanitise(value).as_ref()));
+    }
+    writer.write_event(Event::Start(element))
+}
+
+fn close(writer: &mut Writer<Vec<u8>>, name: &str) -> io::Result<()> {
+    writer.write_event(Event::End(BytesEnd::new(name)))
+}
+
+fn text(writer: &mut Writer<Vec<u8>>, name: &str, content: &str) -> io::Result<()> {
+    open(writer, name, &[])?;
+    writer.write_event(Event::Text(BytesText::new(&sanitise(content))))?;
+    close(writer, name)
+}
+
+fn field(writer: &mut Writer<Vec<u8>>, name: &str, attributes: &[(&str, &str)]) -> io::Result<()> {
+    let mut element = BytesStart::new("FIELD");
+    element.push_attribute(("name", sanitise(name).as_ref()));
+    for (key, value) in attributes {
+        element.push_attribute((*key, *value));
+    }
+    writer.write_event(Event::Empty(element))
+}
+
+fn write_fields(writer: &mut Writer<Vec<u8>>, attributes: &[(String, Kind)]) -> io::Result<()> {
+    field(writer, "Start Time", &START_FIELD)?;
+    field(writer, "Stop Time", &STOP_FIELD)?;
+    field(writer, "author", &CHAR)?;
+    field(writer, "uuid", &CHAR)?;
+    field(writer, "tags", &CHAR)?;
+    field(writer, "products", &CHAR)?;
+    field(writer, "rating", &[("datatype", "long")])?;
+    for (name, kind) in attributes {
+        kind.write_field(writer, name)?;
+    }
+    Ok(())
+}
+
+fn write_row(
+    writer: &mut Writer<Vec<u8>>,
+    event: &EventRecord,
+    attributes: &[(String, Kind)],
+) -> io::Result<()> {
+    let fixed = [
         event.start.to_string(),
         event.stop.to_string(),
-        escape(&event.author),
-        escape(&event.uuid),
+        event.author.clone(),
+        event.uuid.clone(),
         json_list(&event.tags),
         json_list(&event.products),
         event.rating.unwrap_or_default().to_string(),
     ];
-    cells.extend(
-        attributes
-            .iter()
-            .map(|(name, kind)| kind.cell(&event.attributes[name])),
-    );
-    format!("<TR><TD>{}</TD></TR>", cells.join("</TD><TD>"))
+    let drawn: Vec<String> = attributes
+        .iter()
+        .map(|(name, kind)| kind.cell(&event.attributes[name]))
+        .collect();
+    open(writer, "TR", &[])?;
+    for cell in fixed.iter().chain(&drawn) {
+        text(writer, "TD", cell)?;
+    }
+    close(writer, "TR")
 }
 
 /// The attributes every event carries, by name, with the one kind they all share.
@@ -159,39 +226,25 @@ impl Kind {
         }
     }
 
-    fn field(self, name: &str) -> String {
+    fn write_field(self, writer: &mut Writer<Vec<u8>>, name: &str) -> io::Result<()> {
         match self {
-            Self::Text => char_field(name),
-            Self::List => json_field(name),
-            Self::Number => simple_field(name, "double"),
-            Self::Boolean => simple_field(name, "boolean"),
+            Self::Text => field(writer, name, &CHAR),
+            Self::List => field(
+                writer,
+                name,
+                &[("datatype", "char"), ("arraysize", "*"), ("utype", "json")],
+            ),
+            Self::Number => field(writer, name, &[("datatype", "double")]),
+            Self::Boolean => field(writer, name, &[("datatype", "boolean")]),
         }
     }
 
     fn cell(self, value: &Value) -> String {
         match (self, value) {
-            (Self::Text, Value::String(text)) => escape(text),
-            _ => escape(&value.to_string()),
+            (Self::Text, Value::String(text)) => text.clone(),
+            _ => value.to_string(),
         }
     }
-}
-
-fn char_field(name: &str) -> String {
-    format!(
-        r#"<FIELD name="{}" datatype="char" arraysize="*"/>"#,
-        escape(name)
-    )
-}
-
-fn json_field(name: &str) -> String {
-    format!(
-        r#"<FIELD name="{}" datatype="char" arraysize="*" utype="json"/>"#,
-        escape(name)
-    )
-}
-
-fn simple_field(name: &str, datatype: &str) -> String {
-    format!(r#"<FIELD name="{}" datatype="{datatype}"/>"#, escape(name))
 }
 
 fn json_list(items: &[String]) -> String {
@@ -199,26 +252,28 @@ fn json_list(items: &[String]) -> String {
         .iter()
         .map(|item| Value::from(item.as_str()))
         .collect();
-    escape(&Value::Array(values).to_string())
+    Value::Array(values).to_string()
 }
 
-fn escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for character in text.chars() {
-        match character {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&apos;"),
-            // XML 1.0 has no way to represent these, not even as a character reference.
-            control if control < ' ' && !matches!(control, '\t' | '\n' | '\r') => {
-                escaped.push('\u{FFFD}');
-            }
-            other => escaped.push(other),
-        }
+/// XML 1.0 has no way to represent a control character, not even as a character reference,
+/// so the data is cleaned before the writer escapes it.
+fn sanitise(text: &str) -> Cow<'_, str> {
+    let unrepresentable =
+        |character: char| character < ' ' && !matches!(character, '\t' | '\n' | '\r');
+    if !text.chars().any(unrepresentable) {
+        return Cow::Borrowed(text);
     }
-    escaped
+    Cow::Owned(
+        text.chars()
+            .map(|character| {
+                if unrepresentable(character) {
+                    '\u{FFFD}'
+                } else {
+                    character
+                }
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -454,6 +509,24 @@ mod tests {
 
         assert!(xml.contains("<TD>a\u{FFFD}b</TD>"), "{xml}");
         assert!(!xml.contains('\u{1}'), "{xml}");
+    }
+
+    #[test]
+    fn control_character_in_a_name_is_replaced() {
+        let event = with_attributes(json!({"n\u{1}te": "x"}));
+        let xml = export(&catalogue("al\u{2}pha"), &[event]).expect("a votable");
+
+        assert!(xml.contains("<TABLE name=\"al\u{FFFD}pha\">"), "{xml}");
+        assert!(xml.contains("<FIELD name=\"n\u{FFFD}te\""), "{xml}");
+        assert!(!xml.contains(['\u{1}', '\u{2}']), "{xml}");
+    }
+
+    #[test]
+    fn carriage_return_is_written_as_a_reference() {
+        let event = with_attributes(json!({"note": "a\rb"}));
+        let xml = export(&catalogue("alpha"), &[event]).expect("a votable");
+
+        assert!(xml.contains("<TD>a&#13;b</TD>"), "{xml}");
     }
 
     #[test]

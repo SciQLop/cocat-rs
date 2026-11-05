@@ -16,6 +16,7 @@ use axum::Form;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use cookie::{Cookie, SameSite};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -193,11 +194,10 @@ pub fn read_claims<T: DeserializeOwned>(
 
 pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
     let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
-    cookies
-        .split(';')
-        .filter_map(|cookie| cookie.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE_NAME)
-        .map(|(_, value)| value.to_owned())
+    Cookie::split_parse(cookies)
+        .filter_map(Result::ok)
+        .find(|cookie| cookie.name() == COOKIE_NAME)
+        .map(|cookie| cookie.value().to_owned())
 }
 
 pub async fn authenticate(
@@ -246,7 +246,7 @@ pub async fn login(
 
 // simplify: only argon2 PHC hashes verify; bcrypt rows from older Python accounts fail
 // PasswordHash::new and read as bad credentials. Phase 1 supports bcrypt or forces a reset.
-fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
+pub fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
     let hash = PasswordHash::new(hashed).map_err(|_| AuthError::BadCredentials)?;
     Argon2::default()
         .verify_password(password.as_bytes(), &hash)
@@ -254,13 +254,25 @@ fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
 }
 
 pub fn set_cookie(token: &str) -> String {
-    format!("{COOKIE_NAME}={token}; Path=/; Secure; HttpOnly; SameSite=lax")
+    session_cookie_conf(token, None).to_string()
 }
 
 /// The same attributes the login cookie sets, with the empty value and `Max-Age=0` that
 /// Starlette's `CookieTransport` sends on logout.
 pub fn clear_cookie() -> String {
-    format!("{COOKIE_NAME}=\"\"; HttpOnly; Max-Age=0; Path=/; SameSite=lax; Secure")
+    session_cookie_conf("", Some(cookie::time::Duration::ZERO)).to_string()
+}
+
+fn session_cookie_conf(token: &str, max_age: Option<cookie::time::Duration>) -> Cookie<'static> {
+    let builder = Cookie::build((COOKIE_NAME, token.to_owned()))
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .same_site(SameSite::Lax);
+    match max_age {
+        Some(max_age) => builder.max_age(max_age).build(),
+        None => builder.build(),
+    }
 }
 
 fn refused(code: &'static str) -> Response {

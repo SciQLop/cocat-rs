@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use cocat_server::auth::{self, AuthError, LoginForm};
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, db, links::Links, ratelimit::LoginLimit};
+use cookie::{Cookie, SameSite};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -115,6 +116,17 @@ fn the_cookie_is_read_from_the_headers() {
 }
 
 #[test]
+fn verify_password_checks_the_hash() {
+    let hashed = db::hash_password("hunter2").unwrap();
+
+    assert!(auth::verify_password("hunter2", &hashed).is_ok());
+    assert!(matches!(
+        auth::verify_password("wrong", &hashed),
+        Err(AuthError::BadCredentials)
+    ));
+}
+
+#[test]
 fn the_environment_secret_wins_over_the_file() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
@@ -197,16 +209,17 @@ async fn login_sets_a_cookie_for_the_right_password() {
         auth::login_handler(State(state.clone()), form("user@example.org", "hunter2")).await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
-    assert!(cookie.starts_with("fastapiusersauth="), "{cookie}");
-    assert!(
-        cookie.ends_with("; Path=/; Secure; HttpOnly; SameSite=lax"),
-        "{cookie}"
-    );
+    let written = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    let cookie = Cookie::parse(written.to_owned()).unwrap();
+    assert_eq!(cookie.name(), auth::COOKIE_NAME);
+    assert_eq!(cookie.path(), Some("/"));
+    assert_eq!(cookie.secure(), Some(true));
+    assert_eq!(cookie.http_only(), Some(true));
+    assert_eq!(cookie.same_site(), Some(SameSite::Lax));
 
-    let token = cookie.split(';').next().unwrap();
+    let session = format!("{}={}", cookie.name(), cookie.value());
     let mut headers = HeaderMap::new();
-    headers.insert(header::COOKIE, token.parse().unwrap());
+    headers.insert(header::COOKIE, session.parse().unwrap());
     assert_eq!(
         auth::authenticate(&state.pool, &headers, &state.secret)
             .await

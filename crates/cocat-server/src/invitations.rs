@@ -29,7 +29,6 @@ pub(crate) fn usable(table: &str) -> String {
 }
 
 const TOKEN_BYTES: usize = 32;
-const HEX: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invitation {
@@ -297,19 +296,10 @@ pub(crate) fn new_token() -> Result<(String, String), LifecycleError> {
     let mut bytes = [0u8; TOKEN_BYTES];
     getrandom::fill(&mut bytes)?;
     let token = URL_SAFE_NO_PAD.encode(bytes);
-    let hash = hex(&Sha256::digest(token.as_bytes()));
+    let hash = hash(&token);
     Ok((token, hash))
 }
 
 pub(crate) fn hash(token: &str) -> String {
-    hex(&Sha256::digest(token.as_bytes()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from(HEX[usize::from(byte >> 4)]));
-        out.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    out
+    format!("{:x}", Sha256::digest(token.as_bytes()))
 }

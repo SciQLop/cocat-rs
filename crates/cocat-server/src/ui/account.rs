@@ -74,23 +74,14 @@ pub(crate) async fn password(
     if form.new != form.repeat {
         return account_page(&state, &user, PASSWORD_MISMATCH);
     }
-    match auth::login(
-        &state.pool,
-        &state.secret,
-        &user.email,
-        &form.current,
-        false,
-    )
-    .await
-    {
-        Ok(_) => {}
-        Err(auth::AuthError::BadCredentials | auth::AuthError::InactiveUser) => {
-            return account_page(&state, &user, WRONG_PASSWORD);
-        }
-        Err(error) => {
-            tracing::warn!(%error, "cannot check the current password");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+    if let Err(error) = auth::verify_password(&form.current, &user.hashed_password) {
+        return match error {
+            auth::AuthError::BadCredentials => account_page(&state, &user, WRONG_PASSWORD),
+            error => {
+                tracing::warn!(%error, "cannot check the current password");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        };
     }
     let change = accounts::Change {
         password: Some(form.new),

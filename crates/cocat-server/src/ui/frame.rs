@@ -10,6 +10,8 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 
+use url::Url;
+
 use crate::db::User;
 use crate::links::Links;
 use crate::{AppState, auth, db};
@@ -191,7 +193,7 @@ fn cross_site(headers: &HeaderMap) -> bool {
             .get(header::HOST)
             .and_then(|value| value.to_str().ok());
         match origin.to_str() {
-            Ok(origin) => Some(origin_host(origin)) != host,
+            Ok(origin) => origin_authority(origin).as_deref() != host,
             Err(_) => true,
         }
     });
@@ -201,12 +203,15 @@ fn cross_site(headers: &HeaderMap) -> bool {
     foreign_origin || foreign_fetch
 }
 
-/// The netloc of a serialized origin, as `urlsplit(origin).netloc` would give it.
-fn origin_host(origin: &str) -> &str {
-    match origin.split_once("://") {
-        Some((_, rest)) => rest.split(['/', '?', '#']).next().unwrap_or_default(),
-        None => "",
-    }
+/// The `host[:port]` an Origin names, compared with the Host header as Python's
+/// `urlsplit(origin).netloc` does. An opaque (`null`) or unparsable origin names none.
+fn origin_authority(origin: &str) -> Option<String> {
+    let url = Url::parse(origin).ok()?;
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
 }
 
 pub(crate) async fn index(State(state): State<AppState>) -> Response {
@@ -245,8 +250,49 @@ pub(crate) async fn static_asset(Path(file): Path<String>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::message;
+    use super::{cross_site, message};
+    use axum::http::{HeaderMap, header};
     use std::collections::HashMap;
+
+    fn headers(origin: &str, host: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        headers.insert(header::HOST, host.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn a_same_origin_post_is_not_cross_site() {
+        assert!(!cross_site(&headers(
+            "https://cocat.example.org",
+            "cocat.example.org"
+        )));
+        assert!(!cross_site(&headers(
+            "http://localhost:8080",
+            "localhost:8080"
+        )));
+    }
+
+    #[test]
+    fn another_host_or_port_is_cross_site() {
+        assert!(cross_site(&headers(
+            "https://evil.example.org",
+            "cocat.example.org"
+        )));
+        assert!(cross_site(&headers(
+            "https://cocat.example.org:8443",
+            "cocat.example.org"
+        )));
+    }
+
+    #[test]
+    fn an_opaque_or_unparsable_origin_is_cross_site() {
+        assert!(cross_site(&headers("null", "cocat.example.org")));
+        assert!(cross_site(&headers(
+            "cocat.example.org",
+            "cocat.example.org"
+        )));
+    }
 
     fn query(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

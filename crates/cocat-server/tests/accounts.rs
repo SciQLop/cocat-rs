@@ -12,6 +12,7 @@ use cocat_server::mail::Mailer;
 use cocat_server::ratelimit::LoginLimit;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, accounts, auth, db, ws};
+use cookie::{Cookie, SameSite};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -24,8 +25,6 @@ const VERIFY_BAD: &str = "VERIFY_USER_BAD_TOKEN";
 const ALREADY_VERIFIED: &str = "VERIFY_USER_ALREADY_VERIFIED";
 const RESET_BAD: &str = "RESET_PASSWORD_BAD_TOKEN";
 const NOT_VERIFIED: &str = "LOGIN_USER_NOT_VERIFIED";
-const CLEARED_COOKIE: &str =
-    r#"fastapiusersauth=""; HttpOnly; Max-Age=0; Path=/; SameSite=lax; Secure"#;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mail {
@@ -398,6 +397,18 @@ async fn a_wrong_password_on_an_unverified_account_is_bad_credentials() {
     }
 }
 
+/// A cleared session cookie read back as attributes: the cookie crate owns the serialization.
+fn assert_cleared_cookie(written: &str) {
+    let cookie = Cookie::parse(written.to_owned()).unwrap();
+    assert_eq!(cookie.name(), auth::COOKIE_NAME);
+    assert_eq!(cookie.value(), "");
+    assert_eq!(cookie.max_age().map(|age| age.whole_seconds()), Some(0));
+    assert_eq!(cookie.path(), Some("/"));
+    assert_eq!(cookie.secure(), Some(true));
+    assert_eq!(cookie.http_only(), Some(true));
+    assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+}
+
 #[tokio::test]
 async fn logout_clears_the_cookie() {
     let fixture = Fixture::start().await;
@@ -409,7 +420,8 @@ async fn logout_clears_the_cookie() {
         .await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert_eq!(set_cookie(&response).as_deref(), Some(CLEARED_COOKIE));
+    let cleared = set_cookie(&response).expect("logout clears the cookie");
+    assert_cleared_cookie(&cleared);
 
     let anonymous = fixture.post_form("/auth/jwt/logout", "", None).await;
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);

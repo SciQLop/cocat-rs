@@ -44,18 +44,22 @@ pub(crate) fn next_query(value: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-/// What Python's `urlencode` writes for a query value: `quote_plus` with no safe character,
-/// so a path keeps its `/` percent-encoded and a space becomes `+`.
+/// What `urlencode` writes for a query value: `application/x-www-form-urlencoded`, so a
+/// path keeps its `/` percent-encoded and a space becomes `+`.
 pub(crate) fn query_value(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(char::from(byte));
-            }
-            b' ' => encoded.push('+'),
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::query_value;
+
+    #[test]
+    fn query_value_encodes_like_a_form() {
+        assert_eq!(query_value("/ui/rooms"), "%2Fui%2Frooms");
+        assert_eq!(query_value("/ui/a b?c=d&e"), "%2Fui%2Fa+b%3Fc%3Dd%26e");
+        assert_eq!(query_value("é"), "%C3%A9");
+        assert_eq!(query_value("~"), "%7E");
+        assert_eq!(query_value("*"), "*");
     }
-    encoded
 }
