@@ -15,7 +15,7 @@ module for the invitation rules. A `CurrentUser` extractor turns the cookie into
 `base64` 0.22, `getrandom` 0.3, `email_address` 0.2.
 
 **Spec:** `docs/superpowers/specs/2026-11-05-cocat-rs-design.md` ("The HTTP and websocket
-contract", phase 2). Behaviour reference: `/home/jeandet/Documents/prog/cocat-ui` branch
+contract", phase 2). Behaviour reference: `/home/jeandet/Documents/prog/cocat-python-tests` branch
 `rust-spike`: `src/cocat/app/{routes.py,rooms.py,invitations.py,actions.py,schemas.py,
 ratelimit.py,prefix.py,app.py}` and `tests/test_routes.py`.
 
@@ -213,7 +213,7 @@ which is what Python does without a mailer.
 
 ### Task 5: Grow the Python live slice
 
-**Files (cocat-ui, branch `rust-spike`):**
+**Files (cocat-python-tests, branch `rust-spike`):**
 - Modify: `tests/conftest.py` (replace `LIVE_SLICE` with `LIVE_SKIP`: a dict test name →
   reason), `tests/test_live.py`
 

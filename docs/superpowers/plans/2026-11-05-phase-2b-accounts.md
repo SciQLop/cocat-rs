@@ -18,7 +18,7 @@ directory sink used by tests and local development. Links are always built from
 
 **Spec:** `docs/superpowers/specs/2026-11-05-cocat-rs-design.md` (phase 2, contract,
 Risks: "Host-header reset links, placeholder addresses, OAuth association rules").
-Behaviour reference: cocat-ui `rust-spike`: `src/cocat/app/{users.py,accounts.py,mail.py,
+Behaviour reference: cocat-python-tests `rust-spike`: `src/cocat/app/{users.py,accounts.py,mail.py,
 urls.py,app.py}` and fastapi-users 15 (`.venv/lib/python3.14/site-packages/fastapi_users/
 {manager.py,router/*.py}`); tests `test_accounts.py`, `test_mail.py`, `test_login_gate.py`,
 `test_ratelimit.py`.
@@ -199,7 +199,7 @@ unverified local account never taken over).
 
 ### Task 5: Python live slice
 
-**Files (cocat-ui `rust-spike`):** `tests/conftest.py` (`LIVE_SKIP`), and the live branch of
+**Files (cocat-python-tests `rust-spike`):** `tests/conftest.py` (`LIVE_SKIP`), and the live branch of
 the mail fixtures (`app_client_mail`) if it can point the Rust server at `COCAT_MAIL_DIR`.
 
 - [ ] **Step 1:** Release build; run the live slice over `tests/test_routes.py`,

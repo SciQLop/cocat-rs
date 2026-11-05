@@ -5,7 +5,7 @@ Rust spike, so the two JSON files can be compared field by field.
 
 The harness lives with the Rust code because the plan and the docs are here, but it is
 a Python client: run it with a venv that has `pycrdt`, `websockets` and `cocat`
-installed (`/home/jeandet/Documents/prog/cocat-ui/.venv` at the time of the spike).
+installed (`/home/jeandet/Documents/prog/cocat-python-tests/.venv` at the time of the spike).
 
 ## Rooms
 
@@ -73,7 +73,7 @@ at a time; nothing else runs in the background.
 
 ```sh
 SERVER=rust bench/run_gates.sh          # target/release/cocat-server, build it first
-SERVER=python bench/run_gates.sh        # the cocat-ui venv's `cocat`
+SERVER=python bench/run_gates.sh        # the cocat-python-tests venv's `cocat`
 SCENARIOS="open openclose" SERVER=rust bench/run_gates.sh   # a subset, in this order
 SERVER_CMD="env MALLOC_ARENA_MAX=2 $PWD/target/release/cocat-server serve" \
     SCENARIOS="open openclose" SERVER=rust bench/run_gates.sh  # run under an env var

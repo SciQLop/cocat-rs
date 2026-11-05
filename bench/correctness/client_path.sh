@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Gate: the SESSION client (the path SciQLop uses) against this server.
 #
-# The client tests live in cocat-ui; `COCAT_SERVER_CMD` makes their `server`
+# The client tests live in cocat-python-tests; `COCAT_SERVER_CMD` makes their `server`
 # fixture and their user helpers drive a real binary instead of the ASGI app.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-ui=/home/jeandet/Documents/prog/cocat-ui
+ui=/home/jeandet/Documents/prog/cocat-python-tests
 server=${SERVER:-rust}
 
 case "$server" in

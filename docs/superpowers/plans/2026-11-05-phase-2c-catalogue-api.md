@@ -18,7 +18,7 @@ No XML crate: the VOTable is a fixed template plus escaping.
 
 **Spec:** `docs/superpowers/specs/2026-11-05-cocat-rs-design.md`, section "Read-only
 catalogue API (new)". Behaviour reference for the document layout and the VOTable:
-cocat-ui `rust-spike`, `src/cocat/{models.py,event.py,catalogue.py,votable.py}`.
+cocat-python-tests `rust-spike`, `src/cocat/{models.py,event.py,catalogue.py,votable.py}`.
 
 ## Global Constraints
 
@@ -88,7 +88,7 @@ cocat-ui `rust-spike`, `src/cocat/{models.py,event.py,catalogue.py,votable.py}`.
   - Sets (`tags`, `products`) come out as sorted `Vec<String>`.
 
 - [ ] **Step 1: Write the fixture.** A small script in `crates/cocat-core/tests/fixtures/
-  make_catalogues.py` (committed, run once with cocat-ui's venv) builds through `cocat.DB`:
+  make_catalogues.py` (committed, run once with cocat-python-tests's venv) builds through `cocat.DB`:
   catalogue "alpha" (author "a@x.org", tags {"t1","t2"}, attributes {"mission": "MMS",
   "level": 2}) with three events, one of them with microseconds and one with an explicit
   `+00:00` offset, products {"p1"}, rating 3, attributes {"q": 1.5, "flag": true}; catalogue

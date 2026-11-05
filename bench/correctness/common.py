@@ -2,7 +2,7 @@
 
 Every gate starts a server from `SERVER=rust|python` with the same room files and a
 database seeded by that server's own CLI, talks to it with pycrdt (the client stack
-cocat-ui uses), and kills the server it started.
+cocat-python-tests uses), and kills the server it started.
 """
 
 import json
@@ -45,7 +45,7 @@ CLIS = {
     "python": Path(
         os.environ.get(
             "COCAT_PYTHON_CLI",
-            "/home/jeandet/Documents/prog/cocat-ui/.venv/bin/cocat",
+            "/home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/cocat",
         )
     ),
 }

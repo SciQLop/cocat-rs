@@ -7,10 +7,10 @@ beta are ordinary; the file also carries two things a live room can contain and 
 reader must survive: an event whose start is not a time, and a catalogue listing
 an event that does not exist.
 
-Run from the repository root with cocat-ui's environment, then commit both
+Run from the repository root with cocat-python-tests's environment, then commit both
 files this script writes:
 
-    /home/jeandet/Documents/prog/cocat-ui/.venv/bin/python \
+    /home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/python \
         crates/cocat-core/tests/fixtures/make_catalogues.py
 """
 
