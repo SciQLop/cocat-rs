@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Account</h1>
+<p class="email">{{ email }}</p>
+{% match confirm_href %}
+{% when Some with (href) %}
+<p><a href="{{ href }}">Confirm your email</a></p>
+{% when None %}
+{% endmatch %}
+{% match signs_in_with %}
+{% when Some with (names) %}
+<p>This account signs in with {{ names }}.</p>
+{% when None %}
+<form method="post" action="{{ action }}">
+  <label for="current">Current password</label>
+  <input id="current" name="current" type="password"
+         autocomplete="current-password">
+  <label for="new">New password</label>
+  <input id="new" name="new" type="password" autocomplete="new-password">
+  <label for="repeat">Repeat password</label>
+  <input id="repeat" name="repeat" type="password" autocomplete="new-password">
+  <button type="submit">Change password</button>
+  {% include "message.html" %}
+</form>
+{% endmatch %}
+{% endblock %}

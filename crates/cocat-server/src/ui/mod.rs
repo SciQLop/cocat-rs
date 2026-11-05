@@ -1,5 +1,6 @@
 //! The server-rendered web UI under `/ui`.
 
+mod account;
 mod frame;
 mod login;
 mod reset;
@@ -25,6 +26,12 @@ pub fn router(_state: &AppState) -> Router<AppState> {
         .route("/reset-password", get(reset::reset_page).post(reset::reset))
         .route("/verify", get(verify::page).post(verify::submit))
         .route("/rooms", get(frame::rooms))
+        .route("/account", get(account::page))
+        .route("/account/password", post(account::password))
+        .route(
+            "/confirm-email",
+            get(account::confirm_page).post(account::confirm),
+        )
         .route("/static/{file}", get(frame::static_asset))
 }
 
