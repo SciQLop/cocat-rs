@@ -541,12 +541,15 @@ def wait_unloaded(server: Server, baseline_mb: float, open_mb: float) -> bool | 
 
 
 def open_cycles(server: Server, cookie: str, cycles: int) -> dict:
-    baseline = server.rss_mb
+    # The process start RSS is the only baseline that says whether a cycle returned
+    # its memory: a server that never unloads leaves the warm-up's room resident, so
+    # measuring the next cycle against that inflated figure shows no growth at all.
+    start = server.rss_start_mb
     warmup = open_socket(server.host, server.port, BIG_ROOM, cookie)
     warmup.recv()
     warmup_open = server.rss_mb
     warmup.close()
-    wait_unloaded(server, baseline, warmup_open)
+    wait_unloaded(server, start, warmup_open)
 
     before = server.rss_mb
     latencies = []
@@ -561,7 +564,7 @@ def open_cycles(server: Server, cookie: str, cycles: int) -> dict:
         latencies.append((time.perf_counter() - at) * 1000)
         open_rss.append(server.rss_mb)
         socket.close()
-        waited = wait_unloaded(server, before, open_rss[-1])
+        waited = wait_unloaded(server, start, open_rss[-1])
         if waited is not None:
             observed += 1
             if not waited:
