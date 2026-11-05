@@ -2,7 +2,8 @@
 //! A room is shared with a group by a grant, and `db::role_in` folds that grant into
 //! the role a member of the group holds on the room.
 
-use sqlx::{Row, Sqlite, Transaction};
+use sqlx::sqlite::SqliteRow;
+use sqlx::{AssertSqlSafe, Row, Sqlite, Transaction};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -10,7 +11,9 @@ use crate::AppState;
 use cocat_core::role::Role;
 
 use crate::db::{self, DbError};
+use crate::invitations;
 use crate::lifecycle::{self, LifecycleError};
+use crate::mail::{self, Mailer};
 
 pub const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave the group";
 
@@ -40,6 +43,23 @@ pub struct GroupMember {
     pub user_id: Uuid,
     pub email: String,
     pub role: GroupRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupInvitation {
+    pub id: i64,
+    pub email: Option<String>,
+    pub expires_at: String,
+    pub uses: i64,
+    pub max_uses: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupPreview {
+    pub group_id: String,
+    pub group_name: String,
+    pub inviter_email: Option<String>,
+    pub expires_at: String,
 }
 
 pub async fn create(state: &AppState, actor: Uuid, name: &str) -> Result<GroupRow, LifecycleError> {
@@ -291,6 +311,230 @@ pub async fn room_groups(
         ));
     }
     Ok(groups)
+}
+
+/// A link that admits its bearer to the group as a member. The token comes back empty when it
+/// was mailed, so a reply cannot carry a second copy of a link that travelled to its addressee.
+pub async fn create_invitation(
+    state: &AppState,
+    group_id: &str,
+    actor: Uuid,
+    email: Option<&str>,
+    expires_in_days: u32,
+    max_uses: Option<u32>,
+) -> Result<(i64, String), LifecycleError> {
+    require_owner(state, group_id, actor).await?;
+    let (token, hash) = invitations::new_token()?;
+    let max_uses = if email.is_some() { Some(1) } else { max_uses };
+    let id = sqlx::query(
+        "INSERT INTO group_invitation
+             (token_hash, group_id, email, created_by, expires_at, max_uses)
+         VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?), ?)",
+    )
+    .bind(hash)
+    .bind(group_id)
+    .bind(email)
+    .bind(actor.to_string())
+    .bind(format!("+{expires_in_days} days"))
+    .bind(max_uses.map(i64::from))
+    .execute(&state.pool)
+    .await?
+    .last_insert_rowid();
+    if let (Some(mailer), Some(address)) = (&state.mailer, email) {
+        mail_invitation(state, mailer, actor, group_id, id, &token, address).await?;
+        return Ok((id, String::new()));
+    }
+    Ok((id, token))
+}
+
+pub async fn list_invitations(
+    state: &AppState,
+    group_id: &str,
+    actor: Uuid,
+) -> Result<Vec<GroupInvitation>, LifecycleError> {
+    require_owner(state, group_id, actor).await?;
+    let predicate = invitations::usable("group_invitation");
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "SELECT id, email, expires_at, uses, max_uses
+         FROM group_invitation
+         WHERE group_id = ? AND {predicate}
+         ORDER BY created_at DESC, id DESC"
+    )))
+    .bind(group_id)
+    .fetch_all(&state.pool)
+    .await?;
+    rows.iter().map(invitation_from_row).collect()
+}
+
+pub async fn revoke_invitation(
+    state: &AppState,
+    group_id: &str,
+    actor: Uuid,
+    invitation_id: i64,
+) -> Result<(), LifecycleError> {
+    require_owner(state, group_id, actor).await?;
+    let revoked =
+        sqlx::query("UPDATE group_invitation SET revoked = TRUE WHERE id = ? AND group_id = ?")
+            .bind(invitation_id)
+            .bind(group_id)
+            .execute(&state.pool)
+            .await?;
+    if revoked.rows_affected() != 1 {
+        return Err(invitation_not_found(invitation_id));
+    }
+    Ok(())
+}
+
+/// No cookie: the guest has to see what the link offers before signing in.
+pub async fn preview_invitation(
+    state: &AppState,
+    token: &str,
+) -> Result<GroupPreview, LifecycleError> {
+    let predicate = invitations::usable("group_invitation");
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT group_invitation.group_id, group_invitation.expires_at, user_group.name,
+                \"user\".email AS inviter_email
+         FROM group_invitation
+         JOIN user_group ON user_group.id = group_invitation.group_id
+         LEFT JOIN \"user\" ON \"user\".id = group_invitation.created_by
+         WHERE group_invitation.token_hash = ? AND {predicate}"
+    )))
+    .bind(invitations::hash(token))
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| invitation_not_found(0))?;
+    Ok(GroupPreview {
+        group_id: row.try_get("group_id")?,
+        group_name: row.try_get("name")?,
+        inviter_email: row.try_get("inviter_email")?,
+        expires_at: row.try_get("expires_at")?,
+    })
+}
+
+/// Joins `user` as a member, spending one use. An existing member is answered without spending
+/// anything. The use and the membership are written in one immediate transaction, and the
+/// rooms the group carries are read in it too, so nothing can slip in between and stay
+/// unrevoked.
+pub async fn accept_invitation(
+    state: &AppState,
+    token: &str,
+    user: &db::User,
+) -> Result<GroupRow, LifecycleError> {
+    let predicate = invitations::usable("group_invitation");
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT group_invitation.id, group_invitation.group_id, group_invitation.email,
+                user_group.name
+         FROM group_invitation JOIN user_group ON user_group.id = group_invitation.group_id
+         WHERE group_invitation.token_hash = ? AND {predicate}"
+    )))
+    .bind(invitations::hash(token))
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| invitation_not_found(0))?;
+    let id: i64 = row.try_get("id")?;
+    let group = GroupRow {
+        id: row.try_get("group_id")?,
+        name: row.try_get("name")?,
+    };
+    let addressed: Option<String> = row.try_get("email")?;
+    if let Some(addressed) = addressed
+        && !addressed.eq_ignore_ascii_case(&user.email)
+    {
+        return Err(LifecycleError::Forbidden(
+            "This invitation is for another email address".to_owned(),
+        ));
+    }
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let member: Option<String> =
+        sqlx::query_scalar("SELECT role FROM group_member WHERE group_id = ? AND user_id = ?")
+            .bind(&group.id)
+            .bind(user.id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    if member.is_some() {
+        return Ok(group);
+    }
+    let rooms: Vec<String> =
+        sqlx::query_scalar("SELECT room_id FROM room_group WHERE group_id = ?")
+            .bind(&group.id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let spent = sqlx::query(AssertSqlSafe(format!(
+        "UPDATE group_invitation SET uses = uses + 1 WHERE group_invitation.id = ? AND {predicate}"
+    )))
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    if spent.rows_affected() != 1 {
+        return Err(invitation_not_found(id));
+    }
+    sqlx::query("INSERT INTO group_member (group_id, user_id, role) VALUES (?, ?, 'member')")
+        .bind(&group.id)
+        .bind(user.id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let pairs = rooms
+        .into_iter()
+        .map(|room_id| (room_id, user.id))
+        .collect();
+    revoke_pairs(state, pairs).await;
+    Ok(group)
+}
+
+/// Mail the link to the address the invitation names, and undo the invitation if the relay
+/// refuses, as a room invitation does. The token never reaches the log.
+async fn mail_invitation(
+    state: &AppState,
+    mailer: &Mailer,
+    actor: Uuid,
+    group_id: &str,
+    id: i64,
+    token: &str,
+    address: &str,
+) -> Result<(), LifecycleError> {
+    let row = sqlx::query(
+        "SELECT user_group.name, \"user\".email
+         FROM user_group JOIN \"user\" ON \"user\".id = ?
+         WHERE user_group.id = ?",
+    )
+    .bind(actor.to_string())
+    .bind(group_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| not_found(group_id))?;
+    let group_name: String = row.try_get("name")?;
+    let inviter: String = row.try_get("email")?;
+    let (subject, body) =
+        mail::group_invitation_mail(&group_name, &inviter, &state.links.group_invitation(token));
+    if let Err(error) = mailer.send(address, &subject, &body).await {
+        tracing::warn!(%error, "could not mail the group invitation");
+        sqlx::query("DELETE FROM group_invitation WHERE id = ?")
+            .bind(id)
+            .execute(&state.pool)
+            .await?;
+        return Err(LifecycleError::Invalid(
+            "The email could not be sent; no invitation was created",
+        ));
+    }
+    Ok(())
+}
+
+fn invitation_from_row(row: &SqliteRow) -> Result<GroupInvitation, LifecycleError> {
+    Ok(GroupInvitation {
+        id: row.try_get("id")?,
+        email: row.try_get("email")?,
+        expires_at: row.try_get("expires_at")?,
+        uses: row.try_get("uses")?,
+        max_uses: row.try_get("max_uses")?,
+    })
+}
+
+fn invitation_not_found(invitation_id: i64) -> LifecycleError {
+    match invitation_id {
+        0 => LifecycleError::NotFound("Invitation not found".to_owned()),
+        id => LifecycleError::NotFound(format!("Invitation {id} not found")),
+    }
 }
 
 async fn group_row(state: &AppState, group_id: &str) -> Result<GroupRow, LifecycleError> {

@@ -18,10 +18,15 @@ use crate::mail::{self, Mailer};
 
 /// One predicate, used by preview, accept, consume and list: an invitation nobody revoked,
 /// that has not expired, and that still has a use left. It is the only text these queries
-/// build dynamically, hence the `AssertSqlSafe` around each `format!`.
-const USABLE: &str = "invitation.revoked = FALSE
-     AND invitation.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-     AND (invitation.max_uses IS NULL OR invitation.uses < invitation.max_uses)";
+/// build dynamically, hence the `AssertSqlSafe` around each `format!`. Group invitations use
+/// the same rule over their own table.
+pub(crate) fn usable(table: &str) -> String {
+    format!(
+        "{table}.revoked = FALSE
+     AND {table}.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     AND ({table}.max_uses IS NULL OR {table}.uses < {table}.max_uses)"
+    )
+}
 
 const TOKEN_BYTES: usize = 32;
 const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -131,13 +136,14 @@ async fn mail_invitation(
 }
 
 pub async fn preview(state: &AppState, token: &str) -> Result<Preview, LifecycleError> {
+    let predicate = usable("invitation");
     let row = sqlx::query(AssertSqlSafe(format!(
         "SELECT invitation.room_id, invitation.role, invitation.expires_at, room.name,
                 \"user\".email AS inviter_email
          FROM invitation
          JOIN room ON room.id = invitation.room_id
          LEFT JOIN \"user\" ON \"user\".id = invitation.created_by
-         WHERE invitation.token_hash = ? AND {USABLE}"
+         WHERE invitation.token_hash = ? AND {predicate}"
     )))
     .bind(hash(token))
     .fetch_optional(&state.pool)
@@ -159,10 +165,11 @@ pub async fn accept(
     token: &str,
     user: &db::User,
 ) -> Result<(RoomRow, Role), LifecycleError> {
+    let predicate = usable("invitation");
     let row = sqlx::query(AssertSqlSafe(format!(
         "SELECT invitation.id, invitation.room_id, invitation.role, invitation.email, room.name
          FROM invitation JOIN room ON room.id = invitation.room_id
-         WHERE invitation.token_hash = ? AND {USABLE}"
+         WHERE invitation.token_hash = ? AND {predicate}"
     )))
     .bind(hash(token))
     .fetch_optional(&state.pool)
@@ -204,11 +211,12 @@ pub async fn list(
     actor: Uuid,
 ) -> Result<Vec<Invitation>, LifecycleError> {
     require_role(state, room_id, actor, Role::Owner).await?;
+    let predicate = usable("invitation");
     let rows = sqlx::query(AssertSqlSafe(format!(
         "SELECT invitation.id, invitation.email, invitation.role, invitation.expires_at,
                 invitation.uses, invitation.max_uses
          FROM invitation
-         WHERE invitation.room_id = ? AND {USABLE}
+         WHERE invitation.room_id = ? AND {predicate}
          ORDER BY invitation.created_at DESC, invitation.id DESC"
     )))
     .bind(room_id)
@@ -256,8 +264,9 @@ async fn consume(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: i64,
 ) -> Result<(), LifecycleError> {
+    let predicate = usable("invitation");
     let used = sqlx::query(AssertSqlSafe(format!(
-        "UPDATE invitation SET uses = uses + 1 WHERE invitation.id = ? AND {USABLE}"
+        "UPDATE invitation SET uses = uses + 1 WHERE invitation.id = ? AND {predicate}"
     )))
     .bind(id)
     .execute(&mut **tx)
@@ -269,7 +278,7 @@ async fn consume(
 }
 
 /// An unknown, expired, revoked or spent token is the same 404, as in Python.
-fn invitation_not_found() -> LifecycleError {
+pub(crate) fn invitation_not_found() -> LifecycleError {
     LifecycleError::NotFound("Invitation not found".to_owned())
 }
 
@@ -284,7 +293,7 @@ fn invitation_from_row(row: &SqliteRow) -> Result<Invitation, LifecycleError> {
     })
 }
 
-fn new_token() -> Result<(String, String), LifecycleError> {
+pub(crate) fn new_token() -> Result<(String, String), LifecycleError> {
     let mut bytes = [0u8; TOKEN_BYTES];
     getrandom::fill(&mut bytes)?;
     let token = URL_SAFE_NO_PAD.encode(bytes);
@@ -292,7 +301,7 @@ fn new_token() -> Result<(String, String), LifecycleError> {
     Ok((token, hash))
 }
 
-fn hash(token: &str) -> String {
+pub(crate) fn hash(token: &str) -> String {
     hex(&Sha256::digest(token.as_bytes()))
 }
 

@@ -39,6 +39,11 @@ impl Links {
     pub fn ui(&self, path_and_fragment: &str) -> String {
         format!("{}{}/ui{}", self.origin, self.prefix, path_and_fragment)
     }
+
+    /// The page that accepts a group invitation, whose token sits in the path.
+    pub fn group_invitation(&self, token: &str) -> String {
+        self.ui(&format!("/groups/join/{token}"))
+    }
 }
 
 /// `COCAT_PUBLIC_URL` without its path, query and fragment.

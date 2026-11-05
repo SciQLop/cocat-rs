@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use cocat_core::role::Role;
+use cocat_server::mail::Mailer;
 use cocat_server::room::{CloseReason, RoomManager, outbox};
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
@@ -14,18 +17,37 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const WAIT: Duration = Duration::from_secs(10);
+const PUBLIC_URL: &str = "https://cocat.example.org";
 
 struct Fixture {
     state: AppState,
     pool: SqlitePool,
+    mail_dir: Option<PathBuf>,
     _dir: TempDir,
 }
 
 impl Fixture {
     async fn start() -> Self {
+        Self::build(false).await
+    }
+
+    async fn start_with_mail() -> Self {
+        Self::build(true).await
+    }
+
+    async fn build(mail: bool) -> Self {
         let dir = TempDir::new().unwrap();
         let rooms = dir.path().join("rooms");
         fs::create_dir_all(&rooms).unwrap();
+        let mail_dir = mail.then(|| dir.path().join("mail"));
+        let mut env: HashMap<&str, String> = HashMap::new();
+        if let Some(path) = &mail_dir {
+            fs::create_dir_all(path).unwrap();
+            env.insert("COCAT_MAIL_DIR", path.to_string_lossy().into_owned());
+            env.insert("COCAT_MAIL_FROM", "cocat@example.org".to_owned());
+            env.insert("COCAT_PUBLIC_URL", PUBLIC_URL.to_owned());
+        }
+        let lookup = |name: &str| env.get(name).cloned();
         let pool = db::open(&dir.path().join("test.db")).await.unwrap();
         let state = AppState {
             pool: pool.clone(),
@@ -33,14 +55,27 @@ impl Fixture {
             rooms: RoomManager::new(rooms, None),
             before_attach: None,
             login_limit: LoginLimit::default(),
-            mailer: None,
-            links: Links::default(),
+            mailer: Mailer::from_env(&lookup).unwrap(),
+            links: Links::from_env(&lookup).unwrap(),
         };
         Self {
             state,
             pool,
+            mail_dir,
             _dir: dir,
         }
+    }
+
+    fn mails(&self) -> Vec<String> {
+        let Some(dir) = &self.mail_dir else {
+            return Vec::new();
+        };
+        let mut mails: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect();
+        mails.sort();
+        mails
     }
 
     async fn user(&self, email: &str) -> Uuid {
@@ -599,4 +634,374 @@ async fn room_groups_visible_to_viewers() {
         .get("/api/rooms/room-listed/groups", Some(carol))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+async fn invite(
+    fixture: &Fixture,
+    group_id: &str,
+    actor: Uuid,
+    body: Value,
+) -> (StatusCode, Value) {
+    fixture
+        .post(&format!("/api/groups/{group_id}/invitations"), actor, body)
+        .await
+}
+
+async fn uses_of(pool: &SqlitePool, invitation_id: i64) -> i64 {
+    sqlx::query_scalar("SELECT uses FROM group_invitation WHERE id = ?")
+        .bind(invitation_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// lettre folds a long link across lines with quoted-printable soft breaks; they are undone
+/// before a link is searched for.
+fn flattened(mail: &str) -> String {
+    mail.replace("=\r\n", "")
+        .replace("=\n", "")
+        .split_whitespace()
+        .collect()
+}
+
+fn link_token(mails: &[String], marker: &str) -> String {
+    for mail in mails {
+        let body = mail.replace("=\r\n", "").replace("=\n", "");
+        if let Some(start) = body.find(marker) {
+            let token: String = body[start + marker.len()..]
+                .chars()
+                .take_while(|character| {
+                    !character.is_whitespace() && !matches!(character, '"' | '<' | '>')
+                })
+                .collect();
+            if !token.is_empty() {
+                return token;
+            }
+        }
+    }
+    panic!("no {marker} link in {mails:?}");
+}
+
+#[tokio::test]
+async fn accept_joins_as_member() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-join", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+    grant(&fixture.pool, "room-join", &id, "viewer").await;
+
+    let room = fixture.state.rooms.get_or_open("room-join").unwrap();
+    let (out, mut inbox) = outbox();
+    room.attach(1, bob, Role::Viewer, out).unwrap();
+
+    let (status, body) = invite(&fixture, &id, alice, json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+
+    let (status, body) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "id": id, "name": "Team", "role": "member" }));
+
+    let (_, members) = fixture
+        .get(&format!("/api/groups/{id}/members"), Some(alice))
+        .await;
+    assert_eq!(members["members"][1]["email"], "bob@example.org");
+    assert_eq!(members["members"][1]["role"], "member");
+
+    let closed = timeout(WAIT, &mut inbox.close)
+        .await
+        .expect("the rooms the group carries revoke the new member");
+    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+}
+
+#[tokio::test]
+async fn addressed_invitation_other_email_403() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(
+        &fixture,
+        &id,
+        alice,
+        json!({ "email": "alice@example.org" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+
+    let (status, body) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        body["detail"],
+        "This invitation is for another email address"
+    );
+}
+
+#[tokio::test]
+async fn expired_is_404() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+    let invitation_id = body["id"].as_i64().unwrap();
+    sqlx::query("UPDATE group_invitation SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(invitation_id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+    for (status, _) in [
+        fixture
+            .post(
+                "/api/group-invitations/preview",
+                bob,
+                json!({ "token": token }),
+            )
+            .await,
+        fixture
+            .post(
+                "/api/group-invitations/accept",
+                bob,
+                json!({ "token": token }),
+            )
+            .await,
+    ] {
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
+async fn revoked_is_404() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+    let invitation_id = body["id"].as_i64().unwrap();
+
+    let (status, _) = fixture
+        .delete(
+            &format!("/api/groups/{id}/invitations/{invitation_id}"),
+            alice,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, body) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn max_uses_spent_is_404() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({ "max_uses": 1 })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+
+    let (status, _) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            carol,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn concurrent_accepts_respect_max_uses() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({ "max_uses": 1 })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+
+    let (first, second) = tokio::join!(
+        fixture.post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        ),
+        fixture.post(
+            "/api/group-invitations/accept",
+            carol,
+            json!({ "token": token }),
+        )
+    );
+    let accepted = [first.0, second.0]
+        .iter()
+        .filter(|status| **status == StatusCode::OK)
+        .count();
+    assert_eq!(accepted, 1, "one use admits one member");
+    assert_eq!(
+        members_of(&fixture.pool, &id).await,
+        2,
+        "the owner and one guest"
+    );
+}
+
+#[tokio::test]
+async fn already_member_spends_no_use() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &id, bob, "member").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({ "max_uses": 1 })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+    let invitation_id = body["id"].as_i64().unwrap();
+
+    let (status, _) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(uses_of(&fixture.pool, invitation_id).await, 0);
+
+    let (status, _) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            carol,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(uses_of(&fixture.pool, invitation_id).await, 1);
+}
+
+#[tokio::test]
+async fn mailed_invitation_hides_the_token() {
+    let fixture = Fixture::start_with_mail().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({ "email": "bob@example.org" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["token"], "");
+
+    let mails = fixture.mails();
+    assert_eq!(mails.len(), 1, "{mails:?}");
+    assert!(mails[0].contains("To: bob@example.org"), "{mails:?}");
+    assert!(
+        mails[0].contains("alice@example.org invites you to the group Team"),
+        "{mails:?}"
+    );
+
+    let token = link_token(&mails, "/ui/groups/join/");
+    let (status, body) = fixture
+        .post(
+            "/api/group-invitations/accept",
+            bob,
+            json!({ "token": token }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["role"], "member");
+}
+
+#[tokio::test]
+async fn link_uses_public_url() {
+    let fixture = Fixture::start_with_mail().await;
+    let alice = fixture.user("alice@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({ "email": "bob@example.org" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let mail = flattened(&fixture.mails()[0]);
+    assert!(
+        mail.contains(&format!("{PUBLIC_URL}/ui/groups/join/")),
+        "{mail}"
+    );
+}
+
+#[tokio::test]
+async fn non_owner_cannot_invite_403() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    let id = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &id, bob, "member").await;
+
+    let (status, body) = invite(&fixture, &id, alice, json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let invitation_id = body["id"].as_i64().unwrap();
+
+    for (status, body) in [
+        invite(&fixture, &id, bob, json!({})).await,
+        fixture
+            .get(&format!("/api/groups/{id}/invitations"), Some(bob))
+            .await,
+        fixture
+            .delete(
+                &format!("/api/groups/{id}/invitations/{invitation_id}"),
+                bob,
+            )
+            .await,
+    ] {
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+
+    for (status, _) in [
+        invite(&fixture, &id, carol, json!({})).await,
+        fixture
+            .get(&format!("/api/groups/{id}/invitations"), Some(carol))
+            .await,
+    ] {
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
 }

@@ -243,6 +243,16 @@ pub fn invitation_mail(room_name: &str, inviter: &str, link: &str) -> (String, S
     )
 }
 
+pub fn group_invitation_mail(group_name: &str, inviter: &str, link: &str) -> (String, String) {
+    (
+        format!("{inviter} invites you to the group {group_name}"),
+        format!(
+            "{inviter} invites you to join the group \"{group_name}\":\n\n{link}\n\n\
+             The invitation is valid for 14 days.\n"
+        ),
+    )
+}
+
 fn setting(env: &impl Fn(&str) -> Option<String>, name: &str) -> String {
     env(name).unwrap_or_default().trim().to_string()
 }

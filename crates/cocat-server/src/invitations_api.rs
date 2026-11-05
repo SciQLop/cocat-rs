@@ -44,7 +44,7 @@ fn default_role() -> AssignableRole {
     AssignableRole::Editor
 }
 
-fn default_expiry() -> ExpiresInDays {
+pub(crate) fn default_expiry() -> ExpiresInDays {
     ExpiresInDays(INVITATION_LIFETIME_DAYS)
 }
 
@@ -52,7 +52,7 @@ fn default_expiry() -> ExpiresInDays {
 /// and reaches the client as the same 422 as any other invalid body.
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "u32")]
-struct ExpiresInDays(u32);
+pub(crate) struct ExpiresInDays(pub(crate) u32);
 
 impl TryFrom<u32> for ExpiresInDays {
     type Error = &'static str;
@@ -67,7 +67,7 @@ impl TryFrom<u32> for ExpiresInDays {
 
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "u32")]
-struct MaxUses(u32);
+pub(crate) struct MaxUses(pub(crate) u32);
 
 impl TryFrom<u32> for MaxUses {
     type Error = &'static str;
@@ -81,8 +81,8 @@ impl TryFrom<u32> for MaxUses {
 }
 
 #[derive(Debug, Deserialize)]
-struct TokenBody {
-    token: String,
+pub(crate) struct TokenBody {
+    pub(crate) token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -186,7 +186,7 @@ async fn accept_invitation(
 /// Python's `actions._address` once `EmailStr` has accepted the address: the only address it
 /// still refuses is a placeholder of ours, which exists to stand in for an account but must
 /// never receive an invitation.
-fn address(email: Address) -> Result<String, ApiError> {
+pub(crate) fn address(email: Address) -> Result<String, ApiError> {
     if is_placeholder(&email.0) {
         return Err(LifecycleError::Invalid("Enter a valid email address").into());
     }
