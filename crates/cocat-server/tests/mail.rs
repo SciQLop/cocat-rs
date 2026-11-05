@@ -157,10 +157,8 @@ fn a_mailer_needs_a_public_url() {
 fn a_host_and_a_mail_dir_are_exclusive() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let mut env = configured();
-    env.0.insert(
-        "COCAT_MAIL_DIR",
-        dir.path().to_string_lossy().into_owned(),
-    );
+    env.0
+        .insert("COCAT_MAIL_DIR", dir.path().to_string_lossy().into_owned());
 
     let error = env.mailer().expect_err("two sinks");
 
