@@ -31,6 +31,7 @@ yrs.workspace = true
 tempfile = "3"
 tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }
+tracing-subscriber = "0.3"
 
 [lints]
 workspace = true

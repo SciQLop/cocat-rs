@@ -116,12 +116,17 @@ impl From<AccountError> for ApiError {
         match error {
             AccountError::Duplicate => Self::BadRequest("REGISTER_USER_ALREADY_EXISTS".to_owned()),
             AccountError::Db(error) => Self::from(error),
+            AccountError::BadVerifyToken => Self::BadRequest("VERIFY_USER_BAD_TOKEN".to_owned()),
+            AccountError::AlreadyVerified => {
+                Self::BadRequest("VERIFY_USER_ALREADY_VERIFIED".to_owned())
+            }
+            AccountError::BadResetToken => Self::BadRequest("RESET_PASSWORD_BAD_TOKEN".to_owned()),
             AccountError::Clock => {
                 tracing::error!("the clock is before the unix epoch");
                 Self::Internal
             }
-            AccountError::Token(error) => {
-                tracing::error!(%error, "cannot sign a verification token");
+            AccountError::Sign(error) => {
+                tracing::error!(%error, "cannot sign a link");
                 Self::Internal
             }
         }

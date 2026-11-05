@@ -53,14 +53,10 @@ pub fn router(state: AppState) -> Router {
         state.clone(),
         ratelimit::limit,
     ));
-    let register = post(accounts_api::register).layer(middleware::from_fn_with_state(
-        state.clone(),
-        ratelimit::limit,
-    ));
     Router::new()
         .route("/auth/jwt/login", login)
         .route("/auth/jwt/logout", post(auth::logout_handler))
-        .route("/auth/register", register)
+        .merge(accounts_api::router(&state))
         .route("/room/{room_id}", get(room_socket))
         .route("/rooms", get(api::legacy_rooms))
         .route("/room/{room_id}/users", get(api::legacy_room_users))

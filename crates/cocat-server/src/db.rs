@@ -151,9 +151,7 @@ pub async fn create_user(
     is_verified: bool,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::new_v4();
-    let hashed_password = Argon2::default()
-        .hash_password(password.as_bytes())?
-        .to_string();
+    let hashed_password = hash_password(password)?;
     sqlx::query(
         r#"INSERT INTO "user" (id, email, hashed_password, is_active, is_verified, is_superuser)
            VALUES (?, ?, ?, TRUE, ?, ?)"#,
@@ -167,6 +165,33 @@ pub async fn create_user(
     .await
     .map_err(|error| taken_email(error, email))?;
     Ok(id)
+}
+
+fn hash_password(password: &str) -> Result<String, DbError> {
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes())?
+        .to_string())
+}
+
+/// Confirm an account. Returns whether a row matched, so a link for a deleted account is a
+/// bad token rather than a silent success.
+pub async fn set_verified(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> {
+    let updated = sqlx::query(r#"UPDATE "user" SET is_verified = TRUE WHERE id = ?"#)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+/// Replace a password. The argon2 hash is what a reset link's fingerprint is compared
+/// against, so this is also what spends the link.
+pub async fn set_password(pool: &SqlitePool, id: Uuid, password: &str) -> Result<bool, DbError> {
+    let updated = sqlx::query(r#"UPDATE "user" SET hashed_password = ? WHERE id = ?"#)
+        .bind(hash_password(password)?)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
 }
 
 /// The address column is unique, case-insensitively: a second account for the same person is

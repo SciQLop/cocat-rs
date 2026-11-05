@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -11,7 +11,7 @@ use cocat_server::links::Links;
 use cocat_server::mail::Mailer;
 use cocat_server::ratelimit::LoginLimit;
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, auth, db, ws};
+use cocat_server::{AppState, accounts, auth, db, ws};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -20,8 +20,18 @@ use uuid::Uuid;
 
 const PASSWORD: &str = "hunter2";
 const PUBLIC_URL: &str = "https://cocat.example.org";
+const VERIFY_BAD: &str = "VERIFY_USER_BAD_TOKEN";
+const ALREADY_VERIFIED: &str = "VERIFY_USER_ALREADY_VERIFIED";
+const RESET_BAD: &str = "RESET_PASSWORD_BAD_TOKEN";
 const CLEARED_COOKIE: &str =
     r#"fastapiusersauth=""; HttpOnly; Max-Age=0; Path=/; SameSite=lax; Secure"#;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mail {
+    Off,
+    Directory,
+    BrokenDirectory,
+}
 
 struct Fixture {
     state: AppState,
@@ -31,20 +41,30 @@ struct Fixture {
 
 impl Fixture {
     async fn start() -> Self {
-        Self::build(false).await
+        Self::build(Mail::Off).await
     }
 
     async fn start_with_mail() -> Self {
-        Self::build(true).await
+        Self::build(Mail::Directory).await
     }
 
-    async fn build(mail: bool) -> Self {
+    async fn start_with_broken_mail() -> Self {
+        Self::build(Mail::BrokenDirectory).await
+    }
+
+    async fn build(mail: Mail) -> Self {
         let dir = TempDir::new().unwrap();
         let rooms = dir.path().join("rooms");
         fs::create_dir_all(&rooms).unwrap();
-        let mail_dir = mail.then(|| dir.path().join("mail"));
-        if let Some(path) = &mail_dir {
-            fs::create_dir_all(path).unwrap();
+        let mail_dir = (mail != Mail::Off).then(|| {
+            let name = match mail {
+                Mail::Directory => "mail",
+                _ => "missing",
+            };
+            dir.path().join(name)
+        });
+        if mail == Mail::Directory {
+            fs::create_dir_all(mail_dir.as_ref().unwrap()).unwrap();
         }
         let mut env: HashMap<&str, String> = HashMap::new();
         if let Some(path) = &mail_dir {
@@ -129,10 +149,36 @@ impl Fixture {
             .unwrap()
     }
 
+    async fn request_verify(&self, email: &str) -> Response {
+        self.post_json("/auth/request-verify-token", json!({ "email": email }))
+            .await
+    }
+
+    async fn verify(&self, token: &str) -> Response {
+        self.post_json("/auth/verify", json!({ "token": token }))
+            .await
+    }
+
+    async fn forgot(&self, email: &str) -> Response {
+        self.post_json("/auth/forgot-password", json!({ "email": email }))
+            .await
+    }
+
+    async fn reset(&self, token: &str, password: &str) -> Response {
+        self.post_json(
+            "/auth/reset-password",
+            json!({ "token": token, "password": password }),
+        )
+        .await
+    }
+
     fn mails(&self) -> Vec<String> {
         let Some(dir) = &self.mail_dir else {
             return Vec::new();
         };
+        if !dir.is_dir() {
+            return Vec::new();
+        }
         let mut mails: Vec<String> = fs::read_dir(dir)
             .unwrap()
             .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
@@ -354,6 +400,318 @@ async fn register_is_rate_limited() {
     }
 
     let refused = fixture.register("late@example.org").await;
+
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        body(refused).await,
+        json!({ "detail": "Too Many Requests" })
+    );
+}
+
+/// The token a mail carries after `marker`.
+///
+/// lettre writes the body as quoted-printable, so a long link arrives folded with soft line
+/// breaks (`=\r\n`); they are undone before the token is read, and the token then ends at the
+/// first whitespace.
+fn link_token(mails: &[String], marker: &str) -> String {
+    for mail in mails {
+        let body = mail.replace("=\r\n", "").replace("=\n", "");
+        if let Some(start) = body.find(marker) {
+            let token: String = body[start + marker.len()..]
+                .chars()
+                .take_while(|character| {
+                    !character.is_whitespace() && !matches!(character, '"' | '<' | '>')
+                })
+                .collect();
+            if !token.is_empty() {
+                return token;
+            }
+        }
+    }
+    panic!("no {marker} link in {mails:?}");
+}
+
+/// A tracing writer that keeps every formatted event, so a test can assert what was *not*
+/// recorded. `tracing::subscriber::set_default` scopes it to the test's own thread.
+mod capture {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    pub struct Capture(Arc<Mutex<Vec<u8>>>);
+
+    impl Capture {
+        pub fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("the log")).into_owned()
+        }
+    }
+
+    impl io::Write for Capture {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("the log").extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Capture;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+}
+
+#[tokio::test]
+async fn verify_flow() {
+    let fixture = Fixture::start_with_mail().await;
+    let registered = fixture.register("new@example.org").await;
+    assert_eq!(registered.status(), StatusCode::CREATED);
+    let token = link_token(&fixture.mails(), "/ui/verify#");
+
+    let response = fixture.verify(&token).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let user = body(response).await;
+    assert_eq!(user["email"], "new@example.org");
+    assert_eq!(user["is_verified"], true);
+    let logged_in = fixture.login("new@example.org", PASSWORD).await;
+    assert_eq!(logged_in.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn verify_twice_is_already_verified() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.register("new@example.org").await;
+    let token = link_token(&fixture.mails(), "/ui/verify#");
+    assert_eq!(fixture.verify(&token).await.status(), StatusCode::OK);
+
+    let again = fixture.verify(&token).await;
+
+    assert_eq!(again.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(again).await, json!({ "detail": ALREADY_VERIFIED }));
+}
+
+#[tokio::test]
+async fn a_verify_token_for_an_old_email_is_bad() {
+    let fixture = Fixture::start_with_mail().await;
+    let id = fixture.unverified("new@example.org").await;
+    let token = accounts::verification_token(
+        id,
+        "old@example.org",
+        &fixture.state.secret,
+        SystemTime::now(),
+    )
+    .unwrap();
+
+    let response = fixture.verify(&token).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(response).await, json!({ "detail": VERIFY_BAD }));
+}
+
+#[tokio::test]
+async fn a_request_verify_token_mails_again_for_an_unverified_account() {
+    let fixture = Fixture::start_with_mail().await;
+    let id = fixture.unverified("new@example.org").await;
+
+    let response = fixture.request_verify("new@example.org").await;
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let mails = fixture.mails();
+    assert_eq!(mails.len(), 1, "{mails:?}");
+    let token = link_token(&mails, "/ui/verify#");
+    assert_eq!(fixture.verify(&token).await.status(), StatusCode::OK);
+    assert!(
+        db::user_by_id(fixture.pool(), id)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_verified
+    );
+}
+
+#[tokio::test]
+async fn forgot_password_answers_202_for_anyone() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+
+    for address in [
+        "known@example.org",
+        "unknown@example.org",
+        "orcid-1@orcid.placeholder.cocat.org",
+    ] {
+        let response = fixture.forgot(address).await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{address}");
+    }
+
+    let mails = fixture.mails();
+    assert_eq!(
+        mails.len(),
+        1,
+        "only the known address is mailed: {mails:?}"
+    );
+    assert!(mails[0].contains("To: known@example.org"), "{}", mails[0]);
+    assert!(
+        mails[0].contains("Subject: Reset your cocat password"),
+        "{}",
+        mails[0]
+    );
+}
+
+#[tokio::test]
+async fn reset_flow() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+    fixture.forgot("known@example.org").await;
+    let token = link_token(&fixture.mails(), "/ui/reset-password#");
+
+    let response = fixture.reset(&token, "new-password").await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let logged_in = fixture.login("known@example.org", "new-password").await;
+    assert_eq!(logged_in.status(), StatusCode::NO_CONTENT);
+    let old = fixture.login("known@example.org", PASSWORD).await;
+    assert_eq!(old.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_reset_token_works_once() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+    fixture.forgot("known@example.org").await;
+    let token = link_token(&fixture.mails(), "/ui/reset-password#");
+    assert_eq!(
+        fixture.reset(&token, "new-password").await.status(),
+        StatusCode::OK
+    );
+
+    let again = fixture.reset(&token, "another-password").await;
+
+    assert_eq!(again.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(again).await, json!({ "detail": RESET_BAD }));
+    assert_eq!(
+        fixture
+            .login("known@example.org", "new-password")
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn an_expired_token_is_bad() {
+    let fixture = Fixture::start_with_mail().await;
+    let past = SystemTime::now() - Duration::from_secs(2 * 3600);
+    let pending = fixture.unverified("new@example.org").await;
+    let verify =
+        accounts::verification_token(pending, "new@example.org", &fixture.state.secret, past)
+            .unwrap();
+
+    let response = fixture.verify(&verify).await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(response).await, json!({ "detail": VERIFY_BAD }));
+
+    let known = fixture.verified("known@example.org").await;
+    let user = db::user_by_id(fixture.pool(), known)
+        .await
+        .unwrap()
+        .unwrap();
+    let reset =
+        accounts::reset_token(known, &user.hashed_password, &fixture.state.secret, past).unwrap();
+
+    let response = fixture.reset(&reset, "new-password").await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(response).await, json!({ "detail": RESET_BAD }));
+}
+
+#[tokio::test]
+async fn tokens_are_not_interchangeable() {
+    let fixture = Fixture::start_with_mail().await;
+    let pending = fixture.unverified("new@example.org").await;
+    let user = db::user_by_id(fixture.pool(), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = SystemTime::now();
+    let verify =
+        accounts::verification_token(pending, "new@example.org", &fixture.state.secret, now)
+            .unwrap();
+    let reset =
+        accounts::reset_token(pending, &user.hashed_password, &fixture.state.secret, now).unwrap();
+
+    let as_reset = fixture.reset(&verify, "new-password").await;
+    assert_eq!(as_reset.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(as_reset).await, json!({ "detail": RESET_BAD }));
+
+    let as_verify = fixture.verify(&reset).await;
+    assert_eq!(as_verify.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(as_verify).await, json!({ "detail": VERIFY_BAD }));
+
+    fixture.verified("known@example.org").await;
+    let session = cookie_token(&fixture.login("known@example.org", PASSWORD).await);
+    assert_eq!(
+        fixture.verify(&session).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        fixture.reset(&session, "new-password").await.status(),
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn no_token_or_link_reaches_the_log() {
+    let fixture = Fixture::start_with_broken_mail().await;
+    let log = capture::Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(log.clone())
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let pending = fixture.unverified("new@example.org").await;
+    let token = accounts::verification_token(
+        pending,
+        "new@example.org",
+        &fixture.state.secret,
+        SystemTime::now(),
+    )
+    .unwrap();
+    assert_eq!(fixture.verify(&token).await.status(), StatusCode::OK);
+    fixture.verified("known@example.org").await;
+    assert_eq!(
+        fixture.forgot("known@example.org").await.status(),
+        StatusCode::ACCEPTED
+    );
+
+    let text = log.text();
+    assert!(
+        !text.is_empty(),
+        "nothing was captured, the test proves nothing"
+    );
+    assert!(!text.contains(&token), "a token reached the log: {text}");
+    assert!(!text.contains("eyJ"), "a token reached the log: {text}");
+    assert!(!text.contains(PUBLIC_URL), "a link reached the log: {text}");
+}
+
+#[tokio::test]
+async fn forgot_password_is_rate_limited() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+
+    for _ in 0..10 {
+        let response = fixture.forgot("known@example.org").await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    let refused = fixture.forgot("known@example.org").await;
 
     assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(

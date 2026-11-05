@@ -17,6 +17,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use thiserror::Error;
@@ -150,24 +151,44 @@ pub fn mint_token(user_id: Uuid, secret: &str, now: SystemTime) -> Result<String
         aud: vec![AUDIENCE.to_owned()],
         exp: i64::try_from(issued_at + LIFETIME_SECONDS).map_err(|_| AuthError::BadToken)?,
     };
+    signed_claims(&claims, secret)
+}
+
+pub fn verify_token(token: &str, secret: &str) -> Result<Uuid, AuthError> {
+    let claims: Claims = read_claims(token, secret, AUDIENCE)?;
+    Uuid::parse_str(&claims.sub).map_err(|_| AuthError::BadToken)
+}
+
+/// Sign one claim set with the server secret. Every token kind is one of these and is told
+/// apart by its audience, so a link of one kind can never be spent as another.
+pub fn signed_claims<T: Serialize>(claims: &T, secret: &str) -> Result<String, AuthError> {
     encode(
         &Header::new(Algorithm::HS256),
-        &claims,
+        claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .map_err(|_| AuthError::BadToken)
 }
 
-pub fn verify_token(token: &str, secret: &str) -> Result<Uuid, AuthError> {
+/// Read a claim set that was signed for `audience` and has not expired.
+///
+/// pyjwt, which the Python server uses, applies no leeway, and both servers share the secret:
+/// a link that expires at a given instant must stop working at that instant on either.
+pub fn read_claims<T: DeserializeOwned>(
+    token: &str,
+    secret: &str,
+    audience: &str,
+) -> Result<T, AuthError> {
     let mut validation = Validation::new(Algorithm::HS256);
-    validation.set_audience(&[AUDIENCE]);
-    let data = decode::<Claims>(
+    validation.set_audience(&[audience]);
+    validation.leeway = 0;
+    decode::<T>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
         &validation,
     )
-    .map_err(|_| AuthError::BadToken)?;
-    Uuid::parse_str(&data.claims.sub).map_err(|_| AuthError::BadToken)
+    .map(|data| data.claims)
+    .map_err(|_| AuthError::BadToken)
 }
 
 pub fn session_cookie(headers: &HeaderMap) -> Option<String> {

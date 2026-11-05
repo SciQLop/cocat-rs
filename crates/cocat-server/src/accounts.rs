@@ -1,20 +1,23 @@
 //! The account lifecycle steps the REST API and the CLI share: registration, the personal
-//! room that comes with it, and the verification mail.
+//! room that comes with it, and the two mailed links (confirm the address, choose a new
+//! password).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::db::{self, DbError};
+use crate::auth::{self, AuthError};
+use crate::db::{self, DbError, User};
 use crate::mail::{self, Mailer};
 
-/// The audience that keeps a verification token from being spent as a reset token.
+/// The audiences that keep one kind of link from being spent as another.
 const VERIFY_AUDIENCE: &str = "cocat:verify";
-const VERIFY_LIFETIME_SECONDS: u64 = 3600;
+const RESET_AUDIENCE: &str = "cocat:reset";
+const LINK_LIFETIME_SECONDS: u64 = 3600;
 
 #[derive(Debug, Error)]
 pub enum AccountError {
@@ -22,8 +25,14 @@ pub enum AccountError {
     Duplicate,
     #[error("the clock is before the unix epoch")]
     Clock,
-    #[error(transparent)]
-    Token(#[from] jsonwebtoken::errors::Error),
+    #[error("the verification token is bad, expired, or for another address")]
+    BadVerifyToken,
+    #[error("the account is already verified")]
+    AlreadyVerified,
+    #[error("the reset token is bad, expired, or already spent")]
+    BadResetToken,
+    #[error("cannot sign a link")]
+    Sign(#[from] AuthError),
     #[error(transparent)]
     Db(#[from] DbError),
 }
@@ -50,6 +59,97 @@ pub async fn register(state: &AppState, email: &str, password: &str) -> Result<U
     Ok(id)
 }
 
+/// Mail a fresh confirmation link whenever an account could use one.
+///
+/// Without a mailer registration verified every account on the spot, so there is nothing to
+/// send and the caller still answers 202.
+pub async fn request_verification(state: &AppState, email: &str) {
+    let Some(mailer) = &state.mailer else {
+        return;
+    };
+    let Some(user) = owner_of(state, email).await else {
+        return;
+    };
+    if user.is_verified {
+        return;
+    }
+    send_verification(state, mailer, user.id, &user.email).await;
+}
+
+/// Turn a confirmation link into a verified account.
+pub async fn verify(state: &AppState, token: &str) -> Result<User, AccountError> {
+    let claims: VerifyClaims = auth::read_claims(token, &state.secret, VERIFY_AUDIENCE)
+        .map_err(|_| AccountError::BadVerifyToken)?;
+    // Python finds the account by the address in the token and then checks the id, so a link
+    // mailed before an address change stops working instead of confirming the new one.
+    let user = db::user_by_email(&state.pool, &claims.email)
+        .await?
+        .ok_or(AccountError::BadVerifyToken)?;
+    if claims.sub != user.id.to_string() {
+        return Err(AccountError::BadVerifyToken);
+    }
+    if user.is_verified {
+        return Err(AccountError::AlreadyVerified);
+    }
+    if !db::set_verified(&state.pool, user.id).await? {
+        return Err(AccountError::BadVerifyToken);
+    }
+    Ok(User {
+        is_verified: true,
+        ..user
+    })
+}
+
+/// Mail a reset link whenever an account could use one; the caller answers 202 either way.
+pub async fn forgot_password(state: &AppState, email: &str) {
+    let Some(mailer) = &state.mailer else {
+        return;
+    };
+    let Some(user) = owner_of(state, email).await else {
+        return;
+    };
+    send_reset(state, mailer, &user).await;
+}
+
+/// Spend a reset link: the token names the account and the password it was issued against.
+pub async fn reset_password(
+    state: &AppState,
+    token: &str,
+    password: &str,
+) -> Result<(), AccountError> {
+    let claims: ResetClaims = auth::read_claims(token, &state.secret, RESET_AUDIENCE)
+        .map_err(|_| AccountError::BadResetToken)?;
+    let id = Uuid::parse_str(&claims.sub).map_err(|_| AccountError::BadResetToken)?;
+    let user = db::user_by_id(&state.pool, id)
+        .await?
+        .ok_or(AccountError::BadResetToken)?;
+    if claims.password_fgpt != password_fingerprint(&user.hashed_password) {
+        return Err(AccountError::BadResetToken);
+    }
+    if !user.is_active {
+        return Err(AccountError::BadResetToken);
+    }
+    if !db::set_password(&state.pool, user.id, password).await? {
+        return Err(AccountError::BadResetToken);
+    }
+    Ok(())
+}
+
+/// The account behind an address, or `None` when there is none, it is inactive, or it cannot
+/// be read. Both mailed-link requests answer the same way whatever this finds, so a failure to
+/// read is logged rather than turned into a reply that would tell a stranger's address apart
+/// from a member's.
+async fn owner_of(state: &AppState, email: &str) -> Option<User> {
+    match db::user_by_email(&state.pool, email).await {
+        Ok(Some(user)) if user.is_active && !mail::is_placeholder(&user.email) => Some(user),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(%error, "cannot look up an address for a mailed link");
+            None
+        }
+    }
+}
+
 async fn send_verification(state: &AppState, mailer: &Mailer, id: Uuid, email: &str) {
     if mail::is_placeholder(email) {
         return;
@@ -57,18 +157,40 @@ async fn send_verification(state: &AppState, mailer: &Mailer, id: Uuid, email: &
     let token = match verification_token(id, email, &state.secret, SystemTime::now()) {
         Ok(token) => token,
         Err(error) => {
-            tracing::warn!(%error, "cannot build a verification token");
+            tracing::warn!(%error, "cannot sign a verification link");
             return;
         }
     };
-    let (subject, body) = mail::verification_mail(&state.links.ui(&format!("/verify#{token}")));
-    if let Err(error) = mailer.send(email, subject, &body).await {
-        // The token must never reach the log, so only the failure is recorded.
-        tracing::warn!(%error, "could not mail the verification link");
+    let text = mail::verification_mail(&state.links.ui(&format!("/verify#{token}")));
+    deliver(mailer, email, text).await;
+}
+
+async fn send_reset(state: &AppState, mailer: &Mailer, user: &User) {
+    let token = match reset_token(
+        user.id,
+        &user.hashed_password,
+        &state.secret,
+        SystemTime::now(),
+    ) {
+        Ok(token) => token,
+        Err(error) => {
+            tracing::warn!(%error, "cannot sign a reset link");
+            return;
+        }
+    };
+    let text = mail::reset_mail(&state.links.ui(&format!("/reset-password#{token}")));
+    deliver(mailer, &user.email, text).await;
+}
+
+/// The mail is best effort: a refused message changes neither the reply nor the account, and
+/// the token must never reach the log, so only the failure is recorded.
+async fn deliver(mailer: &Mailer, to: &str, (subject, body): (&'static str, String)) {
+    if let Err(error) = mailer.send(to, subject, &body).await {
+        tracing::warn!(%error, "could not mail the link");
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct VerifyClaims {
     sub: String,
     email: String,
@@ -76,27 +198,63 @@ struct VerifyClaims {
     exp: i64,
 }
 
-/// A short-lived link token: the subject and the address it was issued for, in one audience
-/// of its own, so the reset route (another audience) can never accept it.
-fn verification_token(
+#[derive(Debug, Deserialize, Serialize)]
+struct ResetClaims {
+    sub: String,
+    password_fgpt: String,
+    aud: String,
+    exp: i64,
+}
+
+/// A confirmation link for the address as it is now, in an audience of its own so the reset
+/// route can never accept it.
+///
+/// `now` is a parameter so a test can mint an expired link without sleeping.
+pub fn verification_token(
     id: Uuid,
     email: &str,
     secret: &str,
     now: SystemTime,
 ) -> Result<String, AccountError> {
-    let issued_at = now
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| AccountError::Clock)?
-        .as_secs();
     let claims = VerifyClaims {
         sub: id.to_string(),
         email: email.to_owned(),
         aud: VERIFY_AUDIENCE.to_owned(),
-        exp: i64::try_from(issued_at + VERIFY_LIFETIME_SECONDS).map_err(|_| AccountError::Clock)?,
+        exp: expiry(now)?,
     };
-    Ok(encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )?)
+    Ok(auth::signed_claims(&claims, secret)?)
+}
+
+/// A reset link that also binds to the password in force when it was issued: changing the
+/// password is what spends the link, so a second copy of it stops matching as well.
+pub fn reset_token(
+    id: Uuid,
+    hashed_password: &str,
+    secret: &str,
+    now: SystemTime,
+) -> Result<String, AccountError> {
+    let claims = ResetClaims {
+        sub: id.to_string(),
+        password_fgpt: password_fingerprint(hashed_password),
+        aud: RESET_AUDIENCE.to_owned(),
+        exp: expiry(now)?,
+    };
+    Ok(auth::signed_claims(&claims, secret)?)
+}
+
+fn expiry(now: SystemTime) -> Result<i64, AccountError> {
+    let issued_at = now
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| AccountError::Clock)?
+        .as_secs();
+    i64::try_from(issued_at + LINK_LIFETIME_SECONDS).map_err(|_| AccountError::Clock)
+}
+
+/// fastapi-users hashes the stored hash with its password helper; any one-way function of it
+/// serves the same purpose, and a digest keeps validating a reset link cheap.
+fn password_fingerprint(hashed_password: &str) -> String {
+    Sha256::digest(hashed_password.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
