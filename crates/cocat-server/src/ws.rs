@@ -9,18 +9,32 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::{get, post};
+use bytes::Bytes;
 use cocat_core::role::Role;
 use futures_util::{SinkExt, StreamExt};
+use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::AppState;
-use crate::room::{ClientId, RoomHandle};
+use crate::room::{ClientId, RoomError, RoomGone, RoomHandle};
 use crate::{auth, db};
 
 pub const POLICY_VIOLATION: u16 = 1008;
 pub const INTERNAL_ERROR: u16 = 1011;
 
+const ATTACH_TRIES: usize = 3;
+
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Error)]
+enum AttachError {
+    #[error(transparent)]
+    Room(#[from] RoomError),
+    #[error("the room task failed: {0}")]
+    Join(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Gone(#[from] RoomGone),
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -46,14 +60,7 @@ async fn serve(socket: WebSocket, room_id: String, headers: HeaderMap, state: Ap
         Ok(Some(role)) => role,
         Ok(None) | Err(_) => return close(socket, POLICY_VIOLATION, "not a member").await,
     };
-    let room = match state.rooms.get_or_open(&room_id) {
-        Ok(room) => room,
-        Err(error) => {
-            tracing::warn!(%error, room = %room_id, "cannot open the room");
-            return close(socket, INTERNAL_ERROR, "cannot open the room").await;
-        }
-    };
-    bridge(socket, room, role).await;
+    bridge(socket, state, room_id, role).await;
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -64,11 +71,18 @@ async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
     let _ = socket.send(Message::Close(Some(frame))).await;
 }
 
-async fn bridge(socket: WebSocket, room: RoomHandle, role: Role) {
+async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role) {
     let client = next_client();
     let (out, mut frames) = mpsc::unbounded_channel();
+    let room = match attach(&state, &room_id, client, role, out).await {
+        Ok(room) => room,
+        Err(error) => {
+            tracing::warn!(%error, room = %room_id, "cannot attach the socket");
+            return close(socket, INTERNAL_ERROR, "cannot attach to the room").await;
+        }
+    };
+
     let (mut sink, mut stream) = socket.split();
-    room.attach(client, role, out);
     let writer = tokio::spawn(async move {
         while let Some(frame) = frames.recv().await {
             if sink.send(Message::Binary(frame)).await.is_err() {
@@ -86,8 +100,29 @@ async fn bridge(socket: WebSocket, room: RoomHandle, role: Role) {
         }
     }
 
-    room.detach(client);
+    room.detach(client).await;
     let _ = writer.await;
+}
+
+async fn attach(
+    state: &AppState,
+    room_id: &str,
+    client: ClientId,
+    role: Role,
+    out: mpsc::UnboundedSender<Bytes>,
+) -> Result<RoomHandle, AttachError> {
+    for _ in 0..ATTACH_TRIES {
+        let rooms = state.rooms.clone();
+        let id = room_id.to_owned();
+        let room = tokio::task::spawn_blocking(move || rooms.get_or_open(&id))
+            .await?
+            .map_err(AttachError::Room)?;
+        match room.attach(client, role, out.clone()) {
+            Ok(()) => return Ok(room),
+            Err(RoomGone) => continue,
+        }
+    }
+    Err(AttachError::Gone(RoomGone))
 }
 
 fn next_client() -> ClientId {

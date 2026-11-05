@@ -40,8 +40,26 @@ fn update_frame(payload: &[u8]) -> Bytes {
 
 fn attach(handle: &RoomHandle, client: ClientId, role: Role) -> UnboundedReceiver<Bytes> {
     let (out, frames) = tokio::sync::mpsc::unbounded_channel();
-    handle.attach(client, role, out);
+    handle
+        .attach(client, role, out)
+        .expect("the room accepted the client");
     frames
+}
+
+fn attach_with_retry(
+    manager: &RoomManager,
+    room_id: &str,
+    client: ClientId,
+    role: Role,
+) -> (RoomHandle, UnboundedReceiver<Bytes>) {
+    for _ in 0..3 {
+        let handle = manager.get_or_open(room_id).unwrap();
+        let (out, frames) = tokio::sync::mpsc::unbounded_channel();
+        if handle.attach(client, role, out).is_ok() {
+            return (handle, frames);
+        }
+    }
+    panic!("the room never accepted client {client}");
 }
 
 async fn next(frames: &mut UnboundedReceiver<Bytes>) -> Message {
@@ -151,8 +169,8 @@ async fn two_clients_updates_both_land_and_both_are_broadcast() {
         assert_eq!(seen, [alpha.clone(), beta.clone()]);
     }
 
-    room.detach(1);
-    room.detach(2);
+    room.detach(1).await;
+    room.detach(2).await;
 
     let (_, updates) = FileRoomStore::open(dir.path(), "room-two").unwrap();
     assert_eq!(updates, [Bytes::from(alpha), Bytes::from(beta)]);
@@ -186,7 +204,7 @@ async fn the_last_detach_flushes_and_unloads_the_room() {
     room.frame(1, update_frame(&payload));
     next(&mut client).await;
 
-    room.detach(1);
+    room.detach(1).await;
 
     assert_eq!(manager.open_rooms(), 0);
     let (_, updates) = FileRoomStore::open(dir.path(), "room-detach").unwrap();
@@ -201,7 +219,7 @@ async fn reopening_a_room_replays_the_file() {
     next(&mut client).await;
     room.frame(1, update_frame(&update_with("key", "value")));
     next(&mut client).await;
-    room.detach(1);
+    room.detach(1).await;
 
     let reopened = manager.get_or_open("room-replay").unwrap();
     let mut viewer = attach(&reopened, 2, Role::Viewer);
@@ -236,4 +254,59 @@ async fn an_undecodable_record_is_skipped_at_open() {
         other => panic!("expected a step2, got {other:?}"),
     };
     assert_eq!(content(&apply(&reply), "key").as_deref(), Some("value"));
+}
+
+#[tokio::test]
+async fn an_editor_update_is_on_disk_while_the_client_is_attached() {
+    let (dir, manager) = manager();
+    let room = manager.get_or_open("room-durable").unwrap();
+    let mut client = attach(&room, 1, Role::Editor);
+    next(&mut client).await;
+
+    let payload = update_with("key", "value");
+    room.frame(1, update_frame(&payload));
+    next(&mut client).await;
+
+    let (_, updates) = FileRoomStore::open(dir.path(), "room-durable").unwrap();
+    assert_eq!(updates, [Bytes::from(payload)]);
+}
+
+#[tokio::test]
+async fn an_empty_update_is_not_written_or_broadcast() {
+    let (dir, manager) = manager();
+    let room = manager.get_or_open("room-empty").unwrap();
+    let mut client = attach(&room, 1, Role::Editor);
+    next(&mut client).await;
+
+    room.frame(
+        1,
+        Bytes::from(Message::Sync(SyncMessage::SyncStep2(vec![0, 0])).encode_v1()),
+    );
+    room.frame(1, sync_step1());
+
+    assert!(matches!(
+        next(&mut client).await,
+        Message::Sync(SyncMessage::SyncStep2(_))
+    ));
+    let path = dir.path().join("room-empty.y");
+    assert_eq!(fs::metadata(path).unwrap().len(), HEADER.len() as u64);
+}
+
+#[tokio::test]
+async fn a_detach_and_an_attach_racing_keep_the_room_serving() {
+    let (_dir, manager) = manager();
+    for _ in 0..200 {
+        let (room, mut first) = attach_with_retry(&manager, "room-race", 1, Role::Editor);
+        next(&mut first).await;
+
+        let detaching = tokio::spawn(async move { room.detach(1).await });
+        let (room, mut second) = attach_with_retry(&manager, "room-race", 2, Role::Editor);
+
+        assert!(matches!(
+            next(&mut second).await,
+            Message::Sync(SyncMessage::SyncStep1(_))
+        ));
+        detaching.await.unwrap();
+        room.detach(2).await;
+    }
 }
