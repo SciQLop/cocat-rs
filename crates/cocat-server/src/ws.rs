@@ -1,13 +1,13 @@
-//! The websocket route: authenticate the cookie, check the role, then bridge the socket
-//! to the room's actor thread.
+//! The websocket route: authenticate the cookie and check the role before the handshake,
+//! then bridge the socket to the room's actor thread.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
-use axum::response::Response;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
 use cocat_core::role::Role;
@@ -19,7 +19,6 @@ use crate::AppState;
 use crate::room::{ClientId, RoomError, RoomGone, RoomHandle};
 use crate::{auth, db};
 
-pub const POLICY_VIOLATION: u16 = 1008;
 pub const INTERNAL_ERROR: u16 = 1011;
 
 const ATTACH_TRIES: usize = 3;
@@ -49,18 +48,18 @@ async fn room_socket(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
-    upgrade.on_upgrade(move |socket| serve(socket, room_id, headers, state))
+    let role = match lobby_role(&state, &room_id, &headers).await {
+        Some(role) => role,
+        None => return StatusCode::FORBIDDEN.into_response(),
+    };
+    upgrade.on_upgrade(move |socket| bridge(socket, state, room_id, role))
 }
 
-async fn serve(socket: WebSocket, room_id: String, headers: HeaderMap, state: AppState) {
-    let Ok(user) = auth::authenticate(&state.pool, &headers, &state.secret).await else {
-        return close(socket, POLICY_VIOLATION, "not logged in").await;
-    };
-    let role = match db::role_in(&state.pool, &room_id, user).await {
-        Ok(Some(role)) => role,
-        Ok(None) | Err(_) => return close(socket, POLICY_VIOLATION, "not a member").await,
-    };
-    bridge(socket, state, room_id, role).await;
+async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<Role> {
+    let user = auth::authenticate(&state.pool, headers, &state.secret)
+        .await
+        .ok()?;
+    db::role_in(&state.pool, room_id, user).await.ok()?
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {

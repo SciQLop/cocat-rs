@@ -70,7 +70,7 @@ impl Fixture {
         auth::mint_token(user, SECRET, SystemTime::now()).unwrap()
     }
 
-    async fn connect(&self, room_id: &str, token: Option<&str>) -> Socket {
+    async fn handshake(&self, room_id: &str, token: Option<&str>) -> Result<Socket, u16> {
         let mut request = format!("ws://{}/room/{room_id}", self.addr)
             .into_client_request()
             .unwrap();
@@ -80,9 +80,22 @@ impl Fixture {
                 format!("fastapiusersauth={token}").parse().unwrap(),
             );
         }
-        let (socket, response) = connect_async(request).await.unwrap();
-        assert_eq!(response.status(), 101);
-        socket
+        match connect_async(request).await {
+            Ok((socket, response)) => {
+                assert_eq!(response.status(), 101);
+                Ok(socket)
+            }
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                Err(response.status().as_u16())
+            }
+            Err(error) => panic!("the handshake failed: {error}"),
+        }
+    }
+
+    async fn connect(&self, room_id: &str, token: Option<&str>) -> Socket {
+        self.handshake(room_id, token)
+            .await
+            .unwrap_or_else(|status| panic!("the handshake was refused with {status}"))
     }
 }
 
@@ -119,13 +132,6 @@ async fn next_message(socket: &mut Socket) -> Message {
     }
 }
 
-async fn close_code(socket: &mut Socket) -> u16 {
-    match next_ws(socket).await {
-        WsMessage::Close(Some(frame)) => u16::from(frame.code),
-        other => panic!("expected a close frame, got {other:?}"),
-    }
-}
-
 fn content(doc: &Doc, key: &str) -> Option<String> {
     doc.get_or_insert_map("content")
         .get(&doc.transact(), key)
@@ -133,15 +139,16 @@ fn content(doc: &Doc, key: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn anonymous_is_closed_with_1008() {
+async fn an_anonymous_handshake_is_refused_with_403() {
     let fixture = Fixture::start().await;
-    let mut socket = fixture.connect("room-anonymous", None).await;
 
-    assert_eq!(close_code(&mut socket).await, 1008);
+    let status = fixture.handshake("room-anonymous", None).await.err();
+
+    assert_eq!(status, Some(403));
 }
 
 #[tokio::test]
-async fn a_non_member_is_closed_with_1008() {
+async fn a_non_member_handshake_is_refused_with_403() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     db::create_room(&fixture.pool, owner, "room-members", "Members")
@@ -149,11 +156,12 @@ async fn a_non_member_is_closed_with_1008() {
         .unwrap();
     let outsider = fixture.user("outsider@example.org").await;
 
-    let mut socket = fixture
-        .connect("room-members", Some(&fixture.token(outsider)))
-        .await;
+    let status = fixture
+        .handshake("room-members", Some(&fixture.token(outsider)))
+        .await
+        .err();
 
-    assert_eq!(close_code(&mut socket).await, 1008);
+    assert_eq!(status, Some(403));
 }
 
 #[tokio::test]
