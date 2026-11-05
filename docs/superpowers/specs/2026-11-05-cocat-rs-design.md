@@ -1,7 +1,8 @@
 # cocat-rs — design
 
-Status: draft, 2026-11-05, revised after review. Supersedes nothing yet; the Python
-`cocat` stays the product until each phase below replaces a piece of it.
+Status: draft, 2026-11-05, revised after review and the team decisions. The Python
+`cocat` keeps running until the Rust server is feature-complete; there is no side-by-side
+production phase.
 
 ## Why
 
@@ -12,13 +13,13 @@ every engine feature waits for a binding. The goals of the rewrite:
 
 1. **No third-party bindings on the server.** Use `yrs` (and later `ysr`) directly.
 2. **Scale:** rooms spread over all cores, and a path to a disk-backed engine so room
-   size is no longer bounded by RAM. Phases 0–4 do not reduce memory per room — the
+   size is no longer bounded by RAM. Phases 0–5 do not reduce memory per room — the
    engine's in-memory representation is the same — the win there is parallelism, CPU and
-   maintainability; only phase 5 changes the memory ceiling.
+   maintainability; only phase 6 changes the memory ceiling.
 3. **One data model** (events, catalogues, validation, VOTable) shared by server and
    client, in one Rust crate.
-4. **Later, one client**: a Rust core with our own *narrow* Python bindings that
-   replaces the Python `cocat` package under the same name and API.
+4. **One client**: a Rust core with our own *narrow* Python bindings that replaces the
+   Python `cocat` package under the same name and API.
 
 Non-goals: changing the wire protocol (it stays the standard Yjs sync protocol, so
 existing pycrdt clients keep working throughout); changing the user-facing features
@@ -49,38 +50,22 @@ One Cargo workspace:
 | Crate | Role |
 |---|---|
 | `cocat-core` | Data model over a Yrs `Doc` (same layout as Python cocat: root maps `events`, `catalogues`; nested maps; tags/products as maps-as-sets), validation, VOTable import/export, room file storage |
-| `cocat-server` | axum: room websockets (Yjs sync via `yrs::sync`), REST `/api`, auth, web UI |
+| `cocat-server` | axum: room websockets (Yjs sync via `yrs::sync`), REST `/api`, auth, web UI, CLI, sqlx schema |
 | `cocat-py` (later) | PyO3/maturin bindings exposing cocat's current *public Python API*, not the CRDT |
 
 ### Room storage
 
 One concrete `FileRoomStore` for now (`load`, `append`, `flush`), no trait: the trait
-earns its keep only when a second engine exists (phase 5). It speaks the existing `.y`
-format — `"0.0.1"` + `\0` header, then `varuint(len) + update-v1` records — so Rust
-opens rooms Python wrote and Python opens rooms Rust wrote.
+earns its keep only when a second engine exists (phase 6). It speaks the existing `.y`
+format — `"0.0.1"` + `\0` header, then `varuint(len) + update-v1` records — so the
+import tool reads Python rooms directly.
 
-Phase 1 is append-only. Recovery: read records until one fails, truncate to the last
-good offset, log it; a crash mid-append must not make the room unreadable. Durability:
-flush before a room unloads and on SIGINT/SIGTERM, and fsync per flush — the file is the
-only copy.
+Append-only. Recovery: read records until one fails, truncate to the last good offset,
+log it; a crash mid-append must not make the room unreadable. Durability: flush before a
+room unloads and on SIGINT/SIGTERM, and fsync per flush — the file is the only copy.
 
-Compaction and `history/<room>/<date>.y` are a later item, not phase 1, and gated on a
-retention/deletion policy: an archive is a full Yjs history, deleted events and author
-fields included.
-
-### Who owns a room
-
-From phase 1 the Rust process owns a room: its sockets, its file, its lifecycle. The
-room-lifecycle mutations move with it (member remove, role change, ownership transfer,
-room delete, invitation accept). Python keeps accounts, the rest of `/api`, and the UI.
-
-Reason: the Python kick mechanism is an in-process registry of sockets. Across a split
-it closes nothing, so a removed member keeps writing and a deleted room's file is
-rewritten by the still-live room. One owner per room is the only version of the split
-that keeps the anti-goal "a removed member keeps reading or writing the room" true.
-
-Fallback if the move slips: Python calls a private admin endpoint on Rust (shared
-secret, localhost only) to close sockets and drop the room.
+Compaction and `history/<room>/<date>.y` are a later item, gated on a retention/deletion
+policy: an archive is a full Yjs history, deleted events and author fields included.
 
 ### Concurrency and memory
 
@@ -92,50 +77,32 @@ A room costs ~580 MB at 100k events, so opening more rooms means more RAM: a bud
 — unload least-recently-used rooms with no clients first, refuse a new room beyond the
 budget with a clear close reason.
 
-## Compatibility with the Python server (hard requirements)
+## The HTTP and websocket contract
 
-The Rust server must be a drop-in replacement for the same deployment:
+The SciQLop plugin and the Python `cocat` client are what we must not break. They depend
+on:
 
-- **Same SQLite database and Alembic schema** (user, room, membership, invitation,
-  oauth_account). Rust reads/writes it with `sqlx` and **never migrates**: it checks
-  `alembic_version` at startup and refuses an unknown revision. Keep transactions short
-  and never hold a read transaction across an `await` (the Python suite asserts no
-  connection is held while a socket is open). Alembic stays the migration tool, run as
-  `cocat migrate` from a pinned Python env, until the Python package is retired; moving
-  to sqlx instead would need a baseline row in `_sqlx_migrations` for existing databases.
-- **Same login cookie:** `fastapi-users` JWT, HS256, `aud = ["fastapi-users:auth"]`,
-  `sub` = user id (a string UUID), `exp` required, secret from `<db_path>.secret` /
-  `COCAT_SECRET`; cookie `fastapiusersauth`, path `/`, `Secure`, `HttpOnly`,
-  `SameSite=lax`, session cookie; the user must be active, and verified when a mailer
-  is configured. Password-reset and verification tokens are JWTs signed with the same
-  secret (`aud = "fastapi-users:reset"` / `"fastapi-users:verify"`, 3600 s), so links
-  issued before the cutover keep working.
-- **Same password hashes:** pwdlib Argon2 (PHC strings) with bcrypt fallback; a bcrypt
-  hash is rehashed to Argon2 on login.
-- **Same invitation tokens:** `secrets.token_urlsafe(32)`, stored as the sha256 hex in
-  `invitation.token_hash`.
-- **Same storage formats:** UUIDs as `CHAR(36)` with dashes, roles as the enum names in
-  a `VARCHAR` + `CHECK`, timestamps as naive-UTC `YYYY-MM-DD HH:MM:SS.ffffff`. The
-  `accesstoken` table is unused.
-- **Same `.y` room files** and room ids (`[A-Za-z0-9_-]{1,64}`; new rooms are uuid4 hex).
-- **Same routes and behaviour:** `/room/{id}` websocket, `/auth/*`, `/api/*`, `/ui/*`,
-  `COCAT_PROXY_PREFIX`, `COCAT_PUBLIC_URL`, SMTP and OAuth env vars, rate limits,
-  viewer write-blocking, kick on removal/role change.
-- **Same rate limits:** a fixed window keyed `path|client_ip`, 10 calls / 60 s per
-  route, `COCAT_TRUSTED_PROXIES` hops on `X-Forwarded-For`, 10 000 keys, plain 429.
-  Hand-rolled (~40 lines); `tower_governor` has different semantics and would need the
-  key derivation written anyway.
-- **Same websocket handshake:** a refused client is accepted and then closed with code
-  1008, never rejected at the upgrade. Non-SYNC frames are ignored, as today.
+- **Routes and payloads as today:** `/room/{id}` (websocket), `/rooms`, `/room/{id}/users`,
+  `/api/*`, `/auth/*`, `/ui/*`, and the JSON shapes and status codes of the Python API
+  tests.
+- **The login cookie:** name `fastapiusersauth`, path `/`, `Secure`, `HttpOnly`,
+  `SameSite=lax`, session cookie. The name and attributes are the contract (the client
+  reads it by name); the token format is ours, with no live sessions to preserve.
+- **Websocket behaviour:** a refused client is accepted and then closed with code 1008,
+  never rejected at the upgrade; viewer updates are dropped but sync requests answered;
+  removal, role change and room deletion close that user's socket; non-SYNC frames are
+  ignored.
+- **Room ids** `[A-Za-z0-9_-]{1,64}`, and `.y` files that pycrdt can reopen.
+- **Environment variables:** `COCAT_PROXY_PREFIX`, `COCAT_PUBLIC_URL`, `COCAT_SECRET`,
+  `COCAT_TRUSTED_PROXIES`, SMTP and OAuth settings. Behind the proxy, Rust routes on the
+  stripped path and generates URLs with the prefix.
+- **Rate limits:** a fixed window keyed `path|client_ip`, 10 calls / 60 s per route,
+  `COCAT_TRUSTED_PROXIES` hops on `X-Forwarded-For`, 10 000 keys, plain 429. Hand-rolled
+  (~40 lines); `tower_governor` has different semantics and would need the key derivation
+  written anyway.
 
-### The proxy split
-
-Only a websocket upgrade on exactly `/room/{id}` goes to Rust (`map $http_upgrade`, with
-`Upgrade`/`Connection` forwarded). `GET /room/{id}/users` and `GET /rooms` are Python
-HTTP routes under the same prefix and stay on Python. The proxy strips
-`COCAT_PROXY_PREFIX`, so Rust routes on the stripped path and only generates URLs with
-the prefix. Both backends share the cookie. Raise the proxy's read timeout for the room
-location (or add ping/pong) so idle rooms are not cut.
+Rust owns its schema (sqlx migrations from day one). No compatibility with the Python
+database is required beyond what the import tool reads.
 
 ## How the Python suite drives Rust
 
@@ -148,11 +115,10 @@ What exists in the Python repo today:
   fixture). This is the behavioural spec: viewer blocking, kicks, invitations, roles,
   1008s.
 - `tests/test_ui_*.py`: ~200 tests drive NiceGUI's in-process simulator. They cannot run
-  against a live server and cannot be reused by a Rust UI.
+  against a live server and cannot be reused by the Rust UI.
 - `tests/test_api.py`: six tests of the Python *client* library (keyring monkeypatched);
-  it is the client parity test for phase 4.
-- `tests/utils.py` seeds users and rooms by shelling out to the Python `cocat` CLI, so
-  the Python package stays installed in CI even when the server binary is Rust.
+  it is the client parity test for phase 5.
+- `tests/utils.py` seeds users and rooms by shelling out to a `cocat` CLI.
 
 Work items in the Python repo before Rust can be tested by it:
 
@@ -163,18 +129,32 @@ Work items in the Python repo before Rust can be tested by it:
 - `python_only` marks for tests that read Python internals (`db.engine.pool`,
   `RecordingMail`); the pool invariant ("no connection held while a socket is open")
   becomes a Rust test.
-- CI runs Python plus a `cocat-rs` build pinned to a revision.
 
-A phase is done when its slice of that suite passes against the Rust binary.
+The Rust CLI provides the same subcommands the fixtures use — `serve --host --port
+--update_dir --db_path`, `create-user --email --password --db_path`, `create-room --owner
+--room-id --db_path`, `add-user-to-room --email --room_id --db_path` — so the suite
+seeds a Rust server without the Python package. A phase is done when its slice passes
+against the Rust binary.
+
+## Import (one-shot, before the cutover)
+
+`cocat-server import --update-dir <dir> --db <path> [--users <python.db>] [--owner <email>]`
+
+- **Rooms** from the `.y` files: every valid file becomes a room (id from the file name,
+  name = id), left in place.
+- **Users, memberships, invitations** from the Python SQLite when `--users` is given:
+  Argon2 PHC hashes verify as-is, bcrypt hashes rehash on first login; roles and
+  memberships are copied; without `--users`, `--owner` names the owner of the imported
+  rooms.
+- Idempotent and `--dry-run`; the Python database is opened read-only and kept until the
+  import is verified.
 
 ## Phases
-
-Order: 0 → 1 → 2 → 4a → (3, if the open question says yes) → 4b → 5.
 
 0. **Spike (go/no-go).** `cocat-server` serving only `/room/{id}`: cookie check,
    membership/role from SQLite, Yjs sync with viewer write-blocking, `.y` storage.
    Workload: one 100k-event room (the 38 MB file), 50 simulated clients, one edit per
-   second for 5 minutes, plus a cold open. Run it once behind the real proxy.
+   second for 5 minutes, plus a cold open.
 
    | Gate | GO |
    |---|---|
@@ -196,47 +176,49 @@ Order: 0 → 1 → 2 → 4a → (3, if the open question says yes) → 4b → 5.
    update, drift > 10 %, or scale-out < 1.5× Python (that last one fails the premise, not
    the implementation). Timebox 10 days; stop at day 5 if wire and file parity are not
    green. Publish the numbers in the repo.
-1. **Room server in production** behind the proxy split: `/room/{id}`, viewer blocking,
-   the room-lifecycle mutations, append-only storage with tail recovery and flush.
-   Python keeps accounts, the rest of `/api`, and the UI.
-2. **REST API and auth:** the remaining `/api/*` routes, `/auth/*` (login, register,
-   verify, reset, ORCID via `openidconnect`), email via `lettre`, the hand-rolled rate
-   limiter. Python keeps the UI.
-3. **Web UI** (if the open question says yes): server-rendered `askama` + htmx, same
-   pages as the NiceGUI UI. Starts with a new HTTP-level acceptance suite, because the
-   NiceGUI tests cannot be reused. Python server retired here.
-4. **Rust client + `cocat-py`.**
-   - **4a:** the document/catalogue API SciQLop uses, plus array-returning queries for
+1. **Rooms and lifecycle.** `/room/{id}`, viewer blocking, kick on removal/role
+   change/room delete, the lifecycle mutations that drive them, login (the cookie every
+   socket needs), append-only storage with tail recovery and flush, the sqlx schema and
+   the seeding CLI.
+2. **Auth and the REST API.** Register, verify, reset, ORCID via `openidconnect`, email
+   via `lettre`, the rate limiter, rooms/members/invitations under `/api/*`.
+3. **Web UI.** Server-rendered `askama` + htmx, same pages as the NiceGUI UI. Starts
+   with a new HTTP-level acceptance suite, because the NiceGUI tests cannot be reused.
+4. **Import tool**, run as the cutover step, then the Rust server ships.
+5. **Rust client + `cocat-py`.**
+   - **5a:** the document/catalogue API SciQLop uses, plus array-returning queries for
      plotting. This is the phase that removes the `pycrdt` pin.
-   - **4b:** the rest of the public Python API (VOTable, filters, keyring/session, CLI).
+   - **5b:** the rest of the public Python API (VOTable, filters, keyring/session, CLI).
      The `cocat` PyPI name moves to Rust here — a one-way door, taken only after the
      Python wheel is retired.
-5. **Engine switch to `ysr`** (disk-backed, history, rollback), when its on-disk format
+6. **Engine switch to `ysr`** (disk-backed, history, rollback), when its on-disk format
    is stable — server first, client after. `y-crdt/ysr-persistence` and
    `y-crdt/pycrdt-store` are the fallback paths if `ysr` stalls.
 
-Not a phase, but required before the cutover: a **rollback drill** — flip the proxy to
-Rust, flip back, verify rooms open in Python with the same state.
+The server ships when it is feature-complete for the contract above (rooms, API, auth,
+UI); Python is retired at the same cutover, with the imported data kept until verified.
 
 ## Decisions (with the reason)
 
-- **New repository** `cocat-rs`; the Python repo keeps running and receiving fixes
-  until replaced.
+- **New repository** `cocat-rs`, in the SciQLop GitHub organisation. Python keeps running
+  and receiving fixes until the cutover.
+- **Rust replaces the server wholesale**, no side-by-side phase: one process owns each
+  room (sockets, file, lifecycle), so kicks and deletions need no cross-process channel.
+- **Rust owns its schema** with sqlx migrations from day one.
 - **`yrs` now, `ysr` later:** `ysr` is experimental (git-only, format unstable).
-- **Own websocket glue** over `yrs::sync` instead of `yrs-axum` (last release
-  2025-03, lags `yrs` 0.28).
+- **Own websocket glue** over `yrs::sync` instead of `yrs-axum` (last release 2025-03,
+  lags `yrs` 0.28).
 - **Nested event layout kept** (per-field merge, readable history).
-- **Awareness is a later feature**, not part of the port: parity means ignoring
-  non-SYNC frames.
-- **Concrete file store now**, trait in phase 5.
-- **Hand-rolled rate limiter** instead of `tower_governor` (same semantics as Python,
-  no key-derivation rewrite).
-- **Alembic stays** the migration tool; Rust validates the revision and never migrates.
+- **Awareness is a later feature**, not part of the port: parity means ignoring non-SYNC
+  frames.
+- **Concrete file store now**, trait in phase 6.
+- **Hand-rolled rate limiter** instead of `tower_governor` (same semantics as Python, no
+  key-derivation rewrite).
 - **Public read-only room is not a CRDT room:** a sanitized VOTable/JSON snapshot served
   over HTTP and cacheable, in its own later phase. Never the raw `.y` — it carries
   tombstones and author fields.
-- **Server-rendered UI** (askama + htmx) if the UI is ported: no JS build step, but htmx
-  is still a vendored JS file, pinned like any dependency.
+- **Server-rendered UI** (askama + htmx): no JS build step, but htmx is still a vendored
+  JS file, pinned like any dependency.
 
 ## Implementation notes
 
@@ -245,9 +227,8 @@ Rust, flip back, verify rooms open in Python with the same state.
   `write_message`, and read `varuint` then slice when loading.
 - Create the `.y` (header only) when a room opens.
 - `Awareness::new` owns the `Doc`; the room task holds it.
-- CLI: `serve --host --port --update_dir --db_path`, the flags the Python fixture
-  passes; answer `/` (404 is fine) so `wait_for_server` stops retrying; flush and exit 0
-  on SIGINT.
+- `serve` answers `/` (404 is fine) so `wait_for_server` stops retrying, and flushes and
+  exits 0 on SIGINT.
 
 ## Candidate crates (versions checked 2026-11-05)
 
@@ -261,22 +242,12 @@ the Python auth got.
 - **Auth re-implementation** is the security-sensitive part; mitigated by porting the
   Python tests and the review findings (Host-header reset links, placeholder addresses,
   OAuth association rules) as explicit tests.
-- **Engine memory stays until `ysr`:** phases 0–4 do not reduce memory per room, and more
+- **Engine memory stays until `ysr`:** phases 0–5 do not reduce memory per room, and more
   open rooms means more RAM; the memory budget and admission rule above, plus quotas,
-  hold the line until phase 5.
+  hold the line until phase 6.
 - **Durability:** the `.y` file is the only copy; flush/fsync policy and tail recovery
   are part of phase 1, compaction is not.
-- **Two servers during the transition:** one owner per room (phase 1 moves the lifecycle
-  mutations), plus the exact-path proxy rule, shared cookie, prefix and timeouts.
-- **`ysr` maturity** gates phase 5; if it stalls, compaction + archive (with the
+- **Import is one-shot:** a wrong mapping is hard to undo; dry-run first, keep the Python
+  database and update directory until the import is verified.
+- **`ysr` maturity** gates phase 6; if it stalls, compaction + archive (with the
   retention policy) is the history mechanism.
-
-## Open questions for the team
-
-- Where the repository lives (SciQLop org or personal first).
-- **Phase 2 (accounts/API):** the Rust auth is a security-sensitive rewrite of code that
-  is already tested and reviewed; if accounts stay in Python, the split ends at the room
-  boundary and phases 3/4b shrink.
-- **Phase 3 (UI):** ~200 NiceGUI tests run in-process and cannot be reused, and the UI
-  is not part of the binding problem; if it is ported, it starts with a new HTTP-level
-  acceptance suite.
