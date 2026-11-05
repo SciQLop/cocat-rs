@@ -8,11 +8,15 @@ use axum::extract::{ConnectInfo, Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
+use url::Url;
 
 use crate::auth::AuthError;
 use crate::ui::frame::{self, Frame, MaybeUser};
 use crate::ui::next_query;
 use crate::{AppState, accounts, auth};
+
+const LOCAL_ORIGIN: &str = "http://cocat.invalid/";
+const LOCAL_HOST: &str = "cocat.invalid";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ResendForm {
@@ -128,54 +132,40 @@ fn failed(state: &AppState, key: &str) -> Response {
 
 /// Only follow a `next` that stays on this site; anything else is the rooms page.
 ///
-/// The value is refused when it names a scheme or host, contains a backslash, or starts
-/// with a slash pair browsers would collapse into a host. It is also decoded once and
-/// checked again, because `/%2F%2Fhost` reaches the server unchanged and a browser would
-/// read its decoded form as `//host`.
+/// The value is resolved against a placeholder origin the way a browser resolves a
+/// `Location`, so tab, carriage return and newline are stripped and a backslash counts
+/// as a slash before the host is compared. Only the path, query and fragment of the
+/// resolved URL are returned, so no unparsed input reaches the `Location` header.
 pub(crate) fn safe_next(value: Option<&str>, links: &crate::links::Links) -> String {
     let default = links.path("/rooms");
     let Some(value) = value else {
         return default;
     };
-    if !local_path(value) {
+    if !value.starts_with('/') {
         return default;
     }
-    let decoded = percent_decode(value);
-    if decoded != value && !local_path(&decoded) {
+    let Ok(base) = Url::parse(LOCAL_ORIGIN) else {
+        return default;
+    };
+    let Ok(joined) = base.join(value) else {
+        return default;
+    };
+    let local = joined.scheme() == "http"
+        && joined.host_str() == Some(LOCAL_HOST)
+        && joined.port().is_none()
+        && joined.username().is_empty()
+        && joined.password().is_none();
+    if !local {
         return default;
     }
-    value.to_owned()
-}
-
-fn local_path(value: &str) -> bool {
-    value.starts_with('/') && !value.contains('\\') && !value.starts_with("//")
-}
-
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if let Some(byte) = escape(bytes, index) {
-            decoded.push(byte);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
+    let mut target = joined.path().to_owned();
+    if let Some(query) = joined.query() {
+        target.push('?');
+        target.push_str(query);
     }
-    String::from_utf8_lossy(&decoded).into_owned()
-}
-
-fn escape(bytes: &[u8], index: usize) -> Option<u8> {
-    if bytes.get(index) != Some(&b'%') {
-        return None;
+    if let Some(fragment) = joined.fragment() {
+        target.push('#');
+        target.push_str(fragment);
     }
-    let high = hex(*bytes.get(index + 1)?)?;
-    let low = hex(*bytes.get(index + 2)?)?;
-    Some(high * 16 + low)
-}
-
-fn hex(byte: u8) -> Option<u8> {
-    char::from(byte).to_digit(16).map(|digit| digit as u8)
+    target
 }

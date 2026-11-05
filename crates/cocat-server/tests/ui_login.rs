@@ -380,14 +380,44 @@ async fn foreign_next_refused() {
         "//evil.com",
         "/\\evil.com",
         "https://evil.com",
-        "/%2F%2Fevil.com",
         "javascript:alert(1)",
+        "/\t/evil.com",
+        "/\n/evil.com",
     ] {
         let response = fixture
             .login("member@example.org", PASSWORD, Some(next))
             .await;
-        assert_eq!(location(&response), "/ui/rooms", "{next} was followed");
+        assert_eq!(location(&response), "/ui/rooms", "{next:?} was followed");
     }
+}
+
+/// Percent-encoded bytes are not decoded by a browser resolving a `Location`, so these
+/// stay paths on this origin; what is returned keeps them encoded, so the header never
+/// carries a raw control character or a leading slash pair.
+#[tokio::test]
+async fn encoded_slashes_and_tabs_stay_a_path() {
+    let fixture = Fixture::start().await;
+    fixture.verified("member@example.org").await;
+
+    for next in ["/%2F%2Fevil.com", "/%09/evil.com"] {
+        let response = fixture
+            .login("member@example.org", PASSWORD, Some(next))
+            .await;
+        assert_eq!(location(&response), next, "{next:?} was not kept");
+    }
+}
+
+#[tokio::test]
+async fn raw_newline_next_redirects_cleanly() {
+    let fixture = Fixture::start().await;
+    fixture.verified("member@example.org").await;
+
+    let response = fixture
+        .login("member@example.org", PASSWORD, Some("/\r\n/evil.com"))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/ui/rooms");
 }
 
 #[tokio::test]
