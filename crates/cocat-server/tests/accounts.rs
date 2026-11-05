@@ -23,6 +23,7 @@ const PUBLIC_URL: &str = "https://cocat.example.org";
 const VERIFY_BAD: &str = "VERIFY_USER_BAD_TOKEN";
 const ALREADY_VERIFIED: &str = "VERIFY_USER_ALREADY_VERIFIED";
 const RESET_BAD: &str = "RESET_PASSWORD_BAD_TOKEN";
+const NOT_VERIFIED: &str = "LOGIN_USER_NOT_VERIFIED";
 const CLEARED_COOKIE: &str =
     r#"fastapiusersauth=""; HttpOnly; Max-Age=0; Path=/; SameSite=lax; Secure"#;
 
@@ -147,6 +148,51 @@ impl Fixture {
         db::create_user(self.pool(), email, PASSWORD, false, true)
             .await
             .unwrap()
+    }
+
+    async fn superuser(&self, email: &str) -> Uuid {
+        db::create_user(self.pool(), email, PASSWORD, true, true)
+            .await
+            .unwrap()
+    }
+
+    /// A session cookie for an account that can already log in.
+    async fn session(&self, email: &str) -> String {
+        cookie_token(&self.login(email, PASSWORD).await)
+    }
+
+    async fn json_request(
+        &self,
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+        body: Value,
+    ) -> Response {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            builder = builder.header(header::COOKIE, format!("fastapiusersauth={token}"));
+        }
+        self.send(builder.body(Body::from(body.to_string())).unwrap())
+            .await
+    }
+
+    async fn get(&self, path: &str, token: Option<&str>) -> Response {
+        let mut builder = Request::builder().method(Method::GET).uri(path);
+        if let Some(token) = token {
+            builder = builder.header(header::COOKIE, format!("fastapiusersauth={token}"));
+        }
+        self.send(builder.body(Body::empty()).unwrap()).await
+    }
+
+    async fn delete(&self, path: &str, token: Option<&str>) -> Response {
+        let mut builder = Request::builder().method(Method::DELETE).uri(path);
+        if let Some(token) = token {
+            builder = builder.header(header::COOKIE, format!("fastapiusersauth={token}"));
+        }
+        self.send(builder.body(Body::empty()).unwrap()).await
     }
 
     async fn request_verify(&self, email: &str) -> Response {
@@ -321,10 +367,7 @@ async fn with_a_mailer_an_unverified_account_is_refused() {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert!(set_cookie(&response).is_none(), "no session was handed out");
-    assert_eq!(
-        body(response).await,
-        json!({ "detail": "LOGIN_USER_NOT_VERIFIED" })
-    );
+    assert_eq!(body(response).await, json!({ "detail": NOT_VERIFIED }));
 }
 
 #[tokio::test]
@@ -736,5 +779,301 @@ async fn forgot_password_is_rate_limited() {
     assert_eq!(
         body(refused).await,
         json!({ "detail": "Too Many Requests" })
+    );
+}
+
+#[tokio::test]
+async fn users_me_reads_and_updates() {
+    let fixture = Fixture::start().await;
+    fixture.verified("known@example.org").await;
+    let token = fixture.session("known@example.org").await;
+
+    let me = fixture.get("/users/me", Some(&token)).await;
+    assert_eq!(me.status(), StatusCode::OK);
+    let user = body(me).await;
+    assert_eq!(user["email"], "known@example.org");
+    assert_eq!(user["is_superuser"], false);
+
+    let updated = fixture
+        .json_request(
+            Method::PATCH,
+            "/users/me",
+            Some(&token),
+            json!({ "email": "moved@example.org", "password": "new-password" }),
+        )
+        .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let user = body(updated).await;
+    assert_eq!(user["email"], "moved@example.org");
+    assert_eq!(
+        user["is_verified"], false,
+        "a new address is unproven until the link is opened"
+    );
+
+    let logged_in = fixture.login("moved@example.org", "new-password").await;
+    assert_eq!(
+        logged_in.status(),
+        StatusCode::NO_CONTENT,
+        "the new password is in force"
+    );
+    let old = fixture.login("moved@example.org", PASSWORD).await;
+    assert_eq!(old.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_user_cannot_raise_their_own_flags() {
+    let fixture = Fixture::start().await;
+    fixture.verified("known@example.org").await;
+    let token = fixture.session("known@example.org").await;
+
+    let response = fixture
+        .json_request(
+            Method::PATCH,
+            "/users/me",
+            Some(&token),
+            json!({
+                "is_superuser": true,
+                "is_active": false,
+                "is_verified": false,
+                "password": "new-password",
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let user = body(response).await;
+    assert_eq!(user["is_superuser"], false);
+    assert_eq!(user["is_active"], true);
+    assert_eq!(user["is_verified"], true);
+
+    let forbidden = fixture
+        .get("/users/00000000-0000-0000-0000-000000000000", Some(&token))
+        .await;
+    assert_eq!(
+        forbidden.status(),
+        StatusCode::FORBIDDEN,
+        "the safe fields were dropped, not applied"
+    );
+    assert_eq!(
+        fixture
+            .login("known@example.org", "new-password")
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn changing_email_clears_verification() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+    let token = fixture.session("known@example.org").await;
+
+    let response = fixture
+        .json_request(
+            Method::PATCH,
+            "/users/me",
+            Some(&token),
+            json!({ "email": "moved@example.org" }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body(response).await["is_verified"], false);
+    let mails = fixture.mails();
+    assert_eq!(mails.len(), 1, "{mails:?}");
+    assert!(mails[0].contains("To: moved@example.org"), "{}", mails[0]);
+    assert!(
+        mails[0].contains("Subject: Confirm your cocat address"),
+        "{}",
+        mails[0]
+    );
+    assert!(
+        mails[0].replace("=\r\n", "").contains("/ui/verify#"),
+        "{}",
+        mails[0]
+    );
+
+    let refused = fixture.login("moved@example.org", PASSWORD).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body(refused).await, json!({ "detail": NOT_VERIFIED }));
+}
+
+#[tokio::test]
+async fn an_existing_email_is_refused() {
+    let fixture = Fixture::start().await;
+    fixture.verified("first@example.org").await;
+    fixture.verified("second@example.org").await;
+    let token = fixture.session("first@example.org").await;
+
+    let response = fixture
+        .json_request(
+            Method::PATCH,
+            "/users/me",
+            Some(&token),
+            json!({ "email": "SECOND@example.org" }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body(response).await,
+        json!({ "detail": "UPDATE_USER_EMAIL_ALREADY_EXISTS" })
+    );
+}
+
+#[tokio::test]
+async fn only_a_superuser_reaches_users_by_id() {
+    let fixture = Fixture::start().await;
+    let victim = fixture.verified("victim@example.org").await;
+    fixture.superuser("admin@example.org").await;
+    let member = fixture.session("victim@example.org").await;
+    let admin = fixture.session("admin@example.org").await;
+    let path = format!("/users/{victim}");
+
+    assert_eq!(
+        fixture.get(&path, Some(&member)).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture
+            .json_request(
+                Method::PATCH,
+                &path,
+                Some(&member),
+                json!({ "is_superuser": true })
+            )
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture.delete(&path, Some(&member)).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture
+            .get("/users/00000000-0000-0000-0000-000000000000", Some(&admin))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fixture
+            .get("/users/not-a-uuid", Some(&admin))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND,
+        "fastapi-users fails to parse the id into a 404"
+    );
+
+    let read = fixture.get(&path, Some(&admin)).await;
+    assert_eq!(read.status(), StatusCode::OK);
+    assert_eq!(body(read).await["email"], "victim@example.org");
+
+    let promoted = fixture
+        .json_request(
+            Method::PATCH,
+            &path,
+            Some(&admin),
+            json!({ "is_superuser": true, "is_active": false, "is_verified": false }),
+        )
+        .await;
+    assert_eq!(promoted.status(), StatusCode::OK);
+    let user = body(promoted).await;
+    assert_eq!(user["is_superuser"], true);
+    assert_eq!(user["is_active"], false);
+    assert_eq!(user["is_verified"], false);
+
+    assert_eq!(
+        fixture.delete(&path, Some(&admin)).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        fixture.get(&path, Some(&admin)).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn an_emailed_invitation_returns_no_token_and_mails_the_link() {
+    let fixture = Fixture::start_with_mail().await;
+    let owner = fixture.verified("owner@example.org").await;
+    db::create_room(fixture.pool(), owner, "room-a", "Room A")
+        .await
+        .unwrap();
+    let token = fixture.session("owner@example.org").await;
+
+    let response = fixture
+        .json_request(
+            Method::POST,
+            "/api/rooms/room-a/invitations",
+            Some(&token),
+            json!({ "email": "guest@example.org", "role": "editor" }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        body(response).await["token"],
+        "",
+        "the token travels by mail, not in the reply"
+    );
+    let mails = fixture.mails();
+    assert_eq!(mails.len(), 1, "{mails:?}");
+    assert!(mails[0].contains("To: guest@example.org"), "{}", mails[0]);
+    assert!(
+        mails[0].contains("Subject: owner@example.org invites you to the room Room A"),
+        "{}",
+        mails[0]
+    );
+    let flat = mails[0].replace("=\r\n", "").replace("=\n", "");
+    assert!(flat.contains("/ui/invitation#"), "{flat}");
+    assert!(
+        flat.contains("The invitation is valid for 14 days."),
+        "{flat}"
+    );
+
+    let mailed = link_token(&mails, "/ui/invitation#");
+    let preview = fixture
+        .post_json("/api/invitations/preview", json!({ "token": mailed }))
+        .await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview = body(preview).await;
+    assert_eq!(preview["room_name"], "Room A");
+    assert_eq!(preview["role"], "editor");
+}
+
+#[tokio::test]
+async fn a_failed_invitation_mail_creates_nothing() {
+    let fixture = Fixture::start_with_broken_mail().await;
+    let owner = fixture.verified("owner@example.org").await;
+    db::create_room(fixture.pool(), owner, "room-a", "Room A")
+        .await
+        .unwrap();
+    let token = fixture.session("owner@example.org").await;
+
+    let response = fixture
+        .json_request(
+            Method::POST,
+            "/api/rooms/room-a/invitations",
+            Some(&token),
+            json!({ "email": "guest@example.org" }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body(response).await,
+        json!({ "detail": "The email could not be sent; no invitation was created" })
+    );
+    let listed = fixture
+        .get("/api/rooms/room-a/invitations", Some(&token))
+        .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    assert_eq!(
+        body(listed).await,
+        json!([]),
+        "the invitation was undone, not left for nobody to use"
     );
 }

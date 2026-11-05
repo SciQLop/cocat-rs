@@ -597,3 +597,50 @@ async fn accepting_a_higher_invitation_closes_the_old_socket() {
         }
     }
 }
+
+/// Deleting an account takes its socket with it before the row goes: a deleted account must
+/// not keep writing, and its room must not stay loaded behind a socket nobody owns.
+#[tokio::test]
+async fn deleting_a_user_closes_their_sockets() {
+    let fixture = Fixture::start().await;
+    let victim = fixture.user("victim@example.org").await;
+    let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
+        .await
+        .unwrap();
+    db::create_room(&fixture.pool, victim, "room-a", "Room A")
+        .await
+        .unwrap();
+    let mut socket = fixture
+        .connect("room-a", Some(&fixture.token(victim)))
+        .await;
+    next_ws(&mut socket).await;
+
+    let request = Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/users/{victim}"))
+        .header(
+            header::COOKIE,
+            format!("fastapiusersauth={}", fixture.token(admin)),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let status = ws::router(fixture.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status();
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let close = loop {
+        match next_ws(&mut socket).await {
+            WsMessage::Close(frame) => break frame,
+            _ => continue,
+        }
+    };
+    assert_eq!(
+        close.map(|frame| u16::from(frame.code)),
+        Some(1008),
+        "the deleted account's socket is revoked"
+    );
+    wait_for_unload(&fixture).await;
+}

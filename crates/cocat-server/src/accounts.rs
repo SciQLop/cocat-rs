@@ -31,6 +31,8 @@ pub enum AccountError {
     AlreadyVerified,
     #[error("the reset token is bad, expired, or already spent")]
     BadResetToken,
+    #[error("the address belongs to another account")]
+    EmailInUse,
     #[error("cannot sign a link")]
     Sign(#[from] AuthError),
     #[error(transparent)]
@@ -133,6 +135,62 @@ pub async fn reset_password(
         return Err(AccountError::BadResetToken);
     }
     Ok(())
+}
+
+/// The fields an edit may set. Both account routes fill the same struct: the profile route can
+/// only reach `email` and `password`, the superuser route fills whichever flag the body names.
+#[derive(Debug, Default)]
+pub struct Change {
+    pub email: Option<String>,
+    pub password: Option<String>,
+    pub is_active: Option<bool>,
+    pub is_superuser: Option<bool>,
+    pub is_verified: Option<bool>,
+}
+
+/// Apply a profile or admin edit and answer the account as it now stands.
+///
+/// A new address is unproven until the link mailed to it is opened, unless the caller set
+/// `is_verified` explicitly in the same request; that is the one difference between the safe
+/// profile route (which never fills the flags) and the superuser one. The mail is sent after
+/// the write, so a relay that refuses it cannot fail an update that already happened.
+pub async fn change(state: &AppState, user: User, change: Change) -> Result<User, AccountError> {
+    let mut updated = user;
+    let moved = change
+        .email
+        .as_deref()
+        .is_some_and(|email| email != updated.email);
+    updated.is_active = change.is_active.unwrap_or(updated.is_active);
+    updated.is_superuser = change.is_superuser.unwrap_or(updated.is_superuser);
+    updated.is_verified = change.is_verified.unwrap_or(updated.is_verified);
+    if let Some(email) = change.email {
+        updated.email = email;
+    }
+    if moved && change.is_verified.is_none() {
+        updated.is_verified = false;
+    }
+    if let Some(password) = change.password {
+        updated.hashed_password = db::hash_password(&password)?;
+    }
+    db::save_user(&state.pool, &updated)
+        .await
+        .map_err(|error| match error {
+            DbError::EmailTaken { .. } => AccountError::EmailInUse,
+            other => AccountError::Db(other),
+        })?;
+    if moved && let Some(mailer) = &state.mailer {
+        send_verification(state, mailer, updated.id, &updated.email).await;
+    }
+    Ok(updated)
+}
+
+/// Revoke the account from every room it is in, then remove it. The rooms themselves and their
+/// files stay, so an owned room outlives its last member, exactly as Python leaves it.
+pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, AccountError> {
+    for (room, _) in db::list_user_rooms(&state.pool, id).await? {
+        state.rooms.revoke(&room.id, id).await;
+    }
+    Ok(db::delete_user(&state.pool, id).await?)
 }
 
 /// The account behind an address, or `None` when there is none, it is inactive, or it cannot

@@ -167,7 +167,37 @@ pub async fn create_user(
     Ok(id)
 }
 
-fn hash_password(password: &str) -> Result<String, DbError> {
+/// Write every mutable column of `user`. The address is unique, so a duplicate is reported as
+/// one; the caller decides whether that is a conflict or a bad request.
+pub async fn save_user(pool: &SqlitePool, user: &User) -> Result<(), DbError> {
+    sqlx::query(
+        r#"UPDATE "user"
+           SET email = ?, hashed_password = ?, is_active = ?, is_superuser = ?, is_verified = ?
+           WHERE id = ?"#,
+    )
+    .bind(&user.email)
+    .bind(&user.hashed_password)
+    .bind(user.is_active)
+    .bind(user.is_superuser)
+    .bind(user.is_verified)
+    .bind(user.id.to_string())
+    .execute(pool)
+    .await
+    .map_err(|error| taken_email(error, &user.email))?;
+    Ok(())
+}
+
+/// Remove the account. Memberships go with it (the schema cascades) and the rooms' files stay,
+/// like Python's delete, so an owned room survives its last member.
+pub async fn delete_user(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> {
+    let deleted = sqlx::query(r#"DELETE FROM "user" WHERE id = ?"#)
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(deleted.rows_affected() > 0)
+}
+
+pub fn hash_password(password: &str) -> Result<String, DbError> {
     Ok(Argon2::default()
         .hash_password(password.as_bytes())?
         .to_string())

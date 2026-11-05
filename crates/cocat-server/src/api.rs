@@ -121,6 +121,9 @@ impl From<AccountError> for ApiError {
                 Self::BadRequest("VERIFY_USER_ALREADY_VERIFIED".to_owned())
             }
             AccountError::BadResetToken => Self::BadRequest("RESET_PASSWORD_BAD_TOKEN".to_owned()),
+            AccountError::EmailInUse => {
+                Self::BadRequest("UPDATE_USER_EMAIL_ALREADY_EXISTS".to_owned())
+            }
             AccountError::Clock => {
                 tracing::error!("the clock is before the unix epoch");
                 Self::Internal

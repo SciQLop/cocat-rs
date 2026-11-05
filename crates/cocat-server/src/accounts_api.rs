@@ -3,13 +3,14 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::middleware;
-use axum::routing::post;
+use axum::routing::{get, post};
 use serde::Deserialize;
+use uuid::Uuid;
 
-use crate::api::{ApiError, JsonBody, UserRead};
+use crate::api::{ApiError, CurrentUser, JsonBody, UserRead};
 use crate::mail::{self, Address};
 use crate::ratelimit;
 use crate::{AppState, accounts, db};
@@ -28,6 +29,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
     limited
         .route("/auth/verify", post(verify))
         .route("/auth/reset-password", post(reset_password))
+        .route("/users/me", get(me).patch(update_me))
+        .route(
+            "/users/{user_id}",
+            get(read_user).patch(update_user).delete(delete_user),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,4 +120,106 @@ async fn reset_password(
 ) -> Result<StatusCode, ApiError> {
     accounts::reset_password(&state, &body.token, &body.password).await?;
     Ok(StatusCode::OK)
+}
+
+async fn me(CurrentUser(user): CurrentUser) -> Json<UserRead> {
+    Json(UserRead::from(user))
+}
+
+/// What a profile edit may say. The flags are not read here, so a request that names them
+/// changes nothing: serde drops the unknown fields before the handler sees the body.
+#[derive(Debug, Deserialize)]
+struct ProfileBody {
+    email: Option<Address>,
+    password: Option<String>,
+}
+
+/// What a superuser edit may say, the same body with the flags this time.
+#[derive(Debug, Deserialize)]
+struct AdminBody {
+    email: Option<Address>,
+    password: Option<String>,
+    is_active: Option<bool>,
+    is_superuser: Option<bool>,
+    is_verified: Option<bool>,
+}
+
+async fn update_me(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    JsonBody(body): JsonBody<ProfileBody>,
+) -> Result<Json<UserRead>, ApiError> {
+    let change = accounts::Change {
+        email: body.email.map(|address| address.0),
+        password: body.password,
+        ..accounts::Change::default()
+    };
+    let user = accounts::change(&state, user, change).await?;
+    Ok(Json(UserRead::from(user)))
+}
+
+async fn read_user(
+    State(state): State<AppState>,
+    CurrentUser(actor): CurrentUser,
+    Path(raw): Path<String>,
+) -> Result<Json<UserRead>, ApiError> {
+    superuser(&actor)?;
+    let user = find(&state, &raw).await?;
+    Ok(Json(UserRead::from(user)))
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    CurrentUser(actor): CurrentUser,
+    Path(raw): Path<String>,
+    JsonBody(body): JsonBody<AdminBody>,
+) -> Result<Json<UserRead>, ApiError> {
+    superuser(&actor)?;
+    let user = find(&state, &raw).await?;
+    let change = accounts::Change {
+        email: body.email.map(|address| address.0),
+        password: body.password,
+        is_active: body.is_active,
+        is_superuser: body.is_superuser,
+        is_verified: body.is_verified,
+    };
+    let user = accounts::change(&state, user, change).await?;
+    Ok(Json(UserRead::from(user)))
+}
+
+async fn delete_user(
+    State(state): State<AppState>,
+    CurrentUser(actor): CurrentUser,
+    Path(raw): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    superuser(&actor)?;
+    let id = parse_id(&raw)?;
+    if !accounts::delete(&state, id).await? {
+        return Err(not_found());
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The admin routes answer 403 before they look at the id, like fastapi-users, whose
+/// superuser dependency runs before the path is parsed.
+fn superuser(actor: &db::User) -> Result<(), ApiError> {
+    if actor.is_superuser {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("Forbidden".to_owned()))
+    }
+}
+
+/// fastapi-users turns an id that does not parse into the same 404 as one that does not exist.
+fn parse_id(raw: &str) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(raw).map_err(|_| not_found())
+}
+
+async fn find(state: &AppState, raw: &str) -> Result<db::User, ApiError> {
+    let id = parse_id(raw)?;
+    db::user_by_id(&state.pool, id).await?.ok_or_else(not_found)
+}
+
+fn not_found() -> ApiError {
+    ApiError::NotFound("Not found".to_owned())
 }

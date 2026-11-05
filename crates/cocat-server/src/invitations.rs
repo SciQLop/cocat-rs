@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::db::{self, RoomRow};
 use crate::lifecycle::{LifecycleError, require_role};
+use crate::mail::{self, Mailer};
 
 /// One predicate, used by preview, accept, consume and list: an invitation nobody revoked,
 /// that has not expired, and that still has a use left. It is the only text these queries
@@ -45,7 +46,9 @@ pub struct Preview {
 }
 
 /// Creates an invitation and returns its id and its token, the only time the token exists
-/// in clear. An addressed invitation admits one use, as Python's does.
+/// in clear — unless the invitation was mailed, in which case the token comes back empty so a
+/// reply cannot carry a second copy of a link that travelled to its addressee. An addressed
+/// invitation admits one use, as Python's does.
 pub async fn create(
     state: &AppState,
     room_id: &str,
@@ -78,7 +81,53 @@ pub async fn create(
     .execute(&state.pool)
     .await?
     .last_insert_rowid();
+    if let (Some(mailer), Some(address)) = (&state.mailer, email) {
+        mail_invitation(state, mailer, actor, room_id, id, &token, address).await?;
+        return Ok((id, String::new()));
+    }
     Ok((id, token))
+}
+
+/// Mail the link to the address the invitation names, and undo the invitation if the relay
+/// refuses: an addressed invitation nobody received cannot be used and must not sit in the
+/// list. The token never reaches the log, so only the failure is recorded.
+async fn mail_invitation(
+    state: &AppState,
+    mailer: &Mailer,
+    actor: Uuid,
+    room_id: &str,
+    id: i64,
+    token: &str,
+    address: &str,
+) -> Result<(), LifecycleError> {
+    let row = sqlx::query(
+        "SELECT room.name, \"user\".email
+         FROM room JOIN \"user\" ON \"user\".id = ?
+         WHERE room.id = ?",
+    )
+    .bind(actor.to_string())
+    .bind(room_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| LifecycleError::NotFound(format!("Room {room_id} not found")))?;
+    let room_name: String = row.try_get("name")?;
+    let inviter: String = row.try_get("email")?;
+    let (subject, body) = mail::invitation_mail(
+        &room_name,
+        &inviter,
+        &state.links.ui(&format!("/invitation#{token}")),
+    );
+    if let Err(error) = mailer.send(address, &subject, &body).await {
+        tracing::warn!(%error, "could not mail the invitation");
+        sqlx::query("DELETE FROM invitation WHERE id = ?")
+            .bind(id)
+            .execute(&state.pool)
+            .await?;
+        return Err(LifecycleError::Invalid(
+            "The email could not be sent; no invitation was created",
+        ));
+    }
+    Ok(())
 }
 
 pub async fn preview(state: &AppState, token: &str) -> Result<Preview, LifecycleError> {
