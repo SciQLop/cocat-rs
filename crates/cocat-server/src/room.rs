@@ -279,33 +279,7 @@ impl RoomManager {
         T: Send + 'static,
         F: FnOnce(&Doc) -> T + Send + 'static,
     {
-        let estimate = fs::metadata(room_file(&self.update_dir, room_id))
-            .map(|metadata| metadata.len())
-            .unwrap_or(0)
-            .saturating_mul(MEMORY_PER_FILE_BYTE);
-        if let Some(budget) = self.budget {
-            let open: u64 = match self.rooms.lock() {
-                Ok(rooms) => rooms
-                    .values()
-                    .fold(0, |needed, handle| needed.saturating_add(handle.estimate)),
-                Err(_) => return Err(RoomError::Registry),
-            };
-            let needed = open
-                .saturating_add(self.cold_bytes.load(Ordering::Relaxed))
-                .saturating_add(estimate);
-            if needed > budget {
-                return Err(RoomError::OverBudget {
-                    room_id: room_id.to_owned(),
-                    needed,
-                    budget,
-                });
-            }
-        }
-        self.cold_bytes.fetch_add(estimate, Ordering::Relaxed);
-        let charged = Charge {
-            bytes: Arc::clone(&self.cold_bytes),
-            estimate,
-        };
+        let charged = self.admit_cold_read(room_id)?;
         let update_dir = self.update_dir.clone();
         let id = room_id.to_owned();
         let loaded = tokio::task::spawn_blocking(move || {
@@ -323,6 +297,37 @@ impl RoomManager {
             RoomError::Unanswered
         })??;
         loaded.ok_or(RoomError::Unanswered)
+    }
+
+    /// Admits one cold read and charges it in one step, under the registry lock `get_or_open`
+    /// also takes: measuring the budget, then taking it, would let two reads both see the
+    /// room for one and both be admitted.
+    fn admit_cold_read(&self, room_id: &str) -> Result<Charge, RoomError> {
+        let rooms = self.rooms.lock().map_err(|_| RoomError::Registry)?;
+        let estimate = fs::metadata(room_file(&self.update_dir, room_id))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+            .saturating_mul(MEMORY_PER_FILE_BYTE);
+        if let Some(budget) = self.budget {
+            let cold = self.cold_bytes.load(Ordering::Relaxed);
+            let needed = rooms
+                .values()
+                .fold(cold.saturating_add(estimate), |needed, handle| {
+                    needed.saturating_add(handle.estimate)
+                });
+            if needed > budget {
+                return Err(RoomError::OverBudget {
+                    room_id: room_id.to_owned(),
+                    needed,
+                    budget,
+                });
+            }
+        }
+        self.cold_bytes.fetch_add(estimate, Ordering::Relaxed);
+        Ok(Charge {
+            bytes: Arc::clone(&self.cold_bytes),
+            estimate,
+        })
     }
 }
 

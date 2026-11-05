@@ -1,4 +1,7 @@
 use std::fs;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::sleep;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -157,4 +160,58 @@ async fn read_survives_an_unload_race() {
         assert_eq!(value.as_deref(), Some("value"));
     }
     assert_eq!(manager.open_rooms(), 0);
+}
+
+/// Marks a read as running inside its closure, gives it time to overlap with another one,
+/// and records how many ran at once.
+fn overlap(live: &AtomicUsize, peak: &AtomicUsize) {
+    let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+    peak.fetch_max(now, Ordering::SeqCst);
+    sleep(Duration::from_millis(20));
+    live.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// Two rooms that fit the budget only one at a time: whichever read is admitted first keeps
+/// the budget, so the second must be refused. Deciding that needs one lock around the sum,
+/// the charge and the admission.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_cold_reads_never_exceed_the_budget() {
+    let dir = TempDir::new().unwrap();
+    let generous = manager(&dir, None);
+    write_room(&generous, "first", "key", &"x".repeat(200)).await;
+    write_room(&generous, "second", "key", &"y".repeat(200)).await;
+    let estimate = size(&dir, "first").max(size(&dir, "second")) * MEMORY_PER_FILE_BYTE;
+
+    let tight = manager(&dir, Some(estimate + 1));
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+
+    for _ in 0..50 {
+        let first = tight.read("first", {
+            let (live, peak) = (Arc::clone(&live), Arc::clone(&peak));
+            move |doc| {
+                overlap(&live, &peak);
+                content(doc, "key")
+            }
+        });
+        let second = tight.read("second", {
+            let (live, peak) = (Arc::clone(&live), Arc::clone(&peak));
+            move |doc| {
+                overlap(&live, &peak);
+                content(doc, "key")
+            }
+        });
+        let (first, second) = tokio::join!(first, second);
+        let admitted = [&first, &second].iter().filter(|read| read.is_ok()).count();
+
+        assert_eq!(
+            admitted, 1,
+            "only one cold read fits the budget, got {first:?} and {second:?}"
+        );
+    }
+    assert_eq!(
+        peak.load(Ordering::SeqCst),
+        1,
+        "two cold reads were charged at once"
+    );
 }
