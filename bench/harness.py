@@ -36,6 +36,10 @@ COOKIE = "fastapiusersauth"
 BIG_ROOM = "bench100k"
 SMALL_ROOM = "bench1k"
 IN_FLIGHT = 4
+SYNC_TIMEOUT = 10.0
+# A room that carried a five-minute run has a ~450 MB record file and its cold open
+# replays it for ~30 s, so the durability probe after such a run cannot use a join timeout.
+PROBE_SYNC_TIMEOUT = 120.0
 UNLOAD_TIMEOUT = 20.0
 OBSERVABLE_GROWTH_MB = 100.0
 SOAK_SAMPLE_AT = 300.0
@@ -262,18 +266,18 @@ def open_socket(host: str, port: int, room: str, cookie: str):
     )
 
 
-def sync_into(document: Doc, socket) -> None:
+def sync_into(document: Doc, socket, timeout: float = SYNC_TIMEOUT) -> None:
     socket.send(create_sync_message(document))
     while True:
-        frame = socket.recv(timeout=10)
+        frame = socket.recv(timeout=timeout)
         if frame[0] == YMessageType.SYNC and frame[1] == YSyncMessageType.SYNC_STEP2:
             handle_sync_message(frame[1:], document)
             return
 
 
-def fresh_database(socket) -> DB:
+def fresh_database(socket, timeout: float = SYNC_TIMEOUT) -> DB:
     document = Doc()
-    sync_into(document, socket)
+    sync_into(document, socket, timeout)
     return DB(doc=document)
 
 
@@ -417,7 +421,7 @@ def probe_written(
     host: str, port: int, room: str, cookie: str, written: dict[str, datetime]
 ) -> int:
     socket = open_socket(host, port, room, cookie)
-    database = fresh_database(socket)
+    database = fresh_database(socket, PROBE_SYNC_TIMEOUT)
     socket.close()
     return sum(
         1
