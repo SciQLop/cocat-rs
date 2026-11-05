@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ name }}</h1>
+<p><a href="{{ rooms_href }}">My rooms</a></p>
+<p>Your role: {{ role }}</p>
+{% match leave %}
+{% when Some with (form) %}
+<form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
+  <button type="submit">Leave</button>
+</form>
+{% when None %}
+{% endmatch %}
+<h2>Members</h2>
+<ul class="members">
+{% for member in members %}
+  <li class="member" data-member="{{ member.id }}">
+    <span class="email">{{ member.email }}</span>
+{% match member.controls %}
+{% when Some with (controls) %}
+    <form method="post" action="{{ controls.role_action }}">
+      <select name="role" data-role="{{ member.id }}">
+        <option value="editor"{% if member.role == "editor" %} selected{% endif %}>editor</option>
+        <option value="viewer"{% if member.role == "viewer" %} selected{% endif %}>viewer</option>
+      </select>
+      <button type="submit">Change role</button>
+    </form>
+    <form method="post" action="{{ controls.remove_action }}"
+          data-confirm="{{ controls.remove_confirm }}">
+      <button type="submit">Remove</button>
+    </form>
+    <form method="post" action="{{ controls.owner_action }}"
+          data-confirm="{{ controls.transfer_confirm }}">
+      <button type="submit">Transfer ownership</button>
+    </form>
+{% when None %}
+    <span class="role">{{ member.role }}</span>
+{% endmatch %}
+  </li>
+{% endfor %}
+</ul>
+{% match panel %}
+{% when Some with (panel) %}
+<h2>Invitations</h2>
+<form method="post" action="{{ panel.action }}">
+  <input type="hidden" name="kind" value="link">
+  <select name="role">
+    <option value="editor">editor</option>
+    <option value="viewer">viewer</option>
+  </select>
+  <button type="submit">Create share link</button>
+</form>
+<form method="post" action="{{ panel.action }}">
+  <input type="hidden" name="kind" value="email">
+  <select name="role">
+    <option value="editor">editor</option>
+    <option value="viewer">viewer</option>
+  </select>
+  <label for="email">Invite by email</label>
+  <input id="email" name="email" type="email" autocomplete="off">
+  <button type="submit">Send invitation</button>
+</form>
+{% match panel.share_link %}
+{% when Some with (link) %}
+<label for="share-link">Share link</label>
+<input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
+<button type="button" data-copy="share-link">Copy</button>
+{% when None %}
+{% endmatch %}
+<ul class="invitations">
+{% for invitation in panel.invitations %}
+  <li class="invitation" data-invitation="{{ invitation.id }}">
+    <span class="who">{{ invitation.label }}</span>
+    <span class="role">{{ invitation.role }}</span>
+    <span class="expires">{{ invitation.expires }}</span>
+{% if !invitation.usage.is_empty() %}
+    <span class="usage">{{ invitation.usage }}</span>
+{% endif %}
+    <form method="post" action="{{ invitation.action }}"
+          data-confirm="Revoke this invitation?">
+      <button type="submit">Revoke</button>
+    </form>
+  </li>
+{% endfor %}
+</ul>
+{% when None %}
+<p>Only the owner can manage invitations.</p>
+{% endmatch %}
+{% endblock %}

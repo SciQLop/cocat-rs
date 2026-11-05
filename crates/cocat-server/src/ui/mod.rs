@@ -4,6 +4,7 @@ mod account;
 mod frame;
 mod login;
 mod reset;
+mod room;
 mod rooms;
 mod signup;
 mod verify;
@@ -28,9 +29,27 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/reset-password", get(reset::reset_page).post(reset::reset))
         .route("/verify", get(verify::page).post(verify::submit))
         .route("/rooms", get(rooms::page).post(rooms::create))
+        .route("/rooms/{room_id}", get(room::page))
         .route("/rooms/{room_id}/rename", post(rooms::rename))
         .route("/rooms/{room_id}/delete", post(rooms::delete))
         .route("/rooms/{room_id}/leave", post(rooms::leave))
+        .route(
+            "/rooms/{room_id}/members/{member}/role",
+            post(room::set_role),
+        )
+        .route(
+            "/rooms/{room_id}/members/{member}/remove",
+            post(room::remove),
+        )
+        .route(
+            "/rooms/{room_id}/members/{member}/owner",
+            post(room::transfer),
+        )
+        .route("/rooms/{room_id}/invitations", post(room::invite))
+        .route(
+            "/rooms/{room_id}/invitations/{invitation}/revoke",
+            post(room::revoke),
+        )
         .route("/groups", get(frame::groups))
         .route("/account", get(account::page))
         .route("/account/password", post(account::password))
