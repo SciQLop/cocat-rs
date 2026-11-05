@@ -75,6 +75,8 @@ at a time; nothing else runs in the background.
 SERVER=rust bench/run_gates.sh          # target/release/cocat-server, build it first
 SERVER=python bench/run_gates.sh        # the cocat-ui venv's `cocat`
 SCENARIOS="open openclose" SERVER=rust bench/run_gates.sh   # a subset, in this order
+SERVER_CMD="env MALLOC_ARENA_MAX=2 $PWD/target/release/cocat-server serve" \
+    SCENARIOS="open openclose" SERVER=rust bench/run_gates.sh  # run under an env var
 python bench/compare.py                 # gate table, Rust next to Python
 ```
 
@@ -86,6 +88,10 @@ prints their table.
 `compare.py` applies the design's thresholds row by row, lists the hard NO-GO lines the
 Rust run crossed, and names the rows the harness itself may have limited
 (`harness_peak_core_fraction > 0.7`).
+
+`SCENARIOS="open openclose"` runs only those scenarios; `SERVER_CMD` replaces the server
+command line, which is how the allocator configuration was measured
+(`SERVER_CMD="env MALLOC_ARENA_MAX=2 ... cocat-server serve"`).
 
 ## Running one scenario by hand
 

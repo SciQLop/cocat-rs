@@ -5,9 +5,10 @@
 # Usage: SERVER=rust|python bench/run_gates.sh [--smoke]
 #
 # SCENARIOS selects a subset, e.g. SCENARIOS="open openclose" (default: all five,
-# in gate order). The pristine room set (bench100k, bench1k, bench1k-0..7) is built
-# once into bench/work/; every scenario gets a fresh copy of it and a freshly seeded
-# database.
+# in gate order); SERVER_CMD overrides the server command line, e.g. to run it under
+# `env MALLOC_ARENA_MAX=2`. The pristine room set (bench100k, bench1k, bench1k-0..7) is
+# built once into bench/work/; every scenario gets a fresh copy of it and a freshly
+# seeded database.
 set -euo pipefail
 
 bench=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -47,6 +48,7 @@ if [[ ! -x "$cli" ]]; then
     echo "$cli is missing (cargo build --release -p cocat-server for rust)" >&2
     exit 1
 fi
+serve_command=${SERVER_CMD:-$serve_command}
 if [[ ! -x "$python_bin" ]]; then
     echo "$python_bin is missing (set PYTHON to a venv with cocat, pycrdt, websockets)" >&2
     exit 1
