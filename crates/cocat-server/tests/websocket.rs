@@ -9,7 +9,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_server::room::{OUTBOUND_FRAMES, RoomManager};
-use cocat_server::{AppState, BeforeAttach, auth, db, invitations, ws};
+use cocat_server::{AppState, BeforeAttach, auth, db, invitations, ratelimit::LoginLimit, ws};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -87,6 +87,7 @@ impl Fixture {
             secret: SECRET.to_owned(),
             rooms: rooms.clone(),
             before_attach,
+            login_limit: LoginLimit::default(),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

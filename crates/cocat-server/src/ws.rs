@@ -8,6 +8,7 @@ use axum::Router;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use cocat_core::role::Role;
@@ -18,7 +19,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
-use crate::{AppState, api, auth, db};
+use crate::{AppState, api, auth, db, ratelimit};
 
 pub const INTERNAL_ERROR: u16 = 1011;
 
@@ -48,8 +49,12 @@ enum AttachError {
 }
 
 pub fn router(state: AppState) -> Router {
+    let login = post(auth::login_handler).layer(middleware::from_fn_with_state(
+        state.clone(),
+        ratelimit::limit_login,
+    ));
     Router::new()
-        .route("/auth/jwt/login", post(auth::login_handler))
+        .route("/auth/jwt/login", login)
         .route("/room/{room_id}", get(room_socket))
         .route("/rooms", get(api::legacy_rooms))
         .route("/room/{room_id}/users", get(api::legacy_room_users))

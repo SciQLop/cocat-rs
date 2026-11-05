@@ -42,6 +42,16 @@ gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live
 |---|---|
 | `COCAT_SECRET` | Secret that signs the `fastapiusersauth` cookie. When it is unset or empty, the server uses `<db_path>.secret`, creating it (mode 0600) on first start. |
 | `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded rooms. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A room is charged sixteen times its `.y` file size (a measured 37.8 MB room is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the room stays on disk. |
+| `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
+
+### Login rate limit
+
+`POST /auth/jwt/login` takes ten calls per minute per client (the socket address, or the
+trusted hop above); the eleventh answers 429 with a plain body until a minute has passed
+since the first call of the window. Every route keeps its own budget, so a flood of login
+attempts cannot lock a client out of the rest of the API. The table lives in memory, holds
+at most 10 000 clients (the oldest window is evicted first) and is empty again after a
+restart.
 
 ### Close codes
 

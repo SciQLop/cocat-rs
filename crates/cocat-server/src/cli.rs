@@ -4,6 +4,7 @@ use std::env::VarError;
 use std::fs;
 use std::future::Future;
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use axum::serve::ListenerExt;
@@ -15,6 +16,7 @@ use uuid::Uuid;
 
 use cocat_core::role::{Role, UnknownRole};
 
+use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
 use crate::{AppState, auth, db, ws};
 
@@ -106,6 +108,8 @@ pub enum CliError {
     NoSuchUser(String),
     #[error("COCAT_ROOM_MEMORY_BUDGET must be a positive number of megabytes, got {0:?}")]
     InvalidBudget(String),
+    #[error("COCAT_TRUSTED_PROXIES must be a non-negative integer, got {0:?}")]
+    InvalidTrustedProxies(String),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -227,6 +231,7 @@ async fn set_room_owner(db_path: &Path, email: &str, room_id: &str) -> Result<()
 
 async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Result<(), CliError> {
     let budget = room_budget()?;
+    let trusted_proxies = trusted_proxies()?;
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
@@ -238,6 +243,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         secret,
         rooms: rooms.clone(),
         before_attach: None,
+        login_limit: LoginLimit::new(trusted_proxies),
     };
 
     let listener = TcpListener::bind((host, port)).await?;
@@ -245,9 +251,12 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     println!("listening on {}", listener.local_addr()?);
     io::stdout().flush()?;
 
-    axum::serve(listener.tap_io(ws::disable_nagle), ws::router(state))
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener.tap_io(ws::disable_nagle),
+        ws::router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
     rooms.flush_all().await;
     Ok(())
 }
@@ -276,6 +285,29 @@ fn parse_budget(value: &str) -> Result<u64, CliError> {
         .filter(|megabytes| *megabytes > 0)
         .map(|megabytes| megabytes.saturating_mul(1024 * 1024))
         .ok_or_else(|| CliError::InvalidBudget(value.to_owned()))
+}
+
+/// `COCAT_TRUSTED_PROXIES` is how many proxies stand in front of the server; unset or empty
+/// means the socket address is the client.
+fn trusted_proxies() -> Result<usize, CliError> {
+    let value = match std::env::var("COCAT_TRUSTED_PROXIES") {
+        Ok(value) => value,
+        Err(VarError::NotPresent) => return Ok(0),
+        Err(VarError::NotUnicode(_)) => {
+            return Err(CliError::InvalidTrustedProxies(
+                "a non-unicode value".to_owned(),
+            ));
+        }
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(0);
+    }
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|_| value.chars().all(|digit| digit.is_ascii_digit()))
+        .ok_or_else(|| CliError::InvalidTrustedProxies(value.to_owned()))
 }
 
 /// Registers SIGINT and SIGTERM when it is called, not when it is first polled: the server

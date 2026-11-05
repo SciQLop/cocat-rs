@@ -7,6 +7,7 @@ pub mod db;
 pub mod invitations;
 pub mod invitations_api;
 pub mod lifecycle;
+pub mod ratelimit;
 pub mod room;
 pub mod ws;
 
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use sqlx::SqlitePool;
 
+use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
 
 /// Runs once per socket, after the handshake granted a role and before the socket attaches.
@@ -27,4 +29,5 @@ pub struct AppState {
     pub secret: String,
     pub rooms: RoomManager,
     pub before_attach: Option<BeforeAttach>,
+    pub login_limit: LoginLimit,
 }
