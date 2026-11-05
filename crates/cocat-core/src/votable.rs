@@ -139,8 +139,11 @@ fn keys(attributes: &serde_json::Map<String, Value>) -> BTreeSet<&str> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Text,
-    Integer,
-    Float,
+    /// Every JSON number, integer or not, is one `double` column: Python's own export
+    /// contains `double` for an integer attribute (astropy widens the column), and its
+    /// importer matches a `long` field against `rating` first, so a `long` attribute
+    /// overwrites the rating on the way back in.
+    Number,
     Boolean,
     List,
 }
@@ -151,8 +154,7 @@ impl Kind {
             Value::String(_) => Some(Self::Text),
             Value::Bool(_) => Some(Self::Boolean),
             Value::Array(_) => Some(Self::List),
-            Value::Number(number) if number.is_i64() || number.is_u64() => Some(Self::Integer),
-            Value::Number(_) => Some(Self::Float),
+            Value::Number(_) => Some(Self::Number),
             Value::Null | Value::Object(_) => None,
         }
     }
@@ -161,8 +163,7 @@ impl Kind {
         match self {
             Self::Text => char_field(name),
             Self::List => json_field(name),
-            Self::Integer => simple_field(name, "long"),
-            Self::Float => simple_field(name, "double"),
+            Self::Number => simple_field(name, "double"),
             Self::Boolean => simple_field(name, "boolean"),
         }
     }
@@ -170,7 +171,7 @@ impl Kind {
     fn cell(self, value: &Value) -> String {
         match (self, value) {
             (Self::Text, Value::String(text)) => escape(text),
-            _ => value.to_string(),
+            _ => escape(&value.to_string()),
         }
     }
 }
@@ -198,7 +199,7 @@ fn json_list(items: &[String]) -> String {
         .iter()
         .map(|item| Value::from(item.as_str()))
         .collect();
-    Value::Array(values).to_string()
+    escape(&Value::Array(values).to_string())
 }
 
 fn escape(text: &str) -> String {
@@ -210,6 +211,10 @@ fn escape(text: &str) -> String {
             '>' => escaped.push_str("&gt;"),
             '"' => escaped.push_str("&quot;"),
             '\'' => escaped.push_str("&apos;"),
+            // XML 1.0 has no way to represent these, not even as a character reference.
+            control if control < ' ' && !matches!(control, '\t' | '\n' | '\r') => {
+                escaped.push('\u{FFFD}');
+            }
             other => escaped.push(other),
         }
     }
@@ -336,7 +341,7 @@ mod tests {
             "{xml}"
         );
         assert!(
-            xml.contains(r#"<FIELD name="i" datatype="long"/>"#),
+            xml.contains(r#"<FIELD name="i" datatype="double"/>"#),
             "{xml}"
         );
         assert!(
@@ -415,5 +420,55 @@ mod tests {
         );
         assert!(xml.contains("<TABLEDATA>"), "{xml}");
         assert!(!xml.contains("<TR>"), "{xml}");
+    }
+
+    #[test]
+    fn tag_with_markup_is_escaped() {
+        let mut event = event("2025-01-31 10:00:00", None);
+        event.tags = vec!["a<b".to_owned(), "x&y".to_owned()];
+        let xml = export(&catalogue("alpha"), &[event]).expect("a votable");
+
+        assert!(
+            xml.contains(r#"[&quot;a&lt;b&quot;,&quot;x&amp;y&quot;]"#),
+            "{xml}"
+        );
+        assert!(!xml.contains("a<b"), "{xml}");
+    }
+
+    #[test]
+    fn list_attribute_with_markup_is_escaped() {
+        let event = with_attributes(json!({"l": ["a<b", "x&y"]}));
+        let xml = export(&catalogue("alpha"), &[event]).expect("a votable");
+
+        assert!(
+            xml.contains(r#"[&quot;a&lt;b&quot;,&quot;x&amp;y&quot;]"#),
+            "{xml}"
+        );
+        assert!(!xml.contains("a<b"), "{xml}");
+    }
+
+    #[test]
+    fn control_character_is_replaced() {
+        let event = with_attributes(json!({"note": "a\u{1}b"}));
+        let xml = export(&catalogue("alpha"), &[event]).expect("a votable");
+
+        assert!(xml.contains("<TD>a\u{FFFD}b</TD>"), "{xml}");
+        assert!(!xml.contains('\u{1}'), "{xml}");
+    }
+
+    #[test]
+    fn integer_and_float_attribute_is_one_double_field() {
+        let mut whole = with_attributes(json!({"n": 2}));
+        whole.uuid = "00000000-0000-4000-8000-000000000001".to_owned();
+        let mut fractional = with_attributes(json!({"n": 2.5}));
+        fractional.uuid = "00000000-0000-4000-8000-000000000002".to_owned();
+        let xml = export(&catalogue("alpha"), &[whole, fractional]).expect("a votable");
+
+        assert!(
+            xml.contains(r#"<FIELD name="n" datatype="double"/>"#),
+            "{xml}"
+        );
+        assert!(xml.contains("<TD>2</TD></TR>"), "{xml}");
+        assert!(xml.contains("<TD>2.5</TD></TR>"), "{xml}");
     }
 }
