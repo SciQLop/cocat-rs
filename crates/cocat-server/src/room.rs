@@ -17,7 +17,7 @@ use tokio::sync::oneshot;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
-use yrs::{Doc, ReadTxn, Transact, Update};
+use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
 pub type ClientId = u64;
 
@@ -170,6 +170,7 @@ fn room_loop(
     let doc = Doc::new();
     let mut clients = HashMap::new();
     let mut backlog = VecDeque::new();
+    let mut full_state = None;
     let mut commands = Some(commands);
     for update in updates {
         apply(&doc, &update);
@@ -194,7 +195,8 @@ fn room_loop(
                     attach(&doc, &mut clients, client, Client { role, out });
                 }
                 RoomCommand::Frame { client, frame } => {
-                    broadcast = handle_frame(&doc, &mut store, &clients, client, frame);
+                    broadcast =
+                        handle_frame(&doc, &mut store, &mut full_state, &clients, client, frame);
                 }
                 RoomCommand::Detach { client, done } => {
                     clients.remove(&client);
@@ -365,6 +367,7 @@ fn attach(doc: &Doc, clients: &mut HashMap<ClientId, Client>, client: ClientId, 
 fn handle_frame(
     doc: &Doc,
     store: &mut FileRoomStore,
+    full_state: &mut Option<Bytes>,
     clients: &HashMap<ClientId, Client>,
     client: ClientId,
     frame: Bytes,
@@ -385,18 +388,45 @@ fn handle_frame(
     };
     match message {
         SyncMessage::SyncStep1(state_vector) => {
-            let update = doc.transact().encode_state_as_update_v1(&state_vector);
-            let reply = Message::Sync(SyncMessage::SyncStep2(update)).encode_v1();
-            let _ = sender.out.send(Bytes::from(reply));
+            let reply = if state_vector.is_empty() {
+                full_state_frame(doc, full_state).clone()
+            } else {
+                Bytes::from(
+                    Message::Sync(SyncMessage::SyncStep2(
+                        doc.transact().encode_state_as_update_v1(&state_vector),
+                    ))
+                    .encode_v1(),
+                )
+            };
+            let _ = sender.out.send(reply);
             None
         }
         SyncMessage::SyncStep2(update) | SyncMessage::Update(update) => {
             if !sender.role.can_write() {
                 return None;
             }
-            handle_update(doc, store, update)
+            let broadcast = handle_update(doc, store, update);
+            if broadcast.is_some() {
+                *full_state = None;
+            }
+            broadcast
         }
     }
+}
+
+/// Every cold client asks for the same whole-room state, and a 100k-event room answers in
+/// one ~38 MB frame: fifty joining at once would otherwise hold fifty copies in the room's
+/// outbound queues. Encoded once, shared by cheap `Bytes` clones, dropped by any update.
+fn full_state_frame<'a>(doc: &Doc, cache: &'a mut Option<Bytes>) -> &'a Bytes {
+    cache.get_or_insert_with(|| {
+        Bytes::from(
+            Message::Sync(SyncMessage::SyncStep2(
+                doc.transact()
+                    .encode_state_as_update_v1(&StateVector::default()),
+            ))
+            .encode_v1(),
+        )
+    })
 }
 
 fn handle_update(doc: &Doc, store: &mut FileRoomStore, payload: Vec<u8>) -> Option<Bytes> {
@@ -438,6 +468,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{Duration, Instant};
+    use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::mpsc::unbounded_channel;
     use tokio::time::{sleep, timeout};
     use yrs::{Map, ReadTxn, StateVector, Transact};
@@ -549,5 +580,79 @@ mod tests {
         let bytes = fs::read(dir.path().join("room-quiet.y")).unwrap();
         assert!(bytes.len() > cocat_core::store::HEADER.len());
         room.detach(1).await;
+    }
+
+    async fn join(
+        room: &RoomHandle,
+        client: ClientId,
+        out: UnboundedSender<Bytes>,
+        frames: &mut UnboundedReceiver<Bytes>,
+    ) -> Bytes {
+        room.attach(client, Role::Editor, out).unwrap();
+        frames.recv().await.unwrap();
+        room.frame(
+            client,
+            Bytes::from(Message::Sync(SyncMessage::SyncStep1(StateVector::default())).encode_v1()),
+        );
+        timeout(WAIT, frames.recv()).await.unwrap().unwrap()
+    }
+
+    #[tokio::test]
+    async fn cold_joins_share_one_encoded_full_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_owned());
+        let room = manager.get_or_open("room-share").unwrap();
+        let (out_a, mut frames_a) = unbounded_channel();
+        let (out_b, mut frames_b) = unbounded_channel();
+
+        let first = join(&room, 1, out_a, &mut frames_a).await;
+        let second = join(&room, 2, out_b, &mut frames_b).await;
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.as_ptr(),
+            second.as_ptr(),
+            "the full state was encoded one more time for the second client"
+        );
+        room.detach(1).await;
+        room.detach(2).await;
+    }
+
+    #[tokio::test]
+    async fn an_update_between_joins_invalidates_the_full_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_owned());
+        let room = manager.get_or_open("room-invalidate").unwrap();
+        let (out_a, mut frames_a) = unbounded_channel();
+        let (out_b, mut frames_b) = unbounded_channel();
+
+        let first = join(&room, 1, out_a, &mut frames_a).await;
+        room.frame(
+            1,
+            Bytes::from(Message::Sync(SyncMessage::Update(update_with("key", "two"))).encode_v1()),
+        );
+        frames_a.recv().await.unwrap();
+
+        let second = join(&room, 2, out_b, &mut frames_b).await;
+
+        assert_ne!(first, second);
+        assert_ne!(first.as_ptr(), second.as_ptr());
+        let doc = Doc::new();
+        match Message::decode_v1(&second).unwrap() {
+            Message::Sync(SyncMessage::SyncStep2(payload)) => {
+                doc.transact_mut()
+                    .apply_update(Update::decode_v1(&payload).unwrap())
+                    .unwrap();
+            }
+            _ => panic!("a join must be answered with the state as an update"),
+        }
+        let content = doc.get_or_insert_map("content");
+        let txn = doc.transact();
+        assert_eq!(
+            content.get(&txn, "key").map(|value| value.to_string(&txn)),
+            Some("two".to_owned())
+        );
+        room.detach(1).await;
+        room.detach(2).await;
     }
 }
