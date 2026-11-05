@@ -118,6 +118,31 @@ A malformed time, cursor or limit is 422, an unknown catalogue is 404 `{"detail"
 and a catalogue whose events disagree on an attribute's presence or type is 422 with the
 exporter's message. The file reads back through cocat's `import_votable`.
 
+## Groups
+
+A group has one owner and any number of members. A room is shared with a group by a grant
+(`editor` or `viewer`), and the role a user holds on a room is the highest of their direct
+membership and every grant to a group they belong to. A grant can never be `owner`:
+ownership only exists as a direct membership. Losing a group, a membership or a grant closes
+the sockets that carried it (1008) immediately.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/groups`, `POST /api/groups` | any user | your groups; create one (you own it) |
+| `PATCH`/`DELETE /api/groups/{id}` | group owner | rename; delete (revokes every room it carried) |
+| `GET /api/groups/{id}/members` | any member | members, by email |
+| `DELETE /api/groups/{id}/members/{user_id}` | owner, or yourself | remove a member (the owner cannot leave) |
+| `GET /api/rooms/{room_id}/groups` | any room member | the groups the room is shared with |
+| `PUT`/`DELETE /api/rooms/{room_id}/groups/{id}` | room owner | grant `{"role":"editor"\|"viewer"}`; unshare |
+
+Group invitations (`POST /api/groups/{id}/invitations`, `GET` to list, `DELETE` to revoke,
+plus `POST /api/group-invitations/preview` and `/accept`) always admit a member. When an
+email is given and a mailer is configured, the link is mailed and the reply carries no token.
+
+Removing someone from a room directly does **not** remove group access: while a group they
+belong to still holds a grant, they keep the room at the group's role. Remove them from the
+group, or unshare the room, to cut access.
+
 ## Durability
 
 Every update is written to the room file before it is broadcast, so a crash of the process
