@@ -255,6 +255,9 @@ def open_socket(host: str, port: int, room: str, cookie: str):
         f"ws://{host}:{port}/room/{room}",
         additional_headers={"cookie": f"{COOKIE}={cookie}"},
         open_timeout=10,
+        # A synced 100k-event room is one 37.8 MB SyncStep2 frame, far past the 1 MiB
+        # default; the gate measures that frame, so the harness must accept it.
+        max_size=None,
         legacy=True,
     )
 
