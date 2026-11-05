@@ -143,6 +143,35 @@ Removing someone from a room directly does **not** remove group access: while a 
 belong to still holds a grant, they keep the room at the group's role. Remove them from the
 group, or unshare the room, to cut access.
 
+## Web UI
+
+Server-rendered pages under `{COCAT_PROXY_PREFIX}/ui/`, with the paths and messages of the
+Python UI. Every action is a form POST answered by a 303 redirect; the only script is
+`fragment.js`, which moves a mailed `#token` into a form field.
+
+| Page | Path |
+|---|---|
+| Sign in, resend verification | `/ui/login` |
+| Sign up | `/ui/signup` |
+| Forgot / reset password | `/ui/forgot-password`, `/ui/reset-password#token` |
+| Verify an address | `/ui/verify#token` |
+| Account, confirm email | `/ui/account`, `/ui/confirm-email` |
+
+- Sessions are the same `fastapiusersauth` cookie as the API.
+- Any POST under `/ui` coming from another site is refused with 403. The `Origin` must
+  match `Host`, and `Sec-Fetch-Site`, when the browser sends it, must be same-origin or
+  same-site.
+- `?next=` after login only ever leads to a path on this site.
+- Login, sign-up, forgot-password and resend are rate-limited (10 per minute per client).
+
+Two deliberate differences from the Python UI:
+
+1. With mail configured, signing up with a taken address looks like a fresh sign-up, and
+   the address's owner is mailed about the attempt. Without mail, it still says the
+   address is registered.
+2. The forgot-password and resend mails are sent in the background, so the answer time
+   doesn't reveal whether the address has an account.
+
 ## Durability
 
 Every update is written to the room file before it is broadcast, so a crash of the process
