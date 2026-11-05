@@ -1,0 +1,17 @@
+[package]
+name = "cocat-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+yrs.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
