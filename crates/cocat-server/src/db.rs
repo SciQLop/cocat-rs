@@ -183,14 +183,23 @@ pub async fn set_verified(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> 
     Ok(updated.rows_affected() > 0)
 }
 
-/// Replace a password. The argon2 hash is what a reset link's fingerprint is compared
-/// against, so this is also what spends the link.
-pub async fn set_password(pool: &SqlitePool, id: Uuid, password: &str) -> Result<bool, DbError> {
-    let updated = sqlx::query(r#"UPDATE "user" SET hashed_password = ? WHERE id = ?"#)
-        .bind(hash_password(password)?)
-        .bind(id.to_string())
-        .execute(pool)
-        .await?;
+/// Replace a password whose hash is still `expected`. The argon2 hash is what a reset link's
+/// fingerprint is compared against, so comparing it inside the write is also what spends the
+/// link: of two requests holding the same link only the first finds the old hash still there.
+pub async fn replace_password(
+    pool: &SqlitePool,
+    id: Uuid,
+    expected: &str,
+    password: &str,
+) -> Result<bool, DbError> {
+    let updated = sqlx::query(
+        r#"UPDATE "user" SET hashed_password = ? WHERE id = ? AND hashed_password = ?"#,
+    )
+    .bind(hash_password(password)?)
+    .bind(id.to_string())
+    .bind(expected)
+    .execute(pool)
+    .await?;
     Ok(updated.rows_affected() > 0)
 }
 

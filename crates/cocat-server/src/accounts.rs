@@ -129,7 +129,7 @@ pub async fn reset_password(
     if !user.is_active {
         return Err(AccountError::BadResetToken);
     }
-    if !db::set_password(&state.pool, user.id, password).await? {
+    if !db::replace_password(&state.pool, user.id, &user.hashed_password, password).await? {
         return Err(AccountError::BadResetToken);
     }
     Ok(())

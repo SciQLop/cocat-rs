@@ -603,6 +603,25 @@ async fn a_reset_token_works_once() {
     );
 }
 
+/// Two requests can read the same row before either writes. The link is spent by the
+/// password change, so the conditional update is what makes exactly one of them win.
+#[tokio::test]
+async fn two_resets_of_one_link_cannot_both_win() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+    fixture.forgot("known@example.org").await;
+    let token = link_token(&fixture.mails(), "/ui/reset-password#");
+
+    let (first, second) = tokio::join!(
+        fixture.reset(&token, "first-password"),
+        fixture.reset(&token, "second-password"),
+    );
+
+    let statuses = [first.status(), second.status()];
+    let wins = statuses.iter().filter(|s| **s == StatusCode::OK).count();
+    assert_eq!(wins, 1, "one link changes one password: {statuses:?}");
+}
+
 #[tokio::test]
 async fn an_expired_token_is_bad() {
     let fixture = Fixture::start_with_mail().await;
