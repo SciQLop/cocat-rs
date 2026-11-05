@@ -63,6 +63,29 @@ server buffers before the client notices.
 An edit is a real cocat change: the client sets one event's `stop` and sends the
 resulting `sync update`, so the room grows the way it grows under a user.
 
+## Running the gates
+
+`run_gates.sh` builds the pristine room set once (`bench/work/pristine`: `bench100k`
+with 100 catalogues x 1000 events, `bench1k` and `bench1k-0..7` with 10 x 100), then for
+every scenario copies it into a fresh directory, seeds a fresh database with that
+server's own CLI and writes `bench/results/<scenario>-<server>.json`. Scenarios run one
+at a time; nothing else runs in the background.
+
+```sh
+SERVER=rust bench/run_gates.sh          # target/release/cocat-server, build it first
+SERVER=python bench/run_gates.sh        # the cocat-ui venv's `cocat`
+python bench/compare.py                 # gate table, Rust next to Python
+```
+
+The long runs (fanout 5 min, soak 1 h) take about 1.5 h per server. `--smoke` shrinks
+every scenario to seconds and writes `bench/results/smoke-*.json` in a separate
+`bench/work/smoke-*` directory, so it never touches gate numbers; `compare.py --smoke`
+prints their table.
+
+`compare.py` applies the design's thresholds row by row, lists the hard NO-GO lines the
+Rust run crossed, and names the rows the harness itself may have limited
+(`harness_peak_core_fraction > 0.7`).
+
 ## Running one scenario by hand
 
 ```sh
