@@ -90,6 +90,15 @@ pub async fn user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<User
     Ok(row.as_ref().map(user_from_row).transpose()?)
 }
 
+pub async fn user_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<User>, DbError> {
+    let row =
+        sqlx::query(r#"SELECT id, email, hashed_password, is_active FROM "user" WHERE id = ?"#)
+            .bind(id.to_string())
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.as_ref().map(user_from_row).transpose()?)
+}
+
 pub async fn role_in(
     pool: &SqlitePool,
     room_id: &str,

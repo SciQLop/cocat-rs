@@ -6,8 +6,11 @@ publish.workspace = true
 
 [dependencies]
 argon2 = "0.6"
+axum = { version = "0.8", features = ["form"] }
 clap = { version = "4", features = ["derive"] }
 cocat-core = { path = "../cocat-core" }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
+serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 thiserror.workspace = true
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
