@@ -5,9 +5,10 @@ use std::time::Duration;
 use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, HEADER};
-use cocat_server::room::{ClientId, RoomHandle, RoomManager};
+use cocat_server::room::{
+    ClientId, CloseReason, Inbox, OUTBOUND_FRAMES, RoomHandle, RoomManager, outbox,
+};
 use tempfile::TempDir;
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::timeout;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -38,12 +39,12 @@ fn update_frame(payload: &[u8]) -> Bytes {
     Bytes::from(Message::Sync(SyncMessage::Update(payload.to_vec())).encode_v1())
 }
 
-fn attach(handle: &RoomHandle, client: ClientId, role: Role) -> UnboundedReceiver<Bytes> {
-    let (out, frames) = tokio::sync::mpsc::unbounded_channel();
+fn attach(handle: &RoomHandle, client: ClientId, role: Role) -> Inbox {
+    let (out, inbox) = outbox();
     handle
         .attach(client, role, out)
         .expect("the room accepted the client");
-    frames
+    inbox
 }
 
 fn attach_with_retry(
@@ -51,19 +52,19 @@ fn attach_with_retry(
     room_id: &str,
     client: ClientId,
     role: Role,
-) -> (RoomHandle, UnboundedReceiver<Bytes>) {
+) -> (RoomHandle, Inbox) {
     for _ in 0..3 {
         let handle = manager.get_or_open(room_id).unwrap();
-        let (out, frames) = tokio::sync::mpsc::unbounded_channel();
+        let (out, inbox) = outbox();
         if handle.attach(client, role, out).is_ok() {
-            return (handle, frames);
+            return (handle, inbox);
         }
     }
     panic!("the room never accepted client {client}");
 }
 
-async fn next(frames: &mut UnboundedReceiver<Bytes>) -> Message {
-    let frame = timeout(WAIT, frames.recv())
+async fn next(inbox: &mut Inbox) -> Message {
+    let frame = timeout(WAIT, inbox.frames.recv())
         .await
         .expect("the room went quiet")
         .expect("the room closed the channel");
@@ -292,6 +293,30 @@ async fn an_empty_update_is_not_written_or_broadcast() {
     ));
     let path = dir.path().join("room-empty.y");
     assert_eq!(fs::metadata(path).unwrap().len(), HEADER.len() as u64);
+}
+
+#[tokio::test]
+async fn a_client_whose_queue_is_full_is_dropped_with_too_slow() {
+    let (_dir, manager) = manager();
+    let room = manager.get_or_open("room-full").unwrap();
+    let silent = attach(&room, 1, Role::Editor);
+    let mut reader = attach(&room, 2, Role::Editor);
+    next(&mut reader).await;
+
+    let payload = update_with("key", "value");
+    for _ in 0..OUTBOUND_FRAMES + 1 {
+        room.frame(2, update_frame(&payload));
+        // The sender must keep reading or it overflows too: awaiting each broadcast
+        // keeps its queue at one frame, so only the silent client is dropped.
+        next(&mut reader).await;
+    }
+
+    let reason = timeout(WAIT, silent.close)
+        .await
+        .expect("the room never closed the silent client")
+        .expect("the room dropped the close signal");
+    assert_eq!(reason, CloseReason::TooSlow);
+    room.detach(2).await;
 }
 
 #[tokio::test]

@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use cocat_core::role::Role;
-use cocat_server::room::RoomManager;
+use cocat_server::room::{OUTBOUND_FRAMES, RoomManager};
 use cocat_server::{AppState, auth, db, ws};
 use futures_util::{SinkExt, StreamExt};
 use sqlx::SqlitePool;
@@ -23,6 +23,11 @@ use yrs::{Doc, Map, ReadTxn, StateVector, Transact};
 
 const SECRET: &str = "test-secret";
 const WAIT: Duration = Duration::from_secs(10);
+
+/// A slow client only overflows once the kernel has swallowed several megabytes, so the
+/// updates carry 4 KB values: `OUTBOUND_FRAMES` of them plus what the socket buffers hold.
+const SLOW_PADDING: usize = 4096;
+const SLOW_UPDATES: usize = OUTBOUND_FRAMES + 4096;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -281,6 +286,44 @@ async fn short_frames_do_not_close_the_socket() {
         next_message(&mut socket).await,
         Message::Sync(SyncMessage::SyncStep2(_))
     ));
+}
+
+#[tokio::test]
+async fn a_client_that_does_not_read_is_closed_1013() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-slow", "Slow")
+        .await
+        .unwrap();
+    let token = fixture.token(owner);
+    let mut silent = fixture.connect("room-slow", Some(&token)).await;
+    let mut writer = fixture.connect("room-slow", Some(&token)).await;
+    next_message(&mut writer).await;
+
+    let padding = "x".repeat(SLOW_PADDING);
+    for tick in 0..SLOW_UPDATES {
+        let update = update_with(&format!("key-{tick}"), &padding);
+        writer
+            .send(sync_frame(Message::Sync(SyncMessage::Update(update))))
+            .await
+            .unwrap();
+        // Awaiting its own broadcast keeps the writer's queue at one frame, so only the
+        // silent socket's queue fills.
+        next_message(&mut writer).await;
+    }
+
+    // The room dropped the silent client while its socket was blocked on the kernel
+    // buffers; reading it now lets the queued frames and then the close through.
+    loop {
+        if let WsMessage::Close(frame) = next_ws(&mut silent).await {
+            assert_eq!(
+                frame.map(|frame| u16::from(frame.code)),
+                Some(1013),
+                "a client that does not read must be closed 1013"
+            );
+            break;
+        }
+    }
 }
 
 #[tokio::test]

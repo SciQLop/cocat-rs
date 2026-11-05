@@ -9,14 +9,13 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use bytes::Bytes;
 use cocat_core::role::Role;
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
-use tokio::sync::mpsc;
 
 use crate::AppState;
-use crate::room::{ClientId, RoomError, RoomGone, RoomHandle};
+use crate::room::{ClientId, Inbox, RoomError, RoomGone, RoomHandle, outbox};
 use crate::{auth, db};
 
 pub const INTERNAL_ERROR: u16 = 1011;
@@ -79,9 +78,8 @@ async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
 
 async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role) {
     let client = next_client();
-    let (out, mut frames) = mpsc::unbounded_channel();
-    let room = match attach(&state, &room_id, client, role, out).await {
-        Ok(room) => room,
+    let (room, inbox) = match attach(&state, &room_id, client, role).await {
+        Ok(attached) => attached,
         Err(error) => {
             tracing::warn!(%error, room = %room_id, "cannot attach the socket");
             return close(socket, INTERNAL_ERROR, "cannot attach to the room").await;
@@ -90,12 +88,9 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role)
 
     let (mut sink, mut stream) = socket.split();
     let writer = tokio::spawn(async move {
-        while let Some(frame) = frames.recv().await {
-            if sink.send(Message::Binary(frame)).await.is_err() {
-                return;
-            }
+        if let Err(error) = write_until_closed(&mut sink, inbox).await {
+            tracing::debug!(%error, "the socket stopped accepting frames");
         }
-        let _ = sink.send(Message::Close(None)).await;
     });
 
     while let Some(Ok(frame)) = stream.next().await {
@@ -110,21 +105,47 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role)
     let _ = writer.await;
 }
 
+/// Writes the room's frames until it closes the client or the socket fails, then sends the
+/// close frame. A reason that arrives while a write is blocked reaches the client as soon
+/// as it reads again: aborting the pending write could truncate a frame, and the socket
+/// buffers already hold frames that cannot be recalled.
+async fn write_until_closed(
+    sink: &mut SplitSink<WebSocket, Message>,
+    mut inbox: Inbox,
+) -> Result<(), axum::Error> {
+    let reason = loop {
+        let frame = tokio::select! {
+            biased;
+            reason = &mut inbox.close => break reason.ok(),
+            frame = inbox.frames.recv() => match frame {
+                Some(frame) => frame,
+                None => break None,
+            },
+        };
+        sink.send(Message::Binary(frame)).await?;
+    };
+    let frame = reason.map(|reason| CloseFrame {
+        code: reason.code(),
+        reason: reason.reason().into(),
+    });
+    sink.send(Message::Close(frame)).await
+}
+
 async fn attach(
     state: &AppState,
     room_id: &str,
     client: ClientId,
     role: Role,
-    out: mpsc::UnboundedSender<Bytes>,
-) -> Result<RoomHandle, AttachError> {
+) -> Result<(RoomHandle, Inbox), AttachError> {
     for _ in 0..ATTACH_TRIES {
         let rooms = state.rooms.clone();
         let id = room_id.to_owned();
         let room = tokio::task::spawn_blocking(move || rooms.get_or_open(&id))
             .await?
             .map_err(AttachError::Room)?;
-        match room.attach(client, role, out.clone()) {
-            Ok(()) => return Ok(room),
+        let (out, inbox) = outbox();
+        match room.attach(client, role, out) {
+            Ok(()) => return Ok((room, inbox)),
             Err(RoomGone) => continue,
         }
     }

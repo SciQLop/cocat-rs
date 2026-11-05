@@ -12,7 +12,7 @@ use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, StoreError};
 use thiserror::Error;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
 use tokio::sync::oneshot;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -23,6 +23,61 @@ pub type ClientId = u64;
 
 // simplify: a one-second timer instead of a durability policy; phase 1 owns fsync policy.
 const SYNC_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How many frames a client may fall behind before the room closes it: 1024 frames is
+/// roughly twenty seconds of a room at fifty edits per second.
+pub const OUTBOUND_FRAMES: usize = 1024;
+
+/// Why the room closed a socket. `1008` is a policy violation, `1013` means try again
+/// later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseReason {
+    Revoked,
+    TooSlow,
+    OverBudget,
+}
+
+impl CloseReason {
+    pub fn code(self) -> u16 {
+        match self {
+            Self::Revoked => 1008,
+            Self::TooSlow | Self::OverBudget => 1013,
+        }
+    }
+
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Revoked => "access revoked",
+            Self::TooSlow => "client too slow",
+            Self::OverBudget => "server memory budget reached",
+        }
+    }
+}
+
+/// The room's end of one client's queue, and the signal that closes that client.
+#[derive(Debug)]
+pub struct Outbox {
+    pub frames: tokio_mpsc::Sender<Bytes>,
+    pub close: oneshot::Sender<CloseReason>,
+}
+
+#[derive(Debug)]
+pub struct Inbox {
+    pub frames: tokio_mpsc::Receiver<Bytes>,
+    pub close: oneshot::Receiver<CloseReason>,
+}
+
+pub fn outbox() -> (Outbox, Inbox) {
+    let (frames, inbox_frames) = tokio_mpsc::channel(OUTBOUND_FRAMES);
+    let (close, inbox_close) = oneshot::channel();
+    (
+        Outbox { frames, close },
+        Inbox {
+            frames: inbox_frames,
+            close: inbox_close,
+        },
+    )
+}
 
 type Rooms = Arc<Mutex<HashMap<String, RoomHandle>>>;
 
@@ -98,12 +153,7 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub fn attach(
-        &self,
-        client: ClientId,
-        role: Role,
-        out: UnboundedSender<Bytes>,
-    ) -> Result<(), RoomGone> {
+    pub fn attach(&self, client: ClientId, role: Role, out: Outbox) -> Result<(), RoomGone> {
         self.commands
             .send(RoomCommand::Attach { client, role, out })
             .map_err(|_| RoomGone)
@@ -140,7 +190,7 @@ enum RoomCommand {
     Attach {
         client: ClientId,
         role: Role,
-        out: UnboundedSender<Bytes>,
+        out: Outbox,
     },
     Frame {
         client: ClientId,
@@ -157,7 +207,7 @@ enum RoomCommand {
 
 struct Client {
     role: Role,
-    out: UnboundedSender<Bytes>,
+    out: Outbox,
 }
 
 fn room_loop(
@@ -195,8 +245,14 @@ fn room_loop(
                     attach(&doc, &mut clients, client, Client { role, out });
                 }
                 RoomCommand::Frame { client, frame } => {
-                    broadcast =
-                        handle_frame(&doc, &mut store, &mut full_state, &clients, client, frame);
+                    broadcast = handle_frame(
+                        &doc,
+                        &mut store,
+                        &mut full_state,
+                        &mut clients,
+                        client,
+                        frame,
+                    );
                 }
                 RoomCommand::Detach { client, done } => {
                     clients.remove(&client);
@@ -217,7 +273,7 @@ fn room_loop(
                 write(&mut store, &room_id);
             }
             if let Some(frame) = broadcast {
-                broadcast_to(&clients, frame);
+                broadcast_to(&mut clients, frame);
             }
         };
 
@@ -350,32 +406,86 @@ fn flush(store: &mut FileRoomStore, room_id: &str) {
     }
 }
 
-fn broadcast_to(clients: &HashMap<ClientId, Client>, frame: Bytes) {
-    for client in clients.values() {
-        let _ = client.out.send(frame.clone());
+enum Post {
+    Sent,
+    Full,
+    Closed,
+}
+
+fn post(out: &Outbox, frame: Bytes) -> Post {
+    match out.frames.try_send(frame) {
+        Ok(()) => Post::Sent,
+        Err(TrySendError::Full(_)) => Post::Full,
+        Err(TrySendError::Closed(_)) => Post::Closed,
+    }
+}
+
+/// Sends one frame to one client. A client that is too far behind, or whose socket is
+/// gone, leaves the room instead of buffering without bound.
+fn deliver(clients: &mut HashMap<ClientId, Client>, client: ClientId, frame: Bytes) {
+    let Some(entry) = clients.get(&client) else {
+        return;
+    };
+    match post(&entry.out, frame) {
+        Post::Sent => {}
+        Post::Full => drop_client(clients, client, Some(CloseReason::TooSlow)),
+        Post::Closed => drop_client(clients, client, None),
+    }
+}
+
+/// Removes one client; `Some` tells the bridge why it lost the room.
+fn drop_client(
+    clients: &mut HashMap<ClientId, Client>,
+    client: ClientId,
+    reason: Option<CloseReason>,
+) {
+    let Some(entry) = clients.remove(&client) else {
+        return;
+    };
+    if let Some(reason) = reason {
+        let _ = entry.out.close.send(reason);
+    }
+}
+
+fn broadcast_to(clients: &mut HashMap<ClientId, Client>, frame: Bytes) {
+    let mut dropped = Vec::new();
+    for (client, entry) in clients.iter() {
+        match post(&entry.out, frame.clone()) {
+            Post::Sent => {}
+            Post::Full => dropped.push((*client, Some(CloseReason::TooSlow))),
+            Post::Closed => dropped.push((*client, None)),
+        }
+    }
+    for (client, reason) in dropped {
+        drop_client(clients, client, reason);
     }
 }
 
 fn attach(doc: &Doc, clients: &mut HashMap<ClientId, Client>, client: ClientId, entry: Client) {
     let step = Message::Sync(SyncMessage::SyncStep1(doc.transact().state_vector())).encode_v1();
-    if entry.out.send(Bytes::from(step)).is_err() {
-        return;
+    match post(&entry.out, Bytes::from(step)) {
+        Post::Sent => {
+            clients.insert(client, entry);
+        }
+        Post::Full => {
+            let _ = entry.out.close.send(CloseReason::TooSlow);
+        }
+        Post::Closed => {}
     }
-    clients.insert(client, entry);
 }
 
 fn handle_frame(
     doc: &Doc,
     store: &mut FileRoomStore,
     full_state: &mut Option<Bytes>,
-    clients: &HashMap<ClientId, Client>,
+    clients: &mut HashMap<ClientId, Client>,
     client: ClientId,
     frame: Bytes,
 ) -> Option<Bytes> {
     if frame.len() < 2 {
         return None;
     }
-    let sender = clients.get(&client)?;
+    let role = clients.get(&client)?.role;
     let message = match Message::decode_v1(&frame) {
         Ok(message) => message,
         Err(error) => {
@@ -398,11 +508,11 @@ fn handle_frame(
                     .encode_v1(),
                 )
             };
-            let _ = sender.out.send(reply);
+            deliver(clients, client, reply);
             None
         }
         SyncMessage::SyncStep2(update) | SyncMessage::Update(update) => {
-            if !sender.role.can_write() {
+            if !role.can_write() {
                 return None;
             }
             let broadcast = handle_update(doc, store, update);
@@ -468,8 +578,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{Duration, Instant};
-    use tokio::sync::mpsc::UnboundedReceiver;
-    use tokio::sync::mpsc::unbounded_channel;
     use tokio::time::{sleep, timeout};
     use yrs::{Map, ReadTxn, StateVector, Transact};
 
@@ -508,7 +616,7 @@ mod tests {
     #[test]
     fn a_queued_attach_keeps_a_dying_room_alive() {
         let mut room = dying_room();
-        let (out, _frames) = unbounded_channel();
+        let (out, _inbox) = outbox();
         room.handle.attach(1, Role::Editor, out).unwrap();
 
         assert!(close_room(
@@ -532,7 +640,7 @@ mod tests {
             &mut room.backlog
         ));
         assert!(room.registry.lock().unwrap().is_empty());
-        let (out, _frames) = unbounded_channel();
+        let (out, _inbox) = outbox();
         assert_eq!(room.handle.attach(1, Role::Editor, out), Err(RoomGone));
     }
 
@@ -560,16 +668,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let manager = RoomManager::new(dir.path().to_owned());
         let room = manager.get_or_open("room-quiet").unwrap();
-        let (out, mut frames) = unbounded_channel();
+        let (out, mut inbox) = outbox();
         room.attach(1, Role::Editor, out).unwrap();
-        timeout(WAIT, frames.recv()).await.unwrap().unwrap();
+        timeout(WAIT, inbox.frames.recv()).await.unwrap().unwrap();
 
         let payload = update_with("key", "value");
         room.frame(
             1,
             Bytes::from(Message::Sync(SyncMessage::Update(payload)).encode_v1()),
         );
-        timeout(WAIT, frames.recv()).await.unwrap().unwrap();
+        timeout(WAIT, inbox.frames.recv()).await.unwrap().unwrap();
         let written = sync_count();
 
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -582,19 +690,14 @@ mod tests {
         room.detach(1).await;
     }
 
-    async fn join(
-        room: &RoomHandle,
-        client: ClientId,
-        out: UnboundedSender<Bytes>,
-        frames: &mut UnboundedReceiver<Bytes>,
-    ) -> Bytes {
+    async fn join(room: &RoomHandle, client: ClientId, out: Outbox, inbox: &mut Inbox) -> Bytes {
         room.attach(client, Role::Editor, out).unwrap();
-        frames.recv().await.unwrap();
+        inbox.frames.recv().await.unwrap();
         room.frame(
             client,
             Bytes::from(Message::Sync(SyncMessage::SyncStep1(StateVector::default())).encode_v1()),
         );
-        timeout(WAIT, frames.recv()).await.unwrap().unwrap()
+        timeout(WAIT, inbox.frames.recv()).await.unwrap().unwrap()
     }
 
     #[tokio::test]
@@ -602,11 +705,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let manager = RoomManager::new(dir.path().to_owned());
         let room = manager.get_or_open("room-share").unwrap();
-        let (out_a, mut frames_a) = unbounded_channel();
-        let (out_b, mut frames_b) = unbounded_channel();
+        let (out_a, mut inbox_a) = outbox();
+        let (out_b, mut inbox_b) = outbox();
 
-        let first = join(&room, 1, out_a, &mut frames_a).await;
-        let second = join(&room, 2, out_b, &mut frames_b).await;
+        let first = join(&room, 1, out_a, &mut inbox_a).await;
+        let second = join(&room, 2, out_b, &mut inbox_b).await;
 
         assert_eq!(first, second);
         assert_eq!(
@@ -623,17 +726,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let manager = RoomManager::new(dir.path().to_owned());
         let room = manager.get_or_open("room-invalidate").unwrap();
-        let (out_a, mut frames_a) = unbounded_channel();
-        let (out_b, mut frames_b) = unbounded_channel();
+        let (out_a, mut inbox_a) = outbox();
+        let (out_b, mut inbox_b) = outbox();
 
-        let first = join(&room, 1, out_a, &mut frames_a).await;
+        let first = join(&room, 1, out_a, &mut inbox_a).await;
         room.frame(
             1,
             Bytes::from(Message::Sync(SyncMessage::Update(update_with("key", "two"))).encode_v1()),
         );
-        frames_a.recv().await.unwrap();
+        inbox_a.frames.recv().await.unwrap();
 
-        let second = join(&room, 2, out_b, &mut frames_b).await;
+        let second = join(&room, 2, out_b, &mut inbox_b).await;
 
         assert_ne!(first, second);
         assert_ne!(first.as_ptr(), second.as_ptr());
