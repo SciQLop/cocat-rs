@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::accounts::AccountError;
 use crate::db::{self, DbError, RoomRow};
 use crate::lifecycle::{self, LifecycleError};
+use crate::room::RoomError;
 use crate::{AppState, auth};
 
 pub fn router() -> Router<AppState> {
@@ -30,6 +31,7 @@ pub fn router() -> Router<AppState> {
             patch(set_member_role).delete(remove_member),
         )
         .route("/rooms/{room_id}/owner", post(transfer_ownership))
+        .merge(crate::catalogues_api::router())
         .merge(crate::invitations_api::router())
 }
 
@@ -83,6 +85,7 @@ pub enum ApiError {
     Conflict(String),
     BadRequest(String),
     Unprocessable(String),
+    Unavailable(String),
     Internal,
 }
 
@@ -95,6 +98,7 @@ impl IntoResponse for ApiError {
             Self::Conflict(detail) => (StatusCode::CONFLICT, detail),
             Self::BadRequest(detail) => (StatusCode::BAD_REQUEST, detail),
             Self::Unprocessable(detail) => (StatusCode::UNPROCESSABLE_ENTITY, detail),
+            Self::Unavailable(detail) => (StatusCode::SERVICE_UNAVAILABLE, detail),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_owned(),
@@ -150,6 +154,20 @@ impl From<LifecycleError> for ApiError {
             }
             LifecycleError::Random(error) => {
                 tracing::error!(%error, "the random source failed");
+                Self::Internal
+            }
+        }
+    }
+}
+
+impl From<RoomError> for ApiError {
+    fn from(error: RoomError) -> Self {
+        match error {
+            RoomError::OverBudget { .. } => {
+                Self::Unavailable("Server memory budget reached".to_owned())
+            }
+            other => {
+                tracing::error!(%other, "the room could not be read");
                 Self::Internal
             }
         }
@@ -359,7 +377,11 @@ async fn transfer_ownership(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn membership(state: &AppState, room_id: &str, user: Uuid) -> Result<Role, ApiError> {
+pub(crate) async fn membership(
+    state: &AppState,
+    room_id: &str,
+    user: Uuid,
+) -> Result<Role, ApiError> {
     db::role_in(&state.pool, room_id, user)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Room {room_id} not found")))
