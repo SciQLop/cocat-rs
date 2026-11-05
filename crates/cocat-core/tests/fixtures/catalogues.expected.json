@@ -1,0 +1,74 @@
+{
+  "catalogues": [
+    {
+      "attributes": {
+        "level": 2.0,
+        "mission": "MMS"
+      },
+      "author": "a@x.org",
+      "name": "alpha",
+      "tags": [
+        "t1",
+        "t2"
+      ],
+      "uuid": "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60"
+    },
+    {
+      "attributes": {},
+      "author": "b@x.org",
+      "name": "beta",
+      "tags": [],
+      "uuid": "0e4d2c31-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+    }
+  ],
+  "events": [
+    {
+      "attributes": {
+        "flag": true,
+        "q": 1.5
+      },
+      "author": "a@x.org",
+      "products": [
+        "p1"
+      ],
+      "rating": 3.0,
+      "start": "2025-01-31 10:00:00",
+      "stop": "2025-01-31 10:01:00",
+      "tags": [
+        "t1"
+      ],
+      "uuid": "aaaaaaaa-1111-4111-8111-111111111111"
+    },
+    {
+      "attributes": {
+        "flag": false,
+        "q": 0.5
+      },
+      "author": "a@x.org",
+      "products": [],
+      "rating": null,
+      "start": "2025-01-31 11:00:00.123456",
+      "stop": "2025-01-31 11:01:00.654321",
+      "tags": [],
+      "uuid": "bbbbbbbb-2222-4222-8222-222222222222"
+    },
+    {
+      "attributes": {
+        "flag": true,
+        "q": 1.5
+      },
+      "author": "a@x.org",
+      "products": [
+        "p1",
+        "p2"
+      ],
+      "rating": 1.0,
+      "start": "2025-01-31 12:00:00+00:00",
+      "stop": "2025-01-31 12:01:00+00:00",
+      "tags": [
+        "t2"
+      ],
+      "uuid": "cccccccc-3333-4333-8333-333333333333"
+    }
+  ]
+}

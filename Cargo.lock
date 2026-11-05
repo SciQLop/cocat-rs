@@ -333,8 +333,11 @@ name = "cocat-core"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
+ "time",
  "tracing",
  "yrs",
 ]
