@@ -404,9 +404,14 @@ fn room_loop(
                 }
             }
             Unload::Deleted(done) => {
-                remove_room(&room_id, &registry, &mut commands, &mut backlog);
-                drop(store);
-                delete_file(&update_dir, &room_id);
+                remove_room(
+                    &room_id,
+                    &update_dir,
+                    store,
+                    &registry,
+                    &mut commands,
+                    &mut backlog,
+                );
                 let _ = done.send(());
                 break 'serving;
             }
@@ -506,23 +511,31 @@ fn close_room(
     }
 }
 
-/// Removes a room that is being deleted. Unlike `close_room`, a queued attach does not keep
-/// it alive: the file is already gone, and that client learns its role is gone when its
-/// bridge re-reads it.
+/// Removes a room that is being deleted, file included, while still holding the registry
+/// lock: a `get_or_open` in that window would otherwise load the old file and then lose it
+/// under its feet. Unlike `close_room`, a queued attach does not keep the room alive: the
+/// file is already gone, and that client learns its role is gone when its bridge re-reads it.
 fn remove_room(
     room_id: &str,
+    update_dir: &Path,
+    store: FileRoomStore,
     registry: &Rooms,
     commands: &mut Option<Receiver<RoomCommand>>,
     backlog: &mut VecDeque<RoomCommand>,
 ) {
-    match registry.lock() {
-        Ok(mut rooms) => {
-            rooms.remove(room_id);
-            commands.take();
-            settle(backlog);
+    let mut rooms = match registry.lock() {
+        Ok(rooms) => rooms,
+        Err(_) => {
+            tracing::error!(room = %room_id, "the room registry is poisoned");
+            drop(store);
+            return delete_file(update_dir, room_id);
         }
-        Err(_) => tracing::error!(room = %room_id, "the room registry is poisoned"),
-    }
+    };
+    rooms.remove(room_id);
+    drop(store);
+    delete_file(update_dir, room_id);
+    commands.take();
+    settle(backlog);
 }
 
 fn delete_file(update_dir: &Path, room_id: &str) {
