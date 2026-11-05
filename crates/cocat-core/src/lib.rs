@@ -5,3 +5,4 @@ pub mod role;
 pub mod room_id;
 pub mod store;
 pub mod time;
+pub mod votable;
