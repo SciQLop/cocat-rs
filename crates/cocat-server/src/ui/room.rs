@@ -12,7 +12,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
-use crate::{AppState, db, invitations, lifecycle, mail};
+use crate::{AppState, db, groups, invitations, lifecycle, mail};
 
 /// Python's `INVITATION_LIFETIME`: every invitation this page makes lasts two weeks.
 const INVITATION_DAYS: u32 = 14;
@@ -31,6 +31,14 @@ pub(crate) struct InviteForm {
     role: String,
     #[serde(default)]
     email: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GroupGrantForm {
+    #[serde(default)]
+    group: String,
+    #[serde(default)]
+    role: String,
 }
 
 struct LeaveForm {
@@ -68,6 +76,30 @@ struct InvitationPanel {
     invitations: Vec<InvitationLine>,
 }
 
+struct GroupOption {
+    value: String,
+    label: String,
+}
+
+struct GroupControls {
+    action: String,
+    remove_action: String,
+    confirm: String,
+}
+
+struct GroupLine {
+    id: String,
+    name: String,
+    role: &'static str,
+    controls: Option<GroupControls>,
+}
+
+struct GroupPanel {
+    action: String,
+    picker: Vec<GroupOption>,
+    groups: Vec<GroupLine>,
+}
+
 #[derive(Template)]
 #[template(path = "room.html")]
 struct RoomPage {
@@ -77,6 +109,7 @@ struct RoomPage {
     rooms_href: String,
     leave: Option<LeaveForm>,
     members: Vec<MemberLine>,
+    groups: GroupPanel,
     panel: Option<InvitationPanel>,
 }
 
@@ -119,6 +152,7 @@ async fn build_page(
         return Ok(None);
     };
     let members = members_of(state, &room.id, role).await?;
+    let groups = groups_of(state, user.id, &room.id, role).await?;
     let panel = match role {
         Role::Owner => Some(panel(state, user.id, &room.id, share_link).await?),
         _ => None,
@@ -134,6 +168,7 @@ async fn build_page(
         rooms_href: state.links.path("/rooms"),
         leave,
         members,
+        groups,
         panel,
     }))
 }
@@ -169,6 +204,58 @@ async fn members_of(
             }
         })
         .collect())
+}
+
+async fn groups_of(
+    state: &AppState,
+    actor: Uuid,
+    room_id: &str,
+    actor_role: Role,
+) -> Result<GroupPanel, lifecycle::LifecycleError> {
+    let grants = groups::room_groups(state, room_id, actor).await?;
+    let granted: Vec<&str> = grants.iter().map(|(group, _)| group.id.as_str()).collect();
+    let picker = match actor_role {
+        Role::Owner => groups::list_for(state, actor)
+            .await?
+            .into_iter()
+            .filter(|(group, _)| !granted.contains(&group.id.as_str()))
+            .map(|(group, _)| GroupOption {
+                value: group.id,
+                label: group.name,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(GroupPanel {
+        action: state.links.path(&format!("/rooms/{room_id}/groups")),
+        picker,
+        groups: grants
+            .into_iter()
+            .map(|(group, role)| group_line(state, room_id, group, role, actor_role))
+            .collect(),
+    })
+}
+
+fn group_line(
+    state: &AppState,
+    room_id: &str,
+    group: groups::GroupRow,
+    role: Role,
+    actor_role: Role,
+) -> GroupLine {
+    let controls = (actor_role == Role::Owner).then(|| GroupControls {
+        action: state.links.path(&format!("/rooms/{room_id}/groups")),
+        remove_action: state
+            .links
+            .path(&format!("/rooms/{room_id}/groups/{}/remove", group.id)),
+        confirm: format!("Stop sharing with {}?", group.name),
+    });
+    GroupLine {
+        id: group.id,
+        name: group.name,
+        role: role.as_str(),
+        controls,
+    }
 }
 
 async fn panel(
@@ -326,6 +413,55 @@ pub(crate) async fn invite(
         ),
         Err(error) => answer(&state, Err(error), &target, String::new()),
     }
+}
+
+pub(crate) async fn share_group(
+    Path(room_id): Path<String>,
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Form(form): Form<GroupGrantForm>,
+) -> Response {
+    let Ok(role) = Role::from_str(&form.role) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if role == Role::Owner {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let target = format!("/rooms/{room_id}");
+    let granted = match groups::room_groups(&state, &room_id, user.id).await {
+        Ok(grants) => grants.iter().any(|(group, _)| group.id == form.group),
+        Err(error) => return answer(&state, Err(error), &target, String::new()),
+    };
+    match groups::grant(&state, &room_id, &form.group, user.id, role).await {
+        Ok((group, _)) if granted => redirect(
+            &state,
+            &target,
+            &format!("{} is now {}", group.name, role.as_str()),
+        ),
+        Ok((group, _)) => redirect(&state, &target, &format!("Shared with {}", group.name)),
+        Err(error) => answer(&state, Err(error), &target, String::new()),
+    }
+}
+
+pub(crate) async fn stop_sharing_group(
+    Path((room_id, group)): Path<(String, String)>,
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+) -> Response {
+    let target = format!("/rooms/{room_id}");
+    let name = match groups::room_groups(&state, &room_id, user.id).await {
+        Ok(grants) => grants
+            .into_iter()
+            .find(|(granted, _)| granted.id == group)
+            .map(|(granted, _)| granted.name),
+        Err(error) => return answer(&state, Err(error), &target, String::new()),
+    };
+    let result = groups::ungrant(&state, &room_id, &group, user.id).await;
+    let done = name.map_or_else(
+        || "Stopped sharing".to_owned(),
+        |name| format!("Stopped sharing with {name}"),
+    );
+    answer(&state, result, &target, done)
 }
 
 pub(crate) async fn revoke(

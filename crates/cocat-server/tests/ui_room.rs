@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use cocat_core::role::Role;
 use cocat_server::room::{CloseReason, outbox};
-use cocat_server::{db, invitations, lifecycle};
+use cocat_server::{db, groups, invitations, lifecycle};
 use ui_support::{Fixture, PUBLIC_URL, body_text, flash_cookie, form, location, share_link_cookie};
 use uuid::Uuid;
 
@@ -561,4 +561,206 @@ async fn an_invitation_row_shows_usage() {
         .map(|invitation| invitation.expires_at[..10].to_owned())
         .unwrap();
     assert!(page.contains(&expires), "{page}");
+}
+
+async fn group_owned_by(fixture: &Fixture, owner: Uuid, name: &str) -> String {
+    groups::create(&fixture.state, owner, name)
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn grants_are_listed_for_viewers() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let viewer = member_of(&fixture, &room, OTHER, Role::Viewer).await;
+    let group = group_owned_by(&fixture, owner, "friends").await;
+    groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
+        .await
+        .unwrap();
+    let token = fixture.token(viewer);
+
+    let page = body_text(
+        fixture
+            .get(&format!("/ui/rooms/{room}"), Some(&token))
+            .await,
+    )
+    .await;
+
+    assert!(page.contains("friends"), "{page}");
+    assert!(
+        page.contains(r#"<span class="role">editor</span>"#),
+        "{page}"
+    );
+    assert!(!page.contains(">Share with group<"), "{page}");
+    assert!(
+        !page.contains(&format!("data-group-role=\"{group}\"")),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn the_owner_picker_lists_only_their_ungranted_groups() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let other = fixture.verified(OTHER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let granted = group_owned_by(&fixture, owner, "granted").await;
+    let spare = group_owned_by(&fixture, owner, "spare").await;
+    let foreign = group_owned_by(&fixture, other, "foreign").await;
+    groups::grant(&fixture.state, &room, &granted, owner, Role::Editor)
+        .await
+        .unwrap();
+    let token = fixture.token(owner);
+
+    let page = body_text(
+        fixture
+            .get(&format!("/ui/rooms/{room}"), Some(&token))
+            .await,
+    )
+    .await;
+
+    assert!(page.contains(">Share with group<"), "{page}");
+    assert!(
+        page.contains(&format!(r#"<option value="{spare}""#)),
+        "{page}"
+    );
+    assert!(
+        !page.contains(&format!(r#"<option value="{granted}""#)),
+        "{page}"
+    );
+    assert!(
+        !page.contains(&format!(r#"<option value="{foreign}""#)),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn share_with_group() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let group = group_owned_by(&fixture, owner, "friends").await;
+    let token = fixture.token(owner);
+
+    let response = fixture
+        .post(
+            &format!("/ui/rooms/{room}/groups"),
+            Some(&token),
+            &form(&[("group", &group), ("role", "viewer")]),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), format!("/ui/rooms/{room}"));
+    let flash = flash_cookie(&response).expect("sharing flashes a message");
+    assert!(flash.contains("Shared%20with%20friends"), "{flash}");
+    let grants = groups::room_groups(&fixture.state, &room, owner)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].0.name, "friends");
+    assert_eq!(grants[0].1, Role::Viewer);
+}
+
+#[tokio::test]
+async fn change_the_role_of_a_granted_group() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let group = group_owned_by(&fixture, owner, "friends").await;
+    groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
+        .await
+        .unwrap();
+    let token = fixture.token(owner);
+
+    let response = fixture
+        .post(
+            &format!("/ui/rooms/{room}/groups"),
+            Some(&token),
+            &form(&[("group", &group), ("role", "viewer")]),
+        )
+        .await;
+
+    let flash = flash_cookie(&response).expect("the change flashes a message");
+    assert!(flash.contains("friends%20is%20now%20viewer"), "{flash}");
+    let grants = groups::room_groups(&fixture.state, &room, owner)
+        .await
+        .unwrap();
+    assert_eq!(grants[0].1, Role::Viewer);
+}
+
+#[tokio::test]
+async fn stop_sharing_with_a_group() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let group = group_owned_by(&fixture, owner, "friends").await;
+    groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
+        .await
+        .unwrap();
+    let token = fixture.token(owner);
+
+    let page = body_text(
+        fixture
+            .get(&format!("/ui/rooms/{room}"), Some(&token))
+            .await,
+    )
+    .await;
+    assert!(
+        page.contains(r#"data-confirm="Stop sharing with friends?""#),
+        "{page}"
+    );
+
+    let response = fixture
+        .post(
+            &format!("/ui/rooms/{room}/groups/{group}/remove"),
+            Some(&token),
+            "",
+        )
+        .await;
+
+    let flash = flash_cookie(&response).expect("the removal flashes a message");
+    assert!(
+        flash.contains("Stopped%20sharing%20with%20friends"),
+        "{flash}"
+    );
+    assert!(
+        groups::room_groups(&fixture.state, &room, owner)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_foreign_group_is_refused() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let other = fixture.verified(OTHER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let foreign = group_owned_by(&fixture, other, "theirs").await;
+    let token = fixture.token(owner);
+
+    let response = fixture
+        .post(
+            &format!("/ui/rooms/{room}/groups"),
+            Some(&token),
+            &form(&[("group", &foreign), ("role", "viewer")]),
+        )
+        .await;
+
+    let flash = flash_cookie(&response).expect("the refusal flashes a message");
+    assert!(
+        flash.contains(&format!("Group%20{foreign}%20not%20found")),
+        "{flash}"
+    );
+    assert!(
+        groups::room_groups(&fixture.state, &room, owner)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

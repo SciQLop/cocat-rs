@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::ui::frame::{self, Frame};
+use crate::ui::token_from_text;
 use crate::{AppState, accounts};
 
 const EMPTY: &str = "Enter a new password";
@@ -113,16 +114,6 @@ impl ResetForm {
         }
         token_from_text(&self.link)
     }
-}
-
-/// Python's `token_from_text`: what follows the `#`, else the paste itself, first word.
-fn token_from_text(text: &str) -> String {
-    let after_hash = text.split_once('#').map_or(text, |(_, token)| token);
-    after_hash
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_owned()
 }
 
 fn to_forgot(state: &AppState, query: &str) -> Response {

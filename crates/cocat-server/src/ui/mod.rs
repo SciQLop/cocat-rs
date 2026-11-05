@@ -2,6 +2,7 @@
 
 mod account;
 mod frame;
+mod invitation;
 mod login;
 mod reset;
 mod room;
@@ -28,6 +29,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/reset-password", get(reset::reset_page).post(reset::reset))
         .route("/verify", get(verify::page).post(verify::submit))
+        .route(
+            "/invitation",
+            get(invitation::page).post(invitation::preview),
+        )
+        .route("/invitation/accept", post(invitation::accept))
         .route("/rooms", get(rooms::page).post(rooms::create))
         .route("/rooms/{room_id}", get(room::page))
         .route("/rooms/{room_id}/rename", post(rooms::rename))
@@ -46,6 +52,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(room::transfer),
         )
         .route("/rooms/{room_id}/invitations", post(room::invite))
+        .route("/rooms/{room_id}/groups", post(room::share_group))
+        .route(
+            "/rooms/{room_id}/groups/{group}/remove",
+            post(room::stop_sharing_group),
+        )
         .route(
             "/rooms/{room_id}/invitations/{invitation}/revoke",
             post(room::revoke),
@@ -77,6 +88,16 @@ pub(crate) fn next_query(value: Option<&str>) -> String {
 /// path keeps its `/` percent-encoded and a space becomes `+`.
 pub(crate) fn query_value(value: &str) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// Python's `token_from_text`: what follows the `#`, else the paste itself, first word.
+pub(crate) fn token_from_text(text: &str) -> String {
+    let after_hash = text.split_once('#').map_or(text, |(_, token)| token);
+    after_hash
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned()
 }
 
 #[cfg(test)]

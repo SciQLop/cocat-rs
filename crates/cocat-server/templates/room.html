@@ -38,6 +38,45 @@
   </li>
 {% endfor %}
 </ul>
+<h2>Groups</h2>
+{% if !groups.picker.is_empty() %}
+<form method="post" action="{{ groups.action }}">
+  <select name="group">
+{% for option in groups.picker %}
+    <option value="{{ option.value }}">{{ option.label }}</option>
+{% endfor %}
+  </select>
+  <select name="role">
+    <option value="editor">editor</option>
+    <option value="viewer">viewer</option>
+  </select>
+  <button type="submit">Share with group</button>
+</form>
+{% endif %}
+<ul class="groups">
+{% for group in groups.groups %}
+  <li class="group" data-group="{{ group.id }}">
+    <span class="name">{{ group.name }}</span>
+    <span class="role">{{ group.role }}</span>
+{% match group.controls %}
+{% when Some with (controls) %}
+    <form method="post" action="{{ controls.action }}">
+      <input type="hidden" name="group" value="{{ group.id }}">
+      <select name="role" data-group-role="{{ group.id }}">
+        <option value="editor"{% if group.role == "editor" %} selected{% endif %}>editor</option>
+        <option value="viewer"{% if group.role == "viewer" %} selected{% endif %}>viewer</option>
+      </select>
+      <button type="submit">Change role</button>
+    </form>
+    <form method="post" action="{{ controls.remove_action }}"
+          data-confirm="{{ controls.confirm }}">
+      <button type="submit">Remove</button>
+    </form>
+{% when None %}
+{% endmatch %}
+  </li>
+{% endfor %}
+</ul>
 {% match panel %}
 {% when Some with (panel) %}
 <h2>Invitations</h2>
