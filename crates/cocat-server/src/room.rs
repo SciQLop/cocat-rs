@@ -29,6 +29,10 @@ const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 /// roughly twenty seconds of a room at fifty edits per second.
 pub const OUTBOUND_FRAMES: usize = 1024;
 
+/// A room file's size times this estimates what its loaded `Doc` costs: the gate's 37.8 MB
+/// room measured ~566 MB resident under the allocator the server uses.
+pub const MEMORY_PER_FILE_BYTE: u64 = 16;
+
 /// Why the room closed a socket. `1008` is a policy violation, `1013` means try again
 /// later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +98,12 @@ pub enum RoomError {
     Registry,
     #[error("cannot spawn the room task: {0}")]
     Spawn(#[source] std::io::Error),
+    #[error("room {room_id} needs {needed} bytes of memory, over the {budget} byte budget")]
+    OverBudget {
+        room_id: String,
+        needed: u64,
+        budget: u64,
+    },
 }
 
 /// Opens rooms on demand and unloads them when their last client leaves.
@@ -101,13 +111,15 @@ pub enum RoomError {
 pub struct RoomManager {
     update_dir: PathBuf,
     rooms: Rooms,
+    budget: Option<u64>,
 }
 
 impl RoomManager {
-    pub fn new(update_dir: PathBuf) -> Self {
+    pub fn new(update_dir: PathBuf, budget: Option<u64>) -> Self {
         Self {
             update_dir,
             rooms: Arc::default(),
+            budget,
         }
     }
 
@@ -117,6 +129,22 @@ impl RoomManager {
             return Ok(handle.clone());
         }
         let (store, updates) = FileRoomStore::open(&self.update_dir, room_id)?;
+        let estimate = store.size().saturating_mul(MEMORY_PER_FILE_BYTE);
+        // simplify: an over-budget open is refused rather than evicting an older room; in
+        // phase 1 a room is open only while it has clients, so there is nothing to evict.
+        // Add LRU unloading when phase 2's REST reads keep rooms open.
+        if let Some(budget) = self.budget {
+            let needed = rooms.values().fold(estimate, |needed, handle| {
+                needed.saturating_add(handle.estimate)
+            });
+            if needed > budget {
+                return Err(RoomError::OverBudget {
+                    room_id: room_id.to_owned(),
+                    needed,
+                    budget,
+                });
+            }
+        }
         let (commands, receiver) = mpsc::channel();
         let registry = Arc::clone(&self.rooms);
         let task_room_id = room_id.to_owned();
@@ -125,7 +153,7 @@ impl RoomManager {
             .name(format!("room-{room_id}"))
             .spawn(move || room_loop(task_room_id, update_dir, store, updates, receiver, registry))
             .map_err(RoomError::Spawn)?;
-        let handle = RoomHandle { commands };
+        let handle = RoomHandle { commands, estimate };
         rooms.insert(room_id.to_owned(), handle.clone());
         Ok(handle)
     }
@@ -211,6 +239,8 @@ impl RoomManager {
 #[derive(Debug, Clone)]
 pub struct RoomHandle {
     commands: Sender<RoomCommand>,
+    /// What this room is charged against the budget, fixed when it opened.
+    estimate: u64,
 }
 
 impl RoomHandle {
@@ -801,7 +831,10 @@ mod tests {
 
     fn dying_room() -> DyingRoom {
         let (commands, receiver) = mpsc::channel();
-        let handle = RoomHandle { commands };
+        let handle = RoomHandle {
+            commands,
+            estimate: 0,
+        };
         let mut rooms = HashMap::new();
         rooms.insert("room".to_owned(), handle.clone());
         DyingRoom {
@@ -870,7 +903,7 @@ mod tests {
     #[tokio::test]
     async fn a_quiet_room_syncs_within_a_second() {
         let dir = tempfile::tempdir().unwrap();
-        let manager = RoomManager::new(dir.path().to_owned());
+        let manager = RoomManager::new(dir.path().to_owned(), None);
         let room = manager.get_or_open("room-quiet").unwrap();
         let (out, mut inbox) = outbox();
         room.attach(1, Uuid::new_v4(), Role::Editor, out).unwrap();
@@ -908,7 +941,7 @@ mod tests {
     #[tokio::test]
     async fn cold_joins_share_one_encoded_full_state() {
         let dir = tempfile::tempdir().unwrap();
-        let manager = RoomManager::new(dir.path().to_owned());
+        let manager = RoomManager::new(dir.path().to_owned(), None);
         let room = manager.get_or_open("room-share").unwrap();
         let (out_a, mut inbox_a) = outbox();
         let (out_b, mut inbox_b) = outbox();
@@ -929,7 +962,7 @@ mod tests {
     #[tokio::test]
     async fn an_update_between_joins_invalidates_the_full_state() {
         let dir = tempfile::tempdir().unwrap();
-        let manager = RoomManager::new(dir.path().to_owned());
+        let manager = RoomManager::new(dir.path().to_owned(), None);
         let room = manager.get_or_open("room-invalidate").unwrap();
         let (out_a, mut inbox_a) = outbox();
         let (out_b, mut inbox_b) = outbox();

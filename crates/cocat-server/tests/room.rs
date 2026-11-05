@@ -6,7 +6,8 @@ use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, HEADER};
 use cocat_server::room::{
-    ClientId, CloseReason, Inbox, OUTBOUND_FRAMES, RoomHandle, RoomManager, outbox,
+    ClientId, CloseReason, Inbox, MEMORY_PER_FILE_BYTE, OUTBOUND_FRAMES, RoomError, RoomHandle,
+    RoomManager, outbox,
 };
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -20,8 +21,17 @@ const WAIT: Duration = Duration::from_secs(10);
 
 fn manager() -> (TempDir, RoomManager) {
     let dir = TempDir::new().unwrap();
-    let manager = RoomManager::new(dir.path().to_owned());
+    let manager = RoomManager::new(dir.path().to_owned(), None);
     (dir, manager)
+}
+
+fn write_room(update_dir: &Path, room_id: &str, payload: &[u8]) -> u64 {
+    let (mut store, _) = FileRoomStore::open(update_dir, room_id).unwrap();
+    store.append(Bytes::from(payload.to_vec())).unwrap();
+    store.flush().unwrap();
+    fs::metadata(update_dir.join(format!("{room_id}.y")))
+        .unwrap()
+        .len()
 }
 
 fn update_with(key: &str, value: &str) -> Vec<u8> {
@@ -446,4 +456,73 @@ async fn a_deleted_room_does_not_resurrect_its_file() {
     };
     assert_eq!(content(&apply(&reply), "key"), None);
     reopened.detach(2).await;
+}
+
+#[tokio::test]
+async fn a_room_over_the_budget_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let size = write_room(dir.path(), "room-heavy", &update_with("key", "value"));
+    let estimate = size * MEMORY_PER_FILE_BYTE;
+    let budget = estimate / 2;
+    let manager = RoomManager::new(dir.path().to_owned(), Some(budget));
+
+    let error = manager.get_or_open("room-heavy").unwrap_err();
+
+    match error {
+        RoomError::OverBudget {
+            room_id,
+            needed,
+            budget: refused,
+        } => {
+            assert_eq!(room_id, "room-heavy");
+            assert_eq!(needed, estimate);
+            assert_eq!(refused, budget);
+        }
+        other => panic!("expected an over-budget refusal, got {other:?}"),
+    }
+    assert_eq!(manager.open_rooms(), 0);
+    assert!(dir.path().join("room-heavy.y").exists());
+}
+
+#[tokio::test]
+async fn unloading_a_room_releases_its_share_of_the_budget() {
+    let dir = TempDir::new().unwrap();
+    let payload = update_with("key", "value");
+    let size = write_room(dir.path(), "room-first", &payload);
+    write_room(dir.path(), "room-second", &payload);
+    let manager = RoomManager::new(dir.path().to_owned(), Some(size * MEMORY_PER_FILE_BYTE));
+
+    let first = manager.get_or_open("room-first").unwrap();
+    let mut first_inbox = attach(&first, 1, Role::Editor);
+    next(&mut first_inbox).await;
+    assert!(
+        manager.get_or_open("room-second").is_err(),
+        "two rooms fit in a one-room budget"
+    );
+
+    first.detach(1).await;
+    assert_eq!(manager.open_rooms(), 0);
+
+    let second = manager.get_or_open("room-second").unwrap();
+    let mut second_inbox = attach(&second, 2, Role::Editor);
+    next(&mut second_inbox).await;
+    second.detach(2).await;
+}
+
+#[tokio::test]
+async fn no_budget_means_no_limit() {
+    let (_dir, manager) = manager();
+
+    let mut rooms = Vec::new();
+    for index in 0..5 {
+        let room = manager.get_or_open(&format!("room-any-{index}")).unwrap();
+        let inbox = attach(&room, index, Role::Editor);
+        rooms.push((room, inbox, index));
+    }
+
+    assert_eq!(manager.open_rooms(), 5);
+    for (room, mut inbox, client) in rooms {
+        next(&mut inbox).await;
+        room.detach(client).await;
+    }
 }

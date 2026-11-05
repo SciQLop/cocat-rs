@@ -303,3 +303,22 @@ fn run_cli(db_path: &Path, args: &[&str]) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn a_malformed_budget_is_a_startup_error() {
+    let dir = TempDir::new().unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cocat-server"))
+        .args(["serve", "--port", "0", "--db_path"])
+        .arg(dir.path().join("test.db"))
+        .env("COCAT_ROOM_MEMORY_BUDGET", "many")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "serve accepted a bad budget");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("COCAT_ROOM_MEMORY_BUDGET"),
+        "the error does not name the variable: {stderr}"
+    );
+}

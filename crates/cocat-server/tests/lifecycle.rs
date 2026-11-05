@@ -44,7 +44,7 @@ impl Fixture {
         let state = AppState {
             pool,
             secret: SECRET.to_owned(),
-            rooms: RoomManager::new(rooms_dir.clone()),
+            rooms: RoomManager::new(rooms_dir.clone(), None),
             before_attach: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

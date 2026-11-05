@@ -184,7 +184,7 @@ async fn login_sets_a_cookie_for_the_right_password() {
         .await
         .unwrap();
     let state = AppState {
-        rooms: RoomManager::new(dir.path().to_owned()),
+        rooms: RoomManager::new(dir.path().to_owned(), None),
         pool,
         secret: "secret".to_owned(),
         before_attach: None,
@@ -219,7 +219,7 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         .await
         .unwrap();
     let state = AppState {
-        rooms: RoomManager::new(dir.path().to_owned()),
+        rooms: RoomManager::new(dir.path().to_owned(), None),
         pool: pool.clone(),
         secret: "secret".to_owned(),
         before_attach: None,

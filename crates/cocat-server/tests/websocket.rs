@@ -1,5 +1,6 @@
 use std::fs;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -41,13 +42,14 @@ struct Fixture {
     addr: SocketAddr,
     pool: SqlitePool,
     rooms: RoomManager,
+    rooms_dir: PathBuf,
     _dir: TempDir,
     _server: JoinHandle<()>,
 }
 
 impl Fixture {
     async fn start() -> Self {
-        Self::start_with(|_: SqlitePool| async { None }).await
+        Self::build(|_: SqlitePool| async { None }, None).await
     }
 
     /// `prepare` runs on the fixture's pool before the server answers anything, so a test
@@ -57,12 +59,24 @@ impl Fixture {
         F: FnOnce(SqlitePool) -> Fut,
         Fut: std::future::Future<Output = Option<BeforeAttach>>,
     {
+        Self::build(prepare, None).await
+    }
+
+    async fn start_with_budget(budget: u64) -> Self {
+        Self::build(|_: SqlitePool| async { None }, Some(budget)).await
+    }
+
+    async fn build<F, Fut>(prepare: F, budget: Option<u64>) -> Self
+    where
+        F: FnOnce(SqlitePool) -> Fut,
+        Fut: std::future::Future<Output = Option<BeforeAttach>>,
+    {
         let dir = TempDir::new().unwrap();
         let rooms_dir = dir.path().join("rooms");
         fs::create_dir_all(&rooms_dir).unwrap();
         let pool = db::open(&dir.path().join("test.db")).await.unwrap();
         let before_attach = prepare(pool.clone()).await;
-        let rooms = RoomManager::new(rooms_dir);
+        let rooms = RoomManager::new(rooms_dir.clone(), budget);
         let state = AppState {
             pool: pool.clone(),
             secret: SECRET.to_owned(),
@@ -78,6 +92,7 @@ impl Fixture {
             addr,
             pool,
             rooms,
+            rooms_dir,
             _dir: dir,
             _server: server,
         }
@@ -450,4 +465,40 @@ async fn a_downgrade_between_handshake_and_attach_is_honoured() {
             other => panic!("expected a close, got {other:?}"),
         }
     }
+}
+
+#[tokio::test]
+async fn an_over_budget_room_closes_1013() {
+    // One byte of budget: any room with a file on disk is over it.
+    let fixture = Fixture::start_with_budget(1).await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-budget", "Budget")
+        .await
+        .unwrap();
+    let (mut store, _) =
+        cocat_core::store::FileRoomStore::open(&fixture.rooms_dir, "room-budget").unwrap();
+    store
+        .append(Bytes::from(update_with("key", "value")))
+        .unwrap();
+    store.flush().unwrap();
+
+    let mut socket = fixture
+        .connect("room-budget", Some(&fixture.token(owner)))
+        .await;
+
+    loop {
+        match next_ws(&mut socket).await {
+            WsMessage::Close(frame) => {
+                assert_eq!(
+                    frame.map(|frame| u16::from(frame.code)),
+                    Some(1013),
+                    "an over-budget room must close 1013"
+                );
+                break;
+            }
+            WsMessage::Binary(_) => {}
+            other => panic!("expected a close, got {other:?}"),
+        }
+    }
+    assert_eq!(fixture.rooms.open_rooms(), 0);
 }

@@ -91,6 +91,20 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
     let client = next_client();
     let (room, inbox) = match attach(&state, &room_id, client, user, role).await {
         Ok(attached) => attached,
+        Err(AttachError::Room(RoomError::OverBudget {
+            room_id,
+            needed,
+            budget,
+        })) => {
+            tracing::warn!(
+                room = %room_id,
+                needed,
+                budget,
+                "refusing a socket: the room does not fit in the memory budget"
+            );
+            let refusal = CloseReason::OverBudget;
+            return close(socket, refusal.code(), refusal.reason()).await;
+        }
         Err(error) => {
             tracing::warn!(%error, room = %room_id, "cannot attach the socket");
             return close(socket, INTERNAL_ERROR, "cannot attach to the room").await;

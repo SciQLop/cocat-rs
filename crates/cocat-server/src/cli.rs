@@ -1,6 +1,8 @@
 //! The seeding commands: users, rooms and memberships, matching the Python CLI.
 
+use std::env::VarError;
 use std::fs;
+use std::future::Future;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -8,6 +10,7 @@ use axum::serve::ListenerExt;
 use clap::{Parser, Subcommand};
 use thiserror::Error;
 use tokio::net::TcpListener;
+use tokio::signal::unix::SignalKind;
 use uuid::Uuid;
 
 use cocat_core::role::{Role, UnknownRole};
@@ -84,8 +87,8 @@ enum Command {
         host: String,
         #[arg(long, default_value_t = 8000)]
         port: u16,
-        #[arg(long = "update_dir", default_value = "")]
-        update_dir: PathBuf,
+        #[arg(long = "update_dir")]
+        update_dir: Option<PathBuf>,
         #[arg(long = "db_path", default_value = "./test.db")]
         db_path: PathBuf,
     },
@@ -101,6 +104,8 @@ pub enum CliError {
     Io(#[from] io::Error),
     #[error("no user with email {0}")]
     NoSuchUser(String),
+    #[error("COCAT_ROOM_MEMORY_BUDGET must be a positive number of megabytes, got {0:?}")]
+    InvalidBudget(String),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -138,7 +143,15 @@ pub async fn run() -> Result<(), CliError> {
             port,
             update_dir,
             db_path,
-        } => serve(&host, port, &update_dir, &db_path).await,
+        } => {
+            serve(
+                &host,
+                port,
+                update_dir.as_deref().unwrap_or(Path::new("")),
+                &db_path,
+            )
+            .await
+        }
     }
 }
 
@@ -213,12 +226,13 @@ async fn set_room_owner(db_path: &Path, email: &str, room_id: &str) -> Result<()
 }
 
 async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Result<(), CliError> {
+    let budget = room_budget()?;
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
     let pool = db::open(db_path).await?;
     let secret = auth::load_secret(db_path)?;
-    let rooms = RoomManager::new(update_dir.to_owned());
+    let rooms = RoomManager::new(update_dir.to_owned(), budget);
     let state = AppState {
         pool,
         secret,
@@ -227,37 +241,61 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     };
 
     let listener = TcpListener::bind((host, port)).await?;
+    let shutdown = shutdown_signal();
     println!("listening on {}", listener.local_addr()?);
     io::stdout().flush()?;
 
     axum::serve(listener.tap_io(ws::disable_nagle), ws::router(state))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown)
         .await?;
     rooms.flush_all().await;
     Ok(())
 }
 
-async fn shutdown_signal() {
-    let interrupt = async {
-        if let Err(error) = tokio::signal::ctrl_c().await {
-            tracing::warn!(%error, "cannot listen for SIGINT");
-            std::future::pending::<()>().await;
+/// `COCAT_ROOM_MEMORY_BUDGET` is a positive number of megabytes; unset or empty means the
+/// server opens rooms without a limit.
+fn room_budget() -> Result<Option<u64>, CliError> {
+    let value = match std::env::var("COCAT_ROOM_MEMORY_BUDGET") {
+        Ok(value) => value,
+        Err(VarError::NotPresent) => return Ok(None),
+        Err(VarError::NotUnicode(_)) => {
+            return Err(CliError::InvalidBudget("a non-unicode value".to_owned()));
         }
     };
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    parse_budget(&value).map(Some)
+}
+
+fn parse_budget(value: &str) -> Result<u64, CliError> {
+    value
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|megabytes| *megabytes > 0)
+        .map(|megabytes| megabytes.saturating_mul(1024 * 1024))
+        .ok_or_else(|| CliError::InvalidBudget(value.to_owned()))
+}
+
+/// Registers SIGINT and SIGTERM when it is called, not when it is first polled: the server
+/// prints its address before serving, and a caller that signals on that line would
+/// otherwise hit the default action and die instead of shutting down gracefully.
+fn shutdown_signal() -> impl Future<Output = ()> {
+    let interrupt = tokio::signal::unix::signal(SignalKind::interrupt());
+    let terminate = tokio::signal::unix::signal(SignalKind::terminate());
+    async move {
+        let (mut interrupt, mut terminate) = match (interrupt, terminate) {
+            (Ok(interrupt), Ok(terminate)) => (interrupt, terminate),
+            _ => {
+                tracing::warn!("cannot listen for SIGINT and SIGTERM");
+                return std::future::pending::<()>().await;
             }
-            Err(error) => {
-                tracing::warn!(%error, "cannot listen for SIGTERM");
-                std::future::pending::<()>().await;
-            }
+        };
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
         }
-    };
-    tokio::select! {
-        () = interrupt => {},
-        () = terminate => {},
     }
 }
 

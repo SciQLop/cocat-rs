@@ -93,6 +93,12 @@ impl FileRoomStore {
         self.truncated_at
     }
 
+    /// The room file's size on disk, which the server's memory budget turns into an
+    /// estimate of what the loaded `Doc` costs.
+    pub fn size(&self) -> u64 {
+        self.file.metadata().map_or(0, |metadata| metadata.len())
+    }
+
     pub fn append(&mut self, update: Bytes) -> Result<(), StoreError> {
         write_varuint(update.len() as u64, &mut self.pending);
         self.pending.extend_from_slice(&update);
