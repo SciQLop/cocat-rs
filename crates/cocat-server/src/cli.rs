@@ -167,6 +167,7 @@ async fn create_user(
 ) -> Result<(), CliError> {
     let pool = db::open(db_path).await?;
     let id = db::create_user(&pool, email, password, is_superuser).await?;
+    db::create_personal_room(&pool, id).await?;
     println!("User {email} created ({id})");
     Ok(())
 }

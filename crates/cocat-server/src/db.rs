@@ -183,6 +183,16 @@ pub async fn create_room(
     Ok(())
 }
 
+/// What Python (`names.py`) calls the room every account owns from the moment it exists.
+pub const PERSONAL_ROOM_NAME: &str = "Personal";
+
+/// Python's `create_personal_room`: a bare-uuid room named [`PERSONAL_ROOM_NAME`] whose
+/// owner is `user`. Registration and `create-user` both run it.
+pub async fn create_personal_room(pool: &SqlitePool, user: Uuid) -> Result<(), DbError> {
+    let room_id = Uuid::new_v4().simple().to_string();
+    create_room(pool, user, &room_id, PERSONAL_ROOM_NAME).await
+}
+
 pub async fn rename_room(pool: &SqlitePool, room_id: &str, name: &str) -> Result<bool, DbError> {
     let updated = sqlx::query("UPDATE room SET name = ? WHERE id = ?")
         .bind(name)

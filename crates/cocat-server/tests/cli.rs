@@ -145,6 +145,44 @@ async fn the_cli_creates_a_database_the_server_can_read() {
 }
 
 #[tokio::test]
+async fn creating_a_user_creates_their_personal_room() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+
+    run_cli(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "owner@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+
+    let pool = db::open(&db_path).await.unwrap();
+    let user = db::user_by_email(&pool, "owner@example.org")
+        .await
+        .unwrap()
+        .unwrap();
+    let rooms = db::list_user_rooms(&pool, user.id).await.unwrap();
+
+    assert_eq!(rooms.len(), 1, "the user does not own exactly one room");
+    let (room, role) = &rooms[0];
+    assert_eq!(room.name, "Personal");
+    assert_eq!(*role, Role::Owner);
+    assert!(
+        room.id.len() == 32
+            && room
+                .id
+                .chars()
+                .all(|character| matches!(character, '0'..='9' | 'a'..='f')),
+        "the personal room id is not a bare uuid: {}",
+        room.id
+    );
+}
+
+#[tokio::test]
 async fn remove_user_from_room_drops_the_membership() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
