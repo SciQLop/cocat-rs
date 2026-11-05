@@ -39,12 +39,13 @@ pub const OUTBOUND_FRAMES: usize = 1024;
 pub const MEMORY_PER_FILE_BYTE: u64 = 16;
 
 /// Why the room closed a socket. `1008` is a policy violation, `1013` means try again
-/// later.
+/// later, `1011` is the server failing on its side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
     Revoked,
     TooSlow,
     OverBudget,
+    Failed,
 }
 
 impl CloseReason {
@@ -52,6 +53,7 @@ impl CloseReason {
         match self {
             Self::Revoked => 1008,
             Self::TooSlow | Self::OverBudget => 1013,
+            Self::Failed => 1011,
         }
     }
 
@@ -60,6 +62,7 @@ impl CloseReason {
             Self::Revoked => "access revoked",
             Self::TooSlow => "client too slow",
             Self::OverBudget => "server memory budget reached",
+            Self::Failed => "the room could not be loaded",
         }
     }
 }
@@ -139,8 +142,13 @@ impl RoomManager {
         if let Some(handle) = rooms.get(room_id) {
             return Ok(handle.clone());
         }
-        let (store, updates) = FileRoomStore::open(&self.update_dir, room_id)?;
-        let estimate = store.size().saturating_mul(MEMORY_PER_FILE_BYTE);
+        // The estimate is the file's size, measured rather than parsed: loading the file is
+        // about two seconds for the 100k-event room, and holding the registry lock that long
+        // would stall every other room. The room thread does the load.
+        let estimate = fs::metadata(room_file(&self.update_dir, room_id))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+            .saturating_mul(MEMORY_PER_FILE_BYTE);
         // simplify: an over-budget open is refused rather than evicting an older room; in
         // phase 1 a room is open only while it has clients, so there is nothing to evict.
         // Add LRU unloading when phase 2's REST reads keep rooms open.
@@ -165,7 +173,7 @@ impl RoomManager {
         let update_dir = self.update_dir.clone();
         thread::Builder::new()
             .name(format!("room-{room_id}"))
-            .spawn(move || room_loop(task_room_id, update_dir, store, updates, receiver, registry))
+            .spawn(move || load_room(task_room_id, update_dir, receiver, registry))
             .map_err(RoomError::Spawn)?;
         let handle = RoomHandle { commands, estimate };
         rooms.insert(room_id.to_owned(), handle.clone());
@@ -478,6 +486,50 @@ struct Client {
     user: Uuid,
     role: Role,
     out: Outbox,
+}
+
+/// Runs on the room's own thread: loads the file, then serves it. Commands that arrive
+/// while the file loads wait in the channel, so a delete queued during a two-second load
+/// still removes the file once the load finishes.
+fn load_room(
+    room_id: String,
+    update_dir: PathBuf,
+    commands: Receiver<RoomCommand>,
+    registry: Rooms,
+) {
+    match FileRoomStore::open(&update_dir, &room_id) {
+        Ok((store, updates)) => room_loop(room_id, update_dir, store, updates, commands, registry),
+        Err(error) => {
+            tracing::error!(room = %room_id, %error, "the room file cannot be loaded");
+            abandon_room(&room_id, &registry, commands);
+        }
+    }
+}
+
+/// Removes a room whose file never loaded. The registry entry goes first, so a retry opens
+/// a fresh room, then the receiver is dropped, so later attaches fail. Queued commands are
+/// dropped rather than acked: their callers must fall back (`read` reads the file itself,
+/// `delete` unlinks it) instead of believing the room did anything.
+fn abandon_room(room_id: &str, registry: &Rooms, commands: Receiver<RoomCommand>) {
+    match registry.lock() {
+        Ok(mut rooms) => {
+            rooms.remove(room_id);
+            refuse(commands);
+        }
+        Err(_) => {
+            tracing::error!(room = %room_id, "the room registry is poisoned");
+            refuse(commands);
+        }
+    }
+}
+
+/// Tells the queued attaches that the room never loaded, and drops everything else.
+fn refuse(commands: Receiver<RoomCommand>) {
+    while let Ok(command) = commands.try_recv() {
+        if let RoomCommand::Attach { out, .. } = command {
+            let _ = out.close.send(CloseReason::Failed);
+        }
+    }
 }
 
 fn room_loop(

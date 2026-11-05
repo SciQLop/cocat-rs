@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
@@ -525,4 +526,90 @@ async fn no_budget_means_no_limit() {
         next(&mut inbox).await;
         room.detach(client).await;
     }
+}
+
+/// A fifo where a room file would be: reading it blocks until a writer opens it, which is
+/// the cheapest way to hold a room's file load open without a hook in the server.
+fn fifo(path: &Path) {
+    let status = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("mkfifo runs");
+    assert!(status.success(), "mkfifo failed: {status}");
+}
+
+#[test]
+fn loading_one_room_does_not_block_another_open() {
+    let dir = TempDir::new().unwrap();
+    let slow = dir.path().join("room-slow.y");
+    fifo(&slow);
+    let manager = RoomManager::new(dir.path().to_owned(), None);
+
+    let (started, reached) = std::sync::mpsc::channel();
+    let _slow = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            let _ = started.send(());
+            manager.get_or_open("room-slow")
+        })
+    };
+    reached.recv_timeout(WAIT).expect("the slow open started");
+    // Nothing reports that the thread has reached the read, so let it get there; the
+    // assertion below still fails in two seconds if it never does.
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (opened, answer) = std::sync::mpsc::channel();
+    let _other = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            let _ = opened.send(manager.get_or_open("room-fast").is_ok());
+        })
+    };
+    let opened_while_loading = answer
+        .recv_timeout(Duration::from_secs(2))
+        .expect("opening a room must not wait for another room's file to load");
+
+    assert!(opened_while_loading, "the second room opened");
+
+    // Let the room thread read a valid file and carry on; it then parks opening the fifo
+    // for appends, where nothing releases it, and ends with the test process.
+    let mut writer = fs::OpenOptions::new().write(true).open(&slow).unwrap();
+    writer.write_all(HEADER).unwrap();
+    drop(writer);
+}
+
+#[tokio::test]
+async fn a_room_file_that_cannot_be_loaded_does_not_hang() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join("room-broken.y")).unwrap();
+    let manager = RoomManager::new(dir.path().to_owned(), None);
+
+    let handle = manager.get_or_open("room-broken").unwrap();
+    let (out, mut inbox) = outbox();
+    let _ = handle.attach(1, Uuid::new_v4(), Role::Editor, out);
+
+    let closed = timeout(Duration::from_secs(5), &mut inbox.close)
+        .await
+        .expect("a room that cannot be loaded must close its clients");
+    assert_eq!(
+        closed.ok(),
+        Some(CloseReason::Failed),
+        "the client learns the room could not be loaded"
+    );
+    assert_eq!(
+        manager.open_rooms(),
+        0,
+        "the failed room leaves the registry"
+    );
+
+    let read = timeout(
+        Duration::from_secs(5),
+        manager.read("room-broken", |doc| content(doc, "key")),
+    )
+    .await
+    .expect("a read of a room that cannot be loaded must answer");
+    assert!(
+        matches!(read, Err(RoomError::Store(_))),
+        "the read falls back to the file and reports it, got {read:?}"
+    );
 }
