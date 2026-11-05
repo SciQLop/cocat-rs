@@ -88,8 +88,10 @@ on:
 - **The login cookie:** name `fastapiusersauth`, path `/`, `Secure`, `HttpOnly`,
   `SameSite=lax`, session cookie. The name and attributes are the contract (the client
   reads it by name); the token format is ours, with no live sessions to preserve.
-- **Websocket behaviour:** a refused client is accepted and then closed with code 1008,
-  never rejected at the upgrade; viewer updates are dropped but sync requests answered;
+- **Websocket behaviour:** an anonymous or non-member client is refused at the
+  handshake with HTTP 403, as the real Python server does (the SciQLop plugin's join
+  relies on it: with accept-then-close it would think it joined, then reconnect
+  forever); an established socket that loses access is closed with code 1008; viewer updates are dropped but sync requests answered;
   removal, role change and room deletion close that user's socket; non-SYNC frames are
   ignored.
 - **Room ids** `[A-Za-z0-9_-]{1,64}`, and `.y` files that pycrdt can reopen.
