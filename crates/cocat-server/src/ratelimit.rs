@@ -6,10 +6,12 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use axum::Json;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use serde_json::json;
 
 use crate::AppState;
 
@@ -154,6 +156,10 @@ pub async fn limit_login(State(state): State<AppState>, request: Request, next: 
     if limit.limiter().hit(&key, Instant::now()) {
         next.run(request).await
     } else {
-        StatusCode::TOO_MANY_REQUESTS.into_response()
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "detail": "Too Many Requests" })),
+        )
+            .into_response()
     }
 }

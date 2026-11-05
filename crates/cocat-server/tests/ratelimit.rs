@@ -7,6 +7,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
+use axum::response::Response;
 use cocat_server::ratelimit::{LoginLimit, RateLimiter, client_key};
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, ws};
@@ -46,7 +47,7 @@ impl Fixture {
         auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
     }
 
-    async fn call(
+    async fn send(
         &self,
         method: Method,
         path: &str,
@@ -54,7 +55,7 @@ impl Fixture {
         cookie: Option<String>,
         content_type: Option<&'static str>,
         body: Option<String>,
-    ) -> StatusCode {
+    ) -> Response {
         let mut request = Request::builder().method(method).uri(path);
         if let Some(cookie) = cookie {
             request = request.header(header::COOKIE, cookie);
@@ -67,19 +68,43 @@ impl Fixture {
             .extensions_mut()
             .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
         let router: Router = ws::router(self.state.clone());
-        router.oneshot(request).await.unwrap().status()
+        router.oneshot(request).await.unwrap()
+    }
+
+    async fn call(
+        &self,
+        method: Method,
+        path: &str,
+        peer: &str,
+        cookie: Option<String>,
+        content_type: Option<&'static str>,
+        body: Option<String>,
+    ) -> StatusCode {
+        self.send(method, path, peer, cookie, content_type, body)
+            .await
+            .status()
     }
 
     async fn login(&self, peer: &str, email: &str) -> StatusCode {
-        self.call(
-            Method::POST,
-            "/auth/jwt/login",
-            peer,
-            None,
-            Some("application/x-www-form-urlencoded"),
-            Some(format!("username={email}&password=hunter2")),
-        )
-        .await
+        self.login_response(peer, email).await.0
+    }
+
+    async fn login_response(&self, peer: &str, email: &str) -> (StatusCode, String) {
+        let response = self
+            .send(
+                Method::POST,
+                "/auth/jwt/login",
+                peer,
+                None,
+                Some("application/x-www-form-urlencoded"),
+                Some(format!("username={email}&password=hunter2")),
+            )
+            .await;
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
     }
 }
 
@@ -96,10 +121,9 @@ async fn the_eleventh_login_in_a_minute_is_429() {
         );
     }
 
-    assert_eq!(
-        fixture.login(PEER, "guard@example.org").await,
-        StatusCode::TOO_MANY_REQUESTS
-    );
+    let (status, body) = fixture.login_response(PEER, "guard@example.org").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body, r#"{"detail":"Too Many Requests"}"#);
 }
 
 #[tokio::test]
