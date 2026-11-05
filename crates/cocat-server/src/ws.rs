@@ -17,9 +17,8 @@ use thiserror::Error;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
-use crate::{auth, db};
+use crate::{AppState, api, auth, db};
 
 pub const INTERNAL_ERROR: u16 = 1011;
 
@@ -52,6 +51,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/auth/jwt/login", post(auth::login_handler))
         .route("/room/{room_id}", get(room_socket))
+        .route("/rooms", get(api::legacy_rooms))
+        .route("/room/{room_id}/users", get(api::legacy_room_users))
+        .nest("/api", api::router())
         .with_state(state)
 }
 

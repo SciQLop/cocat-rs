@@ -35,6 +35,14 @@ pub struct User {
     pub email: String,
     pub hashed_password: String,
     pub is_active: bool,
+    pub is_superuser: bool,
+    pub is_verified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomRow {
+    pub id: String,
+    pub name: String,
 }
 
 pub async fn open(db_path: &Path) -> Result<SqlitePool, DbError> {
@@ -48,21 +56,73 @@ pub async fn open(db_path: &Path) -> Result<SqlitePool, DbError> {
 }
 
 pub async fn user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<User>, DbError> {
-    let row =
-        sqlx::query(r#"SELECT id, email, hashed_password, is_active FROM "user" WHERE email = ?"#)
-            .bind(email)
-            .fetch_optional(pool)
-            .await?;
+    let row = sqlx::query(
+        r#"SELECT id, email, hashed_password, is_active, is_superuser, is_verified
+           FROM "user" WHERE email = ?"#,
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.as_ref().map(user_from_row).transpose()?)
 }
 
 pub async fn user_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<User>, DbError> {
-    let row =
-        sqlx::query(r#"SELECT id, email, hashed_password, is_active FROM "user" WHERE id = ?"#)
-            .bind(id.to_string())
-            .fetch_optional(pool)
-            .await?;
+    let row = sqlx::query(
+        r#"SELECT id, email, hashed_password, is_active, is_superuser, is_verified
+           FROM "user" WHERE id = ?"#,
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await?;
     Ok(row.as_ref().map(user_from_row).transpose()?)
+}
+
+/// The rooms `user_id` belongs to, by name then id, with the role they hold there.
+pub async fn list_user_rooms(
+    pool: &SqlitePool,
+    user_id: Uuid,
+) -> Result<Vec<(RoomRow, Role)>, DbError> {
+    let rows = sqlx::query(
+        "SELECT room.id, room.name, membership.role
+         FROM membership JOIN room ON room.id = membership.room_id
+         WHERE membership.user_id = ?
+         ORDER BY room.name, room.id",
+    )
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            let role: String = row.try_get("role")?;
+            Ok((
+                RoomRow {
+                    id: row.try_get("id")?,
+                    name: row.try_get("name")?,
+                },
+                role_from_name(&role)?,
+            ))
+        })
+        .collect()
+}
+
+/// The members of a room and their roles, by email.
+pub async fn list_members(pool: &SqlitePool, room_id: &str) -> Result<Vec<(User, Role)>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT "user".id, "user".email, "user".hashed_password, "user".is_active,
+                  "user".is_superuser, "user".is_verified, membership.role
+           FROM membership JOIN "user" ON "user".id = membership.user_id
+           WHERE membership.room_id = ?
+           ORDER BY "user".email"#,
+    )
+    .bind(room_id)
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            let role: String = row.try_get("role")?;
+            Ok((user_from_row(row)?, role_from_name(&role)?))
+        })
+        .collect()
 }
 
 pub async fn role_in(
@@ -266,5 +326,7 @@ fn user_from_row(row: &SqliteRow) -> Result<User, sqlx::Error> {
         email: row.try_get("email")?,
         hashed_password: row.try_get("hashed_password")?,
         is_active: row.try_get("is_active")?,
+        is_superuser: row.try_get("is_superuser")?,
+        is_verified: row.try_get("is_verified")?,
     })
 }
