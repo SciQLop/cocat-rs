@@ -3,14 +3,13 @@ use std::process::Command;
 
 use cocat_core::role::Role;
 use cocat_server::db;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 async fn seeded_db() -> (TempDir, SqlitePool) {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
-    let pool = db::open_writable(&db_path).await.unwrap();
-    db::ensure_schema(&pool).await.unwrap();
+    let pool = db::open(&db_path).await.unwrap();
     (dir, pool)
 }
 
@@ -79,44 +78,6 @@ async fn add_user_to_room_sets_the_role() {
 }
 
 #[tokio::test]
-async fn the_schema_matches_the_python_columns() {
-    let (_dir, pool) = seeded_db().await;
-
-    let tables = [
-        (
-            "PRAGMA table_info(\"user\")",
-            &[
-                "id",
-                "email",
-                "hashed_password",
-                "is_active",
-                "is_verified",
-                "is_superuser",
-                "rooms",
-            ][..],
-        ),
-        (
-            "PRAGMA table_info(room)",
-            &["id", "name", "created_at", "created_by"][..],
-        ),
-        (
-            "PRAGMA table_info(membership)",
-            &["room_id", "user_id", "role", "joined_at"][..],
-        ),
-    ];
-    for (query, columns) in tables {
-        let rows = sqlx::query(query).fetch_all(&pool).await.unwrap();
-        let names: Vec<String> = rows.iter().map(|row| row.get("name")).collect();
-        for column in columns {
-            assert!(
-                names.iter().any(|name| name == column),
-                "{column} is missing from {query}: {names:?}"
-            );
-        }
-    }
-}
-
-#[tokio::test]
 async fn the_cli_creates_a_database_the_server_can_read() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
@@ -164,7 +125,7 @@ async fn the_cli_creates_a_database_the_server_can_read() {
         ],
     );
 
-    let pool = db::open_read_only(&db_path).await.unwrap();
+    let pool = db::open(&db_path).await.unwrap();
     let owner = db::user_by_email(&pool, "owner@example.org")
         .await
         .unwrap()
@@ -180,6 +141,152 @@ async fn the_cli_creates_a_database_the_server_can_read() {
     assert_eq!(
         db::role_in(&pool, "cli-room", viewer.id).await.unwrap(),
         Some(Role::Viewer)
+    );
+}
+
+#[tokio::test]
+async fn remove_user_from_room_drops_the_membership() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    run_cli(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "owner@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+    run_cli(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "member@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+    run_cli(
+        &db_path,
+        &[
+            "create-room",
+            "--owner",
+            "owner@example.org",
+            "--room-id",
+            "cli-room",
+        ],
+    );
+    run_cli(
+        &db_path,
+        &[
+            "add-user-to-room",
+            "--email",
+            "member@example.org",
+            "--room_id",
+            "cli-room",
+            "--role",
+            "editor",
+        ],
+    );
+
+    run_cli(
+        &db_path,
+        &[
+            "remove-user-from-room",
+            "--email",
+            "member@example.org",
+            "--room_id",
+            "cli-room",
+        ],
+    );
+
+    let pool = db::open(&db_path).await.unwrap();
+    let member = db::user_by_email(&pool, "member@example.org")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        db::role_in(&pool, "cli-room", member.id).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn set_room_owner_transfers() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    run_cli(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "owner@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+    run_cli(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "member@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+    run_cli(
+        &db_path,
+        &[
+            "create-room",
+            "--owner",
+            "owner@example.org",
+            "--room-id",
+            "cli-room",
+        ],
+    );
+    run_cli(
+        &db_path,
+        &[
+            "add-user-to-room",
+            "--email",
+            "member@example.org",
+            "--room_id",
+            "cli-room",
+            "--role",
+            "editor",
+        ],
+    );
+
+    run_cli(
+        &db_path,
+        &[
+            "set-room-owner",
+            "--email",
+            "member@example.org",
+            "--room_id",
+            "cli-room",
+        ],
+    );
+
+    let pool = db::open(&db_path).await.unwrap();
+    let owner = db::user_by_email(&pool, "owner@example.org")
+        .await
+        .unwrap()
+        .unwrap();
+    let member = db::user_by_email(&pool, "member@example.org")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        db::role_in(&pool, "cli-room", owner.id).await.unwrap(),
+        Some(Role::Editor)
+    );
+    assert_eq!(
+        db::role_in(&pool, "cli-room", member.id).await.unwrap(),
+        Some(Role::Owner)
     );
 }
 

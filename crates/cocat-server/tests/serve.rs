@@ -41,8 +41,7 @@ impl Server {
         let db_path = dir.path().join("test.db");
         let update_dir = dir.path().join("rooms");
 
-        let pool = db::open_writable(&db_path).await.unwrap();
-        db::ensure_schema(&pool).await.unwrap();
+        let pool = db::open(&db_path).await.unwrap();
         let owner = db::create_user(&pool, "owner@example.org", "hunter2", false)
             .await
             .unwrap();

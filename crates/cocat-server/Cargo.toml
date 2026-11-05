@@ -13,7 +13,7 @@ cocat-core = { path = "../cocat-core" }
 futures-util = "0.3"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
-sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 thiserror.workspace = true
 tikv-jemallocator = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "net", "time", "process"] }

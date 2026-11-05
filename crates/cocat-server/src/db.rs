@@ -1,4 +1,4 @@
-//! The Python server's SQLite database, read-only for the server and writable for seeding.
+//! The server's SQLite schema, applied by sqlx migrations, and the queries on it.
 
 use std::path::Path;
 use std::str::FromStr;
@@ -13,40 +13,20 @@ use uuid::Uuid;
 use cocat_core::role::Role;
 use cocat_core::room_id::{InvalidRoomId, validate_room_id};
 
-// simplify: the spike mirrors the Python schema; phase 1 owns it with sqlx migrations.
-const SCHEMA: [&str; 3] = [
-    r#"CREATE TABLE IF NOT EXISTS "user" (
-        id CHAR(36) PRIMARY KEY,
-        email VARCHAR(320) NOT NULL UNIQUE,
-        hashed_password VARCHAR(1024) NOT NULL,
-        is_active BOOLEAN NOT NULL,
-        is_verified BOOLEAN NOT NULL,
-        is_superuser BOOLEAN NOT NULL,
-        rooms JSON NOT NULL
-    )"#,
-    r#"CREATE TABLE IF NOT EXISTS room (
-        id VARCHAR(255) PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        created_at DATETIME NOT NULL,
-        created_by CHAR(36) REFERENCES "user"(id) ON DELETE SET NULL
-    )"#,
-    r#"CREATE TABLE IF NOT EXISTS membership (
-        room_id VARCHAR(255) NOT NULL REFERENCES room(id) ON DELETE CASCADE,
-        user_id CHAR(36) NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-        role VARCHAR(6) NOT NULL CHECK (role IN ('owner', 'editor', 'viewer')),
-        joined_at DATETIME NOT NULL,
-        PRIMARY KEY (room_id, user_id)
-    )"#,
-];
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, Error)]
 pub enum DbError {
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
+    #[error(transparent)]
+    Migrations(#[from] sqlx::migrate::MigrateError),
     #[error("hashing a password: {0}")]
     Hash(#[from] argon2::password_hash::Error),
     #[error(transparent)]
     InvalidRoomId(#[from] InvalidRoomId),
+    #[error("{user_id} is not a member of room {room_id}")]
+    NoSuchMembership { room_id: String, user_id: Uuid },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,28 +37,14 @@ pub struct User {
     pub is_active: bool,
 }
 
-pub async fn open_read_only(db_path: &Path) -> Result<SqlitePool, DbError> {
-    connect(db_path, true).await
-}
-
-pub async fn open_writable(db_path: &Path) -> Result<SqlitePool, DbError> {
-    connect(db_path, false).await
-}
-
-async fn connect(db_path: &Path, read_only: bool) -> Result<SqlitePool, DbError> {
+pub async fn open(db_path: &Path) -> Result<SqlitePool, DbError> {
     let options = SqliteConnectOptions::new()
         .filename(db_path)
-        .read_only(read_only)
-        .create_if_missing(!read_only)
+        .create_if_missing(true)
         .foreign_keys(true);
-    Ok(SqlitePool::connect_with(options).await?)
-}
-
-pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), DbError> {
-    for statement in SCHEMA {
-        sqlx::query(statement).execute(pool).await?;
-    }
-    Ok(())
+    let pool = SqlitePool::connect_with(options).await?;
+    MIGRATOR.run(&pool).await?;
+    Ok(pool)
 }
 
 pub async fn user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<User>, DbError> {
@@ -128,8 +94,8 @@ pub async fn create_user(
         .hash_password(password.as_bytes())?
         .to_string();
     sqlx::query(
-        r#"INSERT INTO "user" (id, email, hashed_password, is_active, is_verified, is_superuser, rooms)
-           VALUES (?, ?, ?, TRUE, TRUE, ?, '[]')"#,
+        r#"INSERT INTO "user" (id, email, hashed_password, is_active, is_verified, is_superuser)
+           VALUES (?, ?, ?, TRUE, TRUE, ?)"#,
     )
     .bind(id.to_string())
     .bind(email)
@@ -148,17 +114,23 @@ pub async fn create_room(
 ) -> Result<(), DbError> {
     validate_room_id(room_id)?;
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        "INSERT INTO room (id, name, created_at, created_by) VALUES (?, ?, datetime('now'), ?)",
-    )
-    .bind(room_id)
-    .bind(name)
-    .bind(owner_id.to_string())
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("INSERT INTO room (id, name, created_by) VALUES (?, ?, ?)")
+        .bind(room_id)
+        .bind(name)
+        .bind(owner_id.to_string())
+        .execute(&mut *tx)
+        .await?;
     insert_membership(&mut tx, room_id, owner_id, Role::Owner).await?;
     tx.commit().await?;
     Ok(())
+}
+
+pub async fn delete_room(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
+    let deleted = sqlx::query("DELETE FROM room WHERE id = ?")
+        .bind(room_id)
+        .execute(pool)
+        .await?;
+    Ok(deleted.rows_affected() > 0)
 }
 
 pub async fn add_member(
@@ -173,6 +145,61 @@ pub async fn add_member(
     Ok(())
 }
 
+pub async fn remove_member(
+    pool: &SqlitePool,
+    room_id: &str,
+    user_id: Uuid,
+) -> Result<bool, DbError> {
+    let removed = sqlx::query("DELETE FROM membership WHERE room_id = ? AND user_id = ?")
+        .bind(room_id)
+        .bind(user_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(removed.rows_affected() > 0)
+}
+
+pub async fn set_role(
+    pool: &SqlitePool,
+    room_id: &str,
+    user_id: Uuid,
+    role: Role,
+) -> Result<bool, DbError> {
+    let updated = sqlx::query("UPDATE membership SET role = ? WHERE room_id = ? AND user_id = ?")
+        .bind(role.as_str())
+        .bind(room_id)
+        .bind(user_id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+pub async fn set_owner(pool: &SqlitePool, room_id: &str, user_id: Uuid) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    // one_owner_per_room allows a single owner row, so the old owner steps down first.
+    sqlx::query(
+        "UPDATE membership SET role = 'editor'
+         WHERE room_id = ? AND role = 'owner' AND user_id != ?",
+    )
+    .bind(room_id)
+    .bind(user_id.to_string())
+    .execute(&mut *tx)
+    .await?;
+    let promoted =
+        sqlx::query("UPDATE membership SET role = 'owner' WHERE room_id = ? AND user_id = ?")
+            .bind(room_id)
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+    if promoted.rows_affected() == 0 {
+        return Err(DbError::NoSuchMembership {
+            room_id: room_id.to_owned(),
+            user_id,
+        });
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn insert_membership(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     room_id: &str,
@@ -180,8 +207,8 @@ async fn insert_membership(
     role: Role,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT OR REPLACE INTO membership (room_id, user_id, role, joined_at)
-         VALUES (?, ?, ?, datetime('now'))",
+        "INSERT INTO membership (room_id, user_id, role) VALUES (?, ?, ?)
+         ON CONFLICT (room_id, user_id) DO UPDATE SET role = excluded.role",
     )
     .bind(room_id)
     .bind(user_id.to_string())

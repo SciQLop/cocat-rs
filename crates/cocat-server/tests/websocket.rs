@@ -38,10 +38,7 @@ impl Fixture {
         let dir = TempDir::new().unwrap();
         let rooms_dir = dir.path().join("rooms");
         fs::create_dir_all(&rooms_dir).unwrap();
-        let pool = db::open_writable(&dir.path().join("test.db"))
-            .await
-            .unwrap();
-        db::ensure_schema(&pool).await.unwrap();
+        let pool = db::open(&dir.path().join("test.db")).await.unwrap();
         let state = AppState {
             pool: pool.clone(),
             secret: SECRET.to_owned(),

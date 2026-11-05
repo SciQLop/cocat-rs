@@ -18,8 +18,7 @@ use uuid::Uuid;
 async fn seeded_db() -> (TempDir, SqlitePool) {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
-    let pool = db::open_writable(&db_path).await.unwrap();
-    db::ensure_schema(&pool).await.unwrap();
+    let pool = db::open(&db_path).await.unwrap();
     (dir, pool)
 }
 

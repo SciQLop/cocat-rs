@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use axum::serve::ListenerExt;
 use clap::{Parser, Subcommand};
-use sqlx::SqlitePool;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use uuid::Uuid;
@@ -61,6 +60,24 @@ enum Command {
         #[arg(long = "db_path", default_value = "./test.db")]
         db_path: PathBuf,
     },
+    /// Remove a user from a room.
+    RemoveUserFromRoom {
+        #[arg(long)]
+        email: String,
+        #[arg(long = "room_id")]
+        room_id: String,
+        #[arg(long = "db_path", default_value = "./test.db")]
+        db_path: PathBuf,
+    },
+    /// Make a room member the owner of the room.
+    SetRoomOwner {
+        #[arg(long)]
+        email: String,
+        #[arg(long = "room_id")]
+        room_id: String,
+        #[arg(long = "db_path", default_value = "./test.db")]
+        db_path: PathBuf,
+    },
     /// Serve room websockets until SIGINT or SIGTERM.
     Serve {
         #[arg(long, default_value = "localhost")]
@@ -106,6 +123,16 @@ pub async fn run() -> Result<(), CliError> {
             role,
             db_path,
         } => add_user_to_room(&db_path, &email, &room_id, role).await,
+        Command::RemoveUserFromRoom {
+            email,
+            room_id,
+            db_path,
+        } => remove_user_from_room(&db_path, &email, &room_id).await,
+        Command::SetRoomOwner {
+            email,
+            room_id,
+            db_path,
+        } => set_room_owner(&db_path, &email, &room_id).await,
         Command::Serve {
             host,
             port,
@@ -121,7 +148,7 @@ async fn create_user(
     password: &str,
     is_superuser: bool,
 ) -> Result<(), CliError> {
-    let pool = writable_pool(db_path).await?;
+    let pool = db::open(db_path).await?;
     let id = db::create_user(&pool, email, password, is_superuser).await?;
     println!("User {email} created ({id})");
     Ok(())
@@ -133,7 +160,7 @@ async fn create_room(
     room_id: Option<String>,
     name: Option<String>,
 ) -> Result<(), CliError> {
-    let pool = writable_pool(db_path).await?;
+    let pool = db::open(db_path).await?;
     let owner = db::user_by_email(&pool, owner_email)
         .await?
         .ok_or_else(|| CliError::NoSuchUser(owner_email.to_owned()))?;
@@ -150,7 +177,7 @@ async fn add_user_to_room(
     room_id: &str,
     role: Role,
 ) -> Result<(), CliError> {
-    let pool = writable_pool(db_path).await?;
+    let pool = db::open(db_path).await?;
     let user = db::user_by_email(&pool, email)
         .await?
         .ok_or_else(|| CliError::NoSuchUser(email.to_owned()))?;
@@ -159,17 +186,37 @@ async fn add_user_to_room(
     Ok(())
 }
 
-async fn writable_pool(db_path: &Path) -> Result<SqlitePool, CliError> {
-    let pool = db::open_writable(db_path).await?;
-    db::ensure_schema(&pool).await?;
-    Ok(pool)
+async fn remove_user_from_room(db_path: &Path, email: &str, room_id: &str) -> Result<(), CliError> {
+    let pool = db::open(db_path).await?;
+    let user = db::user_by_email(&pool, email)
+        .await?
+        .ok_or_else(|| CliError::NoSuchUser(email.to_owned()))?;
+    if !db::remove_member(&pool, room_id, user.id).await? {
+        return Err(db::DbError::NoSuchMembership {
+            room_id: room_id.to_owned(),
+            user_id: user.id,
+        }
+        .into());
+    }
+    println!("User {email} is no longer in room {room_id}");
+    Ok(())
+}
+
+async fn set_room_owner(db_path: &Path, email: &str, room_id: &str) -> Result<(), CliError> {
+    let pool = db::open(db_path).await?;
+    let user = db::user_by_email(&pool, email)
+        .await?
+        .ok_or_else(|| CliError::NoSuchUser(email.to_owned()))?;
+    db::set_owner(&pool, room_id, user.id).await?;
+    println!("User {email} owns room {room_id}");
+    Ok(())
 }
 
 async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Result<(), CliError> {
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
-    let pool = db::open_read_only(db_path).await?;
+    let pool = db::open(db_path).await?;
     let secret = auth::load_secret(db_path)?;
     let rooms = RoomManager::new(update_dir.to_owned());
     let state = AppState {
