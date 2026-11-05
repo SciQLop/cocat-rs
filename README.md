@@ -72,6 +72,52 @@ restart.
 A handshake without a valid cookie, or from a user who is not a member of the room, is
 refused before the upgrade with HTTP 403.
 
+## Catalogue API
+
+Read-only JSON and VOTable over plain HTTP, for tools that do not speak the sync protocol
+(SciQLop, a notebook, curl). Every route needs the `fastapiusersauth` cookie, answers 401 to
+an anonymous request and 404 to a non-member, and never keeps a room open: a closed room is
+read from its file for the length of the request and dropped again.
+
+```sh
+# the room's catalogues, with their event counts
+curl --cookie "fastapiusersauth=$TOKEN" \
+  http://localhost:8000/api/rooms/my-room/catalogues
+
+# one catalogue
+curl --cookie "fastapiusersauth=$TOKEN" \
+  http://localhost:8000/api/rooms/my-room/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60
+
+# the same catalogue as a VOTable
+curl --cookie "fastapiusersauth=$TOKEN" \
+  -o catalogue.xml \
+  http://localhost:8000/api/rooms/my-room/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60.votable
+
+# one page of events inside a time window
+curl --cookie "fastapiusersauth=$TOKEN" \
+  'http://localhost:8000/api/rooms/my-room/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60/events?start=2025-01-01T00:00:00Z&stop=2025-02-01T00:00:00Z&limit=100'
+```
+
+Times come back as `YYYY-MM-DDTHH:MM:SS.ffffffZ`; a `start` or `stop` argument accepts that
+form, Python's `2025-01-31 10:00:00`, or an explicit offset (`+02:00`), and an argument
+without an offset means UTC. Events are ordered by `(start, uuid)`.
+
+**Overlap.** Either bound may be omitted, and an event is returned when its interval overlaps
+the requested one (`event.stop >= start` and `event.start <= stop`), so an event that begins
+before the window and runs into it is included. A `start` after the `stop` is 422.
+
+**Paging.** `limit` defaults to 1000 and must be between 1 and 10 000. The response carries
+`"next"`: an opaque cursor for the following page, or `null` when nothing follows. Send it
+back unchanged as `cursor`. The cursor names the `(start, uuid)` of the last event returned,
+so events sharing a start time are neither repeated nor skipped.
+
+A malformed time, cursor or limit is 422, an unknown catalogue is 404 `{"detail": "Catalogue
+<uuid> not found"}` and a room too big for `COCAT_ROOM_MEMORY_BUDGET` is 503 `{"detail":
+"Server memory budget reached"}`. The `.votable` route answers
+`application/x-votable+xml` with `content-disposition: attachment; filename="<uuid>.xml"`,
+and a catalogue whose events disagree on an attribute's presence or type is 422 with the
+exporter's message. The file reads back through cocat's `import_votable`.
+
 ## Durability
 
 Every update is written to the room file before it is broadcast, so a crash of the process

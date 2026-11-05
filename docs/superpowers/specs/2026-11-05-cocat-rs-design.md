@@ -180,7 +180,8 @@ against the Rust binary.
 
 ## Phases
 
-Status: phase 0 (spike) and phase 1 (rooms and lifecycle) are done; phase 2 is next.
+Status: phases 0 (spike), 1 (rooms and lifecycle) and 2 (auth and the REST API) are done;
+ORCID moved to phase 3 with the UI, which is next.
 
 0. **Spike (go/no-go).** `cocat-server` serving only `/room/{id}`: cookie check,
    membership/role from SQLite, Yjs sync with viewer write-blocking, `.y` storage.
