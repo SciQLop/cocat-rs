@@ -7,8 +7,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::AppState;
+use cocat_core::role::Role;
+
 use crate::db::{self, DbError};
-use crate::lifecycle::LifecycleError;
+use crate::lifecycle::{self, LifecycleError};
 
 pub const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave the group";
 
@@ -184,6 +186,146 @@ pub async fn remove_member(
     let pairs = rooms.into_iter().map(|room_id| (room_id, member)).collect();
     revoke_pairs(state, pairs).await;
     Ok(())
+}
+
+/// Shares a room with a group. The actor must own the room and belong to the group, so a
+/// group they cannot see answers 404. A changed grant revokes the group's members in that
+/// room, because their sockets carry the old role.
+pub async fn grant(
+    state: &AppState,
+    room_id: &str,
+    group_id: &str,
+    actor: Uuid,
+    role: Role,
+) -> Result<(GroupRow, Role), LifecycleError> {
+    lifecycle::require_role(state, room_id, actor, Role::Owner).await?;
+    if role == Role::Owner {
+        return Err(LifecycleError::Invalid(
+            "A group cannot be granted the owner role",
+        ));
+    }
+    let group = group_row(state, group_id).await?;
+    if group_role(state, group_id, actor).await?.is_none() {
+        return Err(not_found(group_id));
+    }
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let previous: Option<String> =
+        sqlx::query_scalar("SELECT role FROM room_group WHERE room_id = ? AND group_id = ?")
+            .bind(room_id)
+            .bind(group_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let changed = previous
+        .as_deref()
+        .is_some_and(|previous| previous != role.as_str());
+    let members = match changed {
+        true => members_of(&mut tx, group_id).await?,
+        false => Vec::new(),
+    };
+    sqlx::query(
+        "INSERT INTO room_group (room_id, group_id, role) VALUES (?, ?, ?)
+         ON CONFLICT (room_id, group_id) DO UPDATE SET role = excluded.role",
+    )
+    .bind(room_id)
+    .bind(group_id)
+    .bind(role.as_str())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    revoke_pairs(state, in_room(room_id, members)).await;
+    Ok((group, role))
+}
+
+/// Takes the room away from the group. The actor must own the room; they need not belong
+/// to the group any more.
+pub async fn ungrant(
+    state: &AppState,
+    room_id: &str,
+    group_id: &str,
+    actor: Uuid,
+) -> Result<(), LifecycleError> {
+    lifecycle::require_role(state, room_id, actor, Role::Owner).await?;
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let members = members_of(&mut tx, group_id).await?;
+    let deleted = sqlx::query("DELETE FROM room_group WHERE room_id = ? AND group_id = ?")
+        .bind(room_id)
+        .bind(group_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+        > 0;
+    if !deleted {
+        return Err(LifecycleError::NotFound(format!(
+            "Group {group_id} is not granted room {room_id}"
+        )));
+    }
+    tx.commit().await?;
+    revoke_pairs(state, in_room(room_id, members)).await;
+    Ok(())
+}
+
+/// The groups a room is shared with, for any member of the room.
+pub async fn room_groups(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+) -> Result<Vec<(GroupRow, Role)>, LifecycleError> {
+    lifecycle::require_role(state, room_id, actor, Role::Viewer).await?;
+    let rows = sqlx::query(
+        "SELECT user_group.id, user_group.name, room_group.role
+         FROM room_group JOIN user_group ON user_group.id = room_group.group_id
+         WHERE room_group.room_id = ?
+         ORDER BY user_group.name, user_group.id",
+    )
+    .bind(room_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut groups = Vec::new();
+    for row in &rows {
+        groups.push((
+            GroupRow {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+            },
+            row.try_get::<String, _>("role")?.parse::<Role>()?,
+        ));
+    }
+    Ok(groups)
+}
+
+async fn group_row(state: &AppState, group_id: &str) -> Result<GroupRow, LifecycleError> {
+    let row = sqlx::query("SELECT id, name FROM user_group WHERE id = ?")
+        .bind(group_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| not_found(group_id))?;
+    Ok(GroupRow {
+        id: row.try_get("id")?,
+        name: row.try_get("name")?,
+    })
+}
+
+async fn members_of(
+    tx: &mut Transaction<'_, Sqlite>,
+    group_id: &str,
+) -> Result<Vec<Uuid>, LifecycleError> {
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT user_id FROM group_member WHERE group_id = ?")
+            .bind(group_id)
+            .fetch_all(&mut **tx)
+            .await?;
+    let mut members = Vec::new();
+    for raw in &rows {
+        members.push(parse_uuid(raw)?);
+    }
+    Ok(members)
+}
+
+fn in_room(room_id: &str, members: Vec<Uuid>) -> Vec<(String, Uuid)> {
+    members
+        .into_iter()
+        .map(|member| (room_id.to_owned(), member))
+        .collect()
 }
 
 async fn group_role(

@@ -100,6 +100,10 @@ impl Fixture {
         self.send(Method::PATCH, path, Some(user), Some(body)).await
     }
 
+    async fn put(&self, path: &str, user: Uuid, body: Value) -> (StatusCode, Value) {
+        self.send(Method::PUT, path, Some(user), Some(body)).await
+    }
+
     async fn delete(&self, path: &str, user: Uuid) -> (StatusCode, Value) {
         self.send(Method::DELETE, path, Some(user), None).await
     }
@@ -380,4 +384,219 @@ async fn a_member_joined_just_before_the_delete_is_revoked() {
         .await
         .expect("the delete must revoke a member it found in the same transaction");
     assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+}
+
+#[tokio::test]
+async fn owner_grants_and_members_get_access() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-granted", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &id, bob, "member").await;
+
+    let (status, body) = fixture
+        .put(
+            &format!("/api/rooms/room-granted/groups/{id}"),
+            alice,
+            json!({ "role": "editor" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "id": id, "name": "Team", "role": "editor" }));
+
+    let (status, body) = fixture.get("/api/rooms", Some(bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!([{ "id": "room-granted", "name": "room-granted", "role": "editor" }])
+    );
+
+    let (status, body) = fixture.get("/room/room-granted/users", Some(bob)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn grant_to_a_foreign_group_is_404() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-mine", alice).await;
+    let id = create(&fixture, bob, "Bobs team").await;
+
+    let (status, body) = fixture
+        .put(
+            &format!("/api/rooms/room-mine/groups/{id}"),
+            alice,
+            json!({ "role": "viewer" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["detail"], format!("Group {id} not found"));
+}
+
+#[tokio::test]
+async fn editor_through_group_cannot_do_owner_things() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-guarded", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &id, bob, "member").await;
+    grant(&fixture.pool, "room-guarded", &id, "editor").await;
+
+    for (status, body) in [
+        fixture.delete("/api/rooms/room-guarded", bob).await,
+        fixture
+            .post(
+                "/api/rooms/room-guarded/invitations",
+                bob,
+                json!({ "role": "viewer" }),
+            )
+            .await,
+        fixture
+            .patch(
+                &format!("/api/rooms/room-guarded/members/{alice}"),
+                bob,
+                json!({ "role": "viewer" }),
+            )
+            .await,
+        fixture
+            .put(
+                &format!("/api/rooms/room-guarded/groups/{id}"),
+                bob,
+                json!({ "role": "viewer" }),
+            )
+            .await,
+    ] {
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+    assert_eq!(
+        fixture
+            .get("/api/rooms", Some(bob))
+            .await
+            .1
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "the room is still there"
+    );
+}
+
+#[tokio::test]
+async fn owner_role_cannot_be_granted_422() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    fixture.room("room-owner-role", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, _) = fixture
+        .put(
+            &format!("/api/rooms/room-owner-role/groups/{id}"),
+            alice,
+            json!({ "role": "owner" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn changing_a_grant_revokes_the_group_in_that_room() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-changed", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &id, bob, "member").await;
+    grant(&fixture.pool, "room-changed", &id, "editor").await;
+
+    let room = fixture.state.rooms.get_or_open("room-changed").unwrap();
+    let (out, mut inbox) = outbox();
+    room.attach(1, bob, Role::Editor, out).unwrap();
+
+    let (status, _) = fixture
+        .put(
+            &format!("/api/rooms/room-changed/groups/{id}"),
+            alice,
+            json!({ "role": "viewer" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let closed = timeout(WAIT, &mut inbox.close)
+        .await
+        .expect("the room closed a socket that carried the old grant");
+    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    let (status, body) = fixture.get("/api/rooms", Some(bob)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[0]["role"], "viewer");
+}
+
+#[tokio::test]
+async fn ungrant_revokes() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    fixture.room("room-ungranted", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &id, bob, "member").await;
+    grant(&fixture.pool, "room-ungranted", &id, "editor").await;
+
+    let room = fixture.state.rooms.get_or_open("room-ungranted").unwrap();
+    let (out, mut inbox) = outbox();
+    room.attach(1, bob, Role::Editor, out).unwrap();
+
+    let (status, _) = fixture
+        .delete(&format!("/api/rooms/room-ungranted/groups/{id}"), alice)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let closed = timeout(WAIT, &mut inbox.close)
+        .await
+        .expect("the room closed a socket whose grant was removed");
+    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    let (_, body) = fixture.get("/api/rooms", Some(bob)).await;
+    assert_eq!(body, json!([]));
+}
+
+#[tokio::test]
+async fn ungrant_unknown_is_404() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    fixture.room("room-none", alice).await;
+    let id = create(&fixture, alice, "Team").await;
+
+    let (status, body) = fixture
+        .delete(&format!("/api/rooms/room-none/groups/{id}"), alice)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn room_groups_visible_to_viewers() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    fixture.room("room-listed", alice).await;
+    db::add_member(&fixture.pool, "room-listed", bob, Role::Viewer)
+        .await
+        .unwrap();
+    let id = create(&fixture, alice, "Team").await;
+    grant(&fixture.pool, "room-listed", &id, "editor").await;
+
+    let (status, body) = fixture
+        .get("/api/rooms/room-listed/groups", Some(bob))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({ "groups": [{ "id": id, "name": "Team", "role": "editor" }] })
+    );
+
+    let (status, _) = fixture
+        .get("/api/rooms/room-listed/groups", Some(carol))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
