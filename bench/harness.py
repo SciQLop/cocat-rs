@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -596,7 +597,10 @@ def open_cycles(server: Server, cookie: str, cycles: int) -> dict:
     }
 
 
-def run_soak(server: Server, cookie: str, scenario: Scenario, in_flight: int) -> dict:
+def run_soak(
+    server: Server, log_in: Callable[[], str], scenario: Scenario, in_flight: int
+) -> dict:
+    cookie = log_in()
     rss_start = server.rss_start_mb
     rooms = room_set(scenario.rooms)
     measured = run_rooms(
@@ -616,7 +620,8 @@ def run_soak(server: Server, cookie: str, scenario: Scenario, in_flight: int) ->
     rss_end = server.rss_mb
     lost = probe_rooms(server, cookie, written)
     _, peak, cpu = server.restart()
-    lost_after_restart = probe_rooms(server, cookie, written)
+    # The session cookie lives an hour, as long as the soak itself.
+    lost_after_restart = probe_rooms(server, log_in(), written)
     return {
         **measured,
         "rss_start_mb": round(rss_start, 3),
@@ -631,8 +636,13 @@ def run_soak(server: Server, cookie: str, scenario: Scenario, in_flight: int) ->
 
 
 def measure(
-    name: str, server: Server, scenario: Scenario, cookie: str, in_flight: int
+    name: str,
+    server: Server,
+    scenario: Scenario,
+    log_in: Callable[[], str],
+    in_flight: int,
 ) -> dict:
+    cookie = log_in()
     metrics = {key: None for key in METRICS}
     metrics["scenario"] = name
     if name in ("open", "openclose"):
@@ -663,7 +673,7 @@ def measure(
             )
         )
     elif name == "soak":
-        metrics.update(run_soak(server, cookie, scenario, in_flight))
+        metrics.update(run_soak(server, log_in, scenario, in_flight))
     elif name == "scaleout":
         single = run_rooms(
             server,
@@ -741,9 +751,12 @@ def main() -> None:
     )
     server.start()
     try:
-        cookie = login(server, arguments.email, arguments.password)
         metrics = measure(
-            arguments.scenario, server, scenario, cookie, arguments.in_flight
+            arguments.scenario,
+            server,
+            scenario,
+            lambda: login(server, arguments.email, arguments.password),
+            arguments.in_flight,
         )
     finally:
         server.stop()
