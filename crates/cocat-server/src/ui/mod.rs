@@ -2,6 +2,9 @@
 
 mod frame;
 mod login;
+mod reset;
+mod signup;
+mod verify;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -14,6 +17,13 @@ pub fn router(_state: &AppState) -> Router<AppState> {
         .route("/login", get(login::page).post(login::login))
         .route("/logout", post(login::logout))
         .route("/request-verify", post(login::request_verify))
+        .route("/signup", get(signup::page).post(signup::signup))
+        .route(
+            "/forgot-password",
+            get(reset::forgot_page).post(reset::forgot),
+        )
+        .route("/reset-password", get(reset::reset_page).post(reset::reset))
+        .route("/verify", get(verify::page).post(verify::submit))
         .route("/rooms", get(frame::rooms))
         .route("/static/{file}", get(frame::static_asset))
 }

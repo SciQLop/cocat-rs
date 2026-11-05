@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Choose a new password</h1>
+<form method="post" action="{{ action }}">
+  <input type="hidden" name="token" value="">
+  <label for="link">Reset link</label>
+  <input id="link" name="link" type="text" autocomplete="off">
+  <label for="password">New password</label>
+  <input id="password" name="password" type="password" autocomplete="new-password">
+  <label for="repeat">Repeat password</label>
+  <input id="repeat" name="repeat" type="password" autocomplete="new-password">
+  <button type="submit">Change password</button>
+  {% include "message.html" %}
+</form>
+{% endblock %}

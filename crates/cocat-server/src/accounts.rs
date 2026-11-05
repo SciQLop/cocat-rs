@@ -80,6 +80,19 @@ pub async fn request_verification(state: &AppState, email: &str) {
     send_verification(state, mailer, user.id, &user.email).await;
 }
 
+/// Tell an address that already has an account that someone tried to sign up with it.
+///
+/// The sign-up form answers as if the account had just been created, so this mail is the
+/// only thing that tells the owner; a deployment with no mailer says the address is taken
+/// instead, because it has no way to tell them.
+pub async fn notify_signup_attempt(state: &AppState, email: &str) {
+    let Some(mailer) = &state.mailer else {
+        return;
+    };
+    let text = mail::signup_attempt_mail(&state.links.ui("/login"));
+    deliver(mailer, email, text).await;
+}
+
 /// Turn a confirmation link into a verified account.
 pub async fn verify(state: &AppState, token: &str) -> Result<User, AccountError> {
     let claims: VerifyClaims = auth::read_claims(token, &state.secret, VERIFY_AUDIENCE)

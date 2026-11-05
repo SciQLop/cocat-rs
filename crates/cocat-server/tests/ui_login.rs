@@ -13,7 +13,6 @@ use cocat_server::mail::Mailer;
 use cocat_server::ratelimit::LoginLimit;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, accounts, auth, db, ws};
-use serde_json::json;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -115,22 +114,6 @@ impl Fixture {
     async fn post(&self, path: &str, token: Option<&str>, form: &str) -> Response {
         self.send(Method::POST, path, token, Some(form), Body::empty())
             .await
-    }
-
-    async fn post_json(&self, path: &str, body: serde_json::Value) -> Response {
-        let mut request = Request::builder()
-            .method(Method::POST)
-            .uri(path)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(body.to_string()))
-            .unwrap();
-        request
-            .extensions_mut()
-            .insert(ConnectInfo(PEER.parse::<SocketAddr>().unwrap()));
-        ws::router(self.state.clone())
-            .oneshot(request)
-            .await
-            .unwrap()
     }
 
     async fn send(
@@ -546,11 +529,13 @@ async fn login_flood_does_not_block_signup() {
     }
 
     let response = fixture
-        .post_json(
-            "/auth/register",
-            json!({ "email": "fresh@example.org", "password": "pwd123" }),
+        .post(
+            "/ui/signup",
+            None,
+            "email=fresh%40example.org&password=pwd123",
         )
         .await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/ui/rooms");
 }

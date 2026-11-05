@@ -233,6 +233,18 @@ pub fn reset_mail(link: &str) -> (&'static str, String) {
     )
 }
 
+/// The notice an account owner gets when someone tries to sign up with their address.
+pub fn signup_attempt_mail(login: &str) -> (&'static str, String) {
+    (
+        "A sign-up used your cocat address",
+        format!(
+            "Someone tried to create a cocat account with this address, which already has one.\n\n\
+             If that was you, sign in instead:\n\n{login}\n\n\
+             If it was not you, ignore this message.\n"
+        ),
+    )
+}
+
 pub fn invitation_mail(room_name: &str, inviter: &str, link: &str) -> (String, String) {
     (
         format!("{inviter} invites you to the room {room_name}"),

@@ -71,6 +71,7 @@ pub(crate) struct Header {
 pub(crate) struct Frame {
     pub title: &'static str,
     pub style_href: String,
+    pub script_href: String,
     pub header: Option<Header>,
 }
 
@@ -79,6 +80,7 @@ impl Frame {
         Self {
             title,
             style_href: links.path("/static/style.css"),
+            script_href: links.path("/static/fragment.js"),
             header: user.map(|user| Header {
                 email: user.email.clone(),
                 rooms_href: links.path("/rooms"),
