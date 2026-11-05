@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 argon2 = "0.6"
+askama = "0.16"
 axum = { version = "0.8", features = ["form", "ws"] }
 base64 = "0.22"
 bytes.workspace = true

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ frame.title }}</title>
+  <link rel="stylesheet" href="{{ frame.style_href }}">
+</head>
+<body>
+{% match frame.header %}
+{% when Some with (header) %}
+<header>
+  <span class="brand">cocat</span>
+  <a href="{{ header.rooms_href }}">My rooms</a>
+  <a href="{{ header.account_href }}">Account</a>
+  <span class="email">{{ header.email }}</span>
+  <form method="post" action="{{ header.logout_action }}">
+    <button type="submit">Log out</button>
+  </form>
+</header>
+{% when None %}
+{% endmatch %}
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

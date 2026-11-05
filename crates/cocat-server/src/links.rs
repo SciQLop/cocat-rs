@@ -31,13 +31,21 @@ impl Links {
         })
     }
 
+    /// Browser path of a page, reverse-proxy prefix included and no origin.
+    ///
+    /// The UI links and redirects to its own pages from the request it is answering, so
+    /// they carry the prefix but not `COCAT_PUBLIC_URL`.
+    pub fn path(&self, path_and_fragment: &str) -> String {
+        format!("{}/ui{}", self.prefix, path_and_fragment)
+    }
+
     /// Absolute browser path of a page, reverse-proxy prefix included.
     ///
     /// A link is opened from someone else's browser, so its origin is not the `Host` header
     /// of the request that created it; a deployment behind a proxy sets `COCAT_PUBLIC_URL`
     /// and `COCAT_PROXY_PREFIX` instead.
     pub fn ui(&self, path_and_fragment: &str) -> String {
-        format!("{}{}/ui{}", self.origin, self.prefix, path_and_fragment)
+        format!("{}{}", self.origin, self.path(path_and_fragment))
     }
 
     /// The page that accepts a group invitation, whose token sits in the path.

@@ -51,6 +51,19 @@ impl LoginLimit {
     fn limiter(&self) -> &RateLimiter {
         &self.limiter
     }
+
+    /// Counts one call against the budget of `route` for the client behind `headers`.
+    ///
+    /// A page that answers a refusal with a redirect needs the answer, not the middleware's
+    /// 429, so the check is a function both the middleware and the UI handlers call.
+    pub fn hit(&self, route: &str, headers: &HeaderMap, peer: Option<SocketAddr>) -> bool {
+        let key = format!(
+            "{}|{}",
+            route,
+            client_key(headers, peer, self.trusted_proxies)
+        );
+        self.limiter().hit(&key, Instant::now())
+    }
 }
 
 /// Fixed windows per key. In memory and per process: a restart forgives every client, which
@@ -148,12 +161,7 @@ pub async fn limit(State(state): State<AppState>, request: Request, next: Next) 
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|info| info.0);
-    let key = format!(
-        "{}|{}",
-        request.uri().path(),
-        client_key(request.headers(), peer, limit.trusted_proxies())
-    );
-    if limit.limiter().hit(&key, Instant::now()) {
+    if limit.hit(request.uri().path(), request.headers(), peer) {
         next.run(request).await
     } else {
         (

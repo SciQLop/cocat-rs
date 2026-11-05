@@ -1,0 +1,51 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 48rem;
+  padding: 1rem;
+}
+
+header {
+  align-items: center;
+  border-bottom: 1px solid currentColor;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding-bottom: 0.5rem;
+}
+
+header form {
+  margin-left: auto;
+}
+
+.brand {
+  font-weight: bold;
+}
+
+.error:empty {
+  display: none;
+}
+
+.error {
+  color: #b00020;
+}
+
+label {
+  display: block;
+  margin-top: 0.75rem;
+}
+
+input,
+button {
+  font: inherit;
+  padding: 0.25rem 0.5rem;
+}
+
+button {
+  margin-top: 0.75rem;
+}

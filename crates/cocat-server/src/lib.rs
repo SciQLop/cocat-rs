@@ -16,6 +16,7 @@ pub mod links;
 pub mod mail;
 pub mod ratelimit;
 pub mod room;
+pub mod ui;
 pub mod ws;
 
 use std::sync::Arc;
