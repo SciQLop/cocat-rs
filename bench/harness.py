@@ -37,9 +37,6 @@ BIG_ROOM = "bench100k"
 SMALL_ROOM = "bench1k"
 IN_FLIGHT = 4
 SYNC_TIMEOUT = 10.0
-# A room that carried a five-minute run has a ~450 MB record file and its cold open
-# replays it for ~30 s, so the durability probe after such a run cannot use a join timeout.
-PROBE_SYNC_TIMEOUT = 120.0
 UNLOAD_TIMEOUT = 20.0
 OBSERVABLE_GROWTH_MB = 100.0
 SOAK_SAMPLE_AT = 300.0
@@ -311,12 +308,26 @@ def participants(host: str, port: int, room: str, cookie: str, clients: int) -> 
     ]
 
 
-def edit(participant: Participant, tick: int) -> tuple[bytes, str, datetime]:
+def edit(
+    participant: Participant, tick: int, updates: list[bytes]
+) -> tuple[bytes, str, datetime]:
     event_id = participant.event_ids[tick % len(participant.event_ids)]
     value = EPOCH + timedelta(seconds=tick * 1_000_000 + participant.index)
-    state = participant.database.doc.get_state()
+    updates.clear()
     participant.database.get_event(event_id).stop = value
-    return participant.database.doc.get_update(state), event_id, value
+    return updates[-1], event_id, value
+
+
+def observe_edits(doc) -> list[bytes]:
+    """The transaction's own update, the way a real client sends it.
+
+    A state-vector diff carries the document's whole delete set, so its size grows with
+    every edit ever made; `TransactionEvent.update` holds only this transaction's structs
+    and deletes (wiredb/client.py does the same).
+    """
+    updates: list[bytes] = []
+    doc.observe(lambda event: updates.append(event.update))
+    return updates
 
 
 def receive_loop(
@@ -364,6 +375,7 @@ def run_room(
         thread.start()
 
     written: dict[str, datetime] = {}
+    updates = observe_edits(opened[0].database.doc)
     sent = 0
     started = time.perf_counter()
     tick = 0
@@ -372,7 +384,7 @@ def run_room(
             if sent - counters[0] >= in_flight:
                 time.sleep(0.001)
                 continue
-            send_edit(opened[0], tick, pending, written)
+            send_edit(opened[0], tick, pending, written, updates)
             sent += 1
         else:
             for participant in opened:
@@ -380,7 +392,7 @@ def run_room(
                 delay = due - time.perf_counter()
                 if delay > 0:
                     time.sleep(delay)
-                send_edit(participant, tick, pending, written)
+                send_edit(participant, tick, pending, written, updates)
                 sent += 1
             tick += 1
     elapsed = time.perf_counter() - started
@@ -408,8 +420,9 @@ def send_edit(
     tick: int,
     pending: list[deque[float]],
     written: dict[str, datetime],
+    updates: list[bytes],
 ) -> None:
-    update, event_id, value = edit(participant, tick)
+    update, event_id, value = edit(participant, tick, updates)
     written[event_id] = value
     sent_at = time.perf_counter()
     for queue in pending:
@@ -421,7 +434,7 @@ def probe_written(
     host: str, port: int, room: str, cookie: str, written: dict[str, datetime]
 ) -> int:
     socket = open_socket(host, port, room, cookie)
-    database = fresh_database(socket, PROBE_SYNC_TIMEOUT)
+    database = fresh_database(socket)
     socket.close()
     return sum(
         1
