@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use axum::serve::ListenerExt;
 use clap::{Parser, Subcommand};
 use sqlx::SqlitePool;
 use thiserror::Error;
@@ -181,7 +182,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     println!("listening on {}", listener.local_addr()?);
     io::stdout().flush()?;
 
-    axum::serve(listener, ws::router(state))
+    axum::serve(listener.tap_io(ws::disable_nagle), ws::router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     rooms.flush_all().await;

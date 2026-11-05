@@ -25,6 +25,13 @@ const ATTACH_TRIES: usize = 3;
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
 
+/// One frame per broadcast is small; Nagle's delayed ACK would delay it to the next tick.
+pub fn disable_nagle(stream: &mut tokio::net::TcpStream) {
+    if let Err(error) = stream.set_nodelay(true) {
+        tracing::warn!(%error, "cannot disable Nagle on an accepted socket");
+    }
+}
+
 #[derive(Debug, Error)]
 enum AttachError {
     #[error(transparent)]

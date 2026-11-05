@@ -70,6 +70,10 @@ The command already contains the `serve` subcommand; the harness appends `--host
 --port --update_dir --db_path`. It starts the server on a free port, logs in over HTTP,
 runs the scenario, stops the server with SIGINT and prints one JSON object.
 
+The gate numbers come from the release binary: build it with `cargo build --release -p
+cocat-server` and pass `--server-cmd "<repo>/target/release/cocat-server serve"`, as the
+Python baseline is its normal install, not a debug run.
+
 `--smoke` replaces every duration with two seconds and two clients/connects and skips
 the room-size check; it is there to prove the harness works, not to produce numbers.
 

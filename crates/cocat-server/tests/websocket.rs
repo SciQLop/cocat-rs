@@ -285,3 +285,15 @@ async fn short_frames_do_not_close_the_socket() {
         Message::Sync(SyncMessage::SyncStep2(_))
     ));
 }
+
+#[tokio::test]
+async fn an_accepted_socket_has_nagle_disabled() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let connecting = tokio::spawn(async move { TcpStream::connect(addr).await });
+
+    let (mut accepted, _) = listener.accept().await.unwrap();
+    ws::disable_nagle(&mut accepted);
+    assert!(accepted.nodelay().unwrap());
+    connecting.await.unwrap().unwrap();
+}
