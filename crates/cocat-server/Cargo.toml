@@ -12,10 +12,10 @@ clap = { version = "4", features = ["derive"] }
 cocat-core = { path = "../cocat-core" }
 futures-util = "0.3"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
-mimalloc = "0.1.52"
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 thiserror.workspace = true
+tikv-jemallocator = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "net", "time", "process"] }
 tracing.workspace = true
 uuid = { version = "1", features = ["v4"] }
