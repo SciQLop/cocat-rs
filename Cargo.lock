@@ -336,6 +336,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "axum",
+ "bytes",
  "clap",
  "cocat-core",
  "jsonwebtoken",
@@ -346,6 +347,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "yrs",
 ]
 
 [[package]]

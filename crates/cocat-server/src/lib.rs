@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod cli;
 pub mod db;
+pub mod room;
 
 use axum::Router;
 use axum::routing::post;
