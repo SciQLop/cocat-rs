@@ -104,6 +104,33 @@ on:
 Rust owns its schema (sqlx migrations from day one). No compatibility with the Python
 database is required beyond what the import tool reads.
 
+### Read-only catalogue API (new)
+
+Origin: `erdoganfurkan/cocat@missing_rest_api` (2026-05) adds `GET
+/rooms/{id}/catalogues`, `GET /catalogues/{uuid}` and `GET /catalogues/{uuid}/events`,
+so scripts and web pages can read catalogues without a CRDT client. The need is real
+(and is the query side of the public read-only room); the branch itself is not
+mergeable — it predates the rooms model (`user.rooms`), opens a room with no client that
+then never unloads (wiredb only unloads on last-client-leave), scans every room of the
+user to find a uuid, drops `products`/`rating`, truncates timestamps to naive seconds,
+and has no paging. We take the routes' intent, not the code:
+
+- `GET /api/rooms/{id}/catalogues` → uuid, name, author, tags, attributes, event count.
+- `GET /api/rooms/{id}/catalogues/{uuid}` → the same for one catalogue.
+- `GET /api/rooms/{id}/catalogues/{uuid}/events?start=&stop=&limit=&cursor=` → full
+  events (uuid, start, stop, author, tags, products, rating, attributes), sorted by
+  start, ISO 8601 UTC with microseconds, time-range filtered, paged.
+- `GET /api/rooms/{id}/catalogues/{uuid}.votable` → VOTable export (same writer as
+  `cocat-core`).
+- Scoped by room (no global uuid scan); any member, viewer included; non-members get the
+  same 404 as every other room route.
+- Reads go through the room task when the room is open, and otherwise load the `.y`
+  read-only into a short-lived `Doc` that is dropped after the request (never registered
+  as an open room), so REST reads cannot pin rooms in memory. Large rooms hit the memory
+  budget like any other open.
+- The fork's tests (`tests/test_rest_catalogues.py`) are the starting acceptance cases,
+  adapted to these routes; credit the author in the changelog.
+
 ## How the Python suite drives Rust
 
 What exists in the Python repo today:
@@ -181,7 +208,8 @@ against the Rust binary.
    socket needs), append-only storage with tail recovery and flush, the sqlx schema and
    the seeding CLI.
 2. **Auth and the REST API.** Register, verify, reset, ORCID via `openidconnect`, email
-   via `lettre`, the rate limiter, rooms/members/invitations under `/api/*`.
+   via `lettre`, the rate limiter, rooms/members/invitations under `/api/*`, and the
+   read-only catalogue API.
 3. **Web UI.** Server-rendered `askama` + htmx, same pages as the NiceGUI UI. Starts
    with a new HTTP-level acceptance suite, because the NiceGUI tests cannot be reused.
 4. **Import tool**, run as the cutover step, then the Rust server ships.
@@ -216,7 +244,7 @@ UI); Python is retired at the same cutover, with the imported data kept until ve
   key-derivation rewrite).
 - **Public read-only room is not a CRDT room:** a sanitized VOTable/JSON snapshot served
   over HTTP and cacheable, in its own later phase. Never the raw `.y` — it carries
-  tombstones and author fields.
+  tombstones and author fields. Its query side reuses the read-only catalogue API.
 - **Server-rendered UI** (askama + htmx): no JS build step, but htmx is still a vendored
   JS file, pinned like any dependency.
 
