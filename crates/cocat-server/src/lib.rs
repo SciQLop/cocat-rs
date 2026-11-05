@@ -4,19 +4,14 @@ pub mod auth;
 pub mod cli;
 pub mod db;
 pub mod room;
+pub mod ws;
 
-use axum::Router;
-use axum::routing::post;
+use crate::room::RoomManager;
 use sqlx::SqlitePool;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub secret: String,
-}
-
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/auth/jwt/login", post(auth::login_handler))
-        .with_state(state)
+    pub rooms: RoomManager,
 }

@@ -6,10 +6,11 @@ publish.workspace = true
 
 [dependencies]
 argon2 = "0.6"
-axum = { version = "0.8", features = ["form"] }
+axum = { version = "0.8", features = ["form", "ws"] }
 bytes.workspace = true
 clap = { version = "4", features = ["derive"] }
 cocat-core = { path = "../cocat-core" }
+futures-util = "0.3"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
@@ -21,6 +22,7 @@ yrs.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+tokio-tungstenite = "0.30"
 
 [lints]
 workspace = true

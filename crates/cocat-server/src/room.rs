@@ -32,7 +32,7 @@ pub enum RoomError {
 }
 
 /// Opens rooms on demand and unloads them when their last client leaves.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoomManager {
     update_dir: PathBuf,
     rooms: Rooms,

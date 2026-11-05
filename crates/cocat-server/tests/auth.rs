@@ -7,6 +7,7 @@ use axum::Form;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use cocat_server::auth::{self, AuthError, LoginForm};
+use cocat_server::room::RoomManager;
 use cocat_server::{AppState, db};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::Serialize;
@@ -179,11 +180,12 @@ fn a_missing_secret_file_is_created_once_and_reused() {
 
 #[tokio::test]
 async fn login_sets_a_cookie_for_the_right_password() {
-    let (_dir, pool) = seeded_db().await;
+    let (dir, pool) = seeded_db().await;
     let id = db::create_user(&pool, "user@example.org", "hunter2", false)
         .await
         .unwrap();
     let state = AppState {
+        rooms: RoomManager::new(dir.path().to_owned()),
         pool,
         secret: "secret".to_owned(),
     };
@@ -212,11 +214,12 @@ async fn login_sets_a_cookie_for_the_right_password() {
 
 #[tokio::test]
 async fn login_rejects_a_wrong_password_and_an_inactive_user() {
-    let (_dir, pool) = seeded_db().await;
+    let (dir, pool) = seeded_db().await;
     db::create_user(&pool, "user@example.org", "hunter2", false)
         .await
         .unwrap();
     let state = AppState {
+        rooms: RoomManager::new(dir.path().to_owned()),
         pool: pool.clone(),
         secret: "secret".to_owned(),
     };
