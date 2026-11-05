@@ -2,7 +2,9 @@
 //! through channels, because `Doc` and `Update` are not `Send`.
 
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -10,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use cocat_core::role::Role;
-use cocat_core::store::{FileRoomStore, StoreError};
+use cocat_core::store::{FileRoomStore, StoreError, read_updates, room_file};
 use thiserror::Error;
 use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
 use tokio::sync::oneshot;
@@ -107,6 +109,8 @@ pub enum RoomError {
         needed: u64,
         budget: u64,
     },
+    #[error("the room did not answer the read")]
+    Unanswered,
 }
 
 /// Opens rooms on demand and unloads them when their last client leaves.
@@ -115,6 +119,9 @@ pub struct RoomManager {
     update_dir: PathBuf,
     rooms: Rooms,
     budget: Option<u64>,
+    /// What the cold reads in flight are charged, so a burst of them cannot slip past the
+    /// budget between two opens.
+    cold_bytes: Arc<AtomicU64>,
 }
 
 impl RoomManager {
@@ -123,6 +130,7 @@ impl RoomManager {
             update_dir,
             rooms: Arc::default(),
             budget,
+            cold_bytes: Arc::default(),
         }
     }
 
@@ -137,9 +145,12 @@ impl RoomManager {
         // phase 1 a room is open only while it has clients, so there is nothing to evict.
         // Add LRU unloading when phase 2's REST reads keep rooms open.
         if let Some(budget) = self.budget {
-            let needed = rooms.values().fold(estimate, |needed, handle| {
-                needed.saturating_add(handle.estimate)
-            });
+            let cold = self.cold_bytes.load(Ordering::Relaxed);
+            let needed = rooms
+                .values()
+                .fold(estimate.saturating_add(cold), |needed, handle| {
+                    needed.saturating_add(handle.estimate)
+                });
             if needed > budget {
                 return Err(RoomError::OverBudget {
                     room_id: room_id.to_owned(),
@@ -237,6 +248,119 @@ impl RoomManager {
             handle.flush().await;
         }
     }
+
+    /// Answers one question about a room without keeping it open. An open room answers from
+    /// its thread, so the answer includes edits not yet written; a closed room is loaded for
+    /// the length of the read and dropped again.
+    pub async fn read<T, F>(&self, room_id: &str, read: F) -> Result<T, RoomError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Doc) -> T + Send + 'static,
+    {
+        let reader = Arc::new(Mutex::new(Some(read)));
+        let open = match self.rooms.lock() {
+            Ok(rooms) => rooms.get(room_id).cloned(),
+            Err(_) => return Err(RoomError::Registry),
+        };
+        if let Some(handle) = open
+            && let Some(result) = in_room(&handle, Arc::clone(&reader)).await
+        {
+            return result;
+        }
+        self.read_file(room_id, reader).await
+    }
+
+    async fn read_file<T, F>(
+        &self,
+        room_id: &str,
+        reader: Arc<Mutex<Option<F>>>,
+    ) -> Result<T, RoomError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Doc) -> T + Send + 'static,
+    {
+        let estimate = fs::metadata(room_file(&self.update_dir, room_id))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+            .saturating_mul(MEMORY_PER_FILE_BYTE);
+        if let Some(budget) = self.budget {
+            let open: u64 = match self.rooms.lock() {
+                Ok(rooms) => rooms
+                    .values()
+                    .fold(0, |needed, handle| needed.saturating_add(handle.estimate)),
+                Err(_) => return Err(RoomError::Registry),
+            };
+            let needed = open
+                .saturating_add(self.cold_bytes.load(Ordering::Relaxed))
+                .saturating_add(estimate);
+            if needed > budget {
+                return Err(RoomError::OverBudget {
+                    room_id: room_id.to_owned(),
+                    needed,
+                    budget,
+                });
+            }
+        }
+        self.cold_bytes.fetch_add(estimate, Ordering::Relaxed);
+        let charged = Charge {
+            bytes: Arc::clone(&self.cold_bytes),
+            estimate,
+        };
+        let update_dir = self.update_dir.clone();
+        let id = room_id.to_owned();
+        let loaded = tokio::task::spawn_blocking(move || {
+            let _charged = charged;
+            let doc = Doc::new();
+            for update in read_updates(&update_dir, &id)? {
+                apply(&doc, &update);
+            }
+            let read = reader.lock().ok().and_then(|mut slot| slot.take());
+            Ok::<_, StoreError>(read.map(|read| read(&doc)))
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "a cold read panicked");
+            RoomError::Unanswered
+        })??;
+        loaded.ok_or(RoomError::Unanswered)
+    }
+}
+
+/// Releases a cold read's share of the budget however the read ends, a panic included.
+struct Charge {
+    bytes: Arc<AtomicU64>,
+    estimate: u64,
+}
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        self.bytes.fetch_sub(self.estimate, Ordering::Relaxed);
+    }
+}
+
+/// Asks an open room for the answer. `None` when the room unloaded first, which leaves the
+/// question in the shared slot for the file path to ask.
+async fn in_room<T, F>(
+    handle: &RoomHandle,
+    reader: Arc<Mutex<Option<F>>>,
+) -> Option<Result<T, RoomError>>
+where
+    T: Send + 'static,
+    F: FnOnce(&Doc) -> T + Send + 'static,
+{
+    let (done, answer) = oneshot::channel();
+    let shared = Arc::clone(&reader);
+    handle
+        .send(RoomCommand::Read {
+            read: Box::new(move |doc| {
+                let read = shared.lock().ok().and_then(|mut slot| slot.take());
+                if let Some(read) = read {
+                    let _ = done.send(read(doc));
+                }
+            }),
+        })
+        .ok()?;
+    answer.await.ok().map(Ok)
 }
 
 #[derive(Debug, Clone)]
@@ -308,9 +432,12 @@ impl RoomHandle {
             let _ = flushed.await;
         }
     }
+
+    fn send(&self, command: RoomCommand) -> Result<(), RoomGone> {
+        self.commands.send(command).map_err(|_| RoomGone)
+    }
 }
 
-#[derive(Debug)]
 enum RoomCommand {
     Attach {
         client: ClientId,
@@ -335,6 +462,10 @@ enum RoomCommand {
     },
     Flush {
         done: oneshot::Sender<()>,
+    },
+    /// Runs a question against the document on the room's own thread.
+    Read {
+        read: Box<dyn FnOnce(&Doc) + Send>,
     },
 }
 
@@ -413,6 +544,7 @@ fn room_loop(
                     flush(&mut store, &room_id);
                     let _ = done.send(());
                 }
+                RoomCommand::Read { read } => read(&doc),
             }
             drain(&commands, &mut backlog);
             // Written before the broadcast so a client that sees an update can read it
@@ -593,7 +725,7 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             | RoomCommand::Delete { done } => {
                 let _ = done.send(());
             }
-            RoomCommand::Attach { .. } | RoomCommand::Frame { .. } => {}
+            RoomCommand::Attach { .. } | RoomCommand::Frame { .. } | RoomCommand::Read { .. } => {}
         }
     }
 }

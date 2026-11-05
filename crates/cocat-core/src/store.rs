@@ -52,7 +52,7 @@ pub struct FileRoomStore {
 impl FileRoomStore {
     pub fn open(update_dir: &Path, room_id: &str) -> Result<(Self, Vec<Bytes>), StoreError> {
         validate_room_id(room_id)?;
-        let path = update_dir.join(format!("{room_id}.y"));
+        let path = room_file(update_dir, room_id);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
@@ -151,6 +151,25 @@ impl FileRoomStore {
         self.write()?;
         self.sync()
     }
+}
+
+/// The file a room's records live in.
+pub fn room_file(update_dir: &Path, room_id: &str) -> PathBuf {
+    update_dir.join(format!("{room_id}.y"))
+}
+
+/// Every complete record in a room's file, read without writing: a torn tail is left for the
+/// next writer to truncate, and a room that was never written reads as empty.
+pub fn read_updates(update_dir: &Path, room_id: &str) -> Result<Vec<Bytes>, StoreError> {
+    validate_room_id(room_id)?;
+    let path = room_file(update_dir, room_id);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(io_error(&path, source)),
+    };
+    let (updates, _) = parse_records(&path, &bytes)?;
+    Ok(updates)
 }
 
 fn append_handle(path: &Path) -> Result<File, StoreError> {
@@ -278,5 +297,31 @@ mod tests {
         store.flush().unwrap();
         let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
         assert_eq!(updates, [record]);
+    }
+
+    #[test]
+    fn read_updates_leaves_a_torn_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        store.append(Bytes::from_static(b"first")).unwrap();
+        store.append(Bytes::from_static(b"second")).unwrap();
+        store.write().unwrap();
+        let path = store.path().to_owned();
+        let complete = fs::metadata(&path).unwrap().len();
+        // A length prefix that promises more bytes than the file holds.
+        let mut torn = OpenOptions::new().append(true).open(&path).unwrap();
+        torn.write_all(&[0x40, b't', b'r']).unwrap();
+
+        let updates = read_updates(dir.path(), "room").unwrap();
+
+        assert_eq!(
+            updates,
+            [Bytes::from_static(b"first"), Bytes::from_static(b"second")]
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            complete + 3,
+            "the read leaves the torn tail for the next writer to truncate"
+        );
     }
 }
