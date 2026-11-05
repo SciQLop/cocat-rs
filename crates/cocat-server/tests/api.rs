@@ -6,7 +6,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use cocat_core::role::Role;
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, auth, db, ratelimit::LoginLimit, ws};
+use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -29,6 +29,8 @@ impl Fixture {
             rooms: RoomManager::new(rooms, None),
             before_attach: None,
             login_limit: LoginLimit::default(),
+            mailer: None,
+            links: Links::default(),
         };
         Self { state, _dir: dir }
     }

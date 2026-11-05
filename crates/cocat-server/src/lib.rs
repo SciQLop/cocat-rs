@@ -7,6 +7,8 @@ pub mod db;
 pub mod invitations;
 pub mod invitations_api;
 pub mod lifecycle;
+pub mod links;
+pub mod mail;
 pub mod ratelimit;
 pub mod room;
 pub mod ws;
@@ -16,6 +18,8 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use sqlx::SqlitePool;
 
+use crate::links::Links;
+use crate::mail::Mailer;
 use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
 
@@ -30,4 +34,6 @@ pub struct AppState {
     pub rooms: RoomManager,
     pub before_attach: Option<BeforeAttach>,
     pub login_limit: LoginLimit,
+    pub mailer: Option<Mailer>,
+    pub links: Links,
 }

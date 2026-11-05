@@ -7,7 +7,7 @@ use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_server::lifecycle::{self, LifecycleError};
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, auth, db, ratelimit::LoginLimit, ws};
+use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use futures_util::{SinkExt, StreamExt};
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
@@ -47,6 +47,8 @@ impl Fixture {
             rooms: RoomManager::new(rooms_dir.clone(), None),
             before_attach: None,
             login_limit: LoginLimit::default(),
+            mailer: None,
+            links: Links::default(),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

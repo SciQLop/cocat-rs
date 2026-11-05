@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, RoomOut};
 use crate::lifecycle::LifecycleError;
+use crate::mail::is_placeholder;
 use crate::{AppState, invitations};
 
-const PLACEHOLDER_DOMAIN: &str = "placeholder.cocat.org";
 const INVITATION_LIFETIME_DAYS: u32 = 14;
 
 pub fn router() -> Router<AppState> {
@@ -216,13 +216,4 @@ fn address(email: InviteEmail) -> Result<String, ApiError> {
         return Err(LifecycleError::Invalid("Enter a valid email address").into());
     }
     Ok(email.0)
-}
-
-/// `mail.py::is_placeholder`: the reserved domain and its provider subdomains.
-fn is_placeholder(email: &str) -> bool {
-    let Some((_, domain)) = email.rsplit_once('@') else {
-        return false;
-    };
-    let domain = domain.to_ascii_lowercase();
-    domain == PLACEHOLDER_DOMAIN || domain.ends_with(&format!(".{PLACEHOLDER_DOMAIN}"))
 }

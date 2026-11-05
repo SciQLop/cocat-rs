@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use cocat_server::auth::{self, AuthError, LoginForm};
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, db, ratelimit::LoginLimit};
+use cocat_server::{AppState, db, links::Links, ratelimit::LoginLimit};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -189,6 +189,8 @@ async fn login_sets_a_cookie_for_the_right_password() {
         secret: "secret".to_owned(),
         before_attach: None,
         login_limit: LoginLimit::default(),
+        mailer: None,
+        links: Links::default(),
     };
 
     let response =
@@ -225,6 +227,8 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         secret: "secret".to_owned(),
         before_attach: None,
         login_limit: LoginLimit::default(),
+        mailer: None,
+        links: Links::default(),
     };
 
     let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2").await;

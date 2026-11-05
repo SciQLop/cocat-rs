@@ -16,6 +16,8 @@ use uuid::Uuid;
 
 use cocat_core::role::{Role, UnknownRole};
 
+use crate::links::{Links, LinksError};
+use crate::mail::{MailError, Mailer};
 use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
 use crate::{AppState, auth, db, ws};
@@ -110,6 +112,10 @@ pub enum CliError {
     InvalidBudget(String),
     #[error("COCAT_TRUSTED_PROXIES must be a non-negative integer, got {0:?}")]
     InvalidTrustedProxies(String),
+    #[error(transparent)]
+    Mail(#[from] MailError),
+    #[error(transparent)]
+    Links(#[from] LinksError),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -233,6 +239,9 @@ async fn set_room_owner(db_path: &Path, email: &str, room_id: &str) -> Result<()
 async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Result<(), CliError> {
     let budget = room_budget()?;
     let trusted_proxies = trusted_proxies()?;
+    let env = |name: &str| std::env::var(name).ok();
+    let mailer = Mailer::from_env(&env)?;
+    let links = Links::from_env(&env)?;
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
@@ -245,6 +254,8 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         rooms: rooms.clone(),
         before_attach: None,
         login_limit: LoginLimit::new(trusted_proxies),
+        mailer,
+        links,
     };
 
     let listener = TcpListener::bind((host, port)).await?;

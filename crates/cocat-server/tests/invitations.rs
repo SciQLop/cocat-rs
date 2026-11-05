@@ -3,7 +3,7 @@ use std::fs;
 use cocat_core::role::Role;
 use cocat_server::lifecycle::LifecycleError;
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, db, invitations, ratelimit::LoginLimit};
+use cocat_server::{AppState, db, invitations, links::Links, ratelimit::LoginLimit};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -25,6 +25,8 @@ impl Fixture {
             rooms: RoomManager::new(rooms, None),
             before_attach: None,
             login_limit: LoginLimit::default(),
+            mailer: None,
+            links: Links::default(),
         };
         Self { state, _dir: dir }
     }

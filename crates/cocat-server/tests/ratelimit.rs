@@ -10,7 +10,7 @@ use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::response::Response;
 use cocat_server::ratelimit::{LoginLimit, RateLimiter, client_key};
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, auth, db, ws};
+use cocat_server::{AppState, auth, db, links::Links, ws};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -33,6 +33,8 @@ impl Fixture {
             rooms: RoomManager::new(rooms, None),
             before_attach: None,
             login_limit: LoginLimit::default(),
+            mailer: None,
+            links: Links::default(),
         };
         Self { state, _dir: dir }
     }
