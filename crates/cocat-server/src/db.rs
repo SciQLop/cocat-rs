@@ -1,5 +1,6 @@
 //! The server's SQLite schema, applied by sqlx migrations, and the queries on it.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -88,23 +89,34 @@ pub async fn list_user_rooms(
         "SELECT room.id, room.name, membership.role
          FROM membership JOIN room ON room.id = membership.room_id
          WHERE membership.user_id = ?
-         ORDER BY room.name, room.id",
+         UNION ALL
+         SELECT room.id, room.name, room_group.role
+         FROM room_group
+           JOIN group_member ON group_member.group_id = room_group.group_id
+           JOIN room ON room.id = room_group.room_id
+         WHERE group_member.user_id = ?",
     )
+    .bind(user_id.to_string())
     .bind(user_id.to_string())
     .fetch_all(pool)
     .await?;
-    rows.iter()
-        .map(|row| {
-            let role: String = row.try_get("role")?;
-            Ok((
-                RoomRow {
-                    id: row.try_get("id")?,
-                    name: row.try_get("name")?,
-                },
-                role_from_name(&role)?,
-            ))
-        })
-        .collect()
+    let mut best: BTreeMap<(String, String), Role> = BTreeMap::new();
+    for row in &rows {
+        let name: String = row.try_get("name")?;
+        let id: String = row.try_get("id")?;
+        let role = role_from_name(&row.try_get::<String, _>("role")?)?;
+        best.entry((name, id))
+            .and_modify(|current| {
+                if role.rank() > current.rank() {
+                    *current = role;
+                }
+            })
+            .or_insert(role);
+    }
+    Ok(best
+        .into_iter()
+        .map(|((name, id), role)| (RoomRow { id, name }, role))
+        .collect())
 }
 
 /// The members of a room and their roles, by email.
@@ -127,7 +139,8 @@ pub async fn list_members(pool: &SqlitePool, room_id: &str) -> Result<Vec<(User,
         .collect()
 }
 
-pub async fn role_in(
+/// The role a user holds on a room through their own membership alone.
+pub async fn direct_role(
     pool: &SqlitePool,
     room_id: &str,
     user_id: Uuid,
@@ -141,6 +154,35 @@ pub async fn role_in(
             .map(|row| row.try_get("role"))
             .transpose()?;
     Ok(role.as_deref().map(role_from_name).transpose()?)
+}
+
+/// The role a user holds on a room: the highest of their own membership and every
+/// grant made to a group they belong to. A grant can never be `owner`, so an owner
+/// only ever comes from a direct membership.
+pub async fn role_in(
+    pool: &SqlitePool,
+    room_id: &str,
+    user_id: Uuid,
+) -> Result<Option<Role>, DbError> {
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT role FROM membership WHERE room_id = ? AND user_id = ?
+         UNION ALL
+         SELECT room_group.role
+         FROM room_group
+           JOIN group_member ON group_member.group_id = room_group.group_id
+         WHERE room_group.room_id = ? AND group_member.user_id = ?",
+    )
+    .bind(room_id)
+    .bind(user_id.to_string())
+    .bind(room_id)
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    let roles: Vec<Role> = names
+        .iter()
+        .map(|name| role_from_name(name))
+        .collect::<Result<_, _>>()?;
+    Ok(roles.into_iter().max_by_key(Role::rank))
 }
 
 pub async fn create_user(

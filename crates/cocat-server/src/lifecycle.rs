@@ -176,7 +176,7 @@ async fn member_role(
     room_id: &str,
     member: Uuid,
 ) -> Result<Role, LifecycleError> {
-    db::role_in(&state.pool, room_id, member)
+    db::direct_role(&state.pool, room_id, member)
         .await?
         .ok_or_else(|| not_a_member(room_id, member))
 }
