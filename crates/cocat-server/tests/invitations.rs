@@ -137,8 +137,8 @@ async fn an_expired_invitation_is_not_found() {
         .await
         .err();
 
-    assert!(matches!(preview, Some(LifecycleError::NotFound)));
-    assert!(matches!(accept, Some(LifecycleError::NotFound)));
+    assert!(matches!(preview, Some(LifecycleError::NotFound(_))));
+    assert!(matches!(accept, Some(LifecycleError::NotFound(_))));
 }
 
 #[tokio::test]
@@ -161,7 +161,7 @@ async fn a_revoked_invitation_is_not_found() {
     );
     assert!(matches!(
         invitations::preview(&fixture.state, &token).await,
-        Err(LifecycleError::NotFound)
+        Err(LifecycleError::NotFound(_))
     ));
 }
 
@@ -180,7 +180,7 @@ async fn an_email_invitation_is_bound_to_that_address() {
         invitations::accept(&fixture.state, &token, &fixture.user_row(stranger).await).await;
     let right = invitations::accept(&fixture.state, &token, &fixture.user_row(guest).await).await;
 
-    assert!(matches!(wrong, Err(LifecycleError::Forbidden)));
+    assert!(matches!(wrong, Err(LifecycleError::Forbidden(_))));
     assert_eq!(right.unwrap().1, Role::Editor);
 }
 
@@ -206,6 +206,69 @@ async fn a_single_use_invitation_admits_one_of_two_racing_accepts() {
         [one.is_ok(), two.is_ok()].iter().filter(|ok| **ok).count(),
         1,
         "exactly one accept must join: {one:?} / {two:?}"
+    );
+}
+
+/// A membership that cannot be written (here: a user row that does not exist, so the foreign
+/// key refuses) must not leave the use spent behind it.
+#[tokio::test]
+async fn a_failed_membership_does_not_burn_the_use() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    fixture.room("lab", owner).await;
+    let (id, token) = fixture.invite("lab", owner, Role::Editor, None).await;
+    let ghost = db::User {
+        id: Uuid::new_v4(),
+        email: "ghost@example.org".to_owned(),
+        hashed_password: "hunter2".to_owned(),
+        is_active: true,
+        is_superuser: false,
+        is_verified: true,
+    };
+
+    let error = invitations::accept(&fixture.state, &token, &ghost)
+        .await
+        .err();
+    let uses: i64 = sqlx::query_scalar("SELECT uses FROM invitation WHERE id = ?")
+        .bind(id)
+        .fetch_one(&fixture.state.pool)
+        .await
+        .unwrap();
+
+    assert!(matches!(error, Some(LifecycleError::Db(_))), "{error:?}");
+    assert_eq!(uses, 0, "the failed accept must give its use back");
+
+    let guest = fixture.user("guest@example.org").await;
+    assert_eq!(
+        invitations::accept(&fixture.state, &token, &fixture.user_row(guest).await)
+            .await
+            .unwrap()
+            .1,
+        Role::Editor
+    );
+}
+
+#[tokio::test]
+async fn revoking_twice_is_allowed_but_an_unknown_id_is_not() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    fixture.room("lab", owner).await;
+    let (id, _) = fixture.invite("lab", owner, Role::Editor, None).await;
+
+    invitations::revoke(&fixture.state, "lab", owner, id)
+        .await
+        .unwrap();
+    invitations::revoke(&fixture.state, "lab", owner, id)
+        .await
+        .unwrap();
+
+    let unknown = invitations::revoke(&fixture.state, "lab", owner, id + 1)
+        .await
+        .err();
+    assert!(
+        matches!(&unknown, Some(LifecycleError::NotFound(message))
+            if message == &format!("Invitation {} not found", id + 1)),
+        "{unknown:?}"
     );
 }
 
@@ -279,8 +342,8 @@ async fn only_the_owner_may_invite_or_revoke() {
         .await
         .err();
 
-    assert!(matches!(created, Some(LifecycleError::Forbidden)));
-    assert!(matches!(revoked, Some(LifecycleError::Forbidden)));
+    assert!(matches!(created, Some(LifecycleError::Forbidden(_))));
+    assert!(matches!(revoked, Some(LifecycleError::Forbidden(_))));
 }
 
 #[tokio::test]
@@ -297,5 +360,5 @@ async fn a_revoked_invitation_belonging_to_another_room_is_not_found() {
         .await
         .err();
 
-    assert!(matches!(error, Some(LifecycleError::NotFound)));
+    assert!(matches!(error, Some(LifecycleError::NotFound(_))));
 }

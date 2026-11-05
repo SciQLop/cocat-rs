@@ -93,7 +93,7 @@ pub async fn preview(state: &AppState, token: &str) -> Result<Preview, Lifecycle
     .bind(hash(token))
     .fetch_optional(&state.pool)
     .await?
-    .ok_or(LifecycleError::NotFound)?;
+    .ok_or_else(invitation_not_found)?;
     Ok(Preview {
         room_id: row.try_get("room_id")?,
         room_name: row.try_get("name")?,
@@ -118,7 +118,7 @@ pub async fn accept(
     .bind(hash(token))
     .fetch_optional(&state.pool)
     .await?
-    .ok_or(LifecycleError::NotFound)?;
+    .ok_or_else(invitation_not_found)?;
     let id: i64 = row.try_get("id")?;
     let room_id: String = row.try_get("room_id")?;
     let role = Role::from_str(&row.try_get::<String, _>("role")?)?;
@@ -126,10 +126,19 @@ pub async fn accept(
     if let Some(addressed) = addressed
         && !addressed.eq_ignore_ascii_case(&user.email)
     {
-        return Err(LifecycleError::Forbidden);
+        return Err(LifecycleError::Forbidden(
+            "This invitation is for another email address".to_owned(),
+        ));
     }
-    consume(state, id).await?;
-    let granted = db::add_member(&state.pool, &room_id, user.id, role).await?;
+    let mut tx = state.pool.begin().await?;
+    let granted = match join_with_one_use(&mut tx, id, &room_id, user.id, role).await {
+        Ok(granted) => granted,
+        Err(error) => {
+            tx.rollback().await?;
+            return Err(error);
+        }
+    };
+    tx.commit().await?;
     state.rooms.revoke(&room_id, user.id).await;
     Ok((
         RoomRow {
@@ -166,32 +175,53 @@ pub async fn revoke(
     invitation_id: i64,
 ) -> Result<(), LifecycleError> {
     require_role(state, room_id, actor, Role::Owner).await?;
-    let revoked = sqlx::query(
-        "UPDATE invitation SET revoked = TRUE WHERE id = ? AND room_id = ? AND revoked = FALSE",
-    )
-    .bind(invitation_id)
-    .bind(room_id)
-    .execute(&state.pool)
-    .await?;
+    let revoked = sqlx::query("UPDATE invitation SET revoked = TRUE WHERE id = ? AND room_id = ?")
+        .bind(invitation_id)
+        .bind(room_id)
+        .execute(&state.pool)
+        .await?;
     if revoked.rows_affected() != 1 {
-        return Err(LifecycleError::NotFound);
+        return Err(LifecycleError::NotFound(format!(
+            "Invitation {invitation_id} not found"
+        )));
     }
     Ok(())
 }
 
+/// Spends one use and grants the membership in the caller's transaction: a failure on either
+/// side leaves the invitation as usable as it was, and a rolled back use is never spent.
+async fn join_with_one_use(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: i64,
+    room_id: &str,
+    user: Uuid,
+    role: Role,
+) -> Result<Role, LifecycleError> {
+    consume(tx, id).await?;
+    Ok(db::raise_membership(tx, room_id, user, role).await?)
+}
+
 /// Spends one use in a single statement, so two accepts of a `max_uses = 1` token cannot
 /// both succeed: the second update matches no row.
-async fn consume(state: &AppState, id: i64) -> Result<(), LifecycleError> {
+async fn consume(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: i64,
+) -> Result<(), LifecycleError> {
     let used = sqlx::query(AssertSqlSafe(format!(
         "UPDATE invitation SET uses = uses + 1 WHERE invitation.id = ? AND {USABLE}"
     )))
     .bind(id)
-    .execute(&state.pool)
+    .execute(&mut **tx)
     .await?;
     if used.rows_affected() != 1 {
-        return Err(LifecycleError::NotFound);
+        return Err(invitation_not_found());
     }
     Ok(())
+}
+
+/// An unknown, expired, revoked or spent token is the same 404, as in Python.
+fn invitation_not_found() -> LifecycleError {
+    LifecycleError::NotFound("Invitation not found".to_owned())
 }
 
 fn invitation_from_row(row: &SqliteRow) -> Result<Invitation, LifecycleError> {

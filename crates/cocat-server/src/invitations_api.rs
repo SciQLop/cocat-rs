@@ -34,7 +34,7 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 struct InvitationCreate {
-    email: Option<String>,
+    email: Option<InviteEmail>,
     #[serde(default = "default_role")]
     role: AssignableRole,
     #[serde(default = "default_expiry")]
@@ -83,6 +83,28 @@ impl TryFrom<u32> for MaxUses {
     }
 }
 
+/// FastAPI's `EmailStr`: a malformed address is refused while the body is deserialized, so it
+/// is the same 422 as any other schema error, and (like `email-validator`) the address is
+/// trimmed of the whitespace around it. A period-less domain is refused because
+/// `email-validator`, which Python validates with, requires one.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+struct InviteEmail(String);
+
+impl TryFrom<String> for InviteEmail {
+    type Error = &'static str;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        let address = EmailAddress::from_str(trimmed)
+            .map_err(|_| "the invitation email must be an email address")?;
+        if !address.domain().contains('.') {
+            return Err("the invitation email must be an email address");
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct TokenBody {
     token: String,
@@ -119,7 +141,7 @@ async fn create_invitation(
     ApiPath(room_id): ApiPath<String>,
     JsonBody(body): JsonBody<InvitationCreate>,
 ) -> Result<(StatusCode, Json<InvitationCreated>), ApiError> {
-    let email = body.email.as_deref().map(address).transpose()?;
+    let email = body.email.map(address).transpose()?;
     let (id, token) = invitations::create(
         &state,
         &room_id,
@@ -158,9 +180,7 @@ async fn revoke_invitation(
     CurrentUser(user): CurrentUser,
     ApiPath((room_id, invitation_id)): ApiPath<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    invitations::revoke(&state, &room_id, user.id, invitation_id)
-        .await
-        .map_err(invitation_not_found)?;
+    invitations::revoke(&state, &room_id, user.id, invitation_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -169,9 +189,7 @@ async fn preview_invitation(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<TokenBody>,
 ) -> Result<Json<PreviewOut>, ApiError> {
-    let preview = invitations::preview(&state, &body.token)
-        .await
-        .map_err(invitation_not_found)?;
+    let preview = invitations::preview(&state, &body.token).await?;
     Ok(Json(PreviewOut {
         room_id: preview.room_id,
         room_name: preview.room_name,
@@ -186,28 +204,18 @@ async fn accept_invitation(
     CurrentUser(user): CurrentUser,
     JsonBody(body): JsonBody<TokenBody>,
 ) -> Result<Json<RoomOut>, ApiError> {
-    let (room, role) = invitations::accept(&state, &body.token, &user)
-        .await
-        .map_err(invitation_not_found)?;
+    let (room, role) = invitations::accept(&state, &body.token, &user).await?;
     Ok(Json(RoomOut::new(room, role)))
 }
 
-/// An unknown, expired, revoked or spent token is the same 404, as in Python.
-fn invitation_not_found(error: LifecycleError) -> ApiError {
-    match error {
-        LifecycleError::NotFound => ApiError::NotFound("Invitation not found".to_owned()),
-        other => other.into(),
-    }
-}
-
-/// The address to invite, or Python's refusal: blank, a placeholder of ours, or not an
-/// address at all.
-fn address(email: &str) -> Result<String, ApiError> {
-    let trimmed = email.trim();
-    if trimmed.is_empty() || is_placeholder(trimmed) || EmailAddress::from_str(trimmed).is_err() {
+/// Python's `actions._address` once `EmailStr` has accepted the address: the only address it
+/// still refuses is a placeholder of ours, which exists to stand in for an account but must
+/// never receive an invitation.
+fn address(email: InviteEmail) -> Result<String, ApiError> {
+    if is_placeholder(&email.0) {
         return Err(LifecycleError::Invalid("Enter a valid email address").into());
     }
-    Ok(trimmed.to_owned())
+    Ok(email.0)
 }
 
 /// `mail.py::is_placeholder`: the reserved domain and its provider subdomains.

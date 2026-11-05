@@ -334,7 +334,11 @@ async fn an_editor_cannot_change_a_role() {
     .await
     .unwrap_err();
 
-    assert!(matches!(error, LifecycleError::Forbidden), "{error:?}");
+    assert!(
+        matches!(&error, LifecycleError::Forbidden(message)
+            if message == "Room room-forbidden requires the owner role"),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -351,7 +355,11 @@ async fn a_non_member_actor_gets_not_found() {
         .await
         .unwrap_err();
 
-    assert!(matches!(error, LifecycleError::NotFound), "{error:?}");
+    assert!(
+        matches!(&error, LifecycleError::NotFound(message)
+            if message == "Room room-outsider not found"),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

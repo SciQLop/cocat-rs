@@ -15,10 +15,10 @@ const CONTROL_CHARACTERS_IN_ROOM_NAME: &str = "Enter a room name without control
 
 #[derive(Debug, Error)]
 pub enum LifecycleError {
-    #[error("the room or the member does not exist")]
-    NotFound,
-    #[error("the actor's role is too low for this action")]
-    Forbidden,
+    #[error("{0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Forbidden(String),
     #[error("{0}")]
     Conflict(&'static str),
     #[error("{0}")]
@@ -59,7 +59,7 @@ pub async fn rename_room(
     require_role(state, room_id, actor, Role::Owner).await?;
     let name = room_name(name)?;
     if !db::rename_room(&state.pool, room_id, &name).await? {
-        return Err(LifecycleError::NotFound);
+        return Err(room_not_found(room_id));
     }
     Ok(RoomRow {
         id: room_id.to_owned(),
@@ -89,7 +89,9 @@ pub async fn delete_room(
     actor: Uuid,
 ) -> Result<(), LifecycleError> {
     require_role(state, room_id, actor, Role::Owner).await?;
-    db::delete_room(&state.pool, room_id).await?;
+    if !db::delete_room(&state.pool, room_id).await? {
+        return Err(room_not_found(room_id));
+    }
     state.rooms.delete(room_id).await;
     Ok(())
 }
@@ -108,7 +110,7 @@ pub async fn set_member_role(
         return Err(LifecycleError::Conflict(OWNER_KEEPS_OWNER_ROLE));
     }
     if !db::set_role(&state.pool, room_id, member, role).await? {
-        return Err(LifecycleError::NotFound);
+        return Err(not_a_member(room_id, member));
     }
     state.rooms.revoke(room_id, member).await;
     Ok(())
@@ -131,7 +133,7 @@ pub async fn remove_member(
         return Err(LifecycleError::Conflict(OWNER_CANNOT_LEAVE));
     }
     if !db::remove_member(&state.pool, room_id, member).await? {
-        return Err(LifecycleError::NotFound);
+        return Err(not_a_member(room_id, member));
     }
     state.rooms.revoke(room_id, member).await;
     Ok(())
@@ -159,9 +161,12 @@ pub(crate) async fn require_role(
 ) -> Result<(), LifecycleError> {
     let role = db::role_in(&state.pool, room_id, actor)
         .await?
-        .ok_or(LifecycleError::NotFound)?;
+        .ok_or_else(|| room_not_found(room_id))?;
     if role.rank() < minimum.rank() {
-        return Err(LifecycleError::Forbidden);
+        return Err(LifecycleError::Forbidden(format!(
+            "Room {room_id} requires the {} role",
+            minimum.as_str()
+        )));
     }
     Ok(())
 }
@@ -173,5 +178,13 @@ async fn member_role(
 ) -> Result<Role, LifecycleError> {
     db::role_in(&state.pool, room_id, member)
         .await?
-        .ok_or(LifecycleError::NotFound)
+        .ok_or_else(|| not_a_member(room_id, member))
+}
+
+fn room_not_found(room_id: &str) -> LifecycleError {
+    LifecycleError::NotFound(format!("Room {room_id} not found"))
+}
+
+fn not_a_member(room_id: &str, member: Uuid) -> LifecycleError {
+    LifecycleError::NotFound(format!("User {member} is not a member of room {room_id}"))
 }

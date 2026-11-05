@@ -207,20 +207,33 @@ pub async fn add_member(
     role: Role,
 ) -> Result<Role, DbError> {
     let mut tx = pool.begin().await?;
-    let current = membership_role(&mut tx, room_id, user_id).await?;
-    let resulting = match current {
+    let granted = raise_membership(&mut tx, room_id, user_id, role).await?;
+    tx.commit().await?;
+    Ok(granted)
+}
+
+/// Adds `user_id` to the room on the caller's transaction, keeping a higher role than `role`
+/// rather than lowering it, and returns the role they hold afterwards. It takes the caller's
+/// transaction so joining a room and spending the invitation that admitted the member commit
+/// or roll back together.
+pub async fn raise_membership(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    room_id: &str,
+    user_id: Uuid,
+    role: Role,
+) -> Result<Role, DbError> {
+    let current = membership_role(tx, room_id, user_id).await?;
+    Ok(match current {
         Some(existing) if existing.rank() >= role.rank() => existing,
         Some(_) => {
-            set_membership_role(&mut tx, room_id, user_id, role).await?;
+            set_membership_role(tx, room_id, user_id, role).await?;
             role
         }
         None => {
-            insert_membership(&mut tx, room_id, user_id, role).await?;
+            insert_membership(tx, room_id, user_id, role).await?;
             role
         }
-    };
-    tx.commit().await?;
-    Ok(resulting)
+    })
 }
 
 pub async fn remove_member(

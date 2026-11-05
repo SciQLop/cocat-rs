@@ -113,8 +113,8 @@ impl From<DbError> for ApiError {
 impl From<LifecycleError> for ApiError {
     fn from(error: LifecycleError) -> Self {
         match error {
-            LifecycleError::NotFound => Self::NotFound("Not found".to_owned()),
-            LifecycleError::Forbidden => Self::Forbidden("Forbidden".to_owned()),
+            LifecycleError::NotFound(detail) => Self::NotFound(detail),
+            LifecycleError::Forbidden(detail) => Self::Forbidden(detail),
             LifecycleError::Conflict(detail) => Self::Conflict(detail.to_owned()),
             LifecycleError::Invalid(detail) => Self::BadRequest(detail.to_owned()),
             LifecycleError::Db(error) => Self::from(error),

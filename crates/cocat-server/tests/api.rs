@@ -581,6 +581,99 @@ async fn invitations_are_listed_and_revoked() {
     assert_eq!(listed, json!([]));
 }
 
+/// Python's `InvitationCreate.email: EmailStr | None` refuses these in the schema (422),
+/// before `actions._address` ever runs; only a placeholder is left for the 400 below.
+#[tokio::test]
+async fn a_malformed_invitation_address_is_422() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let token = fixture.token(owner);
+    fixture.room(owner, "room-bad-mail", "Bad mail").await;
+
+    for address in ["", "   ", "not-an-address", "a@b"] {
+        let (status, body) = fixture
+            .post(
+                "/api/rooms/room-bad-mail/invitations",
+                Some(&token),
+                json!({"email": address}),
+            )
+            .await;
+
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{address:?} answered {body}"
+        );
+        assert!(body["detail"].is_string(), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn the_error_messages_are_pythons() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let owner_token = fixture.token(owner);
+    fixture.room(owner, "room-words", "Words").await;
+    let viewer = fixture.user("viewer@example.org").await;
+    fixture.member("room-words", viewer, Role::Viewer).await;
+    let viewer_token = fixture.token(viewer);
+    let stranger = Uuid::new_v4();
+
+    let (status, body) = fixture
+        .patch(
+            "/api/rooms/room-words",
+            Some(&viewer_token),
+            json!({"name": "Renamed"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        body,
+        json!({"detail": "Room room-words requires the owner role"})
+    );
+
+    let (status, body) = fixture
+        .patch(
+            &format!("/api/rooms/room-words/members/{stranger}"),
+            Some(&owner_token),
+            json!({"role": "editor"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body,
+        json!({"detail": format!("User {stranger} is not a member of room room-words")})
+    );
+
+    let (status, body) = fixture
+        .get("/api/rooms/room-missing/members", Some(&owner_token))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"detail": "Room room-missing not found"}));
+
+    let (_, created) = fixture
+        .post(
+            "/api/rooms/room-words/invitations",
+            Some(&owner_token),
+            json!({"email": "guest@example.org"}),
+        )
+        .await;
+    let token = created["token"].as_str().expect("no token").to_owned();
+    let guest_token = fixture.token(fixture.user("stranger@example.org").await);
+    let (status, body) = fixture
+        .post(
+            "/api/invitations/accept",
+            Some(&guest_token),
+            json!({"token": token}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        body,
+        json!({"detail": "This invitation is for another email address"})
+    );
+}
+
 #[tokio::test]
 async fn a_placeholder_address_is_refused() {
     let fixture = Fixture::start().await;
