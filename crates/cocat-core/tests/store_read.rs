@@ -19,12 +19,12 @@ fn write_room(dir: &Path, room_id: &str, bytes: &[u8]) {
 
 #[test]
 fn reads_a_file_written_by_pycrdt() {
-    let store = FileRoomStore::open(&fixture_dir(), "python_two_events").unwrap();
-    assert_eq!(store.updates().len(), 2);
+    let (store, updates) = FileRoomStore::open(&fixture_dir(), "python_two_events").unwrap();
+    assert_eq!(updates.len(), 2);
     assert_eq!(store.truncated_at(), None);
 
     let doc = Doc::new();
-    for update in store.updates() {
+    for update in &updates {
         let update = Update::decode_v1(update).unwrap();
         doc.transact_mut().apply_update(update).unwrap();
     }
@@ -40,10 +40,33 @@ fn stops_at_a_truncated_record() {
     bytes.extend_from_slice(&[0x1f, 0x01, 0x01]);
 
     write_room(dir.path(), "cut", &bytes);
-    let store = FileRoomStore::open(dir.path(), "cut").unwrap();
+    let (store, updates) = FileRoomStore::open(dir.path(), "cut").unwrap();
 
-    assert_eq!(store.updates().len(), 2);
+    assert_eq!(updates.len(), 2);
     assert_eq!(store.truncated_at(), Some(GOOD_RECORDS_END));
+}
+
+#[test]
+fn a_zero_length_record_is_a_truncated_tail() {
+    let dir = TempDir::new().unwrap();
+    let mut bytes = Bytes::from_static(FIXTURE).to_vec();
+    bytes.push(0);
+
+    write_room(dir.path(), "zero", &bytes);
+    let (store, updates) = FileRoomStore::open(dir.path(), "zero").unwrap();
+
+    assert_eq!(updates.len(), 2);
+    assert_eq!(store.truncated_at(), Some(GOOD_RECORDS_END));
+}
+
+#[test]
+fn a_partial_header_is_treated_like_an_empty_file() {
+    let dir = TempDir::new().unwrap();
+    write_room(dir.path(), "partial", b"0.0");
+
+    let (_, updates) = FileRoomStore::open(dir.path(), "partial").unwrap();
+    assert!(updates.is_empty());
+    assert_eq!(fs::read(dir.path().join("partial.y")).unwrap(), b"0.0.1\0");
 }
 
 #[test]
@@ -59,8 +82,8 @@ fn rejects_a_file_without_the_version_header() {
 fn a_missing_file_opens_as_an_empty_room() {
     let dir = TempDir::new().unwrap();
 
-    let store = FileRoomStore::open(dir.path(), "absent").unwrap();
-    assert!(store.updates().is_empty());
+    let (store, updates) = FileRoomStore::open(dir.path(), "absent").unwrap();
+    assert!(updates.is_empty());
     assert_eq!(store.truncated_at(), None);
 }
 

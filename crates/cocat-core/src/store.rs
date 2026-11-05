@@ -28,11 +28,12 @@ pub enum StoreError {
     BadHeader { path: PathBuf },
 }
 
+/// The open file plus what was already in it. `open` hands the records over once instead
+/// of retaining them: a room of 100k events must not be held twice in memory.
 #[derive(Debug)]
 pub struct FileRoomStore {
     path: PathBuf,
     file: File,
-    updates: Vec<Bytes>,
     truncated_at: Option<u64>,
     // simplify: appended records wait here until an explicit flush; no Drop flush and
     // no background flusher. Phase 1 gets a durability policy with timed fsyncs.
@@ -40,7 +41,7 @@ pub struct FileRoomStore {
 }
 
 impl FileRoomStore {
-    pub fn open(update_dir: &Path, room_id: &str) -> Result<Self, StoreError> {
+    pub fn open(update_dir: &Path, room_id: &str) -> Result<(Self, Vec<Bytes>), StoreError> {
         validate_room_id(room_id)?;
         let path = update_dir.join(format!("{room_id}.y"));
         let bytes = match fs::read(&path) {
@@ -58,29 +59,24 @@ impl FileRoomStore {
         }
 
         let mut file = append_handle(&path)?;
-        if bytes.is_empty() {
-            write_header(&mut file, &path)?;
-        }
-        if let Some(offset) = truncated_at {
+        if HEADER.starts_with(&bytes) {
+            reset_to_header(&mut file, &path)?;
+        } else if let Some(offset) = truncated_at {
             file.set_len(offset)
                 .map_err(|source| io_error(&path, source))?;
         }
 
-        Ok(Self {
+        let store = Self {
             path,
             file,
-            updates,
             truncated_at,
             pending: Vec::new(),
-        })
+        };
+        Ok((store, updates))
     }
 
     pub fn path(&self) -> &Path {
         &self.path
-    }
-
-    pub fn updates(&self) -> &[Bytes] {
-        &self.updates
     }
 
     pub fn truncated_at(&self) -> Option<u64> {
@@ -90,7 +86,6 @@ impl FileRoomStore {
     pub fn append(&mut self, update: Bytes) -> Result<(), StoreError> {
         write_varuint(update.len() as u64, &mut self.pending);
         self.pending.extend_from_slice(&update);
-        self.updates.push(update);
         Ok(())
     }
 
@@ -98,14 +93,30 @@ impl FileRoomStore {
         if self.pending.is_empty() {
             return Ok(());
         }
-        self.file
-            .write_all(&self.pending)
-            .map_err(|source| io_error(&self.path, source))?;
-        self.file
-            .sync_data()
-            .map_err(|source| io_error(&self.path, source))?;
+        let start = self
+            .file
+            .metadata()
+            .map_err(|source| io_error(&self.path, source))?
+            .len();
+        if let Err(source) = self.write_and_sync() {
+            // Half a record defeats tail recovery, so cut it back and keep the records
+            // in `pending` for a retry.
+            if let Err(error) = self.file.set_len(start) {
+                tracing::error!(
+                    path = %self.path.display(),
+                    %error,
+                    "cannot roll a partial flush back, the next open must recover the tail"
+                );
+            }
+            return Err(io_error(&self.path, source));
+        }
         self.pending.clear();
         Ok(())
+    }
+
+    fn write_and_sync(&mut self) -> io::Result<()> {
+        self.file.write_all(&self.pending)?;
+        self.file.sync_data()
     }
 }
 
@@ -117,14 +128,15 @@ fn append_handle(path: &Path) -> Result<File, StoreError> {
         .map_err(|source| io_error(path, source))
 }
 
-fn write_header(file: &mut File, path: &Path) -> Result<(), StoreError> {
+fn reset_to_header(file: &mut File, path: &Path) -> Result<(), StoreError> {
+    file.set_len(0).map_err(|source| io_error(path, source))?;
     file.write_all(HEADER)
         .map_err(|source| io_error(path, source))?;
     file.sync_data().map_err(|source| io_error(path, source))
 }
 
 fn parse_records(path: &Path, bytes: &[u8]) -> Result<(Vec<Bytes>, Option<u64>), StoreError> {
-    if bytes.is_empty() {
+    if HEADER.starts_with(bytes) {
         return Ok((Vec::new(), None));
     }
     let body = bytes
@@ -137,6 +149,10 @@ fn parse_records(path: &Path, bytes: &[u8]) -> Result<(Vec<Bytes>, Option<u64>),
     let mut offset = HEADER.len();
     let mut input = body;
     while let Some(len) = read_varuint(&mut input) {
+        // Python never writes an empty record; a zero length is a cut tail.
+        if len == 0 {
+            break;
+        }
         let Ok(len) = usize::try_from(len) else {
             break;
         };
@@ -179,4 +195,29 @@ fn write_varuint(mut value: u64, out: &mut Vec<u8>) {
         value >>= 7;
     }
     out.push(value as u8);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A unit test because this failure needs a file handle the public API never opens.
+    #[test]
+    fn a_failed_flush_keeps_the_records_for_a_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        let record = Bytes::from_static(b"update-bytes");
+        store.append(record.clone()).unwrap();
+        let path = store.path().to_owned();
+
+        store.file = File::open(&path).unwrap();
+        let error = store.flush().unwrap_err();
+        assert!(matches!(error, StoreError::Io { .. }));
+        assert_eq!(fs::read(&path).unwrap(), HEADER);
+
+        store.file = append_handle(&path).unwrap();
+        store.flush().unwrap();
+        let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert_eq!(updates, [record]);
+    }
 }
