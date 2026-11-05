@@ -64,10 +64,11 @@ pub struct GroupPreview {
 
 pub async fn create(state: &AppState, actor: Uuid, name: &str) -> Result<GroupRow, LifecycleError> {
     let id = Uuid::new_v4().simple().to_string();
+    let name = lifecycle::clean_name(name, lifecycle::Noun::Group)?;
     let mut tx = state.pool.begin().await?;
     sqlx::query("INSERT INTO user_group (id, name, created_by) VALUES (?, ?, ?)")
         .bind(&id)
-        .bind(name)
+        .bind(&name)
         .bind(actor.to_string())
         .execute(&mut *tx)
         .await?;
@@ -77,10 +78,7 @@ pub async fn create(state: &AppState, actor: Uuid, name: &str) -> Result<GroupRo
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(GroupRow {
-        id,
-        name: name.to_owned(),
-    })
+    Ok(GroupRow { id, name })
 }
 
 pub async fn list_for(
@@ -116,8 +114,9 @@ pub async fn rename(
     name: &str,
 ) -> Result<GroupRow, LifecycleError> {
     require_owner(state, group_id, actor).await?;
+    let name = lifecycle::clean_name(name, lifecycle::Noun::Group)?;
     let updated = sqlx::query("UPDATE user_group SET name = ? WHERE id = ?")
-        .bind(name)
+        .bind(&name)
         .bind(group_id)
         .execute(&state.pool)
         .await?
@@ -128,7 +127,7 @@ pub async fn rename(
     }
     Ok(GroupRow {
         id: group_id.to_owned(),
-        name: name.to_owned(),
+        name,
     })
 }
 

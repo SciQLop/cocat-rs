@@ -11,7 +11,7 @@ use cocat_core::role::Role;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::ui::frame::{self, Flash, Frame, RequireUser};
+use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
 use crate::{AppState, db, invitations, lifecycle, mail};
 
 /// Python's `INVITATION_LIFETIME`: every invitation this page makes lasts two weeks.
@@ -92,8 +92,9 @@ pub(crate) async fn page(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
     Flash(flash): Flash,
+    ShareLink(link): ShareLink,
 ) -> Response {
-    match build_page(&state, &user, &room_id, flash).await {
+    match build_page(&state, &user, &room_id, flash, link).await {
         Ok(Some(page)) => frame::page(page),
         Ok(None) => not_found(&state, &user),
         Err(error) => {
@@ -108,6 +109,7 @@ async fn build_page(
     user: &db::User,
     room_id: &str,
     flash: Option<String>,
+    share_link: Option<String>,
 ) -> Result<Option<RoomPage>, lifecycle::LifecycleError> {
     let Some((room, role)) = db::list_user_rooms(&state.pool, user.id)
         .await?
@@ -116,7 +118,6 @@ async fn build_page(
     else {
         return Ok(None);
     };
-    let (notice, share_link) = split_flash(flash);
     let members = members_of(state, &room.id, role).await?;
     let panel = match role {
         Role::Owner => Some(panel(state, user.id, &room.id, share_link).await?),
@@ -127,7 +128,7 @@ async fn build_page(
         confirm: format!("Leave {}?", room.name),
     });
     Ok(Some(RoomPage {
-        frame: Frame::new(&state.links, Some(user), "Room").flashing(notice),
+        frame: Frame::new(&state.links, Some(user), "Room").flashing(flash),
         name: room.name,
         role: role.as_str(),
         rooms_href: state.links.path("/rooms"),
@@ -208,18 +209,6 @@ fn usage(invitation: &invitations::Invitation) -> String {
     match invitation.max_uses {
         Some(max_uses) => format!("{}/{max_uses}", invitation.uses),
         None => String::new(),
-    }
-}
-
-/// A flash may carry a share link on a second line: a redirect has no other way to hand the
-/// link back, and the notice is all the page shows above it.
-fn split_flash(flash: Option<String>) -> (Option<String>, Option<String>) {
-    match flash {
-        Some(value) => match value.split_once('\n') {
-            Some((notice, link)) => (Some(notice.to_owned()), Some(link.to_owned())),
-            None => (Some(value), None),
-        },
-        None => (None, None),
     }
 }
 
@@ -307,7 +296,7 @@ pub(crate) async fn invite(
         .await
         {
             Ok((_, token)) if !token.is_empty() => {
-                share_link(&state, &target, "Share link created", &token)
+                opened_link(&state, &target, "Share link created", &token)
             }
             Ok(_) => answer(&state, Ok(()), &target, "Share link created".to_owned()),
             Err(error) => answer(&state, Err(error), &target, String::new()),
@@ -328,7 +317,7 @@ pub(crate) async fn invite(
     .await
     {
         Ok((_, token)) if !token.is_empty() => {
-            share_link(&state, &target, "Invitation created", &token)
+            opened_link(&state, &target, "Invitation created", &token)
         }
         Ok(_) => redirect(
             &state,
@@ -353,9 +342,10 @@ pub(crate) async fn revoke(
     )
 }
 
-fn share_link(state: &AppState, target: &str, notice: &str, token: &str) -> Response {
+fn opened_link(state: &AppState, target: &str, notice: &str, token: &str) -> Response {
     let link = state.links.ui(&format!("/invitation#{token}"));
-    redirect(state, target, &format!("{notice}\n{link}"))
+    let response = frame::flash(&state.links, redirect_to(state, target), notice);
+    frame::share_link(&state.links, response, &link)
 }
 
 fn answer(
@@ -379,8 +369,11 @@ fn answer(
 }
 
 fn redirect(state: &AppState, target: &str, text: &str) -> Response {
-    let response = Redirect::to(&state.links.path(target)).into_response();
-    frame::flash(&state.links, response, text)
+    frame::flash(&state.links, redirect_to(state, target), text)
+}
+
+fn redirect_to(state: &AppState, target: &str) -> Response {
+    Redirect::to(&state.links.path(target)).into_response()
 }
 
 async fn member_email(state: &AppState, id: Uuid) -> Result<String, StatusCode> {

@@ -60,7 +60,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/static/{file}", get(frame::static_asset))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            frame::clear_flash,
+            frame::clear_notices,
         ))
 }
 

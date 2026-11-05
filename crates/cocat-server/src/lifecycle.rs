@@ -10,10 +10,31 @@ use crate::db::{self, DbError, RoomRow};
 
 const OWNER_KEEPS_OWNER_ROLE: &str = "The owner keeps the owner role";
 const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave or be removed";
-const EMPTY_ROOM_NAME: &str = "Enter a room name";
-const CONTROL_CHARACTERS_IN_ROOM_NAME: &str = "Enter a room name without control characters";
-const LONG_ROOM_NAME: &str = "Enter a name of at most 200 characters";
+const LONG_NAME: &str = "Enter a name of at most 200 characters";
 const MAX_NAME: usize = 200;
+
+/// The noun a name belongs to, so rooms and groups word the same refusals differently.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Noun {
+    Room,
+    Group,
+}
+
+impl Noun {
+    fn empty(self) -> &'static str {
+        match self {
+            Self::Room => "Enter a room name",
+            Self::Group => "Enter a group name",
+        }
+    }
+
+    fn control_characters(self) -> &'static str {
+        match self {
+            Self::Room => "Enter a room name without control characters",
+            Self::Group => "Enter a group name without control characters",
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum LifecycleError {
@@ -46,7 +67,7 @@ pub async fn create_room(
     name: &str,
 ) -> Result<RoomRow, LifecycleError> {
     let id = Uuid::new_v4().simple().to_string();
-    let name = room_name(name)?;
+    let name = clean_name(name, Noun::Room)?;
     db::create_room(&state.pool, owner, &id, &name).await?;
     Ok(RoomRow { id, name })
 }
@@ -59,7 +80,7 @@ pub async fn rename_room(
     name: &str,
 ) -> Result<RoomRow, LifecycleError> {
     require_role(state, room_id, actor, Role::Owner).await?;
-    let name = room_name(name)?;
+    let name = clean_name(name, Noun::Room)?;
     if !db::rename_room(&state.pool, room_id, &name).await? {
         return Err(room_not_found(room_id));
     }
@@ -69,20 +90,21 @@ pub async fn rename_room(
     })
 }
 
-/// Python's `rooms.py::_room_name`: trim, then refuse an empty name or a control character.
-fn room_name(name: &str) -> Result<String, LifecycleError> {
+/// Python's `rooms.py::_room_name`, shared with groups: trim, then refuse an empty name, a
+/// control character or anything over 200 characters.
+pub(crate) fn clean_name(name: &str, noun: Noun) -> Result<String, LifecycleError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(LifecycleError::Invalid(EMPTY_ROOM_NAME));
+        return Err(LifecycleError::Invalid(noun.empty()));
     }
     if trimmed
         .chars()
         .any(|character| character < ' ' || character == '\x7f')
     {
-        return Err(LifecycleError::Invalid(CONTROL_CHARACTERS_IN_ROOM_NAME));
+        return Err(LifecycleError::Invalid(noun.control_characters()));
     }
     if trimmed.chars().count() > MAX_NAME {
-        return Err(LifecycleError::Invalid(LONG_ROOM_NAME));
+        return Err(LifecycleError::Invalid(LONG_NAME));
     }
     Ok(trimmed.to_owned())
 }

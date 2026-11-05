@@ -114,11 +114,41 @@ impl Frame {
 /// The one-shot message cookie: a rule action answers a 303 and the page it lands on shows
 /// the message once, then clears the cookie.
 const FLASH: &str = "cocat_flash";
+/// The share link a create action hands back through its redirect, in a cookie of its own so
+/// no message text can ever fill the field it lands in.
+const SHARE_LINK: &str = "cocat_share_link";
+const NOTICES: [&str; 2] = [FLASH, SHARE_LINK];
 
 /// Attach `text` to the redirect, for the page the browser asks for next.
 pub(crate) fn flash(links: &Links, response: Response, text: &str) -> Response {
-    let cookie = flash_cookie(links, text, Some(cookie::time::Duration::minutes(1)));
-    with_cookie(response, &cookie)
+    with_notice(
+        links,
+        response,
+        FLASH,
+        text,
+        Some(cookie::time::Duration::minutes(1)),
+    )
+}
+
+/// Attach the share link the next page shows, beside (not instead of) its notice.
+pub(crate) fn share_link(links: &Links, response: Response, link: &str) -> Response {
+    with_notice(
+        links,
+        response,
+        SHARE_LINK,
+        link,
+        Some(cookie::time::Duration::minutes(1)),
+    )
+}
+
+fn with_notice(
+    links: &Links,
+    response: Response,
+    name: &str,
+    text: &str,
+    max_age: Option<cookie::time::Duration>,
+) -> Response {
+    with_cookie(response, &notice_cookie(links, name, text, max_age))
 }
 
 /// The message the request carries, if any.
@@ -131,38 +161,62 @@ impl FromRequestParts<AppState> for Flash {
         parts: &mut Parts,
         _state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        Ok(Self(flash_value(&parts.headers)))
+        Ok(Self(cookie_value(&parts.headers, FLASH)))
     }
 }
 
-/// Clear the cookie on the answer to the request that showed it. A request arriving without
-/// the cookie — the POST that set it, or a second visit — is left alone.
-pub(crate) async fn clear_flash(
+/// The share link the request carries, if any.
+pub(crate) struct ShareLink(pub Option<String>);
+
+impl FromRequestParts<AppState> for ShareLink {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(cookie_value(&parts.headers, SHARE_LINK)))
+    }
+}
+
+/// Clear a notice cookie on the answer to the request that showed it. A request arriving
+/// without the cookie — the POST that set it, or a second visit — is left alone.
+pub(crate) async fn clear_notices(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Response {
-    let carried = flash_value(request.headers()).is_some();
+    let carried: Vec<&str> = NOTICES
+        .into_iter()
+        .filter(|name| cookie_value(request.headers(), name).is_some())
+        .collect();
     let response = next.run(request).await;
-    if !carried {
-        return response;
-    }
-    with_cookie(
-        response,
-        &flash_cookie(&state.links, "", Some(cookie::time::Duration::seconds(0))),
-    )
+    carried.into_iter().fold(response, |response, name| {
+        with_notice(
+            &state.links,
+            response,
+            name,
+            "",
+            Some(cookie::time::Duration::seconds(0)),
+        )
+    })
 }
 
-fn flash_value(headers: &HeaderMap) -> Option<String> {
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
     Cookie::split_parse_encoded(cookies)
         .filter_map(Result::ok)
-        .find(|cookie| cookie.name() == FLASH)
+        .find(|cookie| cookie.name() == name)
         .map(|cookie| cookie.value().to_owned())
 }
 
-fn flash_cookie(links: &Links, text: &str, max_age: Option<cookie::time::Duration>) -> String {
-    let mut builder = Cookie::build((FLASH, text.to_owned()))
+fn notice_cookie(
+    links: &Links,
+    name: &str,
+    text: &str,
+    max_age: Option<cookie::time::Duration>,
+) -> String {
+    let mut builder = Cookie::build((name.to_owned(), text.to_owned()))
         .path(links.path(""))
         .http_only(true)
         .secure(true)

@@ -203,6 +203,37 @@ async fn create_and_list() {
 }
 
 #[tokio::test]
+async fn group_name_with_newline_refused() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+
+    for name in ["a\nb", "a\u{1}b"] {
+        let (status, body) = fixture
+            .post("/api/groups", alice, json!({ "name": name }))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name:?}");
+        assert_eq!(
+            body["detail"], "Enter a group name without control characters",
+            "{body}"
+        );
+    }
+
+    let id = create(&fixture, alice, "Team").await;
+    let (status, body) = fixture
+        .patch(
+            &format!("/api/groups/{id}"),
+            alice,
+            json!({ "name": "a\nb" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["detail"],
+        "Enter a group name without control characters"
+    );
+}
+
+#[tokio::test]
 async fn name_length_is_422() {
     let fixture = Fixture::start().await;
     let alice = fixture.user("alice@example.org").await;

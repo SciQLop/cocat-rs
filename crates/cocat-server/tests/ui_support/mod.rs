@@ -139,7 +139,11 @@ impl Fixture {
 
     /// A GET that carries a cookie the previous response set, such as the flash.
     pub async fn get_with(&self, path: &str, token: &str, cookie: &str) -> Response {
-        self.send(Method::GET, path, Some(token), &[cookie], None)
+        self.get_with_cookies(path, token, &[cookie]).await
+    }
+
+    pub async fn get_with_cookies(&self, path: &str, token: &str, cookies: &[&str]) -> Response {
+        self.send(Method::GET, path, Some(token), cookies, None)
             .await
     }
 
@@ -302,6 +306,17 @@ pub fn flash_cleared(response: &Response) -> bool {
         .iter()
         .filter_map(|value| value.to_str().ok())
         .any(|value| value.starts_with("cocat_flash=") && value.contains("Max-Age=0"))
+}
+
+/// The share-link cookie a create action answers with, up to its attributes.
+pub fn share_link_cookie(response: &Response) -> Option<String> {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter(|value| value.starts_with("cocat_share_link="))
+        .find_map(|value| value.split(';').next().map(str::to_owned))
 }
 
 /// The session token a Set-Cookie header carries.

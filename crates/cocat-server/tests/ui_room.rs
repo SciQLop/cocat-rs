@@ -7,7 +7,7 @@ use axum::response::Response;
 use cocat_core::role::Role;
 use cocat_server::room::{CloseReason, outbox};
 use cocat_server::{db, invitations, lifecycle};
-use ui_support::{Fixture, PUBLIC_URL, body_text, flash_cookie, form, location};
+use ui_support::{Fixture, PUBLIC_URL, body_text, flash_cookie, form, location, share_link_cookie};
 use uuid::Uuid;
 
 const MEMBER: &str = "member@example.org";
@@ -33,10 +33,12 @@ async fn member_of(fixture: &Fixture, room_id: &str, email: &str, role: Role) ->
     id
 }
 
-/// The page the POST redirects to, carrying the flash the POST left.
+/// The page the POST redirects to, carrying the notice (and share link) the POST left.
 async fn page_after(fixture: &Fixture, response: &Response, token: &str, path: &str) -> String {
-    let cookie = flash_cookie(response).expect("the action flashes a message");
-    body_text(fixture.get_with(path, token, &cookie).await).await
+    let mut jar = vec![flash_cookie(response).expect("the action flashes a message")];
+    jar.extend(share_link_cookie(response));
+    let cookies: Vec<&str> = jar.iter().map(String::as_str).collect();
+    body_text(fixture.get_with_cookies(path, token, &cookies).await).await
 }
 
 #[tokio::test]
@@ -279,6 +281,56 @@ async fn share_link_uses_public_url() {
     assert!(page.contains("readonly"), "{page}");
     assert!(page.contains(">Copy<"), "{page}");
     assert!(page.contains("Share link"), "{page}");
+}
+
+/// A share link rides in a cookie of its own: whatever a notice says, the field it fills
+/// holds only the link the create action handed back.
+#[tokio::test]
+async fn share_link_survives_a_newline_free_flash() {
+    let fixture = Fixture::start_with_mail().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user);
+    let id = room_owned_by(&fixture, user, "lab").await;
+    let path = format!("/ui/rooms/{id}");
+
+    let response = fixture
+        .post(
+            &format!("{path}/invitations"),
+            Some(&token),
+            &form(&[("role", "viewer"), ("kind", "link")]),
+        )
+        .await;
+
+    let flash = flash_cookie(&response).expect("the action flashes a notice");
+    assert!(flash.contains("Share%20link%20created"), "{flash}");
+    assert!(
+        !flash.contains("%0A"),
+        "the notice carries no second line: {flash}"
+    );
+    assert!(
+        !flash.contains("/invitation#"),
+        "the link is not in the notice: {flash}"
+    );
+    let link = share_link_cookie(&response).expect("the link has its own cookie");
+    let decoded = cookie::Cookie::parse_encoded(&link)
+        .unwrap()
+        .value()
+        .to_owned();
+    assert!(
+        decoded.starts_with(&format!("{PUBLIC_URL}/ui/invitation#")),
+        "{decoded}"
+    );
+
+    let forged = "cocat_flash=Shared%20with%20a%0Ab";
+    let page = body_text(
+        fixture
+            .get_with_cookies(&path, &token, &[forged, &link])
+            .await,
+    )
+    .await;
+
+    assert!(page.contains("Shared with a"), "{page}");
+    assert!(page.contains(&format!(r#"value="{decoded}""#)), "{page}");
 }
 
 /// Create a share link as the owner and read the page the flash redirects to.
