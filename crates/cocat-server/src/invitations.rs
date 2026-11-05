@@ -1,0 +1,227 @@
+//! Invitations: a link that adds its bearer to a room. The rules are Python's
+//! `invitations.py`; the conditional `UPDATE` is what makes `max_uses` hold under a race.
+
+use std::str::FromStr;
+
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use cocat_core::role::Role;
+use sha2::{Digest, Sha256};
+use sqlx::sqlite::SqliteRow;
+use sqlx::{AssertSqlSafe, Row};
+use uuid::Uuid;
+
+use crate::AppState;
+use crate::db::{self, RoomRow};
+use crate::lifecycle::{LifecycleError, require_role};
+
+/// One predicate, used by preview, accept, consume and list: an invitation nobody revoked,
+/// that has not expired, and that still has a use left. It is the only text these queries
+/// build dynamically, hence the `AssertSqlSafe` around each `format!`.
+const USABLE: &str = "invitation.revoked = FALSE
+     AND invitation.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     AND (invitation.max_uses IS NULL OR invitation.uses < invitation.max_uses)";
+
+const TOKEN_BYTES: usize = 32;
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invitation {
+    pub id: i64,
+    pub email: Option<String>,
+    pub role: Role,
+    pub expires_at: String,
+    pub uses: i64,
+    pub max_uses: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preview {
+    pub room_id: String,
+    pub room_name: String,
+    pub role: Role,
+    pub inviter_email: Option<String>,
+    pub expires_at: String,
+}
+
+/// Creates an invitation and returns its id and its token, the only time the token exists
+/// in clear. An addressed invitation admits one use, as Python's does.
+pub async fn create(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+    role: Role,
+    email: Option<&str>,
+    expires_in_days: u32,
+    max_uses: Option<u32>,
+) -> Result<(i64, String), LifecycleError> {
+    require_role(state, room_id, actor, Role::Owner).await?;
+    if role == Role::Owner {
+        return Err(LifecycleError::Conflict(
+            "An invitation cannot grant the owner role",
+        ));
+    }
+    let (token, hash) = new_token()?;
+    let max_uses = if email.is_some() { Some(1) } else { max_uses };
+    let id = sqlx::query(
+        "INSERT INTO invitation
+             (token_hash, room_id, role, email, created_by, expires_at, max_uses)
+         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?), ?)",
+    )
+    .bind(hash)
+    .bind(room_id)
+    .bind(role.as_str())
+    .bind(email)
+    .bind(actor.to_string())
+    .bind(format!("+{expires_in_days} days"))
+    .bind(max_uses.map(i64::from))
+    .execute(&state.pool)
+    .await?
+    .last_insert_rowid();
+    Ok((id, token))
+}
+
+pub async fn preview(state: &AppState, token: &str) -> Result<Preview, LifecycleError> {
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT invitation.room_id, invitation.role, invitation.expires_at, room.name,
+                \"user\".email AS inviter_email
+         FROM invitation
+         JOIN room ON room.id = invitation.room_id
+         LEFT JOIN \"user\" ON \"user\".id = invitation.created_by
+         WHERE invitation.token_hash = ? AND {USABLE}"
+    )))
+    .bind(hash(token))
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(LifecycleError::NotFound)?;
+    Ok(Preview {
+        room_id: row.try_get("room_id")?,
+        room_name: row.try_get("name")?,
+        role: Role::from_str(&row.try_get::<String, _>("role")?)?,
+        inviter_email: row.try_get("inviter_email")?,
+        expires_at: row.try_get("expires_at")?,
+    })
+}
+
+/// Joins `user` to the invited room, keeping the higher role if they are already a member
+/// and closing the sockets they had there, which were admitted under the old role.
+pub async fn accept(
+    state: &AppState,
+    token: &str,
+    user: &db::User,
+) -> Result<(RoomRow, Role), LifecycleError> {
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "SELECT invitation.id, invitation.room_id, invitation.role, invitation.email, room.name
+         FROM invitation JOIN room ON room.id = invitation.room_id
+         WHERE invitation.token_hash = ? AND {USABLE}"
+    )))
+    .bind(hash(token))
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(LifecycleError::NotFound)?;
+    let id: i64 = row.try_get("id")?;
+    let room_id: String = row.try_get("room_id")?;
+    let role = Role::from_str(&row.try_get::<String, _>("role")?)?;
+    let addressed: Option<String> = row.try_get("email")?;
+    if let Some(addressed) = addressed
+        && !addressed.eq_ignore_ascii_case(&user.email)
+    {
+        return Err(LifecycleError::Forbidden);
+    }
+    consume(state, id).await?;
+    let granted = db::add_member(&state.pool, &room_id, user.id, role).await?;
+    state.rooms.revoke(&room_id, user.id).await;
+    Ok((
+        RoomRow {
+            id: room_id,
+            name: row.try_get("name")?,
+        },
+        granted,
+    ))
+}
+
+pub async fn list(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+) -> Result<Vec<Invitation>, LifecycleError> {
+    require_role(state, room_id, actor, Role::Owner).await?;
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "SELECT invitation.id, invitation.email, invitation.role, invitation.expires_at,
+                invitation.uses, invitation.max_uses
+         FROM invitation
+         WHERE invitation.room_id = ? AND {USABLE}
+         ORDER BY invitation.created_at DESC, invitation.id DESC"
+    )))
+    .bind(room_id)
+    .fetch_all(&state.pool)
+    .await?;
+    rows.iter().map(invitation_from_row).collect()
+}
+
+pub async fn revoke(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+    invitation_id: i64,
+) -> Result<(), LifecycleError> {
+    require_role(state, room_id, actor, Role::Owner).await?;
+    let revoked = sqlx::query(
+        "UPDATE invitation SET revoked = TRUE WHERE id = ? AND room_id = ? AND revoked = FALSE",
+    )
+    .bind(invitation_id)
+    .bind(room_id)
+    .execute(&state.pool)
+    .await?;
+    if revoked.rows_affected() != 1 {
+        return Err(LifecycleError::NotFound);
+    }
+    Ok(())
+}
+
+/// Spends one use in a single statement, so two accepts of a `max_uses = 1` token cannot
+/// both succeed: the second update matches no row.
+async fn consume(state: &AppState, id: i64) -> Result<(), LifecycleError> {
+    let used = sqlx::query(AssertSqlSafe(format!(
+        "UPDATE invitation SET uses = uses + 1 WHERE invitation.id = ? AND {USABLE}"
+    )))
+    .bind(id)
+    .execute(&state.pool)
+    .await?;
+    if used.rows_affected() != 1 {
+        return Err(LifecycleError::NotFound);
+    }
+    Ok(())
+}
+
+fn invitation_from_row(row: &SqliteRow) -> Result<Invitation, LifecycleError> {
+    Ok(Invitation {
+        id: row.try_get("id")?,
+        email: row.try_get("email")?,
+        role: Role::from_str(&row.try_get::<String, _>("role")?)?,
+        expires_at: row.try_get("expires_at")?,
+        uses: row.try_get("uses")?,
+        max_uses: row.try_get("max_uses")?,
+    })
+}
+
+fn new_token() -> Result<(String, String), LifecycleError> {
+    let mut bytes = [0u8; TOKEN_BYTES];
+    getrandom::fill(&mut bytes)?;
+    let token = URL_SAFE_NO_PAD.encode(bytes);
+    let hash = hex(&Sha256::digest(token.as_bytes()));
+    Ok((token, hash))
+}
+
+fn hash(token: &str) -> String {
+    hex(&Sha256::digest(token.as_bytes()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    out
+}

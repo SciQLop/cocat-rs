@@ -7,13 +7,17 @@ publish.workspace = true
 [dependencies]
 argon2 = "0.6"
 axum = { version = "0.8", features = ["form", "ws"] }
+base64 = "0.22"
 bytes.workspace = true
 clap = { version = "4", features = ["derive"] }
 cocat-core = { path = "../cocat-core" }
+email_address = "0.2"
 futures-util = "0.3"
+getrandom = "0.3"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 thiserror.workspace = true
 tikv-jemallocator = "0.7"

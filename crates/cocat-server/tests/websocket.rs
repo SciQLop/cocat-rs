@@ -9,8 +9,9 @@ use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_server::room::{OUTBOUND_FRAMES, RoomManager};
-use cocat_server::{AppState, BeforeAttach, auth, db, ws};
+use cocat_server::{AppState, BeforeAttach, auth, db, invitations, ws};
 use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
@@ -553,4 +554,41 @@ async fn deleting_over_http_closes_the_sockets_and_the_file() {
         }
     }
     assert!(!file.exists(), "the deleted room left its file behind");
+}
+
+#[tokio::test]
+async fn accepting_a_higher_invitation_closes_the_old_socket() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let guest = fixture.user("guest@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-grant", "Grant")
+        .await
+        .unwrap();
+    db::add_member(&fixture.pool, "room-grant", guest, Role::Viewer)
+        .await
+        .unwrap();
+    let state = fixture.state.clone();
+    let (_, token) = invitations::create(&state, "room-grant", owner, Role::Editor, None, 14, None)
+        .await
+        .unwrap();
+    let guest_token = fixture.token(guest);
+    let mut socket = fixture.connect("room-grant", Some(&guest_token)).await;
+    next_message(&mut socket).await;
+
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/invitations/accept")
+        .header(header::COOKIE, format!("fastapiusersauth={guest_token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"token": token}).to_string()))
+        .unwrap();
+    let response = ws::router(state).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    loop {
+        if let WsMessage::Close(frame) = next_ws(&mut socket).await {
+            assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(1008));
+            break;
+        }
+    }
 }

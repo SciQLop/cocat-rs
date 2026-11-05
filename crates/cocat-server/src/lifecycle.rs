@@ -25,6 +25,16 @@ pub enum LifecycleError {
     Invalid(&'static str),
     #[error(transparent)]
     Db(#[from] DbError),
+    #[error(transparent)]
+    Role(#[from] cocat_core::role::UnknownRole),
+    #[error("the random source failed: {0}")]
+    Random(#[from] getrandom::Error),
+}
+
+impl From<sqlx::Error> for LifecycleError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Db(DbError::from(error))
+    }
 }
 
 /// Creates a room owned by `owner`. The id is the hex UUID Python's `uuid4().hex` gives.
@@ -141,7 +151,7 @@ pub async fn transfer_ownership(
     Ok(())
 }
 
-async fn require_role(
+pub(crate) async fn require_role(
     state: &AppState,
     room_id: &str,
     actor: Uuid,

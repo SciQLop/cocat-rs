@@ -24,7 +24,12 @@ async fn role(pool: &SqlitePool, room_id: &str, user_id: Uuid) -> Option<Role> {
 async fn migrations_create_the_tables_on_a_new_file() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test.db");
-    db::open(&path).await.unwrap().close().await;
+    let first_pool = db::open(&path).await.unwrap();
+    let first: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
+        .fetch_one(&first_pool)
+        .await
+        .unwrap();
+    first_pool.close().await;
 
     let pool = db::open(&path).await.unwrap();
 
@@ -32,7 +37,11 @@ async fn migrations_create_the_tables_on_a_new_file() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 1, "the second open must not run a migration twice");
+    assert!(first >= 1, "the first open must apply the migrations");
+    assert_eq!(
+        applied, first,
+        "the second open must not run a migration twice"
+    );
     let owner = user(&pool, "owner@example.org").await;
     db::create_room(&pool, owner, "room-1", "Room one")
         .await

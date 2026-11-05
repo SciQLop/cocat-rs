@@ -4,6 +4,8 @@ pub mod api;
 pub mod auth;
 pub mod cli;
 pub mod db;
+pub mod invitations;
+pub mod invitations_api;
 pub mod lifecycle;
 pub mod room;
 pub mod ws;

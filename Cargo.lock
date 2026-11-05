@@ -339,13 +339,17 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "axum",
+ "base64",
  "bytes",
  "clap",
  "cocat-core",
+ "email_address",
  "futures-util",
+ "getrandom 0.3.4",
  "jsonwebtoken",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "thiserror",
@@ -635,6 +639,15 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "email_address"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e079f19b08ca6239f47f8ba8509c11cf3ea30095831f7fed61441475edd8c449"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

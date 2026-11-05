@@ -478,3 +478,151 @@ async fn the_owner_role_is_not_assignable_over_http() {
         Some(Role::Editor)
     );
 }
+
+#[tokio::test]
+async fn invite_link_flow() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let guest = fixture.user("guest@example.org").await;
+    let token = fixture.token(owner);
+    let (status, room) = fixture
+        .post("/api/rooms", Some(&token), json!({"name": "Lab"}))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let room_id = room["id"].as_str().expect("no room id").to_owned();
+
+    let (created, body) = fixture
+        .post(
+            &format!("/api/rooms/{room_id}/invitations"),
+            Some(&token),
+            json!({}),
+        )
+        .await;
+    assert_eq!(created, StatusCode::CREATED);
+    assert!(body["id"].is_i64());
+    let invitation_token = body["token"].as_str().expect("no token").to_owned();
+
+    let (status, preview) = fixture
+        .post(
+            "/api/invitations/preview",
+            None,
+            json!({"token": invitation_token}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preview["room_id"], room_id);
+    assert_eq!(preview["room_name"], "Lab");
+    assert_eq!(preview["role"], "editor");
+    assert_eq!(preview["inviter_email"], "owner@example.org");
+    assert!(preview["expires_at"].as_str().unwrap().ends_with('Z'));
+
+    let (accepted, joined) = fixture
+        .post(
+            "/api/invitations/accept",
+            Some(&fixture.token(guest)),
+            json!({"token": invitation_token}),
+        )
+        .await;
+    assert_eq!(accepted, StatusCode::OK);
+    assert_eq!(
+        joined,
+        json!({"id": room_id, "name": "Lab", "role": "editor"})
+    );
+
+    let (_, members) = fixture
+        .get(&format!("/api/rooms/{room_id}/members"), Some(&token))
+        .await;
+    let guest_member = members
+        .as_array()
+        .expect("the member list is not an array")
+        .iter()
+        .find(|member| member["email"] == "guest@example.org")
+        .expect("the guest is not a member");
+    assert_eq!(guest_member["role"], "editor");
+}
+
+#[tokio::test]
+async fn invitations_are_listed_and_revoked() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let token = fixture.token(owner);
+    fixture.room(owner, "room-invites", "Invites").await;
+
+    let (_, created) = fixture
+        .post(
+            "/api/rooms/room-invites/invitations",
+            Some(&token),
+            json!({"role": "viewer", "expires_in_days": 7, "max_uses": 3}),
+        )
+        .await;
+    let invitation_id = created["id"].as_i64().expect("no invitation id");
+
+    let (status, listed) = fixture
+        .get("/api/rooms/room-invites/invitations", Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed[0]["id"], invitation_id);
+    assert_eq!(listed[0]["email"], Value::Null);
+    assert_eq!(listed[0]["role"], "viewer");
+    assert_eq!(listed[0]["uses"], 0);
+    assert_eq!(listed[0]["max_uses"], 3);
+
+    let (status, _) = fixture
+        .delete(
+            &format!("/api/rooms/room-invites/invitations/{invitation_id}"),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (_, listed) = fixture
+        .get("/api/rooms/room-invites/invitations", Some(&token))
+        .await;
+    assert_eq!(listed, json!([]));
+}
+
+#[tokio::test]
+async fn a_placeholder_address_is_refused() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let token = fixture.token(owner);
+    fixture.room(owner, "room-mail", "Mail").await;
+
+    let (status, body) = fixture
+        .post(
+            "/api/rooms/room-mail/invitations",
+            Some(&token),
+            json!({"email": "someone@orcid.placeholder.cocat.org"}),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"detail": "Enter a valid email address"}));
+}
+
+#[tokio::test]
+async fn an_invitation_cannot_grant_owner_over_http() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let token = fixture.token(owner);
+    fixture.room(owner, "room-grant", "Grant").await;
+
+    let (status, body) = fixture
+        .post(
+            "/api/rooms/room-grant/invitations",
+            Some(&token),
+            json!({"role": "owner"}),
+        )
+        .await;
+    let (out_of_range, _) = fixture
+        .post(
+            "/api/rooms/room-grant/invitations",
+            Some(&token),
+            json!({"expires_in_days": 91}),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["detail"].is_string());
+    assert_eq!(out_of_range, StatusCode::UNPROCESSABLE_ENTITY);
+}

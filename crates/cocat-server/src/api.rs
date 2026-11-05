@@ -29,6 +29,7 @@ pub fn router() -> Router<AppState> {
             patch(set_member_role).delete(remove_member),
         )
         .route("/rooms/{room_id}/owner", post(transfer_ownership))
+        .merge(crate::invitations_api::router())
 }
 
 #[derive(Debug, Serialize)]
@@ -117,6 +118,14 @@ impl From<LifecycleError> for ApiError {
             LifecycleError::Conflict(detail) => Self::Conflict(detail.to_owned()),
             LifecycleError::Invalid(detail) => Self::BadRequest(detail.to_owned()),
             LifecycleError::Db(error) => Self::from(error),
+            LifecycleError::Role(error) => {
+                tracing::error!(%error, "a role column holds an unknown role");
+                Self::Internal
+            }
+            LifecycleError::Random(error) => {
+                tracing::error!(%error, "the random source failed");
+                Self::Internal
+            }
         }
     }
 }
@@ -124,7 +133,7 @@ impl From<LifecycleError> for ApiError {
 /// A JSON body whose rejection is an API error. FastAPI answers a syntax or schema error
 /// with 422 and `{"detail": ...}`; axum's own rejection is 400 and plain text.
 #[derive(Debug)]
-struct JsonBody<T>(T);
+pub(crate) struct JsonBody<T>(pub(crate) T);
 
 impl<T> FromRequest<AppState> for JsonBody<T>
 where
@@ -142,7 +151,7 @@ where
 
 /// A path parameter whose rejection is an API error, for the same reason as `JsonBody`.
 #[derive(Debug)]
-struct ApiPath<T>(T);
+pub(crate) struct ApiPath<T>(pub(crate) T);
 
 impl<T> FromRequestParts<AppState> for ApiPath<T>
 where
@@ -162,14 +171,14 @@ where
 }
 
 #[derive(Debug, Serialize)]
-struct RoomOut {
+pub(crate) struct RoomOut {
     id: String,
     name: String,
     role: &'static str,
 }
 
 impl RoomOut {
-    fn new(room: RoomRow, role: Role) -> Self {
+    pub(crate) fn new(room: RoomRow, role: Role) -> Self {
         Self {
             id: room.id,
             name: room.name,
@@ -209,7 +218,7 @@ struct RoomNameBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum AssignableRole {
+pub(crate) enum AssignableRole {
     Viewer,
     Editor,
 }
