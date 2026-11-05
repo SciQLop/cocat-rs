@@ -618,9 +618,9 @@ def run_soak(
     written = measured.pop("written", [])
     rss_5min = measured.pop("rss_sample_mb", None)
     rss_end = server.rss_mb
-    lost = probe_rooms(server, cookie, written)
-    _, peak, cpu = server.restart()
     # The session cookie lives an hour, as long as the soak itself.
+    lost = probe_rooms(server, log_in(), written)
+    _, peak, cpu = server.restart()
     lost_after_restart = probe_rooms(server, log_in(), written)
     return {
         **measured,
