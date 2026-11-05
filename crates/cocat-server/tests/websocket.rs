@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_server::room::{OUTBOUND_FRAMES, RoomManager};
@@ -17,6 +19,7 @@ use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tower::ServiceExt;
 use uuid::Uuid;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -40,6 +43,7 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 struct Fixture {
     addr: SocketAddr,
+    state: AppState,
     pool: SqlitePool,
     rooms: RoomManager,
     rooms_dir: PathBuf,
@@ -85,11 +89,13 @@ impl Fixture {
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let served = state.clone();
         let server = tokio::spawn(async move {
-            axum::serve(listener, ws::router(state)).await.unwrap();
+            axum::serve(listener, ws::router(served)).await.unwrap();
         });
         Self {
             addr,
+            state,
             pool,
             rooms,
             rooms_dir,
@@ -501,4 +507,50 @@ async fn an_over_budget_room_closes_1013() {
         }
     }
     assert_eq!(fixture.rooms.open_rooms(), 0);
+}
+
+/// The live socket half needs a real listener, so this test lives with the websocket
+/// fixture; the DELETE goes through the same router the server runs, in process.
+#[tokio::test]
+async fn deleting_over_http_closes_the_sockets_and_the_file() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let token = fixture.token(owner);
+    db::create_room(&fixture.pool, owner, "room-deleted", "Deleted")
+        .await
+        .unwrap();
+    let mut socket = fixture.connect("room-deleted", Some(&token)).await;
+    next_message(&mut socket).await;
+    socket
+        .send(sync_frame(Message::Sync(SyncMessage::Update(update_with(
+            "key", "value",
+        )))))
+        .await
+        .unwrap();
+    match next_message(&mut socket).await {
+        Message::Sync(SyncMessage::Update(_)) => {}
+        other => panic!("expected the broadcast update, got {other:?}"),
+    }
+    let file = fixture.rooms_dir.join("room-deleted.y");
+    assert!(file.exists(), "the update was never written");
+
+    let request = Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/rooms/room-deleted")
+        .header(header::COOKIE, format!("fastapiusersauth={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = ws::router(fixture.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    loop {
+        if let WsMessage::Close(frame) = next_ws(&mut socket).await {
+            assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(1008));
+            break;
+        }
+    }
+    assert!(!file.exists(), "the deleted room left its file behind");
 }

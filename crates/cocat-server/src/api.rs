@@ -3,20 +3,32 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{FromRequestParts, Path, State};
+use axum::extract::rejection::{JsonRejection, PathRejection};
+use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use serde::Serialize;
+use axum::routing::{get, patch, post};
+use cocat_core::role::Role;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::db::{self, DbError};
-use crate::lifecycle::LifecycleError;
+use crate::db::{self, DbError, RoomRow};
+use crate::lifecycle::{self, LifecycleError};
 use crate::{AppState, auth};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/me", get(me))
+    Router::new()
+        .route("/me", get(me))
+        .route("/rooms", get(list_rooms).post(create_room))
+        .route("/rooms/{room_id}", patch(rename_room).delete(delete_room))
+        .route("/rooms/{room_id}/members", get(list_members))
+        .route(
+            "/rooms/{room_id}/members/{user_id}",
+            patch(set_member_role).delete(remove_member),
+        )
+        .route("/rooms/{room_id}/owner", post(transfer_ownership))
 }
 
 #[derive(Debug, Serialize)]
@@ -68,6 +80,7 @@ pub enum ApiError {
     Forbidden(String),
     Conflict(String),
     BadRequest(String),
+    Unprocessable(String),
     Internal,
 }
 
@@ -79,6 +92,7 @@ impl IntoResponse for ApiError {
             Self::Forbidden(detail) => (StatusCode::FORBIDDEN, detail),
             Self::Conflict(detail) => (StatusCode::CONFLICT, detail),
             Self::BadRequest(detail) => (StatusCode::BAD_REQUEST, detail),
+            Self::Unprocessable(detail) => (StatusCode::UNPROCESSABLE_ENTITY, detail),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_owned(),
@@ -101,13 +115,219 @@ impl From<LifecycleError> for ApiError {
             LifecycleError::NotFound => Self::NotFound("Not found".to_owned()),
             LifecycleError::Forbidden => Self::Forbidden("Forbidden".to_owned()),
             LifecycleError::Conflict(detail) => Self::Conflict(detail.to_owned()),
+            LifecycleError::Invalid(detail) => Self::BadRequest(detail.to_owned()),
             LifecycleError::Db(error) => Self::from(error),
         }
     }
 }
 
+/// A JSON body whose rejection is an API error. FastAPI answers a syntax or schema error
+/// with 422 and `{"detail": ...}`; axum's own rejection is 400 and plain text.
+#[derive(Debug)]
+struct JsonBody<T>(T);
+
+impl<T> FromRequest<AppState> for JsonBody<T>
+where
+    Json<T>: FromRequest<AppState, Rejection = JsonRejection>,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &AppState) -> Result<Self, Self::Rejection> {
+        let Json(value) = Json::<T>::from_request(request, state)
+            .await
+            .map_err(|rejection| ApiError::Unprocessable(rejection.body_text()))?;
+        Ok(Self(value))
+    }
+}
+
+/// A path parameter whose rejection is an API error, for the same reason as `JsonBody`.
+#[derive(Debug)]
+struct ApiPath<T>(T);
+
+impl<T> FromRequestParts<AppState> for ApiPath<T>
+where
+    T: DeserializeOwned + Send,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Path(value) = Path::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(|rejection: PathRejection| ApiError::Unprocessable(rejection.body_text()))?;
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RoomOut {
+    id: String,
+    name: String,
+    role: &'static str,
+}
+
+impl RoomOut {
+    fn new(room: RoomRow, role: Role) -> Self {
+        Self {
+            id: room.id,
+            name: room.name,
+            role: role.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct MemberOut {
+    user_id: Uuid,
+    email: String,
+    role: &'static str,
+}
+
+/// FastAPI's `Field(min_length=1, max_length=200)` counts characters, and a name outside
+/// that range is a schema error: validating in the deserializer makes it the same 422.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+struct RoomName(String);
+
+impl TryFrom<String> for RoomName {
+    type Error = &'static str;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        match name.chars().count() {
+            1..=200 => Ok(Self(name)),
+            _ => Err("the room name must be 1 to 200 characters"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RoomNameBody {
+    name: RoomName,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AssignableRole {
+    Viewer,
+    Editor,
+}
+
+impl From<AssignableRole> for Role {
+    fn from(role: AssignableRole) -> Self {
+        match role {
+            AssignableRole::Viewer => Role::Viewer,
+            AssignableRole::Editor => Role::Editor,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RoleBody {
+    role: AssignableRole,
+}
+
+#[derive(Debug, Deserialize)]
+struct OwnerBody {
+    user_id: Uuid,
+}
+
 async fn me(CurrentUser(user): CurrentUser) -> Json<UserRead> {
     Json(user.into())
+}
+
+async fn list_rooms(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<RoomOut>>, ApiError> {
+    let rooms = db::list_user_rooms(&state.pool, user.id)
+        .await?
+        .into_iter()
+        .map(|(room, role)| RoomOut::new(room, role))
+        .collect();
+    Ok(Json(rooms))
+}
+
+async fn create_room(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    JsonBody(body): JsonBody<RoomNameBody>,
+) -> Result<(StatusCode, Json<RoomOut>), ApiError> {
+    let room = lifecycle::create_room(&state, user.id, &body.name.0).await?;
+    Ok((StatusCode::CREATED, Json(RoomOut::new(room, Role::Owner))))
+}
+
+async fn rename_room(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<RoomNameBody>,
+) -> Result<Json<RoomOut>, ApiError> {
+    let room = lifecycle::rename_room(&state, &room_id, user.id, &body.name.0).await?;
+    Ok(Json(RoomOut::new(room, Role::Owner)))
+}
+
+async fn delete_room(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::delete_room(&state, &room_id, user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_members(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+) -> Result<Json<Vec<MemberOut>>, ApiError> {
+    membership(&state, &room_id, user.id).await?;
+    let members = db::list_members(&state.pool, &room_id)
+        .await?
+        .into_iter()
+        .map(|(member, role)| MemberOut {
+            user_id: member.id,
+            email: member.email,
+            role: role.as_str(),
+        })
+        .collect();
+    Ok(Json(members))
+}
+
+async fn set_member_role(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, member)): ApiPath<(String, Uuid)>,
+    JsonBody(body): JsonBody<RoleBody>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::set_member_role(&state, &room_id, user.id, member, body.role.into()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove_member(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, member)): ApiPath<(String, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::remove_member(&state, &room_id, user.id, member).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn transfer_ownership(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<OwnerBody>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::transfer_ownership(&state, &room_id, user.id, body.user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn membership(state: &AppState, room_id: &str, user: Uuid) -> Result<Role, ApiError> {
+    db::role_in(&state.pool, room_id, user)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Room {room_id} not found")))
 }
 
 #[derive(Debug, Serialize)]
@@ -137,9 +357,7 @@ pub async fn legacy_room_users(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<RoomUsers>, ApiError> {
-    if db::role_in(&state.pool, &room_id, user.id).await?.is_none() {
-        return Err(ApiError::NotFound(format!("Room {room_id} not found")));
-    }
+    membership(&state, &room_id, user.id).await?;
     let members = db::list_members(&state.pool, &room_id).await?;
     Ok(Json(RoomUsers {
         users: members

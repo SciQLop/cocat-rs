@@ -6,10 +6,12 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::db::{self, DbError};
+use crate::db::{self, DbError, RoomRow};
 
 const OWNER_KEEPS_OWNER_ROLE: &str = "The owner keeps the owner role";
 const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave or be removed";
+const EMPTY_ROOM_NAME: &str = "Enter a room name";
+const CONTROL_CHARACTERS_IN_ROOM_NAME: &str = "Enter a room name without control characters";
 
 #[derive(Debug, Error)]
 pub enum LifecycleError {
@@ -19,8 +21,55 @@ pub enum LifecycleError {
     Forbidden,
     #[error("{0}")]
     Conflict(&'static str),
+    #[error("{0}")]
+    Invalid(&'static str),
     #[error(transparent)]
     Db(#[from] DbError),
+}
+
+/// Creates a room owned by `owner`. The id is the hex UUID Python's `uuid4().hex` gives.
+pub async fn create_room(
+    state: &AppState,
+    owner: Uuid,
+    name: &str,
+) -> Result<RoomRow, LifecycleError> {
+    let id = Uuid::new_v4().simple().to_string();
+    let name = room_name(name)?;
+    db::create_room(&state.pool, owner, &id, &name).await?;
+    Ok(RoomRow { id, name })
+}
+
+/// Renames a room; only its owner may.
+pub async fn rename_room(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+    name: &str,
+) -> Result<RoomRow, LifecycleError> {
+    require_role(state, room_id, actor, Role::Owner).await?;
+    let name = room_name(name)?;
+    if !db::rename_room(&state.pool, room_id, &name).await? {
+        return Err(LifecycleError::NotFound);
+    }
+    Ok(RoomRow {
+        id: room_id.to_owned(),
+        name,
+    })
+}
+
+/// Python's `rooms.py::_room_name`: trim, then refuse an empty name or a control character.
+fn room_name(name: &str) -> Result<String, LifecycleError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(LifecycleError::Invalid(EMPTY_ROOM_NAME));
+    }
+    if trimmed
+        .chars()
+        .any(|character| character < ' ' || character == '\x7f')
+    {
+        return Err(LifecycleError::Invalid(CONTROL_CHARACTERS_IN_ROOM_NAME));
+    }
+    Ok(trimmed.to_owned())
 }
 
 /// Deletes the room, its memberships and its file, closing every socket it had.

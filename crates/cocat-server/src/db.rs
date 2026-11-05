@@ -183,6 +183,15 @@ pub async fn create_room(
     Ok(())
 }
 
+pub async fn rename_room(pool: &SqlitePool, room_id: &str, name: &str) -> Result<bool, DbError> {
+    let updated = sqlx::query("UPDATE room SET name = ? WHERE id = ?")
+        .bind(name)
+        .bind(room_id)
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
 pub async fn delete_room(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
     let deleted = sqlx::query("DELETE FROM room WHERE id = ?")
         .bind(room_id)
