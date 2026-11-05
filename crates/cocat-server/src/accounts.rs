@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
+use cocat_core::role::Role;
+
 use crate::AppState;
 use crate::auth::{self, AuthError};
 use crate::db::{self, DbError, User};
@@ -156,6 +158,7 @@ pub struct Change {
 /// the write, so a relay that refuses it cannot fail an update that already happened.
 pub async fn change(state: &AppState, user: User, change: Change) -> Result<User, AccountError> {
     let mut updated = user;
+    let was_active = updated.is_active;
     let moved = change
         .email
         .as_deref()
@@ -178,19 +181,39 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
             DbError::EmailTaken { .. } => AccountError::EmailInUse,
             other => AccountError::Db(other),
         })?;
+    if was_active && !updated.is_active {
+        revoke_sockets(
+            state,
+            updated.id,
+            db::list_user_rooms(&state.pool, updated.id).await?,
+        )
+        .await;
+    }
     if moved && let Some(mailer) = &state.mailer {
         send_verification(state, mailer, updated.id, &updated.email).await;
     }
     Ok(updated)
 }
 
-/// Revoke the account from every room it is in, then remove it. The rooms themselves and their
+/// Remove the account and then close every socket it still has. The rooms themselves and their
 /// files stay, so an owned room outlives its last member, exactly as Python leaves it.
+///
+/// The rooms are read before the row goes, because the memberships cascade with it; the revokes
+/// run afterwards because a socket that attaches in between must find no membership left to
+/// pass the bridge's post-attach re-read.
 pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, AccountError> {
-    for (room, _) in db::list_user_rooms(&state.pool, id).await? {
+    let rooms = db::list_user_rooms(&state.pool, id).await?;
+    let deleted = db::delete_user(&state.pool, id).await?;
+    revoke_sockets(state, id, rooms).await;
+    Ok(deleted)
+}
+
+/// Close the sockets these memberships gave the account, once the write that took them away has
+/// committed.
+async fn revoke_sockets(state: &AppState, id: Uuid, rooms: Vec<(db::RoomRow, Role)>) {
+    for (room, _) in rooms {
         state.rooms.revoke(&room.id, id).await;
     }
-    Ok(db::delete_user(&state.pool, id).await?)
 }
 
 /// The account behind an address, or `None` when there is none, it is inactive, or it cannot

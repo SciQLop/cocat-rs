@@ -644,3 +644,100 @@ async fn deleting_a_user_closes_their_sockets() {
     );
     wait_for_unload(&fixture).await;
 }
+
+#[tokio::test]
+async fn deleting_a_user_refuses_the_next_handshake() {
+    let fixture = Fixture::start().await;
+    let victim = fixture.user("victim@example.org").await;
+    let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
+        .await
+        .unwrap();
+    db::create_room(&fixture.pool, victim, "room-a", "Room A")
+        .await
+        .unwrap();
+
+    let request = Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/users/{victim}"))
+        .header(
+            header::COOKIE,
+            format!("fastapiusersauth={}", fixture.token(admin)),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let status = ws::router(fixture.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status();
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(
+        db::user_by_id(&fixture.pool, victim)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .handshake("room-a", Some(&fixture.token(victim)))
+            .await
+            .err(),
+        Some(403),
+        "a deleted account cannot join a room it no longer belongs to"
+    );
+}
+
+#[tokio::test]
+async fn deactivating_a_user_closes_their_sockets() {
+    let fixture = Fixture::start().await;
+    let victim = fixture.user("victim@example.org").await;
+    let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
+        .await
+        .unwrap();
+    db::create_room(&fixture.pool, victim, "room-a", "Room A")
+        .await
+        .unwrap();
+    let mut socket = fixture
+        .connect("room-a", Some(&fixture.token(victim)))
+        .await;
+    next_ws(&mut socket).await;
+
+    let request = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/users/{victim}"))
+        .header(
+            header::COOKIE,
+            format!("fastapiusersauth={}", fixture.token(admin)),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"is_active": false}"#))
+        .unwrap();
+    let status = ws::router(fixture.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+        .status();
+
+    assert_eq!(status, StatusCode::OK);
+    let close = loop {
+        match next_ws(&mut socket).await {
+            WsMessage::Close(frame) => break frame,
+            _ => continue,
+        }
+    };
+    assert_eq!(
+        close.map(|frame| u16::from(frame.code)),
+        Some(1008),
+        "a deactivated account is cut off at once, not at its next reconnect"
+    );
+    assert_eq!(
+        fixture
+            .handshake("room-a", Some(&fixture.token(victim)))
+            .await
+            .err(),
+        Some(403),
+        "the deactivated account cannot reconnect"
+    );
+    wait_for_unload(&fixture).await;
+}
