@@ -72,6 +72,20 @@ impl RoomManager {
     pub fn open_rooms(&self) -> usize {
         self.rooms.lock().map(|rooms| rooms.len()).unwrap_or(0)
     }
+
+    /// Flushes every open room, waiting for each file write to reach the disk.
+    pub async fn flush_all(&self) {
+        let handles: Vec<RoomHandle> = match self.rooms.lock() {
+            Ok(rooms) => rooms.values().cloned().collect(),
+            Err(_) => {
+                tracing::error!("the room registry is poisoned");
+                return;
+            }
+        };
+        for handle in handles {
+            handle.flush().await;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +121,14 @@ impl RoomHandle {
             let _ = processed.await;
         }
     }
+
+    /// Waits for the room thread to flush its pending records to the disk.
+    pub async fn flush(&self) {
+        let (done, flushed) = oneshot::channel();
+        if self.commands.send(RoomCommand::Flush { done }).is_ok() {
+            let _ = flushed.await;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -122,6 +144,9 @@ enum RoomCommand {
     },
     Detach {
         client: ClientId,
+        done: oneshot::Sender<()>,
+    },
+    Flush {
         done: oneshot::Sender<()>,
     },
 }
@@ -164,6 +189,10 @@ fn room_loop(
                     if clients.is_empty() {
                         break Some(done);
                     }
+                    let _ = done.send(());
+                }
+                RoomCommand::Flush { done } => {
+                    flush(&mut store, &room_id);
                     let _ = done.send(());
                 }
             }

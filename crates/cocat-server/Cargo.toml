@@ -15,7 +15,7 @@ jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite"] }
 thiserror.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "net", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "net", "time", "process"] }
 tracing.workspace = true
 uuid = { version = "1", features = ["v4"] }
 yrs.workspace = true
