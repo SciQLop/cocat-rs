@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Sign in</h1>
+<form method="post" action="{{ action }}">
+  <label for="username">Email</label>
+  <input id="username" name="username" type="email" autocomplete="username" required>
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password"
+         autocomplete="current-password" required>
+  <button type="submit">Log in</button>
+  {% include "message.html" %}
+</form>
+<p><a href="{{ sign_up }}">Sign up</a>
+&middot; <a href="{{ forgot }}">Forgot your password?</a></p>
+<form method="post" action="{{ resend_action }}">
+  <label for="resend-email">Email</label>
+  <input id="resend-email" name="email" type="email" autocomplete="email" required>
+  <button type="submit">Resend the verification mail</button>
+</form>
+{% for provider in providers %}
+<p><a href="{{ provider.href }}">Sign in with {{ provider.name }}</a></p>
+{% endfor %}
+{% endblock %}

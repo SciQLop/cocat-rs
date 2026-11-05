@@ -22,8 +22,6 @@ const ASSETS: [(&str, &str, &str); 2] = [
 ];
 
 /// Python's `ui/auth.py::MESSAGES`, which pages look up by query flag.
-// The login page is its first reader; task 2 lands that page.
-#[allow(dead_code)]
 const MESSAGES: [(&str, &str); 10] = [
     ("credentials", "Wrong email or password."),
     ("too_many", "Too many attempts. Try again in a minute."),
@@ -48,7 +46,6 @@ const MESSAGES: [(&str, &str); 10] = [
 
 /// Python's `error_key` rule: the first truthy flag among the four success flags, else
 /// `error`; a key the table does not know renders nothing.
-#[allow(dead_code)]
 pub(crate) fn message(query: &HashMap<String, String>) -> &'static str {
     let key = ["created", "sent", "reset", "resent"]
         .into_iter()
@@ -104,8 +101,6 @@ pub(crate) fn page(template: impl Template) -> Response {
 }
 
 /// The visitor behind the session cookie, however many pages want them.
-// The login page is its first reader; task 2 lands that page.
-#[allow(dead_code)]
 pub(crate) struct MaybeUser(pub Option<User>);
 
 impl FromRequestParts<AppState> for MaybeUser {
