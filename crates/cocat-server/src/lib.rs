@@ -7,6 +7,8 @@ pub mod auth;
 pub mod catalogues_api;
 pub mod cli;
 pub mod db;
+pub mod groups;
+pub mod groups_api;
 pub mod invitations;
 pub mod invitations_api;
 pub mod lifecycle;

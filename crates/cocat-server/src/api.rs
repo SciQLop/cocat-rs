@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/rooms/{room_id}/owner", post(transfer_ownership))
         .merge(crate::catalogues_api::router())
+        .merge(crate::groups_api::router())
         .merge(crate::invitations_api::router())
 }
 
@@ -240,24 +241,25 @@ struct MemberOut {
 
 /// FastAPI's `Field(min_length=1, max_length=200)` counts characters, and a name outside
 /// that range is a schema error: validating in the deserializer makes it the same 422.
+/// Rooms and groups share the rule.
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "String")]
-struct RoomName(String);
+pub(crate) struct Name(pub(crate) String);
 
-impl TryFrom<String> for RoomName {
+impl TryFrom<String> for Name {
     type Error = &'static str;
 
     fn try_from(name: String) -> Result<Self, Self::Error> {
         match name.chars().count() {
             1..=200 => Ok(Self(name)),
-            _ => Err("the room name must be 1 to 200 characters"),
+            _ => Err("the name must be 1 to 200 characters"),
         }
     }
 }
 
 #[derive(Debug, Deserialize)]
-struct RoomNameBody {
-    name: RoomName,
+struct NameBody {
+    name: Name,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,7 +307,7 @@ async fn list_rooms(
 async fn create_room(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    JsonBody(body): JsonBody<RoomNameBody>,
+    JsonBody(body): JsonBody<NameBody>,
 ) -> Result<(StatusCode, Json<RoomOut>), ApiError> {
     let room = lifecycle::create_room(&state, user.id, &body.name.0).await?;
     Ok((StatusCode::CREATED, Json(RoomOut::new(room, Role::Owner))))
@@ -315,7 +317,7 @@ async fn rename_room(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     ApiPath(room_id): ApiPath<String>,
-    JsonBody(body): JsonBody<RoomNameBody>,
+    JsonBody(body): JsonBody<NameBody>,
 ) -> Result<Json<RoomOut>, ApiError> {
     let room = lifecycle::rename_room(&state, &room_id, user.id, &body.name.0).await?;
     Ok(Json(RoomOut::new(room, Role::Owner)))
