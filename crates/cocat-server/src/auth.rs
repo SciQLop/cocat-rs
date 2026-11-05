@@ -1,7 +1,6 @@
-//! Tokens and cookies compatible with the Python server (fastapi-users).
-//!
-//! simplify: the spike verifies the Python server's tokens and mints the same shape;
-//! phase 1 replaces this module with Rust auth.
+//! Tokens and cookies compatible with the Python server (fastapi-users): the same
+//! `fastapiusersauth` cookie, the same HMAC secret from `COCAT_SECRET` or
+//! `<db_path>.secret`, and the same claims, so a cookie one server mints the other accepts.
 
 use std::env;
 use std::fs::{self, OpenOptions};

@@ -180,6 +180,8 @@ against the Rust binary.
 
 ## Phases
 
+Status: phase 0 (spike) and phase 1 (rooms and lifecycle) are done; phase 2 is next.
+
 0. **Spike (go/no-go).** `cocat-server` serving only `/room/{id}`: cookie check,
    membership/role from SQLite, Yjs sync with viewer write-blocking, `.y` storage.
    Workload: one 100k-event room (the 38 MB file), 50 simulated clients, one edit per

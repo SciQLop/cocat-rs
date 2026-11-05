@@ -22,7 +22,10 @@ use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
 pub type ClientId = u64;
 
-// simplify: a one-second timer instead of a durability policy; phase 1 owns fsync policy.
+/// The durability policy. Every update is written to the room file before it is broadcast,
+/// so a process crash loses nothing a client has seen; this timer fsyncs what was written,
+/// so a power loss loses at most one second of acknowledged edits. Unload, delete, flush
+/// and shutdown fsync as well.
 const SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How many frames a client may fall behind before the room closes it: 1024 frames is
