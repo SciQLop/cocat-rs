@@ -1,11 +1,12 @@
 use std::fs;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_server::room::{OUTBOUND_FRAMES, RoomManager};
-use cocat_server::{AppState, auth, db, ws};
+use cocat_server::{AppState, BeforeAttach, auth, db, ws};
 use futures_util::{SinkExt, StreamExt};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -46,15 +47,27 @@ struct Fixture {
 
 impl Fixture {
     async fn start() -> Self {
+        Self::start_with(|_: SqlitePool| async { None }).await
+    }
+
+    /// `prepare` runs on the fixture's pool before the server answers anything, so a test
+    /// can seed data and hand back a hook that acts between the handshake and the attach.
+    async fn start_with<F, Fut>(prepare: F) -> Self
+    where
+        F: FnOnce(SqlitePool) -> Fut,
+        Fut: std::future::Future<Output = Option<BeforeAttach>>,
+    {
         let dir = TempDir::new().unwrap();
         let rooms_dir = dir.path().join("rooms");
         fs::create_dir_all(&rooms_dir).unwrap();
         let pool = db::open(&dir.path().join("test.db")).await.unwrap();
+        let before_attach = prepare(pool.clone()).await;
         let rooms = RoomManager::new(rooms_dir);
         let state = AppState {
             pool: pool.clone(),
             secret: SECRET.to_owned(),
             rooms: rooms.clone(),
+            before_attach,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -384,4 +397,57 @@ async fn an_accepted_socket_has_nagle_disabled() {
     ws::disable_nagle(&mut accepted);
     assert!(accepted.nodelay().unwrap());
     connecting.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_downgrade_between_handshake_and_attach_is_honoured() {
+    const ROOM: &str = "room-downgrade";
+    let fixture = Fixture::start_with(|pool| async move {
+        let owner = db::create_user(&pool, "owner@example.org", "hunter2", false)
+            .await
+            .unwrap();
+        db::create_room(&pool, owner, ROOM, "Downgrade")
+            .await
+            .unwrap();
+        let editor = db::create_user(&pool, "editor@example.org", "hunter2", false)
+            .await
+            .unwrap();
+        db::add_member(&pool, ROOM, editor, Role::Editor)
+            .await
+            .unwrap();
+        let hook: BeforeAttach = Arc::new(move || {
+            let pool = pool.clone();
+            Box::pin(async move {
+                db::set_role(&pool, ROOM, editor, Role::Viewer)
+                    .await
+                    .expect("the downgrade lands");
+            })
+        });
+        Some(hook)
+    })
+    .await;
+
+    let editor = db::user_by_email(&fixture.pool, "editor@example.org")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let mut socket = fixture.connect(ROOM, Some(&fixture.token(editor))).await;
+
+    // The handshake saw an editor; the role changed before the socket attached, so the
+    // socket must not keep the editor it was granted.
+    loop {
+        match next_ws(&mut socket).await {
+            WsMessage::Close(frame) => {
+                assert_eq!(
+                    frame.map(|frame| u16::from(frame.code)),
+                    Some(1008),
+                    "a socket whose role changed before the attach must close 1008"
+                );
+                break;
+            }
+            WsMessage::Binary(_) => {}
+            other => panic!("expected a close, got {other:?}"),
+        }
+    }
 }

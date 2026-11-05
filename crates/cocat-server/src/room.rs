@@ -2,7 +2,7 @@
 //! through channels, because `Doc` and `Update` are not `Send`.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,6 +14,7 @@ use cocat_core::store::{FileRoomStore, StoreError};
 use thiserror::Error;
 use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
 use tokio::sync::oneshot;
+use uuid::Uuid;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
@@ -119,13 +120,73 @@ impl RoomManager {
         let (commands, receiver) = mpsc::channel();
         let registry = Arc::clone(&self.rooms);
         let task_room_id = room_id.to_owned();
+        let update_dir = self.update_dir.clone();
         thread::Builder::new()
             .name(format!("room-{room_id}"))
-            .spawn(move || room_loop(task_room_id, store, updates, receiver, registry))
+            .spawn(move || room_loop(task_room_id, update_dir, store, updates, receiver, registry))
             .map_err(RoomError::Spawn)?;
         let handle = RoomHandle { commands };
         rooms.insert(room_id.to_owned(), handle.clone());
         Ok(handle)
+    }
+
+    /// Closes every socket this user has in the room, whatever their client ids. A room
+    /// that is not open holds no sockets, so revoking there is a no-op.
+    pub async fn revoke(&self, room_id: &str, user: Uuid) {
+        let handle = match self.rooms.lock() {
+            Ok(rooms) => rooms.get(room_id).cloned(),
+            Err(_) => {
+                tracing::error!("the room registry is poisoned");
+                return;
+            }
+        };
+        let Some(handle) = handle else {
+            return;
+        };
+        if handle.revoke(user).await.is_err() {
+            tracing::debug!(room = %room_id, "the room unloaded before the revoke");
+        }
+    }
+
+    /// Deletes the room and its file, whether or not it is open. An open room unloads the
+    /// same way a last detach does, except that it writes nothing more.
+    pub async fn delete(&self, room_id: &str) {
+        // The room can unload between the lookup and the command, so the handle reports
+        // that and the next turn finds either the room that replaced it or the bare file.
+        loop {
+            let handle = match self.rooms.lock() {
+                Ok(rooms) => rooms.get(room_id).cloned(),
+                Err(_) => {
+                    tracing::error!("the room registry is poisoned");
+                    return;
+                }
+            };
+            match handle {
+                Some(handle) => {
+                    if handle.delete().await.is_ok() {
+                        return;
+                    }
+                }
+                None if self.delete_file_if_closed(room_id) => return,
+                None => {}
+            }
+        }
+    }
+
+    /// Deletes the file under the registry lock, so a `get_or_open` racing with the delete
+    /// cannot load the file the delete is about to remove. False when a room opened first.
+    fn delete_file_if_closed(&self, room_id: &str) -> bool {
+        match self.rooms.lock() {
+            Ok(rooms) if !rooms.contains_key(room_id) => {
+                delete_file(&self.update_dir, room_id);
+                true
+            }
+            Ok(_) => false,
+            Err(_) => {
+                tracing::error!("the room registry is poisoned");
+                true
+            }
+        }
     }
 
     pub fn open_rooms(&self) -> usize {
@@ -153,14 +214,45 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub fn attach(&self, client: ClientId, role: Role, out: Outbox) -> Result<(), RoomGone> {
+    pub fn attach(
+        &self,
+        client: ClientId,
+        user: Uuid,
+        role: Role,
+        out: Outbox,
+    ) -> Result<(), RoomGone> {
         self.commands
-            .send(RoomCommand::Attach { client, role, out })
+            .send(RoomCommand::Attach {
+                client,
+                user,
+                role,
+                out,
+            })
             .map_err(|_| RoomGone)
     }
 
     pub fn frame(&self, client: ClientId, frame: Bytes) {
         let _ = self.commands.send(RoomCommand::Frame { client, frame });
+    }
+
+    /// Waits for the room thread to close every socket this user has here.
+    pub async fn revoke(&self, user: Uuid) -> Result<(), RoomGone> {
+        let (done, processed) = oneshot::channel();
+        self.commands
+            .send(RoomCommand::Revoke { user, done })
+            .map_err(|_| RoomGone)?;
+        let _ = processed.await;
+        Ok(())
+    }
+
+    /// Waits for the room thread to close every socket, unload and delete the room file.
+    pub async fn delete(&self) -> Result<(), RoomGone> {
+        let (done, deleted) = oneshot::channel();
+        self.commands
+            .send(RoomCommand::Delete { done })
+            .map_err(|_| RoomGone)?;
+        let _ = deleted.await;
+        Ok(())
     }
 
     /// Waits for the room thread to process the detach, so the last detach has flushed
@@ -189,6 +281,7 @@ impl RoomHandle {
 enum RoomCommand {
     Attach {
         client: ClientId,
+        user: Uuid,
         role: Role,
         out: Outbox,
     },
@@ -200,18 +293,27 @@ enum RoomCommand {
         client: ClientId,
         done: oneshot::Sender<()>,
     },
+    Revoke {
+        user: Uuid,
+        done: oneshot::Sender<()>,
+    },
+    Delete {
+        done: oneshot::Sender<()>,
+    },
     Flush {
         done: oneshot::Sender<()>,
     },
 }
 
 struct Client {
+    user: Uuid,
     role: Role,
     out: Outbox,
 }
 
 fn room_loop(
     room_id: String,
+    update_dir: PathBuf,
     mut store: FileRoomStore,
     updates: Vec<Bytes>,
     commands: Receiver<RoomCommand>,
@@ -237,12 +339,17 @@ fn room_loop(
                         schedule.advance(Instant::now());
                         continue;
                     }
-                    Next::Closed => break None,
+                    Next::Closed => break Unload::Detached(None),
                 };
             let mut broadcast = None;
             match command {
-                RoomCommand::Attach { client, role, out } => {
-                    attach(&doc, &mut clients, client, Client { role, out });
+                RoomCommand::Attach {
+                    client,
+                    user,
+                    role,
+                    out,
+                } => {
+                    attach(&doc, &mut clients, client, Client { user, role, out });
                 }
                 RoomCommand::Frame { client, frame } => {
                     broadcast = handle_frame(
@@ -257,9 +364,17 @@ fn room_loop(
                 RoomCommand::Detach { client, done } => {
                     clients.remove(&client);
                     if clients.is_empty() {
-                        break Some(done);
+                        break Unload::Detached(Some(done));
                     }
                     let _ = done.send(());
+                }
+                RoomCommand::Revoke { user, done } => {
+                    close_user(&mut clients, user, CloseReason::Revoked);
+                    let _ = done.send(());
+                }
+                RoomCommand::Delete { done } => {
+                    close_all(&mut clients, CloseReason::Revoked);
+                    break Unload::Deleted(done);
                 }
                 RoomCommand::Flush { done } => {
                     flush(&mut store, &room_id);
@@ -277,15 +392,34 @@ fn room_loop(
             }
         };
 
-        flush(&mut store, &room_id);
-        let keep_serving = close_room(&room_id, &registry, &mut commands, &mut backlog);
-        if let Some(done) = unloaded {
-            let _ = done.send(());
-        }
-        if !keep_serving {
-            break 'serving;
+        match unloaded {
+            Unload::Detached(done) => {
+                flush(&mut store, &room_id);
+                let keep_serving = close_room(&room_id, &registry, &mut commands, &mut backlog);
+                if let Some(done) = done {
+                    let _ = done.send(());
+                }
+                if !keep_serving {
+                    break 'serving;
+                }
+            }
+            Unload::Deleted(done) => {
+                remove_room(&room_id, &registry, &mut commands, &mut backlog);
+                drop(store);
+                delete_file(&update_dir, &room_id);
+                let _ = done.send(());
+                break 'serving;
+            }
         }
     }
+}
+
+/// Why the room thread stopped serving.
+enum Unload {
+    /// The last client left, or every handle to the room is gone: flush and unload.
+    Detached(Option<oneshot::Sender<()>>),
+    /// The room is being deleted: no final write, and the file goes too.
+    Deleted(oneshot::Sender<()>),
 }
 
 /// When the room thread should fsync next. It only arms while records are unsynced.
@@ -372,12 +506,45 @@ fn close_room(
     }
 }
 
+/// Removes a room that is being deleted. Unlike `close_room`, a queued attach does not keep
+/// it alive: the file is already gone, and that client learns its role is gone when its
+/// bridge re-reads it.
+fn remove_room(
+    room_id: &str,
+    registry: &Rooms,
+    commands: &mut Option<Receiver<RoomCommand>>,
+    backlog: &mut VecDeque<RoomCommand>,
+) {
+    match registry.lock() {
+        Ok(mut rooms) => {
+            rooms.remove(room_id);
+            commands.take();
+            settle(backlog);
+        }
+        Err(_) => tracing::error!(room = %room_id, "the room registry is poisoned"),
+    }
+}
+
+fn delete_file(update_dir: &Path, room_id: &str) {
+    let path = update_dir.join(format!("{room_id}.y"));
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            tracing::warn!(room = %room_id, path = %path.display(), %error, "cannot delete the room file");
+        }
+    }
+}
+
 /// Acks the commands a closing room will not process, so their callers do not wait for a
 /// room that is already gone (the file was flushed just before `close_room`).
 fn settle(backlog: &mut VecDeque<RoomCommand>) {
     for command in backlog.drain(..) {
         match command {
-            RoomCommand::Flush { done } | RoomCommand::Detach { done, .. } => {
+            RoomCommand::Flush { done }
+            | RoomCommand::Detach { done, .. }
+            | RoomCommand::Revoke { done, .. }
+            | RoomCommand::Delete { done } => {
                 let _ = done.send(());
             }
             RoomCommand::Attach { .. } | RoomCommand::Frame { .. } => {}
@@ -443,6 +610,25 @@ fn drop_client(
         return;
     };
     if let Some(reason) = reason {
+        let _ = entry.out.close.send(reason);
+    }
+}
+
+/// Closes every socket one user has in this room; the other clients keep receiving.
+fn close_user(clients: &mut HashMap<ClientId, Client>, user: Uuid, reason: CloseReason) {
+    let doomed: Vec<ClientId> = clients
+        .iter()
+        .filter(|(_, entry)| entry.user == user)
+        .map(|(client, _)| *client)
+        .collect();
+    for client in doomed {
+        drop_client(clients, client, Some(reason));
+    }
+}
+
+/// Closes every socket in a room that is going away.
+fn close_all(clients: &mut HashMap<ClientId, Client>, reason: CloseReason) {
+    for (_, entry) in clients.drain() {
         let _ = entry.out.close.send(reason);
     }
 }
@@ -617,7 +803,9 @@ mod tests {
     fn a_queued_attach_keeps_a_dying_room_alive() {
         let mut room = dying_room();
         let (out, _inbox) = outbox();
-        room.handle.attach(1, Role::Editor, out).unwrap();
+        room.handle
+            .attach(1, Uuid::new_v4(), Role::Editor, out)
+            .unwrap();
 
         assert!(close_room(
             "room",
@@ -641,7 +829,10 @@ mod tests {
         ));
         assert!(room.registry.lock().unwrap().is_empty());
         let (out, _inbox) = outbox();
-        assert_eq!(room.handle.attach(1, Role::Editor, out), Err(RoomGone));
+        assert_eq!(
+            room.handle.attach(1, Uuid::new_v4(), Role::Editor, out),
+            Err(RoomGone)
+        );
     }
 
     #[test]
@@ -669,7 +860,7 @@ mod tests {
         let manager = RoomManager::new(dir.path().to_owned());
         let room = manager.get_or_open("room-quiet").unwrap();
         let (out, mut inbox) = outbox();
-        room.attach(1, Role::Editor, out).unwrap();
+        room.attach(1, Uuid::new_v4(), Role::Editor, out).unwrap();
         timeout(WAIT, inbox.frames.recv()).await.unwrap().unwrap();
 
         let payload = update_with("key", "value");
@@ -691,7 +882,8 @@ mod tests {
     }
 
     async fn join(room: &RoomHandle, client: ClientId, out: Outbox, inbox: &mut Inbox) -> Bytes {
-        room.attach(client, Role::Editor, out).unwrap();
+        room.attach(client, Uuid::new_v4(), Role::Editor, out)
+            .unwrap();
         inbox.frames.recv().await.unwrap();
         room.frame(
             client,

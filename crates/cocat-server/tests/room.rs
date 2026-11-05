@@ -10,6 +10,7 @@ use cocat_server::room::{
 };
 use tempfile::TempDir;
 use tokio::time::timeout;
+use uuid::Uuid;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
@@ -39,12 +40,16 @@ fn update_frame(payload: &[u8]) -> Bytes {
     Bytes::from(Message::Sync(SyncMessage::Update(payload.to_vec())).encode_v1())
 }
 
-fn attach(handle: &RoomHandle, client: ClientId, role: Role) -> Inbox {
+fn attach_as(handle: &RoomHandle, client: ClientId, user: Uuid, role: Role) -> Inbox {
     let (out, inbox) = outbox();
     handle
-        .attach(client, role, out)
+        .attach(client, user, role, out)
         .expect("the room accepted the client");
     inbox
+}
+
+fn attach(handle: &RoomHandle, client: ClientId, role: Role) -> Inbox {
+    attach_as(handle, client, Uuid::new_v4(), role)
 }
 
 fn attach_with_retry(
@@ -56,7 +61,7 @@ fn attach_with_retry(
     for _ in 0..3 {
         let handle = manager.get_or_open(room_id).unwrap();
         let (out, inbox) = outbox();
-        if handle.attach(client, role, out).is_ok() {
+        if handle.attach(client, Uuid::new_v4(), role, out).is_ok() {
             return (handle, inbox);
         }
     }
@@ -370,4 +375,75 @@ async fn a_detach_and_an_attach_racing_keep_the_room_serving() {
         detaching.await.unwrap();
         room.detach(2).await;
     }
+}
+
+#[tokio::test]
+async fn revoke_closes_only_that_users_clients() {
+    let (_dir, manager) = manager();
+    let room = manager.get_or_open("room-revoke").unwrap();
+    let revoked = Uuid::new_v4();
+    let mut first = attach_as(&room, 1, revoked, Role::Editor);
+    let mut second = attach_as(&room, 2, revoked, Role::Editor);
+    let mut kept = attach_as(&room, 3, Uuid::new_v4(), Role::Editor);
+    for inbox in [&mut first, &mut second, &mut kept] {
+        next(inbox).await;
+    }
+
+    manager.revoke("room-revoke", revoked).await;
+
+    for inbox in [&mut first, &mut second] {
+        let reason = timeout(WAIT, &mut inbox.close)
+            .await
+            .expect("the room never closed a revoked client")
+            .expect("the room dropped the close signal");
+        assert_eq!(reason, CloseReason::Revoked);
+    }
+    room.frame(3, update_frame(&update_with("key", "value")));
+    assert!(matches!(
+        next(&mut kept).await,
+        Message::Sync(SyncMessage::Update(_))
+    ));
+    room.detach(3).await;
+}
+
+#[tokio::test]
+async fn revoke_on_a_closed_room_is_a_no_op() {
+    let (dir, manager) = manager();
+
+    manager.revoke("room-closed", Uuid::new_v4()).await;
+
+    assert_eq!(manager.open_rooms(), 0);
+    assert!(!dir.path().join("room-closed.y").exists());
+}
+
+#[tokio::test]
+async fn a_deleted_room_does_not_resurrect_its_file() {
+    let (dir, manager) = manager();
+    let room = manager.get_or_open("room-delete").unwrap();
+    let mut client = attach(&room, 1, Role::Editor);
+    next(&mut client).await;
+    room.frame(1, update_frame(&update_with("key", "value")));
+    next(&mut client).await;
+    assert!(dir.path().join("room-delete.y").exists());
+
+    manager.delete("room-delete").await;
+
+    assert!(!dir.path().join("room-delete.y").exists());
+    assert_eq!(manager.open_rooms(), 0);
+    let reason = timeout(WAIT, client.close)
+        .await
+        .expect("the room never closed the deleted client")
+        .expect("the room dropped the close signal");
+    assert_eq!(reason, CloseReason::Revoked);
+
+    let reopened = manager.get_or_open("room-delete").unwrap();
+    let mut viewer = attach(&reopened, 2, Role::Viewer);
+    next(&mut viewer).await;
+    reopened.frame(2, sync_step1());
+    let reply = match next(&mut viewer).await {
+        Message::Sync(SyncMessage::SyncStep2(update)) => update,
+        other => panic!("expected a step2, got {other:?}"),
+    };
+    assert_eq!(content(&apply(&reply), "key"), None);
+    reopened.detach(2).await;
 }

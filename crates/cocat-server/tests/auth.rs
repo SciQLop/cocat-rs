@@ -187,6 +187,7 @@ async fn login_sets_a_cookie_for_the_right_password() {
         rooms: RoomManager::new(dir.path().to_owned()),
         pool,
         secret: "secret".to_owned(),
+        before_attach: None,
     };
 
     let response =
@@ -221,6 +222,7 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         rooms: RoomManager::new(dir.path().to_owned()),
         pool: pool.clone(),
         secret: "secret".to_owned(),
+        before_attach: None,
     };
 
     let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2").await;

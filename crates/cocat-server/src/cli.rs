@@ -223,6 +223,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         pool,
         secret,
         rooms: rooms.clone(),
+        before_attach: None,
     };
 
     let listener = TcpListener::bind((host, port)).await?;

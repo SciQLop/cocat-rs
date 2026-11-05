@@ -15,9 +15,10 @@ use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 use crate::AppState;
-use crate::room::{ClientId, Inbox, RoomError, RoomGone, RoomHandle, outbox};
+use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
 use crate::{auth, db};
 
 pub const INTERNAL_ERROR: u16 = 1011;
@@ -60,18 +61,19 @@ async fn room_socket(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
-    let role = match lobby_role(&state, &room_id, &headers).await {
-        Some(role) => role,
+    let (user, role) = match lobby_role(&state, &room_id, &headers).await {
+        Some(admitted) => admitted,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
-    upgrade.on_upgrade(move |socket| bridge(socket, state, room_id, role))
+    upgrade.on_upgrade(move |socket| bridge(socket, state, room_id, user, role))
 }
 
-async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<Role> {
+async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(Uuid, Role)> {
     let user = auth::authenticate(&state.pool, headers, &state.secret)
         .await
         .ok()?;
-    db::role_in(&state.pool, room_id, user).await.ok()?
+    let role = db::role_in(&state.pool, room_id, user).await.ok()?;
+    Some((user, role?))
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -82,9 +84,12 @@ async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
     let _ = socket.send(Message::Close(Some(frame))).await;
 }
 
-async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role) {
+async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid, role: Role) {
+    if let Some(hook) = state.before_attach.clone() {
+        hook().await;
+    }
     let client = next_client();
-    let (room, inbox) = match attach(&state, &room_id, client, role).await {
+    let (room, inbox) = match attach(&state, &room_id, client, user, role).await {
         Ok(attached) => attached,
         Err(error) => {
             tracing::warn!(%error, room = %room_id, "cannot attach the socket");
@@ -92,9 +97,20 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, role: Role)
         }
     };
 
+    // The room only knows the role the handshake granted; a revocation can land while the
+    // socket is being attached. A role that cannot be re-read is not trusted either.
+    let close_now = match db::role_in(&state.pool, &room_id, user).await {
+        Ok(Some(current)) if current == role => None,
+        Ok(_) => Some(CloseReason::Revoked),
+        Err(error) => {
+            tracing::warn!(%error, room = %room_id, "cannot re-read the role after the attach");
+            Some(CloseReason::Revoked)
+        }
+    };
+
     let (mut sink, mut stream) = socket.split();
     let mut writer = tokio::spawn(async move {
-        if let Err(error) = write_until_closed(&mut sink, inbox).await {
+        if let Err(error) = write_until_closed(&mut sink, inbox, close_now).await {
             tracing::debug!(%error, "the socket stopped accepting frames");
         }
     });
@@ -147,23 +163,35 @@ enum WriterError {
 async fn write_until_closed(
     sink: &mut SplitSink<WebSocket, Message>,
     mut inbox: Inbox,
+    close_now: Option<CloseReason>,
 ) -> Result<(), WriterError> {
-    let reason = loop {
-        let frame = tokio::select! {
-            biased;
-            reason = &mut inbox.close => break reason.ok(),
-            frame = inbox.frames.recv() => match frame {
-                Some(frame) => frame,
-                None => break None,
-            },
-        };
-        write(sink, Message::Binary(frame)).await?;
+    let reason = match close_now {
+        Some(reason) => Some(reason),
+        None => drain_until_close(sink, &mut inbox).await?,
     };
     let frame = reason.map(|reason| CloseFrame {
         code: reason.code(),
         reason: reason.reason().into(),
     });
     write(sink, Message::Close(frame)).await
+}
+
+/// Writes queued frames until the room closes the client, then reports why.
+async fn drain_until_close(
+    sink: &mut SplitSink<WebSocket, Message>,
+    inbox: &mut Inbox,
+) -> Result<Option<CloseReason>, WriterError> {
+    loop {
+        let frame = tokio::select! {
+            biased;
+            reason = &mut inbox.close => return Ok(reason.ok()),
+            frame = inbox.frames.recv() => match frame {
+                Some(frame) => frame,
+                None => return Ok(None),
+            },
+        };
+        write(sink, Message::Binary(frame)).await?;
+    }
 }
 
 async fn write(
@@ -180,6 +208,7 @@ async fn attach(
     state: &AppState,
     room_id: &str,
     client: ClientId,
+    user: Uuid,
     role: Role,
 ) -> Result<(RoomHandle, Inbox), AttachError> {
     for _ in 0..ATTACH_TRIES {
@@ -189,7 +218,7 @@ async fn attach(
             .await?
             .map_err(AttachError::Room)?;
         let (out, inbox) = outbox();
-        match room.attach(client, role, out) {
+        match room.attach(client, user, role, out) {
             Ok(()) => return Ok((room, inbox)),
             Err(RoomGone) => continue,
         }
