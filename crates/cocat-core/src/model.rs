@@ -101,6 +101,15 @@ pub fn catalogue<T: ReadTxn>(txn: &T, uuid: &str) -> Option<CatalogueSummary> {
     summary(txn, events.as_ref(), uuid, root.get(txn, uuid)?)
 }
 
+/// One event by uuid, or `None` when the room does not hold it.
+pub fn event<T: ReadTxn>(txn: &T, uuid: &str) -> Option<EventRecord> {
+    let events = txn.get_map(EVENTS)?;
+    let Out::YMap(map) = events.get(txn, uuid)? else {
+        return None;
+    };
+    record(txn, &map)
+}
+
 pub fn catalogue_events<T: ReadTxn>(txn: &T, uuid: &str) -> Option<Vec<EventRecord>> {
     let root = txn.get_map(CATALOGUES)?;
     let Out::YMap(catalogue) = root.get(txn, uuid)? else {

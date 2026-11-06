@@ -32,6 +32,18 @@ const PYTHON_FRACTION: &[BorrowedFormatItem<'_>] = format_description!(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timestamp(OffsetDateTime);
 
+/// The calendar fields of an instant, as a `datetime` constructor takes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parts {
+    pub year: i32,
+    pub month: u8,
+    pub day: u8,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub microsecond: u32,
+}
+
 impl Timestamp {
     pub fn parse(text: &str) -> Option<Self> {
         let text = normalise(text)?;
@@ -41,6 +53,28 @@ impl Timestamp {
 
     pub fn unix_micros(self) -> i128 {
         self.0.unix_timestamp_nanos() / 1_000
+    }
+
+    /// The instant as microseconds since the Unix epoch, or `None` when it does not fit the
+    /// range a datetime can hold.
+    pub fn from_unix_micros(micros: i128) -> Option<Self> {
+        let nanos = micros.checked_mul(1_000)?;
+        OffsetDateTime::from_unix_timestamp_nanos(nanos)
+            .ok()
+            .map(|instant| Self(instant.to_offset(UtcOffset::UTC)))
+    }
+
+    /// The calendar fields Python's `datetime` takes, so a binding can build one.
+    pub fn parts(self) -> Parts {
+        Parts {
+            year: self.0.year(),
+            month: self.0.month() as u8,
+            day: self.0.day(),
+            hour: self.0.hour(),
+            minute: self.0.minute(),
+            second: self.0.second(),
+            microsecond: self.0.microsecond(),
+        }
     }
 
     /// The text Python's `str(datetime)` writes for the same instant: a space between the

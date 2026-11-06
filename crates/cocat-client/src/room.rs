@@ -14,7 +14,7 @@ use tokio::sync::{Notify, broadcast};
 use url::Url;
 use yrs::types::DeepObservable;
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, Origin, Transact, TransactionMut, Update, WriteTxn};
+use yrs::{Doc, Origin, ReadTxn, StateVector, Transact, TransactionMut, Update, WriteTxn};
 
 use crate::changes::{self, Change, Observation, Root};
 
@@ -77,8 +77,15 @@ pub(crate) struct Inner {
     pub(crate) online: Arc<AtomicBool>,
     pub(crate) changes: broadcast::Sender<Vec<Change>>,
     pub(crate) pending: Arc<Mutex<Vec<Observation>>>,
+    pub(crate) subscribers: Subscribers,
+    /// While a batch is open, local updates are collected here instead of queued at once.
+    pub(crate) batching: Arc<AtomicBool>,
+    pub(crate) batched: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) status: StatusCell,
 }
+
+/// Every listener of a room's changes, called on the thread that applied them.
+pub(crate) type Subscribers = Arc<Mutex<Vec<Arc<dyn Fn(Vec<Change>) + Send + Sync>>>>;
 
 /// The local updates waiting to be sent, from whatever thread made them.
 pub(crate) struct Outbox {
@@ -188,6 +195,9 @@ impl Room {
             online: Arc::new(AtomicBool::new(false)),
             changes,
             pending: Arc::new(Mutex::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            batching: Arc::new(AtomicBool::new(false)),
+            batched: Arc::new(Mutex::new(Vec::new())),
             status: StatusCell::new(),
         });
         observe(&inner)?;
@@ -201,6 +211,44 @@ impl Room {
     pub fn write<T>(&self, edit: impl FnOnce(&mut TransactionMut<'_>) -> T) -> T {
         let mut txn = self.inner.doc.transact_mut_with(LOCAL_ORIGIN);
         edit(&mut txn)
+    }
+
+    /// Calls `listener` with every batch of remote changes, on the thread that applied them.
+    pub fn subscribe(&self, listener: impl Fn(Vec<Change>) + Send + Sync + 'static) {
+        lock(&self.inner.subscribers).push(Arc::new(listener));
+    }
+
+    /// Starts one batch: the local edits that follow are sent to the server as one update,
+    /// so the others see them in one transaction.
+    pub fn begin_batch(&self) {
+        lock(&self.inner.batched).clear();
+        self.inner.batching.store(true, Ordering::Relaxed);
+    }
+
+    /// Ends the batch opened by [`Room::begin_batch`] and queues its merged update.
+    pub fn end_batch(&self) {
+        self.inner.batching.store(false, Ordering::Relaxed);
+        let updates = std::mem::take(&mut *lock(&self.inner.batched));
+        if updates.is_empty() {
+            return;
+        }
+        let merged = match merge(&updates) {
+            Some(merged) => merged,
+            None => {
+                tracing::error!("the batch could not be merged; sending its parts");
+                for update in updates {
+                    self.queue(update);
+                }
+                return;
+            }
+        };
+        self.queue(merged);
+    }
+
+    fn queue(&self, update: Vec<u8>) {
+        if self.inner.online.load(Ordering::Relaxed) {
+            self.inner.outbox.push(update);
+        }
     }
 
     pub fn doc(&self) -> &Doc {
@@ -234,6 +282,9 @@ impl Room {
     pub fn connect(&self, url: &str, cookie: &str) -> Result<(), RoomError> {
         let url = websocket_url(url, &self.inner.room_id)?;
         self.stop();
+        // Set before spawning: a caller that just gave a new cookie must not read the old
+        // refusal while the new session is still starting.
+        self.inner.status.set(Status::Connecting);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -268,6 +319,21 @@ impl Room {
     }
 }
 
+/// One update holding what every update holds, so the others see one transaction.
+fn merge(updates: &[Vec<u8>]) -> Option<Vec<u8>> {
+    let doc = Doc::new();
+    let mut txn = doc.transact_mut();
+    for update in updates {
+        let update = Update::decode_v1(update).ok()?;
+        txn.apply_update(update).ok()?;
+    }
+    drop(txn);
+    Some(
+        doc.transact()
+            .encode_state_as_update_v1(&StateVector::default()),
+    )
+}
+
 /// Registers the observers that cache, forward and translate document changes.
 fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
     // The deep observers come first: getting a root map out of the document is itself a
@@ -292,6 +358,8 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
     let cache = Arc::clone(&inner.cache);
     let outbox = Arc::clone(&inner.outbox);
     let online = Arc::clone(&inner.online);
+    let batching = Arc::clone(&inner.batching);
+    let batched = Arc::clone(&inner.batched);
     inner
         .doc
         .observe_update_v1("cocat-client:cache", move |_txn, update| {
@@ -308,6 +376,10 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
             if let Err(error) = lock(&cache).write() {
                 tracing::error!(%error, "the cache could not write an update");
             }
+            if batching.load(Ordering::Relaxed) {
+                lock(&batched).push(update.update.clone());
+                return;
+            }
             // Offline work needs no outbox: the handshake diff carries it to the server on
             // the next connect, so queuing it would only grow without a reader.
             if online.load(Ordering::Relaxed) {
@@ -318,6 +390,7 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
 
     let pending = Arc::clone(&inner.pending);
     let sender = inner.changes.clone();
+    let subscribers = Arc::clone(&inner.subscribers);
     inner
         .doc
         .observe_after_transaction("cocat-client:batch", move |txn| {
@@ -326,10 +399,14 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
                 return;
             }
             let batch = changes::finish(&observations, txn);
-            if !batch.is_empty() {
-                // A closed channel means nobody listens any more; the changes are not news.
-                let _ = sender.send(batch);
+            if batch.is_empty() {
+                return;
             }
+            for subscriber in lock(&subscribers).iter() {
+                subscriber(batch.clone());
+            }
+            // A closed channel means nobody listens any more; the changes are not news.
+            let _ = sender.send(batch);
         })
         .map_err(|_| RoomError::Observer)?;
     Ok(())

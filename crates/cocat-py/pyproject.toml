@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cocat-rs"
+version = "0.0.0"
+description = "Collaborative event catalogues, in Rust with a Python face"
+requires-python = ">=3.12"
+dependencies = ["numpy"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "cocat_rs._native"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
