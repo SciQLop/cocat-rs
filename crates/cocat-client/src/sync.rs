@@ -2,6 +2,7 @@
 //! updates both ways, and a reconnect with a backoff after anything but a refusal.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -39,6 +40,8 @@ pub(crate) async fn run(inner: Arc<Inner>, url: Url, cookie: String) {
                 }
             }
         }
+        // No socket, so nothing can be sent: a local edit belongs to the handshake diff.
+        inner.online.store(false, Ordering::Relaxed);
         // The status says "connecting" through the wait: a caller waiting for a reconnect
         // should not see the room look offline while the backoff runs.
         inner.status.set(Status::Connecting);
@@ -84,6 +87,7 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
         tracing::warn!(%error, "the room could not say hello");
         return Ending::Lost { synced: false };
     }
+    inner.online.store(true, Ordering::Relaxed);
 
     let mut synced = false;
     loop {
@@ -156,6 +160,10 @@ fn receive(inner: &Inner, bytes: &[u8], synced: &mut bool) -> Option<Vec<u8>> {
     };
     match message {
         SyncMessage::SyncStep1(wanted) => {
+            // Whatever is queued is about to be inside the diff below, which is computed after
+            // this point: dropping it here sends it once, not twice. Anything pushed later is
+            // still sent as its own update.
+            inner.outbox.drain();
             let txn = inner.doc.transact();
             let reply = txn.encode_state_as_update_v1(&wanted);
             Some(Message::Sync(SyncMessage::SyncStep2(reply)).encode_v1())

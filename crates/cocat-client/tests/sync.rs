@@ -10,6 +10,7 @@ use serde_json::Map;
 use support::*;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio::time::timeout;
+use yrs::{ReadTxn, StateVector, Transact};
 
 const ROOM: &str = "aaaaaaaa-1111-4111-8111-111111111111";
 const CATALOGUE: &str = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60";
@@ -149,6 +150,137 @@ async fn the_server_drops_a_viewer_write() {
         "the server forwarded a viewer's write"
     );
     assert!(!has_catalogue(&a, CATALOGUE));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_synced_room_opens_offline_from_its_cache() {
+    let mut server = Server::start().await;
+    let token = seeded(&server, ROOM, "owner@x.org").await;
+    let a_dir = cache();
+    let a = Room::open(a_dir.path(), ROOM).unwrap();
+    a.connect(&server.url(), &token).unwrap();
+    a.wait_synced(WAIT).unwrap();
+    create_catalogue(&a, CATALOGUE, "alpha");
+
+    let b_dir = cache();
+    let b = Room::open(b_dir.path(), ROOM).unwrap();
+    let mut changes = b.changes();
+    b.connect(&server.url(), &token).unwrap();
+    b.wait_synced(WAIT).unwrap();
+    next_batch(&mut changes).await;
+    assert!(has_catalogue(&b, CATALOGUE));
+    b.close();
+    drop(b);
+    server.stop().await;
+
+    let offline = Room::open(b_dir.path(), ROOM).unwrap();
+    assert_eq!(offline.status(), Status::Offline);
+    assert_eq!(
+        names(&offline),
+        ["alpha"],
+        "the cache holds only what the room still had to send"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reconnect_downloads_only_the_diff() {
+    let server = Server::start().await;
+    let token = seeded(&server, ROOM, "owner@x.org").await;
+    let a_dir = cache();
+    let a = Room::open(a_dir.path(), ROOM).unwrap();
+    a.connect(&server.url(), &token).unwrap();
+    a.wait_synced(WAIT).unwrap();
+
+    let events: Vec<String> = (0..1000).map(|n| format!("event-{n}")).collect();
+    write_catalogue_with_events(&a, CATALOGUE, &events);
+
+    let b_dir = cache();
+    let b = Room::open(b_dir.path(), ROOM).unwrap();
+    b.connect(&server.url(), &token).unwrap();
+    b.wait_synced(WAIT).unwrap();
+    assert_eq!(listed(&b, CATALOGUE), 1000);
+    b.close();
+    drop(b);
+
+    // A witness proves the server has the change before the measurement runs, so a zero
+    // difference means the cache was not reused rather than a race.
+    let witness_dir = cache();
+    let witness = Room::open(witness_dir.path(), ROOM).unwrap();
+    let mut changes = witness.changes();
+    witness.connect(&server.url(), &token).unwrap();
+    witness.wait_synced(WAIT).unwrap();
+
+    a.write(|txn| {
+        model::set_event_range(
+            txn,
+            &events[0],
+            Timestamp::parse("2025-02-01 00:00:00").unwrap(),
+            Timestamp::parse("2025-02-01 00:01:00").unwrap(),
+        )
+        .unwrap()
+    });
+    // The first batch is the whole room arriving; the one after it carries the change, which
+    // proves the server applied it before the measurement runs.
+    loop {
+        let batch = next_batch(&mut changes).await;
+        if batch
+            .iter()
+            .any(|change| matches!(change, Change::EventRange { uuid, .. } if uuid == &events[0]))
+        {
+            break;
+        }
+    }
+
+    let cached = Room::open(b_dir.path(), ROOM).unwrap();
+    let state = cached.doc().transact().state_vector();
+    let full = sync_step2_bytes(server.addr, &token, ROOM, StateVector::default()).await;
+    let diff = sync_step2_bytes(server.addr, &token, ROOM, state).await;
+    println!("full state {full} bytes, reconnect after one change {diff} bytes");
+    assert!(diff > 0, "the reconnect asked for nothing: {diff} bytes");
+    assert!(
+        diff * 20 < full,
+        "the reconnect downloaded {diff} of {full} bytes"
+    );
+}
+
+fn write_catalogue_with_events(room: &Room, catalogue: &str, events: &[String]) {
+    let tags = Vec::new();
+    let attributes = Map::new();
+    room.write(|txn| {
+        model::create_catalogue(
+            txn,
+            &NewCatalogue {
+                uuid: catalogue,
+                name: "alpha",
+                author: "a@x.org",
+                tags: &tags,
+                attributes: &attributes,
+            },
+        )
+        .unwrap();
+        for uuid in events {
+            model::create_event(
+                txn,
+                &NewEvent {
+                    uuid,
+                    start: Timestamp::parse("2025-01-31 10:00:00").unwrap(),
+                    stop: Timestamp::parse("2025-01-31 10:01:00").unwrap(),
+                    author: "a@x.org",
+                    tags: &tags,
+                    products: &tags,
+                    rating: None,
+                    attributes: &attributes,
+                },
+            )
+            .unwrap();
+        }
+        model::add_catalogue_events(txn, catalogue, events);
+    });
+}
+
+fn listed(room: &Room, catalogue: &str) -> usize {
+    let txn = room.doc().transact();
+    model::catalogue_events(&txn, catalogue).map_or(0, |events| events.len())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

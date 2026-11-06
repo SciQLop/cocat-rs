@@ -19,6 +19,7 @@ use cocat_core::role::Role;
 use cocat_core::time::Timestamp;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Map;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -27,8 +28,15 @@ use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::Message as Frame;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
 use uuid::Uuid;
+use yrs::StateVector;
 use yrs::Transact;
+use yrs::sync::{Message, SyncMessage};
+use yrs::updates::decoder::Decode;
+use yrs::updates::encoder::Encode;
 
 pub const PASSWORD: &str = "hunter2";
 pub const WAIT: Duration = Duration::from_secs(15);
@@ -265,6 +273,37 @@ pub fn has_event(room: &Room, uuid: &str) -> bool {
 
 pub fn batches(room: &Room) -> broadcast::Receiver<Vec<Change>> {
     room.changes()
+}
+
+/// The bytes the server answers a client whose document holds `state`: its SyncStep2 reply,
+/// which is the full room for an empty state and the difference for any other.
+pub async fn sync_step2_bytes(
+    addr: SocketAddr,
+    token: &str,
+    room_id: &str,
+    state: StateVector,
+) -> usize {
+    let url = format!("ws://{addr}/room/{room_id}");
+    let mut request = url.as_str().into_client_request().unwrap();
+    request.headers_mut().insert(
+        axum::http::header::COOKIE,
+        HeaderValue::from_str(&format!("fastapiusersauth={token}")).unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let hello = Message::Sync(SyncMessage::SyncStep1(state)).encode_v1();
+    socket.send(Frame::Binary(hello.into())).await.unwrap();
+    loop {
+        let frame = timeout(WAIT, socket.next())
+            .await
+            .expect("the server did not answer")
+            .expect("the socket closed before the reply")
+            .expect("the socket broke before the reply");
+        if let Frame::Binary(bytes) = frame
+            && let Ok(Message::Sync(SyncMessage::SyncStep2(update))) = Message::decode_v1(&bytes)
+        {
+            return update.len();
+        }
+    }
 }
 
 pub async fn next_batch(changes: &mut broadcast::Receiver<Vec<Change>>) -> Vec<Change> {

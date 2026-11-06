@@ -2,6 +2,7 @@
 //! with the server.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -72,6 +73,8 @@ pub(crate) struct Inner {
     pub(crate) room_id: String,
     pub(crate) cache: Arc<Mutex<FileRoomStore>>,
     pub(crate) outbox: Arc<Outbox>,
+    /// Whether a session socket is open; only then can a local update be sent at once.
+    pub(crate) online: Arc<AtomicBool>,
     pub(crate) changes: broadcast::Sender<Vec<Change>>,
     pub(crate) pending: Arc<Mutex<Vec<Observation>>>,
     pub(crate) status: StatusCell,
@@ -182,6 +185,7 @@ impl Room {
             room_id: room_id.to_owned(),
             cache: Arc::new(Mutex::new(store)),
             outbox: Arc::new(Outbox::new()),
+            online: Arc::new(AtomicBool::new(false)),
             changes,
             pending: Arc::new(Mutex::new(Vec::new())),
             status: StatusCell::new(),
@@ -256,6 +260,7 @@ impl Room {
         let Some(session) = lock(&self.session).take() else {
             return;
         };
+        self.inner.online.store(false, Ordering::Relaxed);
         session.task.abort();
         // Dropping a runtime blocks until its threads stop, which panics when the room is
         // closed from inside another runtime; the cache is already on disk at this point.
@@ -286,14 +291,16 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
 
     let cache = Arc::clone(&inner.cache);
     let outbox = Arc::clone(&inner.outbox);
+    let online = Arc::clone(&inner.online);
     inner
         .doc
-        .observe_update_v1("cocat-client:cache", move |txn, update| {
-            if is_remote(txn) {
-                // The server already has it, and the cache only holds what the room still
-                // has to send.
-                return;
-            }
+        .observe_update_v1("cocat-client:cache", move |_txn, update| {
+            // Every update is appended, local or remote: the cache is the room's copy on disk,
+            // so a room opens offline with what the server already sent and a reconnect asks
+            // the server only for what changed since.
+            // simplify: the file only ever grows. Rewriting it as one state update when a room
+            // opens and the file is much larger than that (and compaction is wanted back) is
+            // the upgrade path.
             if let Err(error) = lock(&cache).append(Bytes::copy_from_slice(&update.update)) {
                 tracing::error!(%error, "the cache rejected an update");
                 return;
@@ -301,7 +308,11 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
             if let Err(error) = lock(&cache).write() {
                 tracing::error!(%error, "the cache could not write an update");
             }
-            outbox.push(update.update.clone());
+            // Offline work needs no outbox: the handshake diff carries it to the server on
+            // the next connect, so queuing it would only grow without a reader.
+            if online.load(Ordering::Relaxed) {
+                outbox.push(update.update.clone());
+            }
         })
         .map_err(|_| RoomError::Observer)?;
 
