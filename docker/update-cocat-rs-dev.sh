@@ -11,6 +11,14 @@ export XDG_RUNTIME_DIR=/run/user/"$(id -u)"
 IMAGE=registry.lpp.polytechnique.fr/sciqlop/cocat-server-rs:devel
 NAME=cocat-rs-dev
 DATA=/DATA/cocat_rs_dev
+# The whole mail configuration (COCAT_SMTP_*, COCAT_MAIL_FROM), password included, lives in
+# this file, readable by sciqlop only; without it mails are written as files to $DATA/mail.
+MAIL_ENV=~/.config/cocat-rs-dev/mail.env
+if [[ -f $MAIL_ENV ]]; then
+    MAIL=(--env-file "$MAIL_ENV")
+else
+    MAIL=(-e COCAT_MAIL_DIR=/mail -e COCAT_MAIL_FROM=cocat-dev@sciqlop.lpp.polytechnique.fr)
+fi
 
 podman pull "$IMAGE"
 podman rm --ignore "${NAME}_old"
@@ -23,7 +31,7 @@ podman run --ulimit nofile=262144:262144 --network=host -d \
     -e PORT=6575 \
     -e COCAT_PROXY_PREFIX=cocat-dev \
     -e COCAT_PUBLIC_URL=https://sciqlop.lpp.polytechnique.fr \
-    -e COCAT_MAIL_DIR=/mail -e COCAT_MAIL_FROM=cocat-dev@sciqlop.lpp.polytechnique.fr \
+    "${MAIL[@]}" \
     -v "$DATA/storage:/storage:Z" -v "$DATA/db:/db:Z" -v "$DATA/mail:/mail:Z" \
     --stop-timeout 30 \
     --name "$NAME" "$IMAGE"

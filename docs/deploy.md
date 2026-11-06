@@ -78,6 +78,14 @@ so systemd restarts it after a crash.
 - `podman logs cocat-rs-dev` shows no error; `ls /DATA/cocat_rs_dev/mail` holds the mails a
   sign-up or a reset would have sent.
 
+## Sending real mail
+
+Without configuration the dev server writes each mail as a file in `/DATA/cocat_rs_dev/mail`.
+To send through the lab relay, put the whole mail configuration in
+`~sciqlop/.config/cocat-rs-dev/mail.env` (mode 600; `docker/mail.env.example` is the
+template: hermes, port 25 with STARTTLS, the account and the sender address), then run
+`update-cocat-rs-dev` again. The password never appears in the script or the unit file.
+
 ## 4. Refresh the dev data
 
 Run step 2 again. Starting over is quicker than importing on top, and keeps the dev
