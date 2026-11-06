@@ -31,6 +31,7 @@ struct Options {
     nonce: String,
     claim_nonce: Option<String>,
     subject: String,
+    userinfo_subject: Option<String>,
     email: Option<String>,
     issuer: Option<String>,
     audience: Option<String>,
@@ -47,6 +48,7 @@ impl Default for Options {
             nonce: String::new(),
             claim_nonce: None,
             subject: "u1".to_owned(),
+            userinfo_subject: None,
             email: None,
             issuer: None,
             audience: None,
@@ -131,6 +133,10 @@ impl Fake {
 
     pub fn tamper(&self) {
         self.options.lock().unwrap().tamper = true;
+    }
+
+    pub fn userinfo_subject(&self, subject: &str) {
+        self.options.lock().unwrap().userinfo_subject = Some(subject.to_owned());
     }
 
     pub fn profile_email(&self, email: Option<&str>) {
@@ -232,7 +238,10 @@ async fn userinfo(State((_, options)): State<Endpoints>, headers: HeaderMap) -> 
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let options = options.lock().unwrap().clone();
-    let mut profile = json!({ "sub": options.subject });
+    let subject = options
+        .userinfo_subject
+        .unwrap_or_else(|| options.subject.clone());
+    let mut profile = json!({ "sub": subject });
     if let Some(email) = options.profile_email {
         profile["email"] = json!(email);
     }

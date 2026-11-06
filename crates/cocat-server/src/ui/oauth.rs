@@ -11,7 +11,8 @@ use cookie::{Cookie, SameSite};
 use openidconnect::core::{CoreAuthenticationFlow, CoreGenderClaim};
 use openidconnect::{
     AuthorizationCode, ClaimsVerificationError, CsrfToken, EmptyAdditionalClaims, Nonce,
-    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, Scope, TokenResponse, UserInfoClaims,
+    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, Scope, SubjectIdentifier,
+    TokenResponse, UserInfoClaims,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -28,6 +29,7 @@ const LIFETIME_SECONDS: u64 = 600;
 /// short-lived; the session secret does the signing.
 #[derive(Debug, Serialize, Deserialize)]
 struct Pending {
+    provider: String,
     verifier: String,
     nonce: String,
     state: String,
@@ -82,6 +84,7 @@ pub(crate) async fn login(
     }
     let (url, csrf, nonce) = request.set_pkce_challenge(challenge).url();
     let pending = Pending {
+        provider: name.clone(),
         verifier: verifier.secret().to_owned(),
         nonce: nonce.secret().to_owned(),
         state: csrf.secret().to_owned(),
@@ -105,6 +108,9 @@ pub(crate) async fn callback(
     let Some(pending) = pending(&state, &headers) else {
         return bad_state(&state);
     };
+    if pending.provider != name {
+        return bad_state(&state);
+    }
     let Some(provider) = provider(&state, &name) else {
         return cleared(&state, StatusCode::NOT_FOUND.into_response());
     };
@@ -155,7 +161,7 @@ async fn exchange(
     let subject = claims.subject().as_str().to_owned();
     let email = match claims.email() {
         Some(email) => Some(email.as_str().to_owned()),
-        None => user_info_email(provider, &http, token.access_token().secret()).await?,
+        None => user_info_email(provider, &http, token.access_token().secret(), &subject).await?,
     };
     Ok(Identity { subject, email })
 }
@@ -164,12 +170,13 @@ async fn user_info_email(
     provider: &oidc::Provider,
     http: &openidconnect::reqwest::Client,
     access_token: &str,
+    subject: &str,
 ) -> Result<Option<String>, ExchangeError> {
     let claims: UserInfoClaims<EmptyAdditionalClaims, CoreGenderClaim> = provider
         .client
         .user_info(
             openidconnect::AccessToken::new(access_token.to_owned()),
-            None,
+            Some(SubjectIdentifier::new(subject.to_owned())),
         )
         .map_err(|error| ExchangeError::Profile(error.to_string()))?
         .request_async(http)

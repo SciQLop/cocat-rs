@@ -386,3 +386,55 @@ async fn cookie_cleared_after_callback() {
 
     assert!(cookie_cleared(&response, "cocat_oidc"));
 }
+
+#[tokio::test]
+async fn userinfo_must_describe_the_same_subject() {
+    let (fixture, fake) = started(false).await;
+    fake.profile_email(Some(MEMBER));
+    fake.userinfo_subject("someone-else");
+    let attempt = begin(&fixture, &fake).await;
+
+    let done = callback(
+        &fixture,
+        &attempt.cookie,
+        &format!("code=code&state={}", attempt.state),
+    )
+    .await;
+
+    assert_eq!(done.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&done), "/ui/login?error=provider");
+    assert!(
+        db::user_by_email(&fixture.state.pool, MEMBER)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn the_pending_state_is_bound_to_the_provider() {
+    let fake = Fake::start().await;
+    let mut fixture = Fixture::start_public().await;
+    let providers = oidc::discover(
+        vec![fake.config(true, "first"), fake.config(true, "second")],
+        &fixture.state.links,
+    )
+    .await;
+    assert_eq!(providers.len(), 2, "both configs answered discovery");
+    fixture.add_oidc(providers);
+
+    let started = fixture.get("/ui/oauth/first/login", None).await;
+    let target = Url::parse(&location(&started)).unwrap();
+    let state = query(&target)["state"].clone();
+    let cookie = cookie_named(&started, "cocat_oidc").expect("the pending cookie");
+
+    let done = fixture
+        .get_cookies(
+            &format!("/ui/oauth/second/callback?code=code&state={state}"),
+            &[cookie.as_str()],
+        )
+        .await;
+
+    assert_eq!(done.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(done).await.contains("Bad state"));
+}
