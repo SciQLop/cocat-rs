@@ -350,15 +350,15 @@ fn writes_tags_and_ratings_in_the_shape_python_uses() {
     );
     assert_eq!(
         field(&doc, EVENT, "start"),
-        Out::Any(Any::String("2025-01-31 10:00:00".into()))
+        Out::Any(Any::String("2025-01-31 10:00:00+00:00".into()))
     );
     assert_eq!(
         field(&doc, BETA, "start"),
-        Out::Any(Any::String("2025-01-31 11:00:00.123456".into()))
+        Out::Any(Any::String("2025-01-31 11:00:00.123456+00:00".into()))
     );
     assert_eq!(
         field(&doc, BETA, "stop"),
-        Out::Any(Any::String("2025-01-31 11:01:00.654321".into()))
+        Out::Any(Any::String("2025-01-31 11:01:00.654321+00:00".into()))
     );
 }
 

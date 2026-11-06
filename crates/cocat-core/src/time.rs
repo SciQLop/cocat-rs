@@ -1,8 +1,10 @@
 //! Timestamps as cocat stores them.
 //!
 //! Python writes `str(datetime)`: a space between the date and the time, an
-//! optional fraction, and an offset only when the value is timezone-aware. A
-//! value without one is UTC, which is what cocat's own clients assume.
+//! optional fraction, and an offset only when the value is timezone-aware.
+//! Reading accepts both forms, with or without an offset, and a value without
+//! one is UTC. Writing always uses the aware UTC form (`+00:00`): a naive
+//! datetime next to an aware one makes Python raise when the two are compared.
 //!
 //! Reading normalises that text to RFC 3339 and prints back one shape only
 //! (`2025-01-31T00:00:00.000000Z`), so the same instant is the same text on
@@ -20,10 +22,12 @@ use time::macros::format_description;
 
 const OUTPUT: &[BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]Z");
-const PYTHON: &[BorrowedFormatItem<'_>] =
-    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-const PYTHON_FRACTION: &[BorrowedFormatItem<'_>] =
-    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]");
+const PYTHON: &[BorrowedFormatItem<'_>] = format_description!(
+    "[year]-[month]-[day] [hour]:[minute]:[second][offset_hour sign:mandatory]:[offset_minute]"
+);
+const PYTHON_FRACTION: &[BorrowedFormatItem<'_>] = format_description!(
+    "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6][offset_hour sign:mandatory]:[offset_minute]"
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timestamp(OffsetDateTime);
@@ -40,9 +44,10 @@ impl Timestamp {
     }
 
     /// The text Python's `str(datetime)` writes for the same instant: a space between the
-    /// date and the time, and microseconds only when there are any. The offset is left out
-    /// because a timestamp read from a document has already been normalised to UTC, and a
-    /// value without one is UTC for every cocat client.
+    /// date and the time, microseconds only when there are any, and the `+00:00` offset of
+    /// the aware UTC datetime cocat writes. The offset is always written because Python
+    /// raises when a naive datetime is compared with an aware one, so a document mixing
+    /// the two breaks older clients; every instant here is already normalised to UTC.
     pub fn as_text(self) -> Result<String, Format> {
         let format = match self.0.microsecond() {
             0 => PYTHON,
@@ -114,14 +119,25 @@ mod tests {
     }
 
     #[test]
-    fn python_text_has_a_space_and_keeps_microseconds() {
-        let utc = Timestamp::parse("2025-01-31 00:00:00").unwrap();
-        assert_eq!(utc.as_text().unwrap(), "2025-01-31 00:00:00");
+    fn python_text_is_an_aware_utc_datetime() {
+        let utc = Timestamp::parse("2025-01-31 11:00:00").unwrap();
+        assert_eq!(utc.as_text().unwrap(), "2025-01-31 11:00:00+00:00");
 
-        let precise = Timestamp::parse("2025-01-31T01:02:03.0045Z").unwrap();
-        assert_eq!(precise.as_text().unwrap(), "2025-01-31 01:02:03.004500");
+        let precise = Timestamp::parse("2025-01-31T11:00:00.123456Z").unwrap();
+        assert_eq!(
+            precise.as_text().unwrap(),
+            "2025-01-31 11:00:00.123456+00:00"
+        );
 
-        let offset = Timestamp::parse("2025-01-31 02:00:00+02:00").unwrap();
-        assert_eq!(offset.as_text().unwrap(), "2025-01-31 00:00:00");
+        let offset = Timestamp::parse("2025-01-31 13:00:00+02:00").unwrap();
+        assert_eq!(offset.as_text().unwrap(), "2025-01-31 11:00:00+00:00");
+    }
+
+    #[test]
+    fn both_python_forms_read_back_to_the_same_instant() {
+        let naive = Timestamp::parse("2025-01-31 11:00:00").unwrap();
+        let aware = Timestamp::parse("2025-01-31 11:00:00+00:00").unwrap();
+        assert_eq!(naive, aware);
+        assert_eq!(naive.unix_micros(), aware.unix_micros());
     }
 }
