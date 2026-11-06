@@ -134,7 +134,7 @@ const ROWS: &[Row] = &[
     row("GET", "/api/rooms", Guard::SignedIn, Style::Api),
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
     row("PATCH", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
-    row("DELETE", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_direct(),
+    row("DELETE", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
     row(
         "GET",
         "/api/rooms/{room}/members",
@@ -931,8 +931,8 @@ async fn every_route_answers_every_caller_as_the_table_says() {
     let hashed = db::hash_password(PASSWORD).unwrap();
     let mut wrong = Vec::new();
     for row in ROWS {
-        let world = World::start(&providers, &hashed).await;
         for kind in CALLERS {
+            let world = World::start(&providers, &hashed).await;
             let caps = Caps::of(kind);
             let token = world.token(kind);
             let (status, location) = world
