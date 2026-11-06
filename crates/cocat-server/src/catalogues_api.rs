@@ -123,10 +123,10 @@ async fn one(
     params(
         ("room_id" = String, Path, description = "Room id"),
         ("catalogue" = String, Path, description = "Catalogue uuid"),
-        ("start" = Option<String>, Query, description = "Only events that stop at or after this time"),
-        ("stop" = Option<String>, Query, description = "Only events that start at or before this time"),
-        ("limit" = Option<String>, Query, description = "Page size, 1000 by default and 10000 at most"),
-        ("cursor" = Option<String>, Query, description = "The page cursor returned by the previous call"),
+        ("start" = Option<String>, Query, format = DateTime, description = "Only events that stop at or after this time"),
+        ("stop" = Option<String>, Query, format = DateTime, description = "Only events that start at or before this time"),
+        ("limit" = Option<u32>, Query, minimum = 1, maximum = 10000, description = "Page size, 1000 by default and 10000 at most"),
+        ("cursor" = Option<String>, Query, min_length = 1, description = "The page cursor returned by the previous call"),
     ),
     security(("cookie" = [])),
     responses(

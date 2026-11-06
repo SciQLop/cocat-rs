@@ -590,6 +590,28 @@ async fn invitations_are_listed_and_revoked() {
     assert_eq!(listed, json!([]));
 }
 
+#[tokio::test]
+async fn integral_floats_are_accepted_for_invitation_counts() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let token = fixture.token(owner).await;
+    fixture.room(owner, "room-floats", "Floats").await;
+
+    let (status, created) = fixture
+        .post(
+            "/api/rooms/room-floats/invitations",
+            Some(&token),
+            json!({"role": "viewer", "expires_in_days": 7.0, "max_uses": 3.0}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "created: {created}");
+
+    let (_, listed) = fixture
+        .get("/api/rooms/room-floats/invitations", Some(&token))
+        .await;
+    assert_eq!(listed[0]["max_uses"], 3);
+}
+
 /// Python's `InvitationCreate.email: EmailStr | None` refuses these in the schema (422),
 /// before `actions._address` ever runs; only a placeholder is left for the 400 below.
 #[tokio::test]

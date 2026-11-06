@@ -259,7 +259,12 @@ impl TryFrom<String> for Name {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct NameBody {
-    #[schema(value_type = String, min_length = 1, max_length = 200)]
+    #[schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 200,
+        pattern = "^(?!\\s*$)[^\\u0000-\\u001F\\u007F]+$"
+    )]
     name: Name,
 }
 
@@ -331,6 +336,7 @@ async fn list_rooms(
     security(("cookie" = [])),
     responses(
         (status = 201, description = "The room, with the caller as owner", body = RoomOut),
+        (status = 400, description = "The name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 422, description = "The name is empty or too long", body = Detail),
     )
@@ -352,6 +358,7 @@ async fn create_room(
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The renamed room", body = RoomOut),
+        (status = 400, description = "The name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is not the owner", body = Detail),
         (status = 404, description = "No such room", body = Detail),
@@ -433,6 +440,7 @@ async fn list_members(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not change roles", body = Detail),
         (status = 404, description = "No such room or member", body = Detail),
+        (status = 409, description = "The owner keeps the owner role", body = Detail),
         (status = 422, description = "The body is not a role", body = Detail),
     )
 )]
@@ -459,6 +467,8 @@ async fn set_member_role(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not remove this member", body = Detail),
         (status = 404, description = "No such room or member", body = Detail),
+        (status = 409, description = "The owner cannot leave or be removed", body = Detail),
+        (status = 422, description = "The user id is not an account id", body = Detail),
     )
 )]
 async fn remove_member(

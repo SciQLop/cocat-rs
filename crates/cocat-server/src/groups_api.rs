@@ -39,7 +39,12 @@ struct GrantBody {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct NameBody {
-    #[schema(value_type = String, min_length = 1, max_length = 200)]
+    #[schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 200,
+        pattern = "^(?!\\s*$)[^\\u0000-\\u001F\\u007F]+$"
+    )]
     name: Name,
 }
 
@@ -89,7 +94,7 @@ struct MembersOut {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct GroupInvitationCreate {
-    #[schema(value_type = Option<String>, format = Email)]
+    #[schema(value_type = Option<String>, format = Email, min_length = 1)]
     email: Option<Address>,
     #[serde(default = "crate::invitations_api::default_expiry")]
     #[schema(value_type = u32, minimum = 1, maximum = 90)]
@@ -150,6 +155,7 @@ async fn list(
     security(("cookie" = [])),
     responses(
         (status = 201, description = "The new group, with the caller as owner", body = GroupOut),
+        (status = 400, description = "The name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 422, description = "The name is empty or too long", body = Detail),
     )
@@ -174,6 +180,7 @@ async fn create(
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The renamed group", body = GroupOut),
+        (status = 400, description = "The name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is not the owner", body = Detail),
         (status = 404, description = "No such group", body = Detail),
@@ -248,6 +255,8 @@ async fn members(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not remove this member", body = Detail),
         (status = 404, description = "No such group or member", body = Detail),
+        (status = 409, description = "The owner cannot leave the group", body = Detail),
+        (status = 422, description = "The user id is not an account id", body = Detail),
     )
 )]
 async fn remove_member(
@@ -413,6 +422,7 @@ async fn list_invitations(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not revoke it", body = Detail),
         (status = 404, description = "No such group or invitation", body = Detail),
+        (status = 422, description = "The invitation id is not a number", body = Detail),
     )
 )]
 async fn revoke_invitation(

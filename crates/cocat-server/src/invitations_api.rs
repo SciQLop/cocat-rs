@@ -26,7 +26,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct InvitationCreate {
-    #[schema(value_type = Option<String>, format = Email)]
+    #[schema(value_type = Option<String>, format = Email, min_length = 1)]
     email: Option<Address>,
     #[serde(default = "default_role")]
     role: AssignableRole,
@@ -49,31 +49,54 @@ pub(crate) fn default_expiry() -> ExpiresInDays {
 /// FastAPI's `Field(14, ge=1, le=90)`: a schema error, so it is refused while deserializing
 /// and reaches the client as the same 422 as any other invalid body.
 #[derive(Debug, Deserialize)]
-#[serde(try_from = "u32")]
+#[serde(try_from = "Count")]
 pub(crate) struct ExpiresInDays(pub(crate) u32);
 
-impl TryFrom<u32> for ExpiresInDays {
+impl TryFrom<Count> for ExpiresInDays {
     type Error = &'static str;
 
-    fn try_from(days: u32) -> Result<Self, Self::Error> {
-        match days {
-            1..=90 => Ok(Self(days)),
+    fn try_from(count: Count) -> Result<Self, Self::Error> {
+        match count.whole()? {
+            days @ 1..=90 => Ok(Self(days)),
             _ => Err("expires_in_days must be 1 to 90"),
         }
     }
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(try_from = "u32")]
+#[serde(try_from = "Count")]
 pub(crate) struct MaxUses(pub(crate) u32);
 
-impl TryFrom<u32> for MaxUses {
+impl TryFrom<Count> for MaxUses {
     type Error = &'static str;
 
-    fn try_from(uses: u32) -> Result<Self, Self::Error> {
-        match uses {
+    fn try_from(count: Count) -> Result<Self, Self::Error> {
+        match count.whole()? {
             0 => Err("max_uses must be at least 1"),
             uses => Ok(Self(uses)),
+        }
+    }
+}
+
+/// JSON Schema counts `7.0` as an integer and Python's pydantic coerces it, so a number
+/// without a fractional part is accepted whichever way the client wrote it.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Count {
+    Integer(u64),
+    Float(f64),
+}
+
+impl Count {
+    fn whole(self) -> Result<u32, &'static str> {
+        match self {
+            Self::Integer(value) => u32::try_from(value).map_err(|_| "the count is too large"),
+            Self::Float(value)
+                if value.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&value) =>
+            {
+                Ok(value as u32)
+            }
+            Self::Float(_) => Err("the count must be a whole number"),
         }
     }
 }
@@ -188,6 +211,7 @@ async fn list_invitations(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not revoke it", body = Detail),
         (status = 404, description = "No such room or invitation", body = Detail),
+        (status = 422, description = "The invitation id is not a number", body = Detail),
     )
 )]
 async fn revoke_invitation(
