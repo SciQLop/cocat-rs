@@ -21,6 +21,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const PASSWORD: &str = "hunter2";
+const PEER: &str = "203.0.113.7:41000";
 
 /// What a caller is allowed to be. The ladder is capability, not identity: a group owner
 /// reaches the room through the group's grant, so for room routes they sit with the editor.
@@ -726,7 +727,10 @@ impl World {
             }
             None => Body::empty(),
         };
-        let request = builder.body(body).unwrap();
+        let mut request = builder.body(body).unwrap();
+        request.extensions_mut().insert(axum::extract::ConnectInfo(
+            PEER.parse::<std::net::SocketAddr>().unwrap(),
+        ));
         let response = ws::router(self.state.clone())
             .oneshot(request)
             .await
@@ -925,7 +929,12 @@ async fn token(state: &AppState, user: Uuid) -> String {
 #[tokio::test]
 async fn every_route_answers_every_caller_as_the_table_says() {
     let fake = oidc_support::Fake::start().await;
-    let providers = oidc::discover(vec![fake.config(true, "orcid")], &Links::default()).await;
+    let links = Links::from_env(&|name| {
+        (name == "COCAT_PUBLIC_URL").then(|| "http://localhost".to_owned())
+    })
+    .unwrap();
+    let providers = oidc::discover(vec![fake.config(true, "orcid")], &links).await;
+    assert_eq!(providers.len(), 1, "the fake provider answered discovery");
     let hashed = db::hash_password(PASSWORD).await.unwrap();
     let mut wrong = Vec::new();
     for row in ROWS {

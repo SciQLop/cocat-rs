@@ -64,6 +64,11 @@ pub(crate) fn message(query: &HashMap<String, String>) -> &'static str {
         .find(|flag| query.get(*flag).is_some_and(|value| !value.is_empty()))
         .or_else(|| query.get("error").map(String::as_str))
         .unwrap_or_default();
+    text(key)
+}
+
+/// The wording of one key, for pages that show a message without a query flag.
+pub(crate) fn text(key: &str) -> &'static str {
     MESSAGES
         .iter()
         .find(|(name, _)| *name == key)

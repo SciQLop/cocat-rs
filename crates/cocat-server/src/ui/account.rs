@@ -2,8 +2,8 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::State;
-use axum::http::{StatusCode, header};
+use axum::extract::{ConnectInfo, State};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
@@ -65,8 +65,16 @@ pub(crate) async fn page(
 pub(crate) async fn password(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
     Form(form): Form<PasswordForm>,
 ) -> Response {
+    if !state
+        .login_limit
+        .hit("/ui/account/password", &headers, Some(peer))
+    {
+        return too_many(&state, &user).await;
+    }
     if form.new.is_empty() {
         return account_page(&state, &user, EMPTY_PASSWORD).await;
     }
@@ -93,6 +101,13 @@ pub(crate) async fn password(
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// The form's budget is spent: the page says why, with the status the API would answer.
+async fn too_many(state: &AppState, user: &db::User) -> Response {
+    let mut response = account_page(state, user, frame::text("too_many")).await;
+    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+    response
 }
 
 /// The change ended every session, this one included, so the browser is sent back to the

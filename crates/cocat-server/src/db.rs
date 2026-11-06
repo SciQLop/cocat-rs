@@ -323,7 +323,7 @@ pub async fn delete_user(
 /// park an async worker while other requests wait.
 pub async fn hash_password(password: &str) -> Result<String, DbError> {
     let password = password.to_owned();
-    tokio::task::spawn_blocking(move || hash_password_blocking(&password))
+    crate::hashing::off_worker(move || hash_password_blocking(&password))
         .await
         .map_err(DbError::from)?
 }

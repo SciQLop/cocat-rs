@@ -183,6 +183,47 @@ async fn profile_changes_are_rate_limited() {
 }
 
 #[tokio::test]
+async fn ui_password_form_is_rate_limited() {
+    let fixture = Fixture::start().await;
+    let user = fixture.user("form@example.org").await;
+    let form = "current=hunter2&new=hunter2&repeat=hunter2";
+
+    for attempt in 1..=10 {
+        let cookie = format!("fastapiusersauth={}", fixture.token(user).await);
+        assert_eq!(
+            fixture
+                .call(
+                    Method::POST,
+                    "/ui/account/password",
+                    PEER,
+                    Some(cookie),
+                    Some("application/x-www-form-urlencoded"),
+                    Some(form.to_owned()),
+                )
+                .await,
+            StatusCode::SEE_OTHER,
+            "password change {attempt} was refused"
+        );
+    }
+
+    let cookie = format!("fastapiusersauth={}", fixture.token(user).await);
+    assert_eq!(
+        fixture
+            .call(
+                Method::POST,
+                "/ui/account/password",
+                PEER,
+                Some(cookie),
+                Some("application/x-www-form-urlencoded"),
+                Some(form.to_owned()),
+            )
+            .await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "an unlimited password form still spends two hashes per request"
+    );
+}
+
+#[tokio::test]
 async fn routes_have_separate_budgets() {
     let fixture = Fixture::start().await;
     let user = fixture.user("many@example.org").await;

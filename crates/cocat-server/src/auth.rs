@@ -263,7 +263,7 @@ pub async fn login(
 /// worker from answering other requests.
 pub async fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
     let (password, hashed) = (password.to_owned(), hashed.to_owned());
-    let matches = tokio::task::spawn_blocking(move || password_matches(&password, &hashed))
+    let matches = crate::hashing::off_worker(move || password_matches(&password, &hashed))
         .await
         .map_err(AuthError::Task)?;
     if matches {
