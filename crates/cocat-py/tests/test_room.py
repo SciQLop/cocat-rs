@@ -237,3 +237,25 @@ def test_room_event_arrays_of_nothing_are_empty(room):
     assert arrays["uuid"] == []
     assert arrays["start"].tolist() == []
     assert arrays["attributes"] == []
+
+
+def test_an_event_names_the_catalogues_that_list_it(room):
+    first = a_catalogue(room, "zeta")
+    second = a_catalogue(room, "alpha")
+    event = an_event(room)
+    unwatched = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
+
+    first.add_events([event])
+    second.add_events([event, unwatched])
+
+    assert event.catalogues == sorted([first.uuid, second.uuid])
+    assert room.event(event.uuid).catalogues == sorted([first.uuid, second.uuid])
+    assert unwatched.catalogues == [second.uuid]
+
+    first.remove_events([event])
+    assert event.catalogues == [second.uuid]
+
+
+def test_an_event_no_catalogue_lists_has_no_catalogues(room):
+    event = an_event(room)
+    assert event.catalogues == []

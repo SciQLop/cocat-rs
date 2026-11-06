@@ -110,6 +110,28 @@ pub fn event<T: ReadTxn>(txn: &T, uuid: &str) -> Option<EventRecord> {
     record(txn, &map)
 }
 
+/// The uuids of the catalogues that list `uuid`, sorted.
+pub fn event_catalogues<T: ReadTxn>(txn: &T, uuid: &str) -> Vec<String> {
+    let Some(root) = txn.get_map(CATALOGUES) else {
+        return Vec::new();
+    };
+    let mut catalogues: Vec<String> = root
+        .iter(txn)
+        .filter_map(|(key, value)| match value {
+            Out::YMap(map)
+                if membership(&map, txn, "events")
+                    .iter()
+                    .any(|event| event == uuid) =>
+            {
+                Some(key.to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+    catalogues.sort_unstable();
+    catalogues
+}
+
 pub fn catalogue_events<T: ReadTxn>(txn: &T, uuid: &str) -> Option<Vec<EventRecord>> {
     let root = txn.get_map(CATALOGUES)?;
     let Out::YMap(catalogue) = root.get(txn, uuid)? else {

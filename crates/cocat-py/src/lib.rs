@@ -519,6 +519,14 @@ impl Event {
         to_python_map(py, &self.record()?.attributes)
     }
 
+    /// The uuids of the catalogues that list this event, sorted.
+    #[getter]
+    fn catalogues(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        let txn = self.room.doc().transact();
+        let uuids = model::event_catalogues(&txn, &self.uuid);
+        Ok(PyList::new(py, uuids)?.into_any().unbind())
+    }
+
     #[pyo3(signature = (**attributes))]
     fn set_attributes(&self, attributes: Option<&Bound<'_, PyDict>>) -> Result<()> {
         let Some(attributes) = attributes else {
