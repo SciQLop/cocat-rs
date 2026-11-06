@@ -234,6 +234,7 @@ pub async fn login(
         verify_password(password, DUMMY_HASH)?;
         return Err(AuthError::BadCredentials);
     };
+    let needs_rehash = is_bcrypt(&user.hashed_password);
     verify_password(password, &user.hashed_password)?;
     if !user.is_active {
         return Err(AuthError::InactiveUser);
@@ -241,16 +242,34 @@ pub async fn login(
     if requires_verification && !user.is_verified {
         return Err(AuthError::NotVerified);
     }
+    if needs_rehash {
+        // A failed rewrite leaves a hash that still works, so it never blocks the sign-in.
+        let mut updated = user.clone();
+        updated.hashed_password = crate::db::hash_password(password)?;
+        if let Err(error) = db::save_user(pool, &updated).await {
+            tracing::warn!(%error, "cannot rehash a password");
+        }
+    }
     mint_token(user.id, secret, SystemTime::now())
 }
 
-// simplify: only argon2 PHC hashes verify; bcrypt rows from older Python accounts fail
-// PasswordHash::new and read as bad credentials. Phase 1 supports bcrypt or forces a reset.
+/// Older Python accounts hold bcrypt hashes, which the argon2 crate cannot read; they keep
+/// working here and are rewritten as argon2 on the next successful sign-in.
 pub fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
+    if is_bcrypt(hashed) {
+        return match bcrypt::verify(password, hashed) {
+            Ok(true) => Ok(()),
+            _ => Err(AuthError::BadCredentials),
+        };
+    }
     let hash = PasswordHash::new(hashed).map_err(|_| AuthError::BadCredentials)?;
     Argon2::default()
         .verify_password(password.as_bytes(), &hash)
         .map_err(|_| AuthError::BadCredentials)
+}
+
+fn is_bcrypt(hashed: &str) -> bool {
+    hashed.starts_with("$2a$") || hashed.starts_with("$2b$") || hashed.starts_with("$2y$")
 }
 
 pub fn set_cookie(token: &str) -> String {

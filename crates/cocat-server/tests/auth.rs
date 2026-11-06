@@ -277,3 +277,64 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         AuthError::InactiveUser
     ));
 }
+
+const BCRYPT: &str = "$2b$10$0aQWymGJbVF/FHfPIDH/UeRJ9lquQk7rS2dC5egTYDuJwtoSu/sgC";
+
+#[test]
+fn bcrypt_hash_verifies() {
+    auth::verify_password("hunter2", BCRYPT).expect("an older hash still verifies");
+}
+
+#[test]
+fn wrong_password_on_bcrypt_refused() {
+    assert!(matches!(
+        auth::verify_password("wrong", BCRYPT),
+        Err(AuthError::BadCredentials)
+    ));
+}
+
+#[test]
+fn unknown_hash_format_refused() {
+    assert!(matches!(
+        auth::verify_password("hunter2", "not-a-hash"),
+        Err(AuthError::BadCredentials)
+    ));
+}
+
+#[tokio::test]
+async fn bcrypt_login_rehashes_to_argon2() {
+    let (dir, pool) = seeded_db().await;
+    db::create_user(&pool, "user@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let mut user = db::user_by_email(&pool, "user@example.org")
+        .await
+        .unwrap()
+        .expect("the account exists");
+    user.hashed_password = BCRYPT.to_owned();
+    db::save_user(&pool, &user).await.unwrap();
+
+    let state = AppState {
+        rooms: RoomManager::new(dir.path().to_owned(), None),
+        pool,
+        secret: "secret".to_owned(),
+        before_attach: None,
+        login_limit: LoginLimit::default(),
+        mailer: None,
+        links: Links::default(),
+        oidc: Vec::new(),
+    };
+    let response =
+        auth::login_handler(State(state.clone()), form("user@example.org", "hunter2")).await;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let stored = db::user_by_email(&state.pool, "user@example.org")
+        .await
+        .unwrap()
+        .expect("the account exists");
+    assert!(
+        stored.hashed_password.starts_with("$argon2"),
+        "the hash moved to argon2: {}",
+        stored.hashed_password
+    );
+}

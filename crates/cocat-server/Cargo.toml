@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+bcrypt = "0.15"
 argon2 = "0.6"
 askama = "0.16"
 axum = { version = "0.8", features = ["form", "ws"] }
