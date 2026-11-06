@@ -20,7 +20,7 @@ use crate::links::{Links, LinksError};
 use crate::mail::{MailError, Mailer};
 use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
-use crate::{AppState, auth, db, oidc, ws};
+use crate::{AppState, auth, db, import, oidc, ws};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -85,6 +85,19 @@ enum Command {
         #[arg(long = "db_path", default_value = "./test.db")]
         db_path: PathBuf,
     },
+    /// Copy a running Python cocat deployment into this database.
+    Import {
+        #[arg(long = "update-dir", default_value = ".")]
+        update_dir: PathBuf,
+        #[arg(long = "db", default_value = "./test.db")]
+        db_path: PathBuf,
+        #[arg(long)]
+        users: Option<PathBuf>,
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Serve room websockets until SIGINT or SIGTERM.
     Serve {
         #[arg(long, default_value = "localhost")]
@@ -118,6 +131,8 @@ pub enum CliError {
     Links(#[from] LinksError),
     #[error(transparent)]
     Oidc(#[from] oidc::OidcError),
+    #[error(transparent)]
+    Import(#[from] import::ImportError),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -150,6 +165,26 @@ pub async fn run() -> Result<(), CliError> {
             room_id,
             db_path,
         } => set_room_owner(&db_path, &email, &room_id).await,
+        Command::Import {
+            update_dir,
+            db_path,
+            users,
+            owner,
+            dry_run,
+        } => {
+            let summary = import::run(
+                &update_dir,
+                &db_path,
+                users.as_deref(),
+                owner.as_deref(),
+                dry_run,
+            )
+            .await?;
+            for line in summary.lines(dry_run) {
+                println!("{line}");
+            }
+            Ok(())
+        }
         Command::Serve {
             host,
             port,

@@ -9,6 +9,7 @@ pub mod cli;
 pub mod db;
 pub mod groups;
 pub mod groups_api;
+pub mod import;
 pub mod invitations;
 pub mod invitations_api;
 pub mod lifecycle;

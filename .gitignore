@@ -1,4 +1,5 @@
 /target
 *.db
+!crates/cocat-server/tests/fixtures/python/*.db
 __pycache__/
 bench/work/
