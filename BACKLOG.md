@@ -21,6 +21,18 @@ make superuser, delete), rooms (owner, size, members; change owner; delete) and 
 the access matrix apply like every other UI route; every action goes through the existing
 lifecycle functions so open sockets are closed as they are today.
 
+The dashboard's numbers are the basic metrics every deployment gets with no extra setup,
+so a lab running its own server sees them without Grafana.
+
+## Metrics export
+
+The same numbers and more (request latency per route, websocket frames in/out, room open
+time, flush time, rate-limit refusals, quota refusals) exported for Grafana. A Prometheus
+`/metrics` endpoint (the `metrics` + `metrics-exporter-prometheus` crates) is the common
+choice; the LPP Grafana reads Graphite today, so decide at planning time between
+Prometheus, a Graphite push, or both. The endpoint must not be public (superuser, a
+token, or a separate listen address).
+
 ## Leads from the attacker campaign (not proven)
 
 See `docs/superpowers/reports/2026-11-06-phase-4b.md`, "Leads not proven": export blocking
