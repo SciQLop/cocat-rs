@@ -23,7 +23,7 @@ pub(crate) struct ResendForm {
     email: String,
 }
 
-/// A provider that can sign a visitor in; empty until phase 3c adds OAuth.
+/// A provider that can sign a visitor in.
 struct Provider {
     name: String,
     href: String,
@@ -60,7 +60,16 @@ pub(crate) async fn page(
         sign_up: state.links.path("/signup"),
         forgot: state.links.path("/forgot-password"),
         resend_action: state.links.path("/request-verify"),
-        providers: Vec::new(),
+        providers: state
+            .oidc
+            .iter()
+            .map(|provider| Provider {
+                name: provider.config.name.clone(),
+                href: state
+                    .links
+                    .path(&format!("/oauth/{}/login", provider.config.name)),
+            })
+            .collect(),
     })
 }
 

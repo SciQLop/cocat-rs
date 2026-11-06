@@ -5,6 +5,7 @@ mod frame;
 mod groups;
 mod invitation;
 mod login;
+mod oauth;
 mod reset;
 mod room;
 mod rooms;
@@ -90,6 +91,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/confirm-email",
             get(account::confirm_page).post(account::confirm),
         )
+        .route("/oauth/{name}/login", get(oauth::login))
+        .route("/oauth/{name}/callback", get(oauth::callback))
         .route("/static/{file}", get(frame::static_asset))
         .layer(middleware::from_fn_with_state(
             state.clone(),

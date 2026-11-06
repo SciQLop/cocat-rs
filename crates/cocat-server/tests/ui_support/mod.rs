@@ -15,7 +15,7 @@ use cocat_server::links::Links;
 use cocat_server::mail::Mailer;
 use cocat_server::ratelimit::LoginLimit;
 use cocat_server::room::RoomManager;
-use cocat_server::{AppState, accounts, auth, db, ws};
+use cocat_server::{AppState, accounts, auth, db, oidc, ws};
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -41,19 +41,24 @@ pub struct Fixture {
 
 impl Fixture {
     pub async fn start() -> Self {
-        Self::build(Mail::Off).await
+        Self::build(Mail::Off, false).await
+    }
+
+    /// A server that knows its public URL but has no relay, as an OAuth-only deployment does.
+    pub async fn start_public() -> Self {
+        Self::build(Mail::Off, true).await
     }
 
     pub async fn start_with_mail() -> Self {
-        Self::build(Mail::Directory).await
+        Self::build(Mail::Directory, true).await
     }
 
     /// The mailer cannot finish, so any route that waits for it shows up as a slow answer.
     pub async fn start_with_slow_mail() -> Self {
-        Self::build(Mail::Silent).await
+        Self::build(Mail::Silent, true).await
     }
 
-    async fn build(mail: Mail) -> Self {
+    async fn build(mail: Mail, public: bool) -> Self {
         let dir = TempDir::new().unwrap();
         let rooms = dir.path().join("rooms");
         fs::create_dir_all(&rooms).unwrap();
@@ -74,6 +79,8 @@ impl Fixture {
         };
         if mail != Mail::Off {
             env.insert("COCAT_MAIL_FROM", "cocat@example.org".to_owned());
+        }
+        if public || mail != Mail::Off {
             env.insert("COCAT_PUBLIC_URL", PUBLIC_URL.to_owned());
         }
         let lookup = |name: &str| env.get(name).cloned();
@@ -135,7 +142,7 @@ impl Fixture {
     }
 
     pub async fn get(&self, path: &str, token: Option<&str>) -> Response {
-        self.send(Method::GET, path, token, &[], None).await
+        self.send(Method::GET, path, token, &[], None, &[]).await
     }
 
     /// A GET that carries a cookie the previous response set, such as the flash.
@@ -144,12 +151,28 @@ impl Fixture {
     }
 
     pub async fn get_with_cookies(&self, path: &str, token: &str, cookies: &[&str]) -> Response {
-        self.send(Method::GET, path, Some(token), cookies, None)
+        self.send(Method::GET, path, Some(token), cookies, None, &[])
             .await
     }
 
+    /// A GET carrying headers a browser would send, such as `Host` or `Sec-Fetch-Site`.
+    pub async fn get_with_headers(&self, path: &str, headers: &[(&str, &str)]) -> Response {
+        self.send(Method::GET, path, None, &[], None, headers).await
+    }
+
+    /// A GET carrying cookies but no session, as the provider callback starts out.
+    pub async fn get_cookies(&self, path: &str, cookies: &[&str]) -> Response {
+        self.send(Method::GET, path, None, cookies, None, &[]).await
+    }
+
     pub async fn post(&self, path: &str, token: Option<&str>, form: &str) -> Response {
-        self.send(Method::POST, path, token, &[], Some(form)).await
+        self.send(Method::POST, path, token, &[], Some(form), &[])
+            .await
+    }
+
+    /// Attach the providers a browser flow needs, after discovery has answered.
+    pub fn add_oidc(&mut self, providers: Vec<oidc::Provider>) {
+        self.state.oidc = providers;
     }
 
     async fn send(
@@ -159,8 +182,12 @@ impl Fixture {
         token: Option<&str>,
         cookies: &[&str],
         form: Option<&str>,
+        headers: &[(&str, &str)],
     ) -> Response {
         let mut request = Request::builder().method(method).uri(path);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
         let mut jar: Vec<String> = token
             .map(|token| format!("fastapiusersauth={token}"))
             .into_iter()
@@ -286,6 +313,27 @@ pub fn set_cookie(response: &Response) -> Option<String> {
         .headers()
         .get(header::SET_COOKIE)
         .map(|value| value.to_str().unwrap().to_owned())
+}
+
+/// The `name=value` pair of a cookie the response set, ready to send back.
+pub fn cookie_named(response: &Response, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter(|value| value.starts_with(&format!("{name}=")))
+        .find_map(|value| value.split(';').next().map(str::to_owned))
+}
+
+/// Whether the response expires the named cookie, as every callback outcome must.
+pub fn cookie_cleared(response: &Response, name: &str) -> bool {
+    response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| value.starts_with(&format!("{name}=")) && value.contains("Max-Age=0"))
 }
 
 /// The `name=value` pair of the flash cookie a page sets, ready to send back.

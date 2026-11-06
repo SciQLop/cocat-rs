@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
 use crate::ui::frame::{self, Frame, RequireUser};
-use crate::{AppState, accounts, auth, db, mail};
+use crate::{AppState, accounts, auth, db, mail, oidc};
 
 const EMPTY_PASSWORD: &str = "Enter a new password";
 const PASSWORD_MISMATCH: &str = "The new passwords differ";
@@ -60,7 +60,7 @@ pub(crate) async fn page(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
-    account_page(&state, &user, "")
+    account_page(&state, &user, "").await
 }
 
 pub(crate) async fn password(
@@ -69,14 +69,14 @@ pub(crate) async fn password(
     Form(form): Form<PasswordForm>,
 ) -> Response {
     if form.new.is_empty() {
-        return account_page(&state, &user, EMPTY_PASSWORD);
+        return account_page(&state, &user, EMPTY_PASSWORD).await;
     }
     if form.new != form.repeat {
-        return account_page(&state, &user, PASSWORD_MISMATCH);
+        return account_page(&state, &user, PASSWORD_MISMATCH).await;
     }
     if let Err(error) = auth::verify_password(&form.current, &user.hashed_password) {
         return match error {
-            auth::AuthError::BadCredentials => account_page(&state, &user, WRONG_PASSWORD),
+            auth::AuthError::BadCredentials => account_page(&state, &user, WRONG_PASSWORD).await,
             error => {
                 tracing::warn!(%error, "cannot check the current password");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -88,7 +88,7 @@ pub(crate) async fn password(
         ..accounts::Change::default()
     };
     match accounts::change(&state, user, change).await {
-        Ok(updated) => account_page(&state, &updated, CHANGED),
+        Ok(updated) => account_page(&state, &updated, CHANGED).await,
         Err(error) => {
             tracing::warn!(%error, "cannot change a password");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
@@ -142,12 +142,20 @@ pub(crate) async fn confirm(
     }
 }
 
-fn account_page(state: &AppState, user: &db::User, message: &str) -> Response {
+async fn account_page(state: &AppState, user: &db::User, message: &str) -> Response {
+    let signs_in_with = match oidc::linked_providers(&state.pool, user.id).await {
+        Ok(providers) if !providers.is_empty() => Some(providers.join(", ")),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the linked providers");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     frame::page(AccountPage {
         frame: Frame::new(&state.links, Some(user), "Account"),
         email: user.email.clone(),
         confirm_href: mail::is_placeholder(&user.email).then(|| state.links.path("/confirm-email")),
-        signs_in_with: None,
+        signs_in_with,
         action: state.links.path("/account/password"),
         message: message.to_owned(),
     })

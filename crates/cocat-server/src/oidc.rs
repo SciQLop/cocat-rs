@@ -168,13 +168,22 @@ enum ConnectError {
     ),
 }
 
+/// The configuration names the discovery document, which is what Python's files carry; the
+/// crate wants the issuer and appends the same well-known path itself.
+fn issuer(config: &ProviderConfig) -> &str {
+    config
+        .discovery_url
+        .strip_suffix("/.well-known/openid-configuration")
+        .unwrap_or(&config.discovery_url)
+}
+
 async fn connected(
     config: ProviderConfig,
     links: &Links,
     http_client: &openidconnect::reqwest::Client,
 ) -> Result<Provider, ConnectError> {
     let metadata = CoreProviderMetadata::discover_async(
-        IssuerUrl::new(config.discovery_url.clone())?,
+        IssuerUrl::new(issuer(&config).to_owned())?,
         http_client,
     )
     .await?;
