@@ -16,6 +16,7 @@ use cocat_core::role::Role;
 use crate::groups::{self, GroupMember, GroupRole, GroupRow};
 use crate::invitations_api::{self, ExpiresInDays, MaxUses, TokenBody};
 use crate::mail::Address;
+use crate::openapi::Detail;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -43,17 +44,18 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct GrantBody {
     role: AssignableRole,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct NameBody {
+    #[schema(value_type = String, min_length = 1, max_length = 200)]
     name: Name,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct GroupOut {
     id: String,
     name: String,
@@ -70,12 +72,12 @@ impl GroupOut {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct GroupsOut {
     groups: Vec<GroupOut>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct MemberOut {
     user_id: Uuid,
     email: String,
@@ -92,27 +94,30 @@ impl From<GroupMember> for MemberOut {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct MembersOut {
     members: Vec<MemberOut>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct GroupInvitationCreate {
+    #[schema(value_type = Option<String>, format = Email)]
     email: Option<Address>,
     #[serde(default = "crate::invitations_api::default_expiry")]
+    #[schema(value_type = u32, minimum = 1, maximum = 90)]
     expires_in_days: ExpiresInDays,
     #[serde(default)]
+    #[schema(value_type = Option<u32>, minimum = 1)]
     max_uses: Option<MaxUses>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct InvitationCreated {
     id: i64,
     token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct GroupInvitationOut {
     id: i64,
     email: Option<String>,
@@ -121,7 +126,7 @@ struct GroupInvitationOut {
     max_uses: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct GroupPreviewOut {
     group_id: String,
     group_name: String,
@@ -129,6 +134,15 @@ struct GroupPreviewOut {
     expires_at: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/groups",
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's groups", body = GroupsOut),
+        (status = 401, description = "No valid session", body = Detail),
+    )
+)]
 async fn list(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -141,6 +155,17 @@ async fn list(
     Ok(Json(GroupsOut { groups }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/groups",
+    request_body = NameBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The new group, with the caller as owner", body = GroupOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 422, description = "The name is empty or too long", body = Detail),
+    )
+)]
 async fn create(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -153,6 +178,20 @@ async fn create(
     ))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/groups/{group_id}",
+    params(("group_id" = String, Path, description = "Group id")),
+    request_body = NameBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The renamed group", body = GroupOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such group", body = Detail),
+        (status = 422, description = "The name is empty or too long", body = Detail),
+    )
+)]
 async fn rename(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -163,6 +202,18 @@ async fn rename(
     Ok(Json(GroupOut::new(row, GroupRole::Owner.as_str())))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/groups/{group_id}",
+    params(("group_id" = String, Path, description = "Group id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The group is gone"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such group", body = Detail),
+    )
+)]
 async fn remove(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -172,6 +223,17 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/members",
+    params(("group_id" = String, Path, description = "Group id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The group's members and their roles", body = MembersOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such group, or the caller is not a member", body = Detail),
+    )
+)]
 async fn members(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -185,6 +247,21 @@ async fn members(
     Ok(Json(MembersOut { members }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/groups/{group_id}/members/{user_id}",
+    params(
+        ("group_id" = String, Path, description = "Group id"),
+        ("user_id" = Uuid, Path, description = "Member's account id"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The membership is gone"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not remove this member", body = Detail),
+        (status = 404, description = "No such group or member", body = Detail),
+    )
+)]
 async fn remove_member(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -194,6 +271,17 @@ async fn remove_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/groups",
+    params(("room_id" = String, Path, description = "Room id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The groups granted on the room", body = GroupsOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+    )
+)]
 async fn room_groups(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -207,6 +295,23 @@ async fn room_groups(
     Ok(Json(GroupsOut { groups }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/rooms/{room_id}/groups/{group_id}",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("group_id" = String, Path, description = "Group id"),
+    ),
+    request_body = GrantBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The group and the role it now has on the room", body = GroupOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not grant this group", body = Detail),
+        (status = 404, description = "No such room or group", body = Detail),
+        (status = 422, description = "The body is not a role", body = Detail),
+    )
+)]
 async fn grant(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -218,6 +323,21 @@ async fn grant(
     Ok(Json(GroupOut::new(row, granted.as_str())))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/rooms/{room_id}/groups/{group_id}",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("group_id" = String, Path, description = "Group id"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The group no longer has access to the room"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such room or group", body = Detail),
+    )
+)]
 async fn ungrant(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -227,6 +347,21 @@ async fn ungrant(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/groups/{group_id}/invitations",
+    params(("group_id" = String, Path, description = "Group id")),
+    request_body = GroupInvitationCreate,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The new invitation and its token", body = InvitationCreated),
+        (status = 400, description = "The invitation was refused", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not invite", body = Detail),
+        (status = 404, description = "No such group", body = Detail),
+        (status = 422, description = "The body is not an invitation", body = Detail),
+    )
+)]
 async fn create_invitation(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -246,6 +381,18 @@ async fn create_invitation(
     Ok((StatusCode::CREATED, Json(InvitationCreated { id, token })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/invitations",
+    params(("group_id" = String, Path, description = "Group id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The group's live invitations", body = [GroupInvitationOut]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not see the invitations", body = Detail),
+        (status = 404, description = "No such group", body = Detail),
+    )
+)]
 async fn list_invitations(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -265,6 +412,21 @@ async fn list_invitations(
     Ok(Json(invitations))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/groups/{group_id}/invitations/{invitation_id}",
+    params(
+        ("group_id" = String, Path, description = "Group id"),
+        ("invitation_id" = i64, Path, description = "Invitation id"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The invitation is revoked"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not revoke it", body = Detail),
+        (status = 404, description = "No such group or invitation", body = Detail),
+    )
+)]
 async fn revoke_invitation(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -274,6 +436,16 @@ async fn revoke_invitation(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/group-invitations/preview",
+    request_body = TokenBody,
+    responses(
+        (status = 200, description = "The group the token invites to", body = GroupPreviewOut),
+        (status = 400, description = "The token is spent or not ours", body = Detail),
+        (status = 422, description = "The body has no token", body = Detail),
+    )
+)]
 async fn preview_invitation(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<TokenBody>,
@@ -287,6 +459,19 @@ async fn preview_invitation(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/group-invitations/accept",
+    request_body = TokenBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The group, joined", body = GroupOut),
+        (status = 400, description = "The token is spent or not ours", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The invitation does not admit this account", body = Detail),
+        (status = 422, description = "The body has no token", body = Detail),
+    )
+)]
 async fn accept_invitation(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -294,4 +479,19 @@ async fn accept_invitation(
 ) -> Result<Json<GroupOut>, ApiError> {
     let group = groups::accept_invitation(&state, &body.token, &user).await?;
     Ok(Json(GroupOut::new(group, GroupRole::Member.as_str())))
+}
+
+/// The group routes as the OpenAPI document lists them; the live router is `router`.
+pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
+    utoipa_axum::router::OpenApiRouter::new()
+        .routes(utoipa_axum::routes!(list, create))
+        .routes(utoipa_axum::routes!(rename, remove))
+        .routes(utoipa_axum::routes!(members))
+        .routes(utoipa_axum::routes!(remove_member))
+        .routes(utoipa_axum::routes!(list_invitations, create_invitation))
+        .routes(utoipa_axum::routes!(revoke_invitation))
+        .routes(utoipa_axum::routes!(preview_invitation))
+        .routes(utoipa_axum::routes!(accept_invitation))
+        .routes(utoipa_axum::routes!(room_groups))
+        .routes(utoipa_axum::routes!(grant, ungrant))
 }

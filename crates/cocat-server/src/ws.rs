@@ -67,6 +67,7 @@ pub fn router(state: AppState) -> Router {
         .route("/rooms", get(api::legacy_rooms))
         .route("/room/{room_id}/users", get(api::legacy_room_users))
         .nest("/api", api::router())
+        .merge(crate::openapi::router(&state.links))
         .layer(middleware::from_fn(ui::same_site))
         .with_state(state)
 }

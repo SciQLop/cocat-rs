@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::db::{self, DbError};
+use crate::openapi::Detail;
 
 pub const COOKIE_NAME: &str = "fastapiusersauth";
 pub const SECRET_ENV: &str = "COCAT_SECRET";
@@ -79,7 +80,7 @@ pub enum AuthError {
     Db(#[from] DbError),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginForm {
     pub username: String,
     pub password: String,
@@ -319,6 +320,16 @@ fn refused(code: &'static str) -> Response {
         .into_response()
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/jwt/login",
+    request_body(content = LoginForm, content_type = "application/x-www-form-urlencoded"),
+    responses(
+        (status = 204, description = "Signed in: the session cookie is set"),
+        (status = 400, description = "Wrong password, inactive account, or unverified address", body = Detail),
+        (status = 429, description = "Too many attempts", body = Detail),
+    )
+)]
 pub async fn login_handler(State(state): State<AppState>, Form(form): Form<LoginForm>) -> Response {
     match login(
         &state.pool,
@@ -347,6 +358,16 @@ pub async fn login_handler(State(state): State<AppState>, Form(form): Form<Login
 /// Python gates this route on the same verification rule as login (`verified=mail is not
 /// None`), and its authenticator answers 403 when the cookie is good but the account is
 /// unverified, so the two refusals are kept apart.
+#[utoipa::path(
+    post,
+    path = "/auth/jwt/logout",
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "Signed out: the session is ended and the cookie cleared"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The address is not verified", body = Detail),
+    )
+)]
 pub async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Ok(user_id) = authenticate(&state.pool, &headers).await else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -376,4 +397,11 @@ fn secret_path(db_path: &Path) -> PathBuf {
     let mut path = db_path.as_os_str().to_owned();
     path.push(".secret");
     PathBuf::from(path)
+}
+
+/// The session routes as the OpenAPI document lists them; the live router is `ws::router`.
+pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
+    utoipa_axum::router::OpenApiRouter::new()
+        .routes(utoipa_axum::routes!(login_handler))
+        .routes(utoipa_axum::routes!(logout_handler))
 }

@@ -17,6 +17,7 @@ pub mod lifecycle;
 pub mod links;
 pub mod mail;
 pub mod oidc;
+pub mod openapi;
 pub mod ratelimit;
 pub mod room;
 pub mod ui;

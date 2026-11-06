@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, RoomOut};
 use crate::lifecycle::LifecycleError;
 use crate::mail::{Address, is_placeholder};
+use crate::openapi::Detail;
 use crate::{AppState, invitations};
 
 const INVITATION_LIFETIME_DAYS: u32 = 14;
@@ -29,14 +30,17 @@ pub fn router() -> Router<AppState> {
         .route("/invitations/accept", post(accept_invitation))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct InvitationCreate {
+    #[schema(value_type = Option<String>, format = Email)]
     email: Option<Address>,
     #[serde(default = "default_role")]
     role: AssignableRole,
     #[serde(default = "default_expiry")]
+    #[schema(value_type = u32, minimum = 1, maximum = 90)]
     expires_in_days: ExpiresInDays,
     #[serde(default)]
+    #[schema(value_type = Option<u32>, minimum = 1)]
     max_uses: Option<MaxUses>,
 }
 
@@ -80,18 +84,18 @@ impl TryFrom<u32> for MaxUses {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct TokenBody {
     pub(crate) token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct InvitationCreated {
     id: i64,
     token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct InvitationOut {
     id: i64,
     email: Option<String>,
@@ -101,7 +105,7 @@ struct InvitationOut {
     max_uses: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct PreviewOut {
     room_id: String,
     room_name: String,
@@ -110,6 +114,21 @@ struct PreviewOut {
     expires_at: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/invitations",
+    params(("room_id" = String, Path, description = "Room id")),
+    request_body = InvitationCreate,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The new invitation and its token", body = InvitationCreated),
+        (status = 400, description = "The invitation was refused", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not invite", body = Detail),
+        (status = 404, description = "No such room", body = Detail),
+        (status = 422, description = "The body is not an invitation", body = Detail),
+    )
+)]
 async fn create_invitation(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -130,6 +149,18 @@ async fn create_invitation(
     Ok((StatusCode::CREATED, Json(InvitationCreated { id, token })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/invitations",
+    params(("room_id" = String, Path, description = "Room id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The room's live invitations", body = [InvitationOut]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not see the invitations", body = Detail),
+        (status = 404, description = "No such room", body = Detail),
+    )
+)]
 async fn list_invitations(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -150,6 +181,21 @@ async fn list_invitations(
     Ok(Json(invitations))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/rooms/{room_id}/invitations/{invitation_id}",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("invitation_id" = i64, Path, description = "Invitation id"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The invitation is revoked"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not revoke it", body = Detail),
+        (status = 404, description = "No such room or invitation", body = Detail),
+    )
+)]
 async fn revoke_invitation(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -160,6 +206,16 @@ async fn revoke_invitation(
 }
 
 /// No cookie: the guest has to see what the link offers before signing in.
+#[utoipa::path(
+    post,
+    path = "/api/invitations/preview",
+    request_body = TokenBody,
+    responses(
+        (status = 200, description = "The room the token invites to", body = PreviewOut),
+        (status = 400, description = "The token is spent or not ours", body = Detail),
+        (status = 422, description = "The body has no token", body = Detail),
+    )
+)]
 async fn preview_invitation(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<TokenBody>,
@@ -174,6 +230,19 @@ async fn preview_invitation(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/invitations/accept",
+    request_body = TokenBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The room, joined", body = RoomOut),
+        (status = 400, description = "The token is spent or not ours", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The invitation does not admit this account", body = Detail),
+        (status = 422, description = "The body has no token", body = Detail),
+    )
+)]
 async fn accept_invitation(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -191,4 +260,13 @@ pub(crate) fn address(email: Address) -> Result<String, ApiError> {
         return Err(LifecycleError::Invalid("Enter a valid email address").into());
     }
     Ok(email.0)
+}
+
+/// The invitation routes as the OpenAPI document lists them; the live router is `router`.
+pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
+    utoipa_axum::router::OpenApiRouter::new()
+        .routes(utoipa_axum::routes!(list_invitations, create_invitation))
+        .routes(utoipa_axum::routes!(revoke_invitation))
+        .routes(utoipa_axum::routes!(preview_invitation))
+        .routes(utoipa_axum::routes!(accept_invitation))
 }

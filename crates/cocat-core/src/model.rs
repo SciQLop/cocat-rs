@@ -16,25 +16,29 @@ use crate::time::Timestamp;
 pub const CATALOGUES: &str = "catalogues";
 pub const EVENTS: &str = "events";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct CatalogueSummary {
     pub uuid: String,
     pub name: String,
     pub author: String,
     pub tags: Vec<String>,
+    #[schema(value_type = Object)]
     pub attributes: Map<String, Value>,
     pub event_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct EventRecord {
     pub uuid: String,
+    #[schema(value_type = String)]
     pub start: Timestamp,
+    #[schema(value_type = String)]
     pub stop: Timestamp,
     pub author: String,
     pub tags: Vec<String>,
     pub products: Vec<String>,
     pub rating: Option<i64>,
+    #[schema(value_type = Object)]
     pub attributes: Map<String, Value>,
 }
 

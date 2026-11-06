@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::accounts::AccountError;
 use crate::db::{self, DbError, RoomRow};
 use crate::lifecycle::{self, LifecycleError};
+use crate::openapi::Detail;
 use crate::room::RoomError;
 use crate::{AppState, auth};
 
@@ -36,7 +37,7 @@ pub fn router() -> Router<AppState> {
         .merge(crate::invitations_api::router())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct UserRead {
     id: Uuid,
     email: String,
@@ -215,7 +216,7 @@ where
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct RoomOut {
     id: String,
     name: String,
@@ -232,7 +233,7 @@ impl RoomOut {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct MemberOut {
     user_id: Uuid,
     email: String,
@@ -257,13 +258,15 @@ impl TryFrom<String> for Name {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct NameBody {
+    #[schema(value_type = String, min_length = 1, max_length = 200)]
     name: Name,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
 pub(crate) enum AssignableRole {
     Viewer,
     Editor,
@@ -278,20 +281,38 @@ impl From<AssignableRole> for Role {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct RoleBody {
     role: AssignableRole,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct OwnerBody {
     user_id: Uuid,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me",
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's account", body = UserRead),
+        (status = 401, description = "No valid session", body = Detail),
+    )
+)]
 async fn me(CurrentUser(user): CurrentUser) -> Json<UserRead> {
     Json(user.into())
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms",
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's rooms", body = [RoomOut]),
+        (status = 401, description = "No valid session", body = Detail),
+    )
+)]
 async fn list_rooms(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -304,6 +325,17 @@ async fn list_rooms(
     Ok(Json(rooms))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/rooms",
+    request_body = NameBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The room, with the caller as owner", body = RoomOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 422, description = "The name is empty or too long", body = Detail),
+    )
+)]
 async fn create_room(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -313,6 +345,20 @@ async fn create_room(
     Ok((StatusCode::CREATED, Json(RoomOut::new(room, Role::Owner))))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/rooms/{room_id}",
+    params(("room_id" = String, Path, description = "Room id")),
+    request_body = NameBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The renamed room", body = RoomOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such room", body = Detail),
+        (status = 422, description = "The name is empty or too long", body = Detail),
+    )
+)]
 async fn rename_room(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -323,6 +369,18 @@ async fn rename_room(
     Ok(Json(RoomOut::new(room, Role::Owner)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/rooms/{room_id}",
+    params(("room_id" = String, Path, description = "Room id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The room is gone"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such room", body = Detail),
+    )
+)]
 async fn delete_room(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -332,6 +390,17 @@ async fn delete_room(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/members",
+    params(("room_id" = String, Path, description = "Room id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The members and their roles", body = [MemberOut]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+    )
+)]
 async fn list_members(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -350,6 +419,24 @@ async fn list_members(
     Ok(Json(members))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/api/rooms/{room_id}/members/{user_id}",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("user_id" = Uuid, Path, description = "Member's account id"),
+    ),
+    request_body = RoleBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The role is set"),
+        (status = 400, description = "The role cannot be assigned", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not change roles", body = Detail),
+        (status = 404, description = "No such room or member", body = Detail),
+        (status = 422, description = "The body is not a role", body = Detail),
+    )
+)]
 async fn set_member_role(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -360,6 +447,21 @@ async fn set_member_role(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/rooms/{room_id}/members/{user_id}",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("user_id" = Uuid, Path, description = "Member's account id"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The membership is gone"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not remove this member", body = Detail),
+        (status = 404, description = "No such room or member", body = Detail),
+    )
+)]
 async fn remove_member(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -369,6 +471,20 @@ async fn remove_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/owner",
+    params(("room_id" = String, Path, description = "Room id")),
+    request_body = OwnerBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The room has a new owner"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such room or account", body = Detail),
+        (status = 422, description = "The body is not an account id", body = Detail),
+    )
+)]
 async fn transfer_ownership(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -389,17 +505,26 @@ pub(crate) async fn membership(
         .ok_or_else(|| ApiError::NotFound(format!("Room {room_id} not found")))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserRooms {
     rooms: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RoomUsers {
     users: Vec<String>,
 }
 
 /// `GET /rooms`: the ids of the caller's rooms, for the old UI.
+#[utoipa::path(
+    get,
+    path = "/rooms",
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's room ids", body = UserRooms),
+        (status = 401, description = "No valid session", body = Detail),
+    )
+)]
 pub async fn legacy_rooms(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -411,6 +536,17 @@ pub async fn legacy_rooms(
 }
 
 /// `GET /room/{room_id}/users`: the members' emails; a non-member sees 404, not 403.
+#[utoipa::path(
+    get,
+    path = "/room/{room_id}/users",
+    params(("room_id" = String, Path, description = "Room id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The members' addresses", body = RoomUsers),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+    )
+)]
 pub async fn legacy_room_users(
     Path(room_id): Path<String>,
     State(state): State<AppState>,
@@ -424,4 +560,20 @@ pub async fn legacy_room_users(
             .map(|(member, _)| member.email)
             .collect(),
     }))
+}
+
+/// The room routes as the OpenAPI document lists them; the live router is `router`.
+///
+/// `routes!` registers one path per call: every handler in a call shares the same path and
+/// must answer a different method.
+pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
+    utoipa_axum::router::OpenApiRouter::new()
+        .routes(utoipa_axum::routes!(me))
+        .routes(utoipa_axum::routes!(list_rooms, create_room))
+        .routes(utoipa_axum::routes!(rename_room, delete_room))
+        .routes(utoipa_axum::routes!(list_members))
+        .routes(utoipa_axum::routes!(set_member_role, remove_member))
+        .routes(utoipa_axum::routes!(transfer_ownership))
+        .routes(utoipa_axum::routes!(legacy_rooms))
+        .routes(utoipa_axum::routes!(legacy_room_users))
 }

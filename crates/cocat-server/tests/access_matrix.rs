@@ -109,6 +109,8 @@ struct Row {
 }
 
 const ROWS: &[Row] = &[
+    row("GET", "/docs", Guard::Public, Style::Api),
+    row("GET", "/openapi.json", Guard::Public, Style::Api),
     row("POST", "/auth/jwt/login", Guard::Public, Style::Api),
     row("POST", "/auth/jwt/logout", Guard::Public, Style::Api),
     row("GET", "/rooms", Guard::SignedIn, Style::Api),

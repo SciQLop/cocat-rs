@@ -39,6 +39,14 @@ impl Links {
         format!("{}/ui{}", self.prefix, path_and_fragment)
     }
 
+    /// Path of a route outside `/ui`, reverse-proxy prefix included and no origin.
+    ///
+    /// The documentation pages are not part of the UI, so they build their paths through
+    /// this instead of `path`.
+    pub fn app(&self, path_and_fragment: &str) -> String {
+        format!("{}{}", self.prefix, path_and_fragment)
+    }
+
     /// Absolute browser path of a page, reverse-proxy prefix included.
     ///
     /// A link is opened from someone else's browser, so its origin is not the `Host` header

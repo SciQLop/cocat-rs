@@ -19,6 +19,7 @@ use yrs::Transact;
 
 use crate::AppState;
 use crate::api::{ApiError, ApiPath, CurrentUser, membership};
+use crate::openapi::Detail;
 
 const VOTABLE_SUFFIX: &str = ".votable";
 const DEFAULT_LIMIT: usize = 1000;
@@ -34,12 +35,12 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct CatalogueList {
     catalogues: Vec<CatalogueSummary>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct EventsPage {
     events: Vec<EventRecord>,
     next: Option<String>,
@@ -55,6 +56,17 @@ struct EventsQuery {
     cursor: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/catalogues",
+    params(("room_id" = String, Path, description = "Room id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The catalogues in the room", body = CatalogueList),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+    )
+)]
 async fn list(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -71,6 +83,20 @@ async fn list(
     Ok(Json(CatalogueList { catalogues }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/catalogues/{catalogue}",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("catalogue" = String, Path, description = "Catalogue uuid; a .votable suffix answers VOTable XML"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The catalogue, JSON or VOTable XML", body = CatalogueSummary),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, catalogue or membership", body = Detail),
+    )
+)]
 async fn one(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -94,6 +120,25 @@ async fn one(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/catalogues/{catalogue}/events",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("catalogue" = String, Path, description = "Catalogue uuid"),
+        ("start" = Option<String>, Query, description = "Only events that stop at or after this time"),
+        ("stop" = Option<String>, Query, description = "Only events that start at or before this time"),
+        ("limit" = Option<String>, Query, description = "Page size, 1000 by default and 10000 at most"),
+        ("cursor" = Option<String>, Query, description = "The page cursor returned by the previous call"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "One page of events", body = EventsPage),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, catalogue or membership", body = Detail),
+        (status = 422, description = "A query value does not parse", body = Detail),
+    )
+)]
 async fn events(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -234,4 +279,12 @@ fn cursor(text: &str) -> Result<(i128, String), ApiError> {
         .parse()
         .map_err(|_| invalid("the cursor is not valid"))?;
     Ok((micros, uuid.to_owned()))
+}
+
+/// The catalogue routes as the OpenAPI document lists them; the live router is `router`.
+pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
+    utoipa_axum::router::OpenApiRouter::new()
+        .routes(utoipa_axum::routes!(list))
+        .routes(utoipa_axum::routes!(one))
+        .routes(utoipa_axum::routes!(events))
 }

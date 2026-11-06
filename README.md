@@ -284,6 +284,17 @@ deleted or rewritten.
 Session cookies do not survive the move. The Python server signs them and this one keeps
 its own session table, so every user signs in once again after the switch.
 
+## API documentation
+
+`/docs` serves the Swagger UI page and `/openapi.json` the OpenAPI 3.1 document behind it;
+both are public, so the shape of the API can be read before signing in. The document covers
+every JSON route (`/api`, `/auth`, `/users` and the two legacy room routes), names the
+`fastapiusersauth` cookie as its `apiKey` security scheme, and marks the operations that need
+a session. The rendered pages and the websocket handshake are not part of it.
+
+Behind a reverse proxy, `COCAT_PROXY_PREFIX` reaches the document's `servers` entry and the
+URL the page fetches, while the routes themselves stay where the proxy forwards them.
+
 ## Tests
 
 ```sh
