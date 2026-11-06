@@ -82,6 +82,7 @@ pub(crate) struct Header {
     pub rooms_href: String,
     pub groups_href: String,
     pub account_href: String,
+    pub admin_href: Option<String>,
     pub logout_action: String,
 }
 
@@ -110,6 +111,7 @@ impl Frame {
                 rooms_href: links.path("/rooms"),
                 groups_href: links.path("/groups"),
                 account_href: links.path("/account"),
+                admin_href: user.is_superuser.then(|| links.path("/admin")),
                 logout_action: links.path("/logout"),
             }),
             flash: None,

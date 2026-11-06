@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>Administration</h1></div>
+{% include "admin_tabs.html" %}
+
+{% if rooms.is_empty() %}
+<p class="empty">No room yet.</p>
+{% else %}
+<div class="table-wrap">
+<table class="rooms">
+  <thead>
+    <tr><th>Room</th><th>Owner</th><th>Size</th><th>Members</th><th>Live</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
+  </thead>
+  <tbody>
+{% for room in rooms %}
+    <tr>
+      <td class="name" title="Room id: {{ room.id }}">{{ room.name }}</td>
+      <td>{% if room.owner.is_empty() %}<span class="tag danger">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
+      <td>{% include "admin_usage_room.html" %}</td>
+      <td>{{ room.members }} {% if room.members == 1 %}member{% else %}members{% endif %}</td>
+      <td>{% if room.open %}{{ room.clients }} connected{% else %}<span class="muted">closed</span>{% endif %}</td>
+      <td class="actions">
+        <details class="edit menu">
+          <summary>Manage</summary>
+          <div class="menu-items">
+            <form method="post" action="{{ room.limit_action }}" class="inline">
+              <label for="limit-{{ loop.index }}">Size limit (MB)</label>
+              <input id="limit-{{ loop.index }}" name="mb" type="text" inputmode="numeric"
+                     value="{{ room.limit_override }}" placeholder="default">
+              <button type="submit" class="small">Save</button>
+            </form>
+            <form method="post" action="{{ room.owner_action }}" class="inline">
+              <label for="owner-{{ loop.index }}">Owner</label>
+              <input id="owner-{{ loop.index }}" name="email" type="email"
+                     value="{{ room.owner }}" placeholder="email of the new owner">
+              <button type="submit" class="small">Give</button>
+            </form>
+            <form method="post" action="{{ room.delete_action }}" data-confirm="{{ room.delete_confirm }}">
+              <button type="submit" class="danger">Delete room</button>
+            </form>
+          </div>
+        </details>
+      </td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted note">A room's limit replaces the server default of {{ room_default }} for that
+room; the owner's quota still applies. A change applies the next time the room opens.</p>
+{% endif %}
+{% endblock %}

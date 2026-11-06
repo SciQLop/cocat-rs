@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head"><h1>Administration</h1></div>
+{% include "admin_tabs.html" %}
+
+<div class="stats">
+  <section class="stat">
+    <h2>Users</h2>
+    <p class="figure">{{ users.total }}</p>
+    <ul>
+      <li>{{ users.active }} active</li>
+      <li>{{ users.unverified }} unverified</li>
+      <li>{{ users.superusers }} {% if users.superusers == 1 %}administrator{% else %}administrators{% endif %}</li>
+      <li>{{ users.recent }} signed up this week</li>
+    </ul>
+  </section>
+  <section class="stat">
+    <h2>Rooms</h2>
+    <p class="figure">{{ rooms.total }}</p>
+    <ul>
+      <li>{{ rooms.open }} open now</li>
+      <li>{{ rooms.clients }} {% if rooms.clients == 1 %}client{% else %}clients{% endif %} connected</li>
+    </ul>
+  </section>
+  <section class="stat">
+    <h2>Storage</h2>
+    <p class="figure">{{ storage.total }}</p>
+    <ul>
+      <li>{{ server.room_limit }} per room</li>
+      <li>{{ server.owner_limit }} per owner</li>
+    </ul>
+  </section>
+  <section class="stat">
+    <h2>Server</h2>
+    <p class="figure">{{ server.memory }}</p>
+    <ul>
+      <li>resident memory</li>
+      <li>up {{ server.uptime }}</li>
+      <li>version {{ server.version }}</li>
+    </ul>
+  </section>
+</div>
+
+<h2>Largest rooms</h2>
+{% if largest.is_empty() %}
+<p class="empty">No room has stored anything yet.</p>
+{% else %}
+<div class="table-wrap">
+<table class="rooms">
+  <thead><tr><th>Room</th><th>Owner</th><th>Size</th><th>Live</th></tr></thead>
+  <tbody>
+{% for room in largest %}
+    <tr>
+      <td class="name" title="Room id: {{ room.id }}">{{ room.name }}</td>
+      <td>{% if room.owner.is_empty() %}<span class="muted">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
+      <td>{% include "admin_usage_room.html" %}</td>
+      <td>{% if room.open %}{{ room.clients }} connected{% else %}<span class="muted">closed</span>{% endif %}</td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<h2>Owners close to their quota</h2>
+{% if near_quota.is_empty() %}
+<p class="empty">Every owner is below 80 % of their quota.</p>
+{% else %}
+<div class="table-wrap">
+<table class="users">
+  <thead><tr><th>Owner</th><th>Rooms</th><th>Storage</th></tr></thead>
+  <tbody>
+{% for user in near_quota %}
+    <tr>
+      <td class="email">{{ user.email }}</td>
+      <td>{{ user.rooms_owned }} owned</td>
+      <td>{% include "admin_usage_user.html" %}</td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

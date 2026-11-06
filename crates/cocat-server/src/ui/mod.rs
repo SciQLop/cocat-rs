@@ -1,6 +1,7 @@
 //! The server-rendered web UI under `/ui`.
 
 mod account;
+mod admin;
 mod frame;
 mod groups;
 mod invitation;
@@ -88,6 +89,15 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/groups/{group_id}/invitations/{invitation}/revoke",
             post(groups::revoke),
         )
+        .route("/admin", get(admin::overview))
+        .route("/admin/users", get(admin::users))
+        .route("/admin/users/{user}/flag", post(admin::set_flag))
+        .route("/admin/users/{user}/quota", post(admin::set_quota))
+        .route("/admin/users/{user}/delete", post(admin::delete_user))
+        .route("/admin/rooms", get(admin::rooms))
+        .route("/admin/rooms/{room}/limit", post(admin::set_limit))
+        .route("/admin/rooms/{room}/owner", post(admin::set_owner))
+        .route("/admin/rooms/{room}/delete", post(admin::delete_room))
         .route("/account", get(account::page))
         .route("/account/password", post(account::password))
         .route(

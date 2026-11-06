@@ -18,7 +18,8 @@
       <a href="{{ header.rooms_href }}">My rooms</a>
       <a href="{{ header.groups_href }}">My groups</a>
       <a href="{{ header.account_href }}">Account</a>
-    </nav>
+{% match header.admin_href %}{% when Some with (href) %}      <a href="{{ href }}">Admin</a>
+{% when None %}{% endmatch %}    </nav>
     <div class="who">
       <span class="email">{{ header.email }}</span>
       <form method="post" action="{{ header.logout_action }}">

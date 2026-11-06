@@ -494,6 +494,45 @@ const ROWS: &[Row] = &[
         Style::UiAction,
     ),
     row("GET", "/ui/static/{file}", Guard::Public, Style::UiPage),
+    row("GET", "/ui/admin", Guard::Superuser, Style::UiPage),
+    row("GET", "/ui/admin/users", Guard::Superuser, Style::UiPage),
+    row("GET", "/ui/admin/rooms", Guard::Superuser, Style::UiPage),
+    row(
+        "POST",
+        "/ui/admin/users/{user}/flag",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
+        "/ui/admin/users/{user}/quota",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
+        "/ui/admin/users/{user}/delete",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
+        "/ui/admin/rooms/{room}/limit",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
+        "/ui/admin/rooms/{room}/owner",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
+        "/ui/admin/rooms/{room}/delete",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
 ];
 
 const fn row(method: &'static str, path: &'static str, guard: Guard, style: Style) -> Row {
@@ -831,6 +870,15 @@ impl World {
                 format!("current={PASSWORD}&new=another-password&repeat=another-password"),
             ),
             ("POST", "/ui/confirm-email") => (form, "email=fresh@example.org".to_owned()),
+            ("POST", "/ui/admin/users/{user}/flag") => {
+                (form, "flag=verified&value=true".to_owned())
+            }
+            ("POST", "/ui/admin/users/{user}/quota" | "/ui/admin/rooms/{room}/limit") => {
+                (form, "mb=100".to_owned())
+            }
+            ("POST", "/ui/admin/rooms/{room}/owner") => {
+                (form, "email=owner%40example.org".to_owned())
+            }
             ("POST", _) => (form, String::new()),
             _ => return None,
         };
