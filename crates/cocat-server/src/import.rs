@@ -10,6 +10,11 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 
+use cocat_core::room_id;
+use time::format_description::BorrowedFormatItem;
+use time::macros::format_description;
+use time::{OffsetDateTime, PrimitiveDateTime};
+
 use crate::db;
 
 #[derive(Debug, Error)]
@@ -40,6 +45,8 @@ pub enum ImportError {
     UnknownOwner(String),
     #[error("these addresses already belong to another account: {}", .0.join(", "))]
     Conflicts(Vec<String>),
+    #[error("cannot read the timestamp {text:?}: {reason}")]
+    Timestamp { text: String, reason: String },
 }
 
 /// What an import did, or would do under `--dry-run`.
@@ -280,7 +287,7 @@ async fn copy_rooms(
         )
         .bind(row.get::<String, _>("id"))
         .bind(row.get::<String, _>("name"))
-        .bind(row.get::<String, _>("created_at"))
+        .bind(space_time(&row.get::<String, _>("created_at"))?)
         .bind(row.get::<Option<String>, _>("created_by"))
         .execute(&mut **tx)
         .await?;
@@ -314,7 +321,7 @@ async fn copy_rooms(
         .bind(row.get::<String, _>("role"))
         .bind(row.get::<Option<String>, _>("email"))
         .bind(row.get::<Option<String>, _>("created_by"))
-        .bind(row.get::<String, _>("expires_at"))
+        .bind(instant(&row.get::<String, _>("expires_at"))?)
         .bind(row.get::<bool, _>("revoked"))
         .bind(row.get::<Option<i64>, _>("max_uses"))
         .bind(row.get::<i64, _>("uses"))
@@ -371,7 +378,7 @@ async fn import_room_files(
         let Some(room_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        if uuid::Uuid::parse_str(room_id).is_err() {
+        if room_id::validate_room_id(room_id).is_err() {
             continue;
         }
         if let Err(error) = cocat_core::store::FileRoomStore::open(update_dir, room_id) {
@@ -478,4 +485,44 @@ fn python_error(path: &Path, source: sqlx::Error) -> ImportError {
         path: path.to_path_buf(),
         source,
     }
+}
+
+/// Python writes naive UTC timestamps as `YYYY-MM-DD HH:MM:SS.ffffff`; every copied value is
+/// parsed here and written in the form its Rust column already holds.
+fn python_time(text: &str) -> Result<OffsetDateTime, ImportError> {
+    const WITH_FRACTION: &[BorrowedFormatItem<'static>] =
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond]");
+    const PLAIN: &[BorrowedFormatItem<'static>] =
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    let parsed = PrimitiveDateTime::parse(text, WITH_FRACTION)
+        .or_else(|_| PrimitiveDateTime::parse(text, PLAIN))
+        .map_err(|error| ImportError::Timestamp {
+            text: text.to_owned(),
+            reason: error.to_string(),
+        })?;
+    Ok(parsed.assume_utc())
+}
+
+/// The space-separated form SQLite's `CURRENT_TIMESTAMP` writes for `created_at` and `joined_at`.
+fn space_time(text: &str) -> Result<String, ImportError> {
+    const SPACE: &[BorrowedFormatItem<'static>] =
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    python_time(text)?
+        .format(SPACE)
+        .map_err(|error| ImportError::Timestamp {
+            text: text.to_owned(),
+            reason: error.to_string(),
+        })
+}
+
+/// The form `strftime('%Y-%m-%dT%H:%M:%fZ')` writes, which invitation comparisons use.
+fn instant(text: &str) -> Result<String, ImportError> {
+    const INSTANT: &[BorrowedFormatItem<'static>] =
+        format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z");
+    python_time(text)?
+        .format(INSTANT)
+        .map_err(|error| ImportError::Timestamp {
+            text: text.to_owned(),
+            reason: error.to_string(),
+        })
 }

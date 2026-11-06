@@ -7,6 +7,8 @@ use cocat_server::room::RoomManager;
 use cocat_server::{AppState, db, import, invitations, links::Links, ratelimit::LoginLimit};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
+use time::OffsetDateTime;
+use time::macros::format_description;
 use uuid::Uuid;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/python");
@@ -383,4 +385,75 @@ async fn python_db_opened_read_only() {
         std::fs::metadata(&python).unwrap().modified().unwrap(),
         modified
     );
+}
+
+#[tokio::test]
+async fn a_named_room_file_imports() {
+    let fixture = Fixture::start().await;
+    let owner = db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let (mut store, _records) = FileRoomStore::open(&fixture.updates, "lab").unwrap();
+    store.append(Bytes::from_static(b"a room file")).unwrap();
+    store.write().unwrap();
+    drop(store);
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.rooms, 1);
+    assert_eq!(
+        db::role_in(&fixture.pool, "lab", owner).await.unwrap(),
+        Some(Role::Owner)
+    );
+}
+
+#[tokio::test]
+async fn an_invitation_expiring_soon_is_accepted() {
+    let fixture = Fixture::start().await;
+    let python = fixture.dir.path().join("soon.db");
+    std::fs::copy(Fixture::rooms_model(), &python).unwrap();
+    let pool = SqlitePool::connect(&format!("sqlite://{}", python.display()))
+        .await
+        .unwrap();
+    let soon = OffsetDateTime::now_utc() + time::Duration::hours(1);
+    let text = soon
+        .format(format_description!(
+            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond]"
+        ))
+        .unwrap();
+    sqlx::query("UPDATE invitation SET expires_at = ?")
+        .bind(text)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        Some(&python),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    let carol = db::create_user(&fixture.pool, "carol@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let carol_user = db::user_by_id(&fixture.pool, carol).await.unwrap().unwrap();
+
+    let (room, _role) =
+        invitations::accept(&fixture.state(), "python-invitation-token", &carol_user)
+            .await
+            .expect("an invitation that expires in an hour is still usable");
+
+    assert_eq!(room.id, "lab2");
 }
