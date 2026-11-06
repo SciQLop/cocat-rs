@@ -907,13 +907,22 @@ fn handle_frame(
         return None;
     }
     let role = clients.get(&client)?.role;
-    let message = match Message::decode_v1(&frame) {
-        Ok(message) => message,
-        Err(error) => {
-            tracing::warn!(%client, %error, "ignoring an undecodable frame");
-            return None;
-        }
-    };
+    // yrs asserts inside its decoders on values it cannot represent (a state vector naming a
+    // client id above its mask, for one), so a decoder panic is another undecodable frame
+    // rather than the end of the room thread.
+    let message =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Message::decode_v1(&frame)))
+        {
+            Ok(Ok(message)) => message,
+            Ok(Err(error)) => {
+                tracing::warn!(%client, %error, "ignoring an undecodable frame");
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!(%client, "ignoring a frame the decoder cannot represent");
+                return None;
+            }
+        };
     let Message::Sync(message) = message else {
         return None;
     };
@@ -978,13 +987,19 @@ fn handle_update(doc: &Doc, store: &mut FileRoomStore, payload: Vec<u8>) -> Opti
 }
 
 fn apply(doc: &Doc, payload: &[u8]) -> bool {
-    let update = match Update::decode_v1(payload) {
-        Ok(update) => update,
-        Err(error) => {
-            tracing::warn!(%error, "skipping a record that is not a v1 update");
-            return false;
-        }
-    };
+    let update =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Update::decode_v1(payload)))
+        {
+            Ok(Ok(update)) => update,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "skipping a record that is not a v1 update");
+                return false;
+            }
+            Err(_) => {
+                tracing::warn!("skipping a record the decoder cannot represent");
+                return false;
+            }
+        };
     match doc.transact_mut().apply_update(update) {
         Ok(()) => true,
         Err(error) => {
@@ -1035,6 +1050,41 @@ mod tests {
             commands: Some(receiver),
             backlog: VecDeque::new(),
         }
+    }
+
+    #[test]
+    fn a_frame_that_breaks_the_decoder_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "lab").unwrap();
+        let doc = Doc::new();
+        let mut clients = HashMap::new();
+        let (out, _inbox) = outbox();
+        clients.insert(
+            7,
+            Client {
+                user: Uuid::new_v4(),
+                role: Role::Viewer,
+                out,
+            },
+        );
+
+        let vector = [
+            0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01, 0,
+        ];
+        let mut hostile = vec![0u8, 0u8, vector.len() as u8];
+        hostile.extend_from_slice(&vector);
+
+        assert!(
+            handle_frame(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut clients,
+                7,
+                Bytes::from(hostile)
+            )
+            .is_none()
+        );
     }
 
     #[test]
