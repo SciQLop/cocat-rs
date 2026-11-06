@@ -4,11 +4,13 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::io;
 
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
-use serde_json::Value;
+use quick_xml::escape::{resolve_predefined_entity, unescape};
+use quick_xml::events::{BytesDecl, BytesEnd, BytesRef, BytesStart, BytesText, Event};
+use quick_xml::{Reader, Writer, XmlVersion};
+use serde_json::{Map as JsonMap, Value};
 
 use crate::model::{CatalogueSummary, EventRecord};
+use crate::time::Timestamp;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VotableError {
@@ -18,6 +20,14 @@ pub enum VotableError {
     MixedTypes(String),
     #[error("Export VOTable: cannot write the document: {0}")]
     Encoding(#[from] io::Error),
+    #[error("Import VOTable: the document is not readable: {0}")]
+    Malformed(String),
+    #[error("Import VOTable: cannot import field: {0}")]
+    UnknownField(String),
+    #[error("Import VOTable: required fields are missing for table {0}")]
+    MissingTimes(String),
+    #[error("Import VOTable: cannot read the value {1} of field {0}")]
+    BadValue(String, String),
 }
 
 const START_FIELD: [(&str, &str); 6] = [
@@ -42,11 +52,20 @@ pub fn export(
     catalogue: &CatalogueSummary,
     events: &[EventRecord],
 ) -> Result<String, VotableError> {
-    let attributes = attribute_kinds(events)?;
-    let mut ordered: Vec<&EventRecord> = events.iter().collect();
-    ordered.sort_by(|left, right| {
-        (left.start, left.uuid.as_str()).cmp(&(right.start, right.uuid.as_str()))
-    });
+    export_many(&[(catalogue, events)])
+}
+
+pub fn export_many(
+    catalogues: &[(&CatalogueSummary, &[EventRecord])],
+) -> Result<String, VotableError> {
+    let mut prepared = Vec::with_capacity(catalogues.len());
+    for (catalogue, events) in catalogues {
+        prepared.push(Prepared {
+            catalogue,
+            kinds: attribute_kinds(events)?,
+            events: in_time_order(events),
+        });
+    }
 
     let mut writer = Writer::new(Vec::with_capacity(2048));
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))?;
@@ -58,31 +77,55 @@ pub fn export(
             ("xmlns", "http://www.ivoa.net/xml/VOTable/v1.3"),
         ],
     )?;
-    text(
-        &mut writer,
-        "DESCRIPTION",
-        &format!("Contact:{};Name:{}", catalogue.author, catalogue.name),
-    )?;
-    open(&mut writer, "RESOURCE", &[])?;
-    open(
-        &mut writer,
-        "TABLE",
-        &[("name", &catalogue.name.replace(' ', "_"))],
-    )?;
-    write_fields(&mut writer, &attributes)?;
-    open(&mut writer, "DATA", &[])?;
-    open(&mut writer, "TABLEDATA", &[])?;
-    for event in &ordered {
-        write_row(&mut writer, event, &attributes)?;
+    if let [one] = prepared.as_slice() {
+        text(
+            &mut writer,
+            "DESCRIPTION",
+            &format!(
+                "Contact:{};Name:{}",
+                one.catalogue.author, one.catalogue.name
+            ),
+        )?;
     }
-    close(&mut writer, "TABLEDATA")?;
-    close(&mut writer, "DATA")?;
-    close(&mut writer, "TABLE")?;
+    open(&mut writer, "RESOURCE", &[])?;
+    for table in &prepared {
+        open(
+            &mut writer,
+            "TABLE",
+            &[("name", &table.catalogue.name.replace(' ', "_"))],
+        )?;
+        write_fields(&mut writer, &table.kinds)?;
+        open(&mut writer, "DATA", &[])?;
+        open(&mut writer, "TABLEDATA", &[])?;
+        for event in &table.events {
+            write_row(&mut writer, event, &table.kinds)?;
+        }
+        close(&mut writer, "TABLEDATA")?;
+        close(&mut writer, "DATA")?;
+        close(&mut writer, "TABLE")?;
+    }
     close(&mut writer, "RESOURCE")?;
     close(&mut writer, "VOTABLE")?;
 
     let bytes = writer.into_inner();
     String::from_utf8(bytes).map_err(|error| VotableError::Encoding(io::Error::other(error)))
+}
+
+/// One catalogue and the event table written for it.
+struct Prepared<'a> {
+    catalogue: &'a CatalogueSummary,
+    kinds: Vec<(String, Kind)>,
+    events: Vec<&'a EventRecord>,
+}
+
+/// Python writes the rows in catalogue order; ordering by start makes the export stable
+/// whatever order the set-like membership gives us.
+fn in_time_order(events: &[EventRecord]) -> Vec<&EventRecord> {
+    let mut ordered: Vec<&EventRecord> = events.iter().collect();
+    ordered.sort_by(|left, right| {
+        (left.start, left.uuid.as_str()).cmp(&(right.start, right.uuid.as_str()))
+    });
+    ordered
 }
 
 fn open(writer: &mut Writer<Vec<u8>>, name: &str, attributes: &[(&str, &str)]) -> io::Result<()> {
@@ -276,13 +319,355 @@ fn sanitise(text: &str) -> Cow<'_, str> {
     )
 }
 
+/// A VOTable read back into the parts an importer needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Imported {
+    /// The `Contact` of the description, when the file names one.
+    pub author: Option<String>,
+    /// The `Name` of the description, when the file names one.
+    pub name: Option<String>,
+    pub tables: Vec<ImportedTable>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedTable {
+    /// The `TABLE` name, as written.
+    pub name: String,
+    pub events: Vec<ImportedEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedEvent {
+    pub uuid: String,
+    pub start: Timestamp,
+    pub stop: Timestamp,
+    pub author: String,
+    pub tags: Vec<String>,
+    pub products: Vec<String>,
+    pub rating: Option<i64>,
+    pub attributes: JsonMap<String, Value>,
+}
+
+/// Fields cocat writes itself, matched by name as Python's importer does.
+const STANDARD_FIELDS: [&str; 7] = [
+    "Start Time",
+    "Stop Time",
+    "author",
+    "uuid",
+    "tags",
+    "products",
+    "rating",
+];
+
+const DEFAULT_AUTHOR: &str = "VOTable Import";
+
+pub fn import(xml: &str) -> Result<Imported, VotableError> {
+    let (description, tables) = read(xml)?;
+    let (author, name) = description_parts(&description);
+    let mut imported = Vec::with_capacity(tables.len());
+    for table in tables {
+        imported.push(ImportedTable {
+            name: table.name.clone(),
+            events: events(&table)?,
+        });
+    }
+    Ok(Imported {
+        author,
+        name,
+        tables: imported,
+    })
+}
+
+struct Table {
+    name: String,
+    fields: Vec<Field>,
+    rows: Vec<Vec<String>>,
+}
+
+impl Table {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            fields: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+}
+
+struct Field {
+    name: String,
+    datatype: String,
+    utype: String,
+}
+
+fn read(xml: &str) -> Result<(String, Vec<Table>), VotableError> {
+    let mut reader = Reader::from_str(xml);
+    let mut description = String::new();
+    let mut in_description = false;
+    let mut cell: Option<String> = None;
+    let mut row: Option<Vec<String>> = None;
+    let mut table: Option<Table> = None;
+    let mut tables = Vec::new();
+
+    loop {
+        match reader.read_event().map_err(malformed)? {
+            Event::Start(element) => match element.name().as_ref() {
+                "DESCRIPTION" => in_description = true,
+                "TABLE" => {
+                    table = Some(Table::new(attribute(&element, "name").unwrap_or_default()));
+                }
+                "FIELD" => {
+                    if let Some(table) = table.as_mut() {
+                        table.fields.push(read_field(&element));
+                    }
+                }
+                "TR" => row = Some(Vec::new()),
+                "TD" => cell = Some(String::new()),
+                _ => {}
+            },
+            Event::Empty(element) => {
+                if element.name().as_ref() == "FIELD"
+                    && let Some(table) = table.as_mut()
+                {
+                    table.fields.push(read_field(&element));
+                }
+            }
+            Event::Text(text) => {
+                push_text(
+                    &mut description,
+                    &mut cell,
+                    in_description,
+                    &text_content(&text)?,
+                );
+            }
+            Event::GeneralRef(reference) => {
+                push_text(
+                    &mut description,
+                    &mut cell,
+                    in_description,
+                    &reference_text(&reference),
+                );
+            }
+            Event::End(element) => match element.name().as_ref() {
+                "DESCRIPTION" => in_description = false,
+                "TD" => {
+                    if let (Some(done), Some(row)) = (cell.take(), row.as_mut()) {
+                        row.push(done.trim().to_owned());
+                    }
+                }
+                "TR" => {
+                    if let (Some(done), Some(table)) = (row.take(), table.as_mut()) {
+                        table.rows.push(done);
+                    }
+                }
+                "TABLE" => {
+                    if let Some(done) = table.take() {
+                        tables.push(done);
+                    }
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+
+    Ok((description, tables))
+}
+
+fn push_text(
+    description: &mut String,
+    cell: &mut Option<String>,
+    in_description: bool,
+    text: &str,
+) {
+    if in_description {
+        description.push_str(text);
+    }
+    if let Some(cell) = cell.as_mut() {
+        cell.push_str(text);
+    }
+}
+
+/// The reader reports `&quot;` and friends as their own event, so the text of a cell is the
+/// concatenation of the text events and of the references between them.
+fn reference_text(reference: &BytesRef<'_>) -> String {
+    if let Some(resolved) = resolve_predefined_entity(reference.as_ref()) {
+        return resolved.to_owned();
+    }
+    reference
+        .resolve_char_ref()
+        .ok()
+        .flatten()
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+fn malformed(error: impl std::fmt::Display) -> VotableError {
+    VotableError::Malformed(error.to_string())
+}
+
+fn text_content(text: &BytesText<'_>) -> Result<String, VotableError> {
+    unescape(text.as_ref())
+        .map(Cow::into_owned)
+        .map_err(malformed)
+}
+
+fn attribute(element: &BytesStart<'_>, key: &str) -> Option<String> {
+    element
+        .attributes()
+        .flatten()
+        .find(|attribute| attribute.key.as_ref() == key)
+        .and_then(|attribute| attribute.normalized_value(XmlVersion::Implicit1_0).ok())
+        .map(Cow::into_owned)
+}
+
+fn read_field(element: &BytesStart<'_>) -> Field {
+    Field {
+        name: attribute(element, "name").unwrap_or_default(),
+        datatype: attribute(element, "datatype").unwrap_or_default(),
+        utype: attribute(element, "utype").unwrap_or_default(),
+    }
+}
+
+fn description_parts(description: &str) -> (Option<String>, Option<String>) {
+    let mut author = None;
+    let mut name = None;
+    for part in description.split(';') {
+        if let Some((key, value)) = part.split_once(':') {
+            match key.trim() {
+                "Contact" => author = Some(value.trim().to_owned()),
+                "Name" => name = Some(value.trim().to_owned()),
+                _ => {}
+            }
+        }
+    }
+    (author, name)
+}
+
+fn events(table: &Table) -> Result<Vec<ImportedEvent>, VotableError> {
+    let named = |wanted: &str| table.fields.iter().any(|field| field.name == wanted);
+    if !named(STANDARD_FIELDS[0]) || !named(STANDARD_FIELDS[1]) {
+        return Err(VotableError::MissingTimes(table.name.clone()));
+    }
+    for field in &table.fields {
+        if !STANDARD_FIELDS.contains(&field.name.as_str()) && !Kind::importable(field) {
+            return Err(VotableError::UnknownField(field.name.clone()));
+        }
+    }
+
+    let mut imported = Vec::with_capacity(table.rows.len());
+    for row in &table.rows {
+        imported.push(event(table, row)?);
+    }
+    Ok(imported)
+}
+
+fn event(table: &Table, row: &[String]) -> Result<ImportedEvent, VotableError> {
+    let mut uuid = String::new();
+    let mut author = DEFAULT_AUTHOR.to_owned();
+    let mut start = None;
+    let mut stop = None;
+    let mut tags = Vec::new();
+    let mut products = Vec::new();
+    let mut rating = None;
+    let mut attributes = JsonMap::new();
+
+    for (field, value) in table.fields.iter().zip(row) {
+        match field.name.as_str() {
+            "Start Time" => start = Timestamp::parse(value),
+            "Stop Time" => stop = Timestamp::parse(value),
+            "author" => {
+                if !value.is_empty() {
+                    author = value.to_owned();
+                }
+            }
+            "uuid" => {
+                if !value.is_empty() {
+                    uuid = value.to_owned();
+                }
+            }
+            "tags" => tags = strings(field, value)?,
+            "products" => products = strings(field, value)?,
+            "rating" => rating = rating_of(field, value)?,
+            _ => {
+                attributes.insert(field.name.clone(), Kind::import(field, value)?);
+            }
+        }
+    }
+
+    Ok(ImportedEvent {
+        uuid: if uuid.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            uuid
+        },
+        start: start
+            .ok_or_else(|| VotableError::BadValue("Start Time".to_owned(), String::new()))?,
+        stop: stop.ok_or_else(|| VotableError::BadValue("Stop Time".to_owned(), String::new()))?,
+        author,
+        tags,
+        products,
+        rating,
+        attributes,
+    })
+}
+
+fn strings(field: &Field, value: &str) -> Result<Vec<String>, VotableError> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str::<Vec<String>>(value)
+        .map_err(|_| VotableError::BadValue(field.name.clone(), value.to_owned()))
+}
+
+fn rating_of(field: &Field, value: &str) -> Result<Option<i64>, VotableError> {
+    match value.trim() {
+        "" | "0" => Ok(None),
+        text => text
+            .parse()
+            .map(Some)
+            .map_err(|_| VotableError::BadValue(field.name.clone(), value.to_owned())),
+    }
+}
+
+impl Kind {
+    /// Whether a field that is not one of cocat's own can be carried as an attribute.
+    fn importable(field: &Field) -> bool {
+        matches!(
+            field.datatype.as_str(),
+            "long" | "int" | "short" | "double" | "float" | "boolean" | "char"
+        )
+    }
+
+    fn import(field: &Field, value: &str) -> Result<Value, VotableError> {
+        let bad = || VotableError::BadValue(field.name.clone(), value.to_owned());
+        let parsed = match field.datatype.as_str() {
+            "long" | "int" | "short" => {
+                Value::from(value.trim().parse::<i64>().map_err(|_| bad())?)
+            }
+            "double" | "float" => {
+                let number: f64 = value.trim().parse().map_err(|_| bad())?;
+                serde_json::Number::from_f64(number)
+                    .map(Value::Number)
+                    .ok_or_else(bad)?
+            }
+            "boolean" => Value::from(matches!(value.trim(), "true" | "1" | "T")),
+            _ if field.utype == "json" => serde_json::from_str(value).map_err(|_| bad())?,
+            _ => Value::from(value.to_owned()),
+        };
+        Ok(parsed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Map, Value, json};
 
-    use super::export;
+    use super::{export, export_many, import};
     use crate::model::{CatalogueSummary, EventRecord};
     use crate::time::Timestamp;
+    use crate::votable::VotableError;
 
     fn catalogue(name: &str) -> CatalogueSummary {
         CatalogueSummary {
@@ -312,6 +697,176 @@ mod tests {
         let mut event = event("2025-01-31 10:00:00", Some(3));
         event.attributes = values.as_object().cloned().expect("an object");
         event
+    }
+
+    fn field(name: &str, datatype: &str, utype: &str) -> String {
+        let utype = if utype.is_empty() {
+            String::new()
+        } else {
+            format!(r#" utype="{utype}""#)
+        };
+        format!(r#"<FIELD name="{name}" datatype="{datatype}" arraysize="*"{utype}/>"#)
+    }
+
+    fn votable(fields: &[String], rows: &[&str]) -> String {
+        format!(
+            "<VOTABLE><RESOURCE><TABLE name=\"t\"><DATA><TABLEDATA>{}{}</TABLEDATA></DATA></TABLE></RESOURCE></VOTABLE>",
+            fields.concat(),
+            rows.concat()
+        )
+    }
+
+    fn start_stop() -> Vec<String> {
+        vec![
+            field("Start Time", "char", ""),
+            field("Stop Time", "char", ""),
+        ]
+    }
+
+    #[test]
+    fn an_exported_catalogue_imports_back() {
+        let catalogue = catalogue("alpha");
+        let first = with_attributes(json!({"q": 1.5, "mission": "MMS"}));
+        let mut second = with_attributes(json!({"q": 2.5, "mission": "MMS"}));
+        second.start = Timestamp::parse("2025-01-31 11:00:00").expect("a time");
+        second.stop = second.start;
+        second.rating = None;
+        let xml = export(&catalogue, &[first.clone(), second]).expect("an export");
+
+        let imported = import(&xml).expect("an import");
+
+        assert_eq!(imported.author.as_deref(), Some("a@x.org"));
+        assert_eq!(imported.name.as_deref(), Some("alpha"));
+        assert_eq!(imported.tables.len(), 1);
+        let table = &imported.tables[0];
+        assert_eq!(table.name, "alpha");
+        assert_eq!(table.events.len(), 2);
+        assert_eq!(table.events[0].uuid, first.uuid);
+        assert_eq!(table.events[0].start, first.start);
+        assert_eq!(table.events[0].stop, first.stop);
+        assert_eq!(table.events[0].author, "a@x.org");
+        assert_eq!(table.events[0].tags, vec!["t1".to_owned()]);
+        assert_eq!(table.events[0].products, vec!["p1".to_owned()]);
+        assert_eq!(table.events[0].rating, Some(3));
+        assert_eq!(
+            table.events[0].attributes,
+            json!({"q": 1.5, "mission": "MMS"})
+                .as_object()
+                .cloned()
+                .expect("an object")
+        );
+        assert_eq!(table.events[1].rating, None);
+    }
+
+    #[test]
+    fn export_many_writes_a_table_per_catalogue() {
+        let first = catalogue("alpha");
+        let second = catalogue("beta");
+        let xml = export_many(&[(&first, &[]), (&second, &[])]).expect("an export");
+
+        let imported = import(&xml).expect("an import");
+
+        assert_eq!(imported.author, None);
+        assert_eq!(imported.name, None);
+        let names: Vec<&str> = imported
+            .tables
+            .iter()
+            .map(|table| table.name.as_str())
+            .collect();
+        assert_eq!(names, ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn a_row_without_a_uuid_gets_a_fresh_one() {
+        let rows = [
+            "<TR><TD>2025-01-31 10:00:00+00:00</TD><TD>2025-01-31 10:01:00+00:00</TD></TR>",
+            "<TR><TD>2025-01-31 11:00:00+00:00</TD><TD>2025-01-31 11:01:00+00:00</TD></TR>",
+        ];
+        let xml = votable(&start_stop(), &rows);
+
+        let imported = import(&xml).expect("an import");
+
+        let events = &imported.tables[0].events;
+        assert_eq!(events.len(), 2);
+        assert_ne!(events[0].uuid, events[1].uuid);
+        assert_eq!(events[0].author, "VOTable Import");
+        assert_eq!(
+            events[0].start,
+            Timestamp::parse("2025-01-31 10:00:00").expect("a time")
+        );
+    }
+
+    #[test]
+    fn a_rating_of_zero_is_no_rating() {
+        let mut fields = start_stop();
+        fields.push(field("rating", "long", ""));
+        let rows = [
+            "<TR><TD>2025-01-31 10:00:00</TD><TD>2025-01-31 10:01:00</TD><TD>0</TD></TR>",
+            "<TR><TD>2025-01-31 11:00:00</TD><TD>2025-01-31 11:01:00</TD><TD>5</TD></TR>",
+        ];
+        let xml = votable(&fields, &rows);
+
+        let imported = import(&xml).expect("an import");
+
+        let ratings: Vec<Option<i64>> = imported.tables[0]
+            .events
+            .iter()
+            .map(|event| event.rating)
+            .collect();
+        assert_eq!(ratings, [None, Some(5)]);
+    }
+
+    #[test]
+    fn an_attribute_takes_its_type_from_the_field() {
+        let fields = vec![
+            field("Start Time", "char", ""),
+            field("Stop Time", "char", ""),
+            field("count", "long", ""),
+            field("q", "double", ""),
+            field("flag", "boolean", ""),
+            field("list", "char", "json"),
+            field("mission", "char", ""),
+        ];
+        let rows = [
+            "<TR><TD>2025-01-31 10:00:00</TD><TD>2025-01-31 10:01:00</TD><TD>2</TD><TD>1.5</TD><TD>true</TD><TD>[\"a\", \"b\"]</TD><TD>MMS</TD></TR>",
+        ];
+        let xml = votable(&fields, &rows);
+
+        let imported = import(&xml).expect("an import");
+
+        assert_eq!(
+            imported.tables[0].events[0].attributes,
+            json!({"count": 2, "q": 1.5, "flag": true, "list": ["a", "b"], "mission": "MMS"})
+                .as_object()
+                .cloned()
+                .expect("an object")
+        );
+    }
+
+    #[test]
+    fn a_table_without_times_is_refused() {
+        let xml = votable(&[field("author", "char", "")], &[]);
+
+        let error = import(&xml).expect_err("a refusal");
+
+        assert!(
+            matches!(&error, VotableError::MissingTimes(name) if name == "t"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_field_is_refused() {
+        let mut fields = start_stop();
+        fields.push(field("temperature", "complex", ""));
+        let xml = votable(&fields, &[]);
+
+        let error = import(&xml).expect_err("a refusal");
+
+        assert!(
+            matches!(&error, VotableError::UnknownField(name) if name == "temperature"),
+            "{error:?}"
+        );
     }
 
     fn position(xml: &str, needle: &str) -> usize {

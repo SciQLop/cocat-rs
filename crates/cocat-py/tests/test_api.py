@@ -1,0 +1,210 @@
+"""The script mode, ported from Python cocat's tests/test_api.py.
+
+Python cocat's own tests monkeypatch its keyring wallet; here the same in-memory
+wallet replaces the keyring backend, and the server is the `cocat-server` binary
+from `conftest.py`.
+"""
+
+from datetime import datetime
+
+import pytest
+
+import cocat_rs
+from cocat_rs import api
+
+
+class Credentials:
+    def __init__(self, username: str, password: str) -> None:
+        self.username = username
+        self.password = password
+
+
+WALLET: dict[str, Credentials] = {}
+
+
+def get_credential(service_name: str, username: str | None) -> Credentials | None:
+    return WALLET.get(service_name)
+
+
+def set_password(service_name: str, username: str, password: str) -> None:
+    WALLET[service_name] = Credentials(username, password)
+
+
+@pytest.fixture(autouse=True)
+def wallet(monkeypatch):
+    """The in-memory keyring wallet, and a fresh session per test."""
+    WALLET.clear()
+    monkeypatch.setattr(api.keyring, "get_credential", get_credential)
+    monkeypatch.setattr(api.keyring, "set_password", set_password)
+    monkeypatch.setattr(api.atexit, "register", lambda function: None)
+    api._reset()
+    yield WALLET
+    api._reset()
+
+
+def configure(server, tmp_path, room_id=None) -> None:
+    api.set_config(
+        host=server.url,
+        file_path=str(tmp_path / "cache"),
+        room_id=room_id,
+    )
+
+
+def until(predicate, timeout: float = 15.0) -> None:
+    """Wait for a change to come back from the server; the client syncs in the background."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    reason = None
+    while True:
+        try:
+            if predicate():
+                return
+        except RuntimeError as error:
+            reason = error
+        if time.monotonic() > deadline:
+            raise AssertionError(f"the change never arrived after {timeout}s: {reason}")
+        time.sleep(0.05)
+
+
+def test_user_room(server, tmp_path) -> None:
+    configure(server, tmp_path)
+    api.log_in(server.email, "hunter2")
+
+    listed = cocat_rs.rooms(api.SESSION.base_url(), api.SESSION.cookie)
+    assert api.SESSION.room_id in [room.id for room in listed]
+    assert api.SESSION.room_id != server.room_id
+    assert len(api.SESSION.room_id) == 32
+
+
+def test_api(server, tmp_path) -> None:
+    configure(server, tmp_path, room_id=server.room_id)
+    api.log_in(server.email, "hunter2")
+
+    catalogue = api.create_catalogue(name="cat0", author="Paul")
+    event = api.create_event(
+        start="2025-01-30",
+        stop="2026-01-30",
+        author="Mike",
+    )
+    assert api.get_event(event.uuid) == event
+    assert api.get_catalogue(catalogue.uuid) == catalogue
+
+    api.save()
+
+    other = cocat_rs.Room.open(str(tmp_path / "other"), server.room_id)
+    other.connect(server.url, server.cookie)
+    other.wait_synced(15)
+    try:
+        until(lambda: other.catalogue("cat0").name == "cat0")
+
+        remote = other.create_event(
+            start="2025-01-31",
+            stop="2026-01-31",
+            author="John",
+        )
+        api.refresh()
+        until(lambda: api.get_event(remote.uuid) == remote)
+    finally:
+        other.close()
+
+    api.log_out()
+
+    with pytest.raises(RuntimeError, match="Wrong username or password"):
+        api.log_in("foo", "bar")
+
+
+def test_login(server, tmp_path) -> None:
+    configure(server, tmp_path, room_id=server.room_id)
+
+    with pytest.raises(RuntimeError, match="Not logged in"):
+        api.refresh()
+
+    with pytest.raises(RuntimeError, match="Username or password not provided"):
+        api.log_in(server.email, connect=False)
+
+    api.log_in(server.email, "hunter2", connect=False)
+    api.log_in(connect=False)
+
+
+def test_login_with_port_in_host(server, tmp_path) -> None:
+    api.set_config(host=server.url, file_path=str(tmp_path / "cache"))
+
+    with pytest.raises(RuntimeError, match="Not logged in"):
+        api.refresh()
+
+    assert api.SESSION.host == "http://127.0.0.1"
+    assert api.SESSION.port == int(server.url.rsplit(":", 1)[1])
+
+
+def test_atexit(server, tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+    configure(server, tmp_path, room_id=server.room_id)
+    api.log_in(server.email, "hunter2")
+    api.create_catalogue(name="cat0", author="Paul Newton")
+    api.save_on_exit()
+    assert capsys.readouterr().out == "Changes have been saved.\n"
+
+
+def test_default_room(monkeypatch) -> None:
+    def unavailable(base_url, cookie):
+        raise RuntimeError("Cannot list rooms: HTTP 500")
+
+    monkeypatch.setattr(api, "_list_rooms", unavailable)
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        api._default_room("http://localhost:8000/", "cookie")
+
+    monkeypatch.setattr(api, "_list_rooms", lambda base_url, cookie: [])
+    with pytest.raises(RuntimeError, match="No room available"):
+        api._default_room("http://localhost:8000/", "cookie")
+
+    monkeypatch.setattr(
+        api,
+        "_list_rooms",
+        lambda base_url, cookie: [
+            cocat_rs.RoomInfo(id="room1", name="Lab", role="editor")
+        ],
+    )
+    assert api._default_room("http://localhost:8000/", "cookie") == "room1"
+
+
+def test_save_waits_for_the_server(server, tmp_path) -> None:
+    configure(server, tmp_path, room_id=server.room_id)
+    api.log_in(server.email, "hunter2")
+    api.create_catalogue(name="ack", author="Paul")
+
+    api.save()
+
+    other = cocat_rs.Room.open(str(tmp_path / "other"), server.room_id)
+    other.connect(server.url, server.cookie)
+    other.wait_synced(15)
+    try:
+        assert other.catalogue("ack").name == "ack"
+    finally:
+        other.close()
+
+
+def test_a_save_after_a_relogin_keeps_the_cache(server, tmp_path) -> None:
+    configure(server, tmp_path, room_id=server.room_id)
+    api.log_in(server.email, "hunter2")
+    api.create_catalogue(name="kept", author="Paul")
+    api.save()
+
+    api.log_out()
+    api.log_in(server.email, "hunter2")
+
+    assert api.get_catalogue("kept").name == "kept"
+
+
+def test_create_event_takes_naive_datetimes_as_utc(server, tmp_path) -> None:
+    configure(server, tmp_path, room_id=server.room_id)
+    api.log_in(server.email, "hunter2")
+
+    event = api.create_event(
+        start=datetime(2025, 3, 1, 10, 0, 0, 500000),
+        stop=datetime(2025, 3, 1, 10, 1, 0),
+        author="Paul",
+    )
+
+    assert event.start.utcoffset().total_seconds() == 0
+    assert event.start.microsecond == 500000

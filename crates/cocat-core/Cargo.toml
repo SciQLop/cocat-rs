@@ -13,6 +13,7 @@ thiserror.workspace = true
 time.workspace = true
 tracing.workspace = true
 utoipa = { version = "6", default-features = false, features = ["macros"] }
+uuid = { version = "1", features = ["v4"] }
 yrs.workspace = true
 
 [dev-dependencies]

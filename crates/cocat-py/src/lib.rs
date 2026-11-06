@@ -13,6 +13,7 @@ use std::time::Duration;
 use cocat_client::{Change, Room as ClientRoom, RoomInfo as ClientRoomInfo};
 use cocat_core::model::{self, NewCatalogue, NewEvent};
 use cocat_core::time::Timestamp;
+use cocat_core::votable;
 use numpy::PyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -21,6 +22,9 @@ use serde_json::{Map as JsonMap, Value};
 use yrs::Transact;
 
 type Result<T> = PyResult<T>;
+
+/// `save()` waits for the server's acknowledgement this long before it gives up.
+const DEFAULT_SAVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -220,6 +224,34 @@ fn unknown(what: &str) -> PyErr {
     PyRuntimeError::new_err(format!("no {what} with that uuid"))
 }
 
+/// Whether two reads of one event hold the same values, whatever room each was read from.
+fn same_event(a: &model::EventRecord, b: &model::EventRecord) -> bool {
+    a.uuid == b.uuid
+        && a.start == b.start
+        && a.stop == b.stop
+        && a.author == b.author
+        && a.rating == b.rating
+        && a.attributes == b.attributes
+        && sorted(&a.tags) == sorted(&b.tags)
+        && sorted(&a.products) == sorted(&b.products)
+}
+
+/// Whether two reads of one catalogue hold the same values. Its member events are not
+/// compared: two clients agree on a catalogue's fields before they agree on its contents.
+fn same_catalogue(a: &model::CatalogueSummary, b: &model::CatalogueSummary) -> bool {
+    a.uuid == b.uuid
+        && a.name == b.name
+        && a.author == b.author
+        && a.attributes == b.attributes
+        && sorted(&a.tags) == sorted(&b.tags)
+}
+
+fn sorted(values: &[String]) -> Vec<&str> {
+    let mut sorted: Vec<&str> = values.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    sorted
+}
+
 #[pyclass(module = "cocat_rs", frozen)]
 #[derive(Clone)]
 pub struct Catalogue {
@@ -247,8 +279,8 @@ impl Catalogue {
         hash_of(&self.uuid)
     }
 
-    fn __eq__(&self, other: &Catalogue) -> bool {
-        self.uuid == other.uuid && Arc::ptr_eq(&self.room, &other.room)
+    fn __eq__(&self, other: &Catalogue) -> Result<bool> {
+        Ok(same_catalogue(&self.summary()?, &other.summary()?))
     }
 
     #[getter]
@@ -394,6 +426,11 @@ impl Catalogue {
 }
 
 impl Catalogue {
+    fn summary(&self) -> Result<model::CatalogueSummary> {
+        let txn = self.room.doc().transact();
+        model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))
+    }
+
     fn records(&self) -> Result<Vec<model::EventRecord>> {
         let txn = self.room.doc().transact();
         model::catalogue_events(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))
@@ -432,8 +469,8 @@ impl Event {
         hash_of(&self.uuid)
     }
 
-    fn __eq__(&self, other: &Event) -> bool {
-        self.uuid == other.uuid && Arc::ptr_eq(&self.room, &other.room)
+    fn __eq__(&self, other: &Event) -> Result<bool> {
+        Ok(same_event(&self.record()?, &other.record()?))
     }
 
     #[getter]
@@ -538,6 +575,8 @@ pub struct Room {
 impl Room {
     #[staticmethod]
     fn open(cache_dir: String, room_id: String) -> Result<Room> {
+        std::fs::create_dir_all(Path::new(&cache_dir))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
         let room = Arc::new(
             ClientRoom::open(Path::new(&cache_dir), &room_id)
                 .map_err(|error| PyValueError::new_err(error.to_string()))?,
@@ -727,6 +766,116 @@ impl Room {
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         Py::new(py, Event::of(&self.room, &uuid))
     }
+
+    /// Blocks until the server has processed every change made so far, or `timeout` passes.
+    #[pyo3(signature = (timeout=None))]
+    fn save(&self, py: Python<'_>, timeout: Option<f64>) -> Result<()> {
+        let timeout = timeout.map_or(DEFAULT_SAVE_TIMEOUT, Duration::from_secs_f64);
+        py.detach(|| self.room.save(timeout))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+    }
+
+    /// Imports the VOTable's tables into this room and returns how many catalogues it added.
+    #[pyo3(signature = (path, table_name=None))]
+    fn import_votable(&self, path: String, table_name: Option<String>) -> Result<usize> {
+        let xml = std::fs::read_to_string(&path)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let imported =
+            votable::import(&xml).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let base = table_name
+            .or(imported.name)
+            .unwrap_or_else(|| "Imported Catalogue".to_owned());
+        let author = imported
+            .author
+            .unwrap_or_else(|| "VOTable Import".to_owned());
+        let single = imported.tables.len() == 1;
+        self.room.write(|txn| -> Result<()> {
+            for (index, table) in imported.tables.iter().enumerate() {
+                let name = if single {
+                    base.clone()
+                } else {
+                    format!("{base}_{index}")
+                };
+                import_table(txn, &name, &author, &table.events)?;
+            }
+            Ok(())
+        })?;
+        Ok(imported.tables.len())
+    }
+}
+
+/// Writes one imported table as a catalogue holding its events.
+fn import_table(
+    txn: &mut yrs::TransactionMut<'_>,
+    name: &str,
+    author: &str,
+    events: &[votable::ImportedEvent],
+) -> Result<()> {
+    let catalogue = uuid::Uuid::new_v4().to_string();
+    let mut uuids = Vec::with_capacity(events.len());
+    for event in events {
+        let record = NewEvent {
+            uuid: &event.uuid,
+            start: event.start,
+            stop: event.stop,
+            author: &event.author,
+            tags: &event.tags,
+            products: &event.products,
+            rating: event.rating,
+            attributes: &event.attributes,
+        };
+        model::create_event(txn, &record)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        uuids.push(event.uuid.clone());
+    }
+    let new = NewCatalogue {
+        uuid: &catalogue,
+        name,
+        author,
+        tags: &[],
+        attributes: &JsonMap::new(),
+    };
+    model::create_catalogue(txn, &new).map_err(|error| PyValueError::new_err(error.to_string()))?;
+    model::add_catalogue_events(txn, &catalogue, &uuids);
+    Ok(())
+}
+
+/// The VOTable a set of catalogues exports to, the file Python cocat's exporter writes.
+///
+/// The catalogues carry their room, so the script mode can export a room it never
+/// logged into.
+#[pyfunction]
+fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
+    let (room, uuids) = catalogues_of(catalogues)?;
+    let txn = room.doc().transact();
+    let mut exported = Vec::new();
+    for uuid in &uuids {
+        let catalogue = model::catalogue(&txn, uuid).ok_or_else(|| unknown("catalogue"))?;
+        let events = model::catalogue_events(&txn, uuid).unwrap_or_default();
+        exported.push((catalogue, events));
+    }
+    let pairs: Vec<(&model::CatalogueSummary, &[model::EventRecord])> = exported
+        .iter()
+        .map(|(catalogue, events)| (catalogue, events.as_slice()))
+        .collect();
+    votable::export_many(&pairs).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+/// The uuids of the catalogues an argument names (one catalogue or an iterable of them),
+/// with the room they belong to.
+fn catalogues_of(value: &Bound<'_, PyAny>) -> Result<(Arc<ClientRoom>, Vec<String>)> {
+    if let Ok(catalogue) = value.extract::<PyRef<Catalogue>>() {
+        return Ok((Arc::clone(&catalogue.room), vec![catalogue.uuid.clone()]));
+    }
+    let mut room = None;
+    let mut uuids = Vec::new();
+    for catalogue in value.try_iter()? {
+        let catalogue = catalogue?.extract::<PyRef<Catalogue>>()?;
+        room.get_or_insert_with(|| Arc::clone(&catalogue.room));
+        uuids.push(catalogue.uuid.clone());
+    }
+    let room = room.ok_or_else(|| PyValueError::new_err("no catalogue to export"))?;
+    Ok((room, uuids))
 }
 
 fn change_to_python(py: Python<'_>, change: &Change) -> Result<Py<PyAny>> {
@@ -792,6 +941,14 @@ pub struct RoomInfo {
     pub role: String,
 }
 
+#[pymethods]
+impl RoomInfo {
+    #[new]
+    fn new(id: String, name: String, role: String) -> RoomInfo {
+        RoomInfo { id, name, role }
+    }
+}
+
 impl From<ClientRoomInfo> for RoomInfo {
     fn from(info: ClientRoomInfo) -> RoomInfo {
         RoomInfo {
@@ -833,5 +990,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RoomInfo>()?;
     module.add_function(wrap_pyfunction!(login, module)?)?;
     module.add_function(wrap_pyfunction!(rooms, module)?)?;
+    module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     Ok(())
 }

@@ -7,7 +7,7 @@ name = "cocat-rs"
 version = "0.0.0"
 description = "Collaborative event catalogues, in Rust with a Python face"
 requires-python = ">=3.12"
-dependencies = ["numpy"]
+dependencies = ["numpy", "keyring"]
 
 [tool.maturin]
 python-source = "python"

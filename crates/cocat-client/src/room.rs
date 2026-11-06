@@ -59,6 +59,10 @@ pub enum RoomError {
     Unauthorized,
     #[error("the room did not reach {0:?} in time")]
     TimedOut(Status),
+    #[error("the room is not connected")]
+    Offline,
+    #[error("the server did not acknowledge the room's changes in time")]
+    Unacknowledged,
 }
 
 /// A room: the document, the cache and the session to the server.
@@ -82,14 +86,24 @@ pub(crate) struct Inner {
     pub(crate) batching: Arc<AtomicBool>,
     pub(crate) batched: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) status: StatusCell,
+    pub(crate) ack: AckCell,
 }
 
 /// Every listener of a room's changes, called on the thread that applied them.
 pub(crate) type Subscribers = Arc<Mutex<Vec<Arc<dyn Fn(Vec<Change>) + Send + Sync>>>>;
 
+/// Something the session has to send, in the order the document produced it.
+pub(crate) enum Outgoing {
+    /// A local transaction's update.
+    Update(Vec<u8>),
+    /// Asks the session for a state vector once everything before it is sent: the server's
+    /// answer then proves it applied those updates.
+    Ack,
+}
+
 /// The local updates waiting to be sent, from whatever thread made them.
 pub(crate) struct Outbox {
-    updates: Mutex<Vec<Vec<u8>>>,
+    updates: Mutex<Vec<Outgoing>>,
     ready: Notify,
 }
 
@@ -102,7 +116,12 @@ impl Outbox {
     }
 
     pub(crate) fn push(&self, update: Vec<u8>) {
-        lock(&self.updates).push(update);
+        lock(&self.updates).push(Outgoing::Update(update));
+        self.ready.notify_one();
+    }
+
+    pub(crate) fn request_ack(&self) {
+        lock(&self.updates).push(Outgoing::Ack);
         self.ready.notify_one();
     }
 
@@ -111,8 +130,49 @@ impl Outbox {
         self.ready.notified().await;
     }
 
-    pub(crate) fn drain(&self) -> Vec<Vec<u8>> {
+    pub(crate) fn drain(&self) -> Vec<Outgoing> {
         std::mem::take(&mut *lock(&self.updates))
+    }
+}
+
+/// How many times the server has answered a state vector, and a way to wait for the next one.
+pub(crate) struct AckCell {
+    generation: Mutex<u64>,
+    changed: Condvar,
+}
+
+impl AckCell {
+    fn new() -> AckCell {
+        AckCell {
+            generation: Mutex::new(0),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        *lock(&self.generation)
+    }
+
+    pub(crate) fn acknowledge(&self) {
+        *lock(&self.generation) += 1;
+        self.changed.notify_all();
+    }
+
+    fn wait(&self, generation: u64, timeout: Duration) -> Result<(), RoomError> {
+        let deadline = Instant::now() + timeout;
+        let mut seen = lock(&self.generation);
+        while *seen <= generation {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(RoomError::Unacknowledged);
+            }
+            let (next, _) = self
+                .changed
+                .wait_timeout(seen, remaining)
+                .unwrap_or_else(PoisonError::into_inner);
+            seen = next;
+        }
+        Ok(())
     }
 }
 
@@ -199,6 +259,7 @@ impl Room {
             batching: Arc::new(AtomicBool::new(false)),
             batched: Arc::new(Mutex::new(Vec::new())),
             status: StatusCell::new(),
+            ack: AckCell::new(),
         });
         observe(&inner)?;
         Ok(Room {
@@ -275,6 +336,19 @@ impl Room {
     /// Blocks until the room has exchanged its state with the server at least once.
     pub fn wait_synced(&self, timeout: Duration) -> Result<(), RoomError> {
         self.wait_for(Status::Synced, timeout)
+    }
+
+    /// Blocks until the server has processed every local change made so far.
+    ///
+    /// The session sends a state vector after those changes, and the server handles one
+    /// socket's frames in order, so its answer to that vector is the proof.
+    pub fn save(&self, timeout: Duration) -> Result<(), RoomError> {
+        if !self.inner.online.load(Ordering::Relaxed) {
+            return Err(RoomError::Offline);
+        }
+        let generation = self.inner.ack.generation();
+        self.inner.outbox.request_ack();
+        self.inner.ack.wait(generation, timeout)
     }
 
     /// Starts a session on a runtime the room owns and returns at once. A previous session is

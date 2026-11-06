@@ -108,7 +108,11 @@ impl Serialize for Timestamp {
 
 fn normalise(text: &str) -> Option<String> {
     let text = text.trim();
-    let (date, rest) = text.split_once([' ', 'T'])?;
+    // A bare date is midnight, as `datetime.fromisoformat` takes it.
+    let (date, rest) = match text.split_once([' ', 'T']) {
+        Some(parts) => parts,
+        None => (text, "00:00:00"),
+    };
 
     let mut out = String::with_capacity(text.len() + 1);
     out.push_str(date);
@@ -138,6 +142,12 @@ mod tests {
     fn a_missing_offset_is_utc() {
         let parsed = Timestamp::parse("2025-01-31 00:00:00").unwrap();
         assert_eq!(parsed.to_string(), "2025-01-31T00:00:00.000000Z");
+    }
+
+    #[test]
+    fn a_bare_date_is_midnight_utc() {
+        let parsed = Timestamp::parse("2025-01-30").unwrap();
+        assert_eq!(parsed.to_string(), "2025-01-30T00:00:00.000000Z");
     }
 
     #[test]

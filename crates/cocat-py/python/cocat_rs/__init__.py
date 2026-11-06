@@ -180,3 +180,36 @@ class Room:
                 method,
                 registration.listener,
             )
+
+
+# The script mode re-exports Python cocat's names, so `import cocat_rs as cocat`
+# gives a script the same surface.
+from . import api  # noqa: E402
+from .api import (  # noqa: E402
+    create_catalogue,
+    create_event,
+    export_votable,
+    get_catalogue,
+    get_event,
+    import_votable,
+    log_in,
+    log_out,
+    refresh,
+    save,
+    set_config,
+)
+
+__all__ += [
+    "api",
+    "create_catalogue",
+    "create_event",
+    "export_votable",
+    "get_catalogue",
+    "get_event",
+    "import_votable",
+    "log_in",
+    "log_out",
+    "refresh",
+    "save",
+    "set_config",
+]

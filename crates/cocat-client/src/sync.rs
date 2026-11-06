@@ -18,7 +18,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ReadTxn, Transact, Update};
 
-use crate::room::{Inner, REMOTE_ORIGIN, Status};
+use crate::room::{Inner, Outgoing, REMOTE_ORIGIN, Status};
 
 /// The first wait after a dropped session, doubling up to [`MAX_BACKOFF`].
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -90,6 +90,7 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     inner.online.store(true, Ordering::Relaxed);
 
     let mut synced = false;
+    let mut awaiting_ack = false;
     loop {
         tokio::select! {
             frame = socket.next() => {
@@ -98,11 +99,11 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                 };
                 match frame {
                     Ok(Frame::Binary(bytes)) => {
-                        if let Some(reply) = receive(inner, &bytes, &mut synced)
-                            && let Err(error) = socket.send(Frame::Binary(reply.into())).await
-                        {
-                            tracing::warn!(%error, "the room could not answer the server");
-                            return Ending::Lost { synced };
+                        for reply in receive(inner, &bytes, &mut synced, &mut awaiting_ack) {
+                            if let Err(error) = socket.send(Frame::Binary(reply.into())).await {
+                                tracing::warn!(%error, "the room could not answer the server");
+                                return Ending::Lost { synced };
+                            }
                         }
                     }
                     Ok(Frame::Close(close)) => {
@@ -121,8 +122,16 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                 }
             }
             () = inner.outbox.ready() => {
-                for update in inner.outbox.drain() {
-                    let frame = Message::Sync(SyncMessage::Update(update)).encode_v1();
+                for outgoing in inner.outbox.drain() {
+                    let frame = match outgoing {
+                        Outgoing::Update(update) => {
+                            Message::Sync(SyncMessage::Update(update)).encode_v1()
+                        }
+                        Outgoing::Ack => {
+                            awaiting_ack = true;
+                            state_vector(inner)
+                        }
+                    };
                     if let Err(error) = socket.send(Frame::Binary(frame.into())).await {
                         tracing::warn!(%error, "the room could not send a local change");
                         return Ending::Lost { synced };
@@ -152,35 +161,60 @@ fn request(
     }
 }
 
-/// Handles one frame from the server, answering with the frame the protocol asks for.
-fn receive(inner: &Inner, bytes: &[u8], synced: &mut bool) -> Option<Vec<u8>> {
+/// Handles one frame from the server, returning the frames the protocol asks for.
+fn receive(
+    inner: &Inner,
+    bytes: &[u8],
+    synced: &mut bool,
+    awaiting_ack: &mut bool,
+) -> Vec<Vec<u8>> {
     let Ok(Message::Sync(message)) = Message::decode_v1(bytes) else {
         // Awareness and custom frames are not part of the room protocol.
-        return None;
+        return Vec::new();
     };
     match message {
         SyncMessage::SyncStep1(wanted) => {
             // Whatever is queued is about to be inside the diff below, which is computed after
             // this point: dropping it here sends it once, not twice. Anything pushed later is
             // still sent as its own update.
-            inner.outbox.drain();
-            let txn = inner.doc.transact();
-            let reply = txn.encode_state_as_update_v1(&wanted);
-            Some(Message::Sync(SyncMessage::SyncStep2(reply)).encode_v1())
+            let queued = inner.outbox.drain();
+            let reply = {
+                let txn = inner.doc.transact();
+                txn.encode_state_as_update_v1(&wanted)
+            };
+            let mut frames = vec![Message::Sync(SyncMessage::SyncStep2(reply)).encode_v1()];
+            // An acknowledgement asked for before the server spoke still has to be asked for,
+            // and only after the diff above: the answer proves that diff was applied too.
+            if queued.iter().any(|item| matches!(item, Outgoing::Ack)) {
+                *awaiting_ack = true;
+                frames.push(state_vector(inner));
+            }
+            frames
         }
         SyncMessage::SyncStep2(update) => {
             apply(inner, &update);
+            if *awaiting_ack {
+                *awaiting_ack = false;
+                inner.ack.acknowledge();
+            }
             if !*synced {
                 *synced = true;
                 inner.status.set(Status::Synced);
             }
-            None
+            Vec::new()
         }
         SyncMessage::Update(update) => {
             apply(inner, &update);
-            None
+            Vec::new()
         }
     }
+}
+
+/// The frame that asks the server what it still needs, and whose answer proves our updates
+/// before it have been processed.
+fn state_vector(inner: &Inner) -> Vec<u8> {
+    let txn = inner.doc.transact();
+    Message::Sync(SyncMessage::SyncStep1(txn.state_vector())).encode_v1()
 }
 
 /// Applies what the server sent as one remote transaction, so its changes are one batch.

@@ -562,6 +562,7 @@ dependencies = [
  "time",
  "tracing",
  "utoipa",
+ "uuid",
  "yrs",
 ]
 
