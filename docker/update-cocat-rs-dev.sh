@@ -31,6 +31,7 @@ podman run --ulimit nofile=262144:262144 --network=host -d \
     -e PORT=6575 \
     -e COCAT_PROXY_PREFIX=cocat-dev \
     -e COCAT_PUBLIC_URL=https://sciqlop.lpp.polytechnique.fr \
+    -e COCAT_METRICS_BIND=127.0.0.1:9187 \
     "${MAIL[@]}" \
     -v "$DATA/storage:/storage:Z" -v "$DATA/db:/db:Z" -v "$DATA/mail:/mail:Z" \
     --stop-timeout 30 \
