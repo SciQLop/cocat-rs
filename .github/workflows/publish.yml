@@ -6,6 +6,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  version:
+    name: Tag matches the package version
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/cocat-py/pyproject.toml", "rb"))["project"]["version"])')
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $version"; exit 1; }
+
   wheels:
     name: Wheel ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -53,7 +63,9 @@ jobs:
 
   upload:
     name: Upload to PyPI
-    needs: [wheels, sdist]
+    needs: [version, wheels, sdist]
+    # A manual run builds the wheels to check them; only a version tag uploads.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
