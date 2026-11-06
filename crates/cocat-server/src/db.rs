@@ -232,6 +232,26 @@ pub async fn role_in(
     Ok(roles.into_iter().max_by_key(Role::rank))
 }
 
+/// The account that owns a room, if a membership says anyone does.
+pub async fn room_owner(pool: &SqlitePool, room_id: &str) -> Result<Option<Uuid>, DbError> {
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT user_id FROM membership WHERE room_id = ? AND role = 'owner'")
+            .bind(room_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(owner.and_then(|id| Uuid::parse_str(&id).ok()))
+}
+
+/// The rooms `user` owns: what a storage quota counts before the room being opened.
+pub async fn owned_rooms(pool: &SqlitePool, user: Uuid) -> Result<Vec<String>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT room_id FROM membership WHERE user_id = ? AND role = 'owner'")
+            .bind(user.to_string())
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 pub async fn create_user(
     pool: &SqlitePool,
     email: &str,

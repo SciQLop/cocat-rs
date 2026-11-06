@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, StoreError, read_updates, room_file};
+use sqlx::SqlitePool;
 use thiserror::Error;
 use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
 use tokio::sync::{Semaphore, oneshot};
@@ -38,22 +39,35 @@ pub const OUTBOUND_FRAMES: usize = 1024;
 /// room measured ~566 MB resident under the allocator the server uses.
 pub const MEMORY_PER_FILE_BYTE: u64 = 16;
 
-/// One cold read per core. Each one parses a whole room file into a fresh document, so a
-/// burst would multiply that document's memory by the burst's width.
-fn cold_read_slots() -> usize {
-    thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
+/// Two cold reads at once: each one parses a whole room file into a fresh document, and
+/// SciQLop syncs over the websocket, so these reads are rare and do not need one per core.
+pub const COLD_READ_SLOTS: usize = 2;
+
+/// How large a room file may grow, and how much the files of one owner's rooms may total.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageLimits {
+    pub room: u64,
+    pub owner: u64,
+}
+
+impl Default for StorageLimits {
+    fn default() -> Self {
+        Self {
+            room: 1024 * 1024 * 1024,
+            owner: 5120 * 1024 * 1024,
+        }
+    }
 }
 
 /// Why the room closed a socket. `1008` is a policy violation, `1013` means try again
-/// later, `1011` is the server failing on its side.
+/// later, `1011` is the server failing on its side, and `4507` is the room's storage limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
     Revoked,
     TooSlow,
     OverBudget,
     TooLarge,
+    Full,
     Failed,
 }
 
@@ -63,6 +77,7 @@ impl CloseReason {
             Self::Revoked => 1008,
             Self::TooLarge => 1009,
             Self::TooSlow | Self::OverBudget => 1013,
+            Self::Full => 4507,
             Self::Failed => 1011,
         }
     }
@@ -73,6 +88,7 @@ impl CloseReason {
             Self::TooSlow => "client too slow",
             Self::OverBudget => "server memory budget reached",
             Self::TooLarge => "message too large",
+            Self::Full => "room storage limit reached",
             Self::Failed => "the room could not be loaded",
         }
     }
@@ -125,6 +141,8 @@ pub enum RoomError {
     },
     #[error("the room did not answer the read")]
     Unanswered,
+    #[error(transparent)]
+    Db(#[from] crate::db::DbError),
 }
 
 /// Opens rooms on demand and unloads them when their last client leaves.
@@ -138,11 +156,13 @@ pub struct RoomManager {
     cold_bytes: Arc<AtomicU64>,
     /// How many cold reads may parse at once: each one loads a whole room file.
     cold_reads: Arc<Semaphore>,
+    /// The room and owner storage limits, applied to the file when a room opens.
+    storage: StorageLimits,
 }
 
 impl RoomManager {
     pub fn new(update_dir: PathBuf, budget: Option<u64>) -> Self {
-        Self::with_cold_reads(update_dir, budget, cold_read_slots())
+        Self::with_cold_reads(update_dir, budget, COLD_READ_SLOTS)
     }
 
     fn with_cold_reads(update_dir: PathBuf, budget: Option<u64>, cold_reads: usize) -> Self {
@@ -152,10 +172,26 @@ impl RoomManager {
             budget,
             cold_bytes: Arc::default(),
             cold_reads: Arc::new(Semaphore::new(cold_reads.max(1))),
+            storage: StorageLimits::default(),
         }
     }
 
+    pub fn with_storage(mut self, storage: StorageLimits) -> Self {
+        self.storage = storage;
+        self
+    }
+
     pub fn get_or_open(&self, room_id: &str) -> Result<RoomHandle, RoomError> {
+        self.get_or_open_within(room_id, self.storage.room.min(self.storage.owner))
+    }
+
+    /// Opens a room whose file may reach `allowance` bytes. The caller measures what the
+    /// owner's other rooms take; the room itself only enforces the number it was given.
+    pub fn get_or_open_within(
+        &self,
+        room_id: &str,
+        allowance: u64,
+    ) -> Result<RoomHandle, RoomError> {
         let mut rooms = self.rooms.lock().map_err(|_| RoomError::Registry)?;
         if let Some(handle) = rooms.get(room_id) {
             return Ok(handle.clone());
@@ -191,11 +227,37 @@ impl RoomManager {
         let update_dir = self.update_dir.clone();
         thread::Builder::new()
             .name(format!("room-{room_id}"))
-            .spawn(move || load_room(task_room_id, update_dir, receiver, registry))
+            .spawn(move || load_room(task_room_id, update_dir, allowance, receiver, registry))
             .map_err(RoomError::Spawn)?;
         let handle = RoomHandle { commands, estimate };
         rooms.insert(room_id.to_owned(), handle.clone());
         Ok(handle)
+    }
+
+    /// The bytes a room's file may reach: the room limit, or what its owner's quota leaves
+    /// once the owner's other room files are counted.
+    ///
+    /// simplify: the allowance is measured when the room opens, so two of one owner's rooms
+    /// opening together can each spend the remaining quota (overshoot ≤ remaining × open
+    /// rooms). Upgrade path: one shared per-owner byte counter in the manager.
+    pub async fn allowance(&self, pool: &SqlitePool, room_id: &str) -> Result<u64, RoomError> {
+        let Some(owner) = crate::db::room_owner(pool, room_id).await? else {
+            return Ok(self.storage.room);
+        };
+        let mut used = 0u64;
+        for owned in crate::db::owned_rooms(pool, owner).await? {
+            if owned != room_id {
+                used = used.saturating_add(
+                    fs::metadata(room_file(&self.update_dir, &owned))
+                        .map(|metadata| metadata.len())
+                        .unwrap_or(0),
+                );
+            }
+        }
+        Ok(self
+            .storage
+            .room
+            .min(self.storage.owner.saturating_sub(used)))
     }
 
     /// Closes every socket this user has in the room, whatever their client ids. A room
@@ -527,11 +589,14 @@ struct Client {
 fn load_room(
     room_id: String,
     update_dir: PathBuf,
+    allowance: u64,
     commands: Receiver<RoomCommand>,
     registry: Rooms,
 ) {
     match FileRoomStore::open(&update_dir, &room_id) {
-        Ok((store, updates)) => room_loop(room_id, update_dir, store, updates, commands, registry),
+        Ok((store, updates)) => room_loop(
+            room_id, update_dir, allowance, store, updates, commands, registry,
+        ),
         Err(error) => {
             tracing::error!(room = %room_id, %error, "the room file cannot be loaded");
             abandon_room(&room_id, &registry, commands);
@@ -568,6 +633,7 @@ fn refuse(commands: Receiver<RoomCommand>) {
 fn room_loop(
     room_id: String,
     update_dir: PathBuf,
+    limit: u64,
     mut store: FileRoomStore,
     updates: Vec<Bytes>,
     commands: Receiver<RoomCommand>,
@@ -609,15 +675,26 @@ fn room_loop(
                         Step::Serving
                     }
                     RoomCommand::Frame { client, frame } => {
-                        broadcast = handle_frame(
-                            &doc,
-                            &mut store,
-                            &mut seen,
-                            &mut full_state,
-                            &mut clients,
-                            client,
-                            frame,
-                        );
+                        let mut serving = Serving {
+                            doc: &doc,
+                            store: &mut store,
+                            seen: &mut seen,
+                            full_state: &mut full_state,
+                            clients: &mut clients,
+                            limit,
+                        };
+                        match handle_frame(&mut serving, client, frame) {
+                            Ok(frame) => broadcast = frame,
+                            Err(reason) => {
+                                tracing::warn!(
+                                    room = %room_id,
+                                    "an update was refused at the room's storage limit"
+                                );
+                                if let Some(closed) = clients.remove(&client) {
+                                    let _ = closed.out.close.send(reason);
+                                }
+                            }
+                        }
                         Step::Serving
                     }
                     RoomCommand::Detach { client, done } => {
@@ -1000,18 +1077,16 @@ fn attach(doc: &Doc, clients: &mut HashMap<ClientId, Client>, client: ClientId, 
 }
 
 fn handle_frame(
-    doc: &Doc,
-    store: &mut FileRoomStore,
-    seen: &mut StateVector,
-    full_state: &mut Option<Bytes>,
-    clients: &mut HashMap<ClientId, Client>,
+    serving: &mut Serving<'_>,
     client: ClientId,
     frame: Bytes,
-) -> Option<Bytes> {
+) -> Result<Option<Bytes>, CloseReason> {
     if frame.len() < 2 {
-        return None;
+        return Ok(None);
     }
-    let role = clients.get(&client)?.role;
+    let Some(role) = serving.clients.get(&client).map(|client| client.role) else {
+        return Ok(None);
+    };
     // yrs asserts inside its decoders on values it cannot represent (a state vector naming a
     // client id above its mask, for one), so a decoder panic is another undecodable frame
     // rather than the end of the room thread.
@@ -1021,42 +1096,62 @@ fn handle_frame(
             Ok(Ok(message)) => message,
             Ok(Err(error)) => {
                 tracing::warn!(%client, %error, "ignoring an undecodable frame");
-                return None;
+                return Ok(None);
             }
             Err(_) => {
                 tracing::warn!(%client, "ignoring a frame the decoder cannot represent");
-                return None;
+                return Ok(None);
             }
         };
     let Message::Sync(message) = message else {
-        return None;
+        return Ok(None);
     };
     match message {
         SyncMessage::SyncStep1(state_vector) => {
             let reply = if state_vector.is_empty() {
-                full_state_frame(doc, full_state).clone()
+                full_state_frame(serving.doc, serving.full_state).clone()
             } else {
                 Bytes::from(
                     Message::Sync(SyncMessage::SyncStep2(
-                        doc.transact().encode_state_as_update_v1(&state_vector),
+                        serving
+                            .doc
+                            .transact()
+                            .encode_state_as_update_v1(&state_vector),
                     ))
                     .encode_v1(),
                 )
             };
-            deliver(clients, client, reply);
-            None
+            deliver(serving.clients, client, reply);
+            Ok(None)
         }
         SyncMessage::SyncStep2(update) | SyncMessage::Update(update) => {
             if !role.can_write() {
-                return None;
+                return Ok(None);
             }
-            let broadcast = handle_update(doc, store, seen, update);
+            let broadcast = handle_update(
+                serving.doc,
+                serving.store,
+                serving.seen,
+                serving.limit,
+                update,
+            )?;
             if broadcast.is_some() {
-                *full_state = None;
+                *serving.full_state = None;
             }
-            broadcast
+            Ok(broadcast)
         }
     }
+}
+
+/// What one frame may reach on the room's thread: the document, the file it persists to, the
+/// room's own state vector, the cached full state, and the clients to answer or close.
+struct Serving<'a> {
+    doc: &'a Doc,
+    store: &'a mut FileRoomStore,
+    seen: &'a mut StateVector,
+    full_state: &'a mut Option<Bytes>,
+    clients: &'a mut HashMap<ClientId, Client>,
+    limit: u64,
 }
 
 /// Every cold client asks for the same whole-room state, and a 100k-event room answers in
@@ -1078,22 +1173,29 @@ fn handle_update(
     doc: &Doc,
     store: &mut FileRoomStore,
     seen: &mut StateVector,
+    limit: u64,
     payload: Vec<u8>,
-) -> Option<Bytes> {
+) -> Result<Option<Bytes>, CloseReason> {
     // Python's wire_file drops this payload: an empty v1 update is two zero bytes, and
     // clients send one as their SyncStep2 on every connect.
     if payload == [0, 0] {
-        return None;
+        return Ok(None);
+    }
+    // The payload's size bounds what an append adds, and the check runs before the update is
+    // applied so a refused update leaves the document and the file as they were. A repeated
+    // update at the boundary is refused with the rest: it costs a reconnection, not data.
+    if store.total_size().saturating_add(payload.len() as u64) > limit {
+        return Err(CloseReason::Full);
     }
     if !took_update(doc, seen, &payload) {
-        return None;
+        return Ok(None);
     }
     if let Err(error) = store.append(Bytes::from(payload.clone())) {
         tracing::warn!(%error, "cannot append to the room file, the update is in memory only");
     }
-    Some(Bytes::from(
+    Ok(Some(Bytes::from(
         Message::Sync(SyncMessage::Update(payload)).encode_v1(),
-    ))
+    )))
 }
 
 /// Applies one live update and says whether it changed the document: a block for a client
@@ -1295,14 +1397,18 @@ mod tests {
         );
         assert!(
             handle_frame(
-                &doc,
-                &mut store,
-                &mut StateVector::default(),
-                &mut None,
-                &mut clients,
+                &mut Serving {
+                    doc: &doc,
+                    store: &mut store,
+                    seen: &mut StateVector::default(),
+                    full_state: &mut None,
+                    clients: &mut clients,
+                    limit: u64::MAX,
+                },
                 1,
-                frame
+                frame,
             )
+            .unwrap()
             .is_none(),
             "a state request is answered to its asker only"
         );
@@ -1328,14 +1434,18 @@ mod tests {
             Bytes::from(Message::Sync(SyncMessage::Update(update_with("b", "2"))).encode_v1());
         assert!(
             handle_frame(
-                &doc,
-                &mut store,
-                &mut StateVector::default(),
-                &mut None,
-                &mut clients,
+                &mut Serving {
+                    doc: &doc,
+                    store: &mut store,
+                    seen: &mut StateVector::default(),
+                    full_state: &mut None,
+                    clients: &mut clients,
+                    limit: u64::MAX,
+                },
                 2,
-                frame
+                frame,
             )
+            .unwrap()
             .is_some(),
             "the room still accepts updates"
         );
@@ -1409,14 +1519,18 @@ mod tests {
 
         assert!(
             handle_frame(
-                &doc,
-                &mut store,
-                &mut StateVector::default(),
-                &mut None,
-                &mut clients,
+                &mut Serving {
+                    doc: &doc,
+                    store: &mut store,
+                    seen: &mut StateVector::default(),
+                    full_state: &mut None,
+                    clients: &mut clients,
+                    limit: u64::MAX,
+                },
                 7,
-                Bytes::from(hostile)
+                Bytes::from(hostile),
             )
+            .unwrap()
             .is_none()
         );
     }
@@ -1583,11 +1697,15 @@ mod tests {
         let update = update_with("key", "value");
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, update.clone()).is_some(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, update.clone())
+                .unwrap()
+                .is_some(),
             "the first update is broadcast"
         );
         assert!(
-            handle_update(&doc, &mut store, &mut seen, update).is_none(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, update)
+                .unwrap()
+                .is_none(),
             "a repeated update changes nothing and is broadcast again"
         );
         store.write().unwrap();
@@ -1607,7 +1725,8 @@ mod tests {
         let doc = Doc::new();
         let mut seen = StateVector::default();
         let insert = update_with("key", "value");
-        handle_update(&doc, &mut store, &mut seen, insert.clone())
+        handle_update(&doc, &mut store, &mut seen, u64::MAX, insert.clone())
+            .unwrap()
             .expect("the insert is broadcast");
 
         let writer = Doc::new();
@@ -1622,7 +1741,9 @@ mod tests {
         drop(txn);
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, deletion).is_some(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, deletion)
+                .unwrap()
+                .is_some(),
             "an update that only deletes is broadcast"
         );
         store.write().unwrap();
@@ -1649,7 +1770,8 @@ mod tests {
         let doc = Doc::new();
         let mut seen = StateVector::default();
         let insert = update_with("key", "value");
-        handle_update(&doc, &mut store, &mut seen, insert.clone())
+        handle_update(&doc, &mut store, &mut seen, u64::MAX, insert.clone())
+            .unwrap()
             .expect("the insert is broadcast");
 
         let writer = Doc::new();
@@ -1664,11 +1786,15 @@ mod tests {
         drop(txn);
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, deletion.clone()).is_some(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, deletion.clone())
+                .unwrap()
+                .is_some(),
             "an update that only deletes is broadcast"
         );
         assert!(
-            handle_update(&doc, &mut store, &mut seen, deletion).is_none(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, deletion)
+                .unwrap()
+                .is_none(),
             "a repeated delete changes nothing and is broadcast again"
         );
         store.write().unwrap();
@@ -1688,7 +1814,8 @@ mod tests {
         let doc = Doc::new();
         let mut seen = StateVector::default();
         let first = update_with("old", "value");
-        handle_update(&doc, &mut store, &mut seen, first.clone())
+        handle_update(&doc, &mut store, &mut seen, u64::MAX, first.clone())
+            .unwrap()
             .expect("the first update is broadcast");
 
         let producer = Doc::new();
@@ -1704,7 +1831,9 @@ mod tests {
             .encode_state_as_update_v1(&StateVector::default());
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, combined).is_some(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, combined)
+                .unwrap()
+                .is_some(),
             "an update with new blocks is broadcast even when it repeats old ones"
         );
         store.write().unwrap();
@@ -1737,7 +1866,9 @@ mod tests {
             transaction.encode_update_v1()
         };
         assert!(
-            handle_update(&doc, &mut store, &mut seen, first).is_some(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, first)
+                .unwrap()
+                .is_some(),
             "the first update is broadcast"
         );
         let second = {
@@ -1746,7 +1877,9 @@ mod tests {
             transaction.encode_update_v1()
         };
         assert!(
-            handle_update(&doc, &mut store, &mut seen, second).is_some(),
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, second)
+                .unwrap()
+                .is_some(),
             "an update that continues a client's history is broadcast"
         );
         store.write().unwrap();
@@ -1762,5 +1895,117 @@ mod tests {
         }
         assert!(has_key(&replayed, "one"), "the first key did not survive");
         assert!(has_key(&replayed, "two"), "the second key did not survive");
+    }
+
+    #[test]
+    fn update_past_the_room_limit_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "room-limit").unwrap();
+        let doc = Doc::new();
+        let mut seen = StateVector::default();
+        let mut full_state = None;
+        let mut clients = HashMap::new();
+        for client in 1..=2 {
+            let (out, _inbox) = outbox();
+            clients.insert(
+                client,
+                Client {
+                    user: Uuid::new_v4(),
+                    role: Role::Owner,
+                    out,
+                },
+            );
+        }
+        let frame = |payload: &[u8]| {
+            Bytes::from(Message::Sync(SyncMessage::Update(payload.to_vec())).encode_v1())
+        };
+        let small = update_with("key", "value");
+        let limit = store.total_size() + 2 * small.len() as u64 + 8;
+        let accepted = handle_frame(
+            &mut Serving {
+                doc: &doc,
+                store: &mut store,
+                seen: &mut seen,
+                full_state: &mut full_state,
+                clients: &mut clients,
+                limit,
+            },
+            1,
+            frame(&small),
+        )
+        .expect("a small update fits");
+        assert!(accepted.is_some(), "the small update is broadcast");
+
+        let before = store.total_size();
+        let big = update_with("big", &"x".repeat(4096));
+        assert_eq!(
+            handle_frame(
+                &mut Serving {
+                    doc: &doc,
+                    store: &mut store,
+                    seen: &mut seen,
+                    full_state: &mut full_state,
+                    clients: &mut clients,
+                    limit,
+                },
+                2,
+                frame(&big),
+            ),
+            Err(CloseReason::Full),
+            "an update past the limit is refused"
+        );
+        assert_eq!(
+            store.total_size(),
+            before,
+            "a refused update is not appended"
+        );
+        assert!(!has_key(&doc, "big"), "a refused update is not applied");
+
+        let later = update_with("second", "value");
+        let accepted = handle_frame(
+            &mut Serving {
+                doc: &doc,
+                store: &mut store,
+                seen: &mut seen,
+                full_state: &mut full_state,
+                clients: &mut clients,
+                limit,
+            },
+            1,
+            frame(&later),
+        )
+        .expect("another client still writes under the limit");
+        assert!(accepted.is_some(), "the later small update is broadcast");
+    }
+
+    #[tokio::test]
+    async fn owner_quota_counts_other_rooms() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open(&dir.path().join("test.db")).await.unwrap();
+        let owner = crate::db::create_user(&pool, "owner@example.org", "pwd", false, true)
+            .await
+            .unwrap();
+        crate::db::create_room(&pool, owner, "first", "First")
+            .await
+            .unwrap();
+        crate::db::create_room(&pool, owner, "second", "Second")
+            .await
+            .unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "first").unwrap();
+        store
+            .append(Bytes::from(update_with("key", "value")))
+            .unwrap();
+        store.write().unwrap();
+        let used = fs::metadata(room_file(dir.path(), "first")).unwrap().len();
+        let manager = RoomManager::new(dir.path().to_owned(), None).with_storage(StorageLimits {
+            room: u64::MAX,
+            owner: used + 100,
+        });
+
+        assert_eq!(
+            manager.allowance(&pool, "second").await.unwrap(),
+            100,
+            "the owner's other room did not count against the quota"
+        );
     }
 }

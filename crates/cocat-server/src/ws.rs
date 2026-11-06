@@ -264,10 +264,11 @@ async fn attach(
     user: Uuid,
     role: Role,
 ) -> Result<(RoomHandle, Inbox), AttachError> {
+    let allowance = state.rooms.allowance(&state.pool, room_id).await?;
     for _ in 0..ATTACH_TRIES {
         let rooms = state.rooms.clone();
         let id = room_id.to_owned();
-        let room = tokio::task::spawn_blocking(move || rooms.get_or_open(&id))
+        let room = tokio::task::spawn_blocking(move || rooms.get_or_open_within(&id, allowance))
             .await?
             .map_err(AttachError::Room)?;
         let (out, inbox) = outbox();

@@ -19,7 +19,7 @@ use cocat_core::role::{Role, UnknownRole};
 use crate::links::{Links, LinksError};
 use crate::mail::{MailError, Mailer};
 use crate::ratelimit::LoginLimit;
-use crate::room::RoomManager;
+use crate::room::{RoomManager, StorageLimits};
 use crate::{AppState, auth, db, import, oidc, ws};
 
 #[derive(Debug, Parser)]
@@ -121,8 +121,11 @@ pub enum CliError {
     Io(#[from] io::Error),
     #[error("no user with email {0}")]
     NoSuchUser(String),
-    #[error("COCAT_ROOM_MEMORY_BUDGET must be a positive number of megabytes, got {0:?}")]
-    InvalidBudget(String),
+    #[error("{variable} must be a positive number of megabytes, got {value:?}")]
+    InvalidSize {
+        variable: &'static str,
+        value: String,
+    },
     #[error("COCAT_TRUSTED_PROXIES must be a non-negative integer, got {0:?}")]
     InvalidTrustedProxies(String),
     #[error(transparent)]
@@ -285,7 +288,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     }
     let pool = db::open(db_path).await?;
     let secret = auth::load_secret(db_path)?;
-    let rooms = RoomManager::new(update_dir.to_owned(), budget);
+    let rooms = RoomManager::new(update_dir.to_owned(), budget).with_storage(storage_limits()?);
     let state = AppState {
         pool,
         secret,
@@ -315,27 +318,50 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
 /// `COCAT_ROOM_MEMORY_BUDGET` is a positive number of megabytes; unset or empty means the
 /// server opens rooms without a limit.
 fn room_budget() -> Result<Option<u64>, CliError> {
-    let value = match std::env::var("COCAT_ROOM_MEMORY_BUDGET") {
-        Ok(value) => value,
-        Err(VarError::NotPresent) => return Ok(None),
-        Err(VarError::NotUnicode(_)) => {
-            return Err(CliError::InvalidBudget("a non-unicode value".to_owned()));
-        }
-    };
-    if value.trim().is_empty() {
-        return Ok(None);
+    match std::env::var("COCAT_ROOM_MEMORY_BUDGET") {
+        Err(VarError::NotPresent) => Ok(None),
+        Err(VarError::NotUnicode(_)) => Err(CliError::InvalidSize {
+            variable: "COCAT_ROOM_MEMORY_BUDGET",
+            value: "a non-unicode value".to_owned(),
+        }),
+        Ok(value) if value.trim().is_empty() => Ok(None),
+        Ok(value) => positive_megabytes("COCAT_ROOM_MEMORY_BUDGET", &value).map(Some),
     }
-    parse_budget(&value).map(Some)
 }
 
-fn parse_budget(value: &str) -> Result<u64, CliError> {
+/// The room and owner storage limits. Both are megabytes; unset or empty means the default.
+fn storage_limits() -> Result<StorageLimits, CliError> {
+    let defaults = StorageLimits::default();
+    let default_mb = |bytes: u64| bytes / (1024 * 1024);
+    Ok(StorageLimits {
+        room: megabytes("COCAT_ROOM_MAX_MB", default_mb(defaults.room))?,
+        owner: megabytes("COCAT_OWNER_MAX_MB", default_mb(defaults.owner))?,
+    })
+}
+
+fn megabytes(variable: &'static str, default: u64) -> Result<u64, CliError> {
+    match std::env::var(variable) {
+        Err(VarError::NotPresent) => Ok(default),
+        Err(VarError::NotUnicode(_)) => Err(CliError::InvalidSize {
+            variable,
+            value: "a non-unicode value".to_owned(),
+        }),
+        Ok(value) if value.trim().is_empty() => Ok(default),
+        Ok(value) => positive_megabytes(variable, &value),
+    }
+}
+
+fn positive_megabytes(variable: &'static str, value: &str) -> Result<u64, CliError> {
     value
         .trim()
         .parse::<u64>()
         .ok()
         .filter(|megabytes| *megabytes > 0)
         .map(|megabytes| megabytes.saturating_mul(1024 * 1024))
-        .ok_or_else(|| CliError::InvalidBudget(value.to_owned()))
+        .ok_or_else(|| CliError::InvalidSize {
+            variable,
+            value: value.to_owned(),
+        })
 }
 
 /// `COCAT_TRUSTED_PROXIES` is how many proxies stand in front of the server; unset or empty
@@ -384,4 +410,34 @@ fn shutdown_signal() -> impl Future<Output = ()> {
 
 fn parse_role(value: &str) -> Result<Role, UnknownRole> {
     value.parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limits_from_env() {
+        let defaults = StorageLimits::default();
+        assert_eq!(defaults.room, 1024 * 1024 * 1024, "the room default moved");
+        assert_eq!(
+            defaults.owner,
+            5120 * 1024 * 1024,
+            "the owner default moved"
+        );
+        assert_eq!(
+            positive_megabytes("COCAT_ROOM_MAX_MB", "1024").unwrap(),
+            1024 * 1024 * 1024,
+            "a megabyte value is read as bytes"
+        );
+        for bad in ["0", "many", "-1"] {
+            let message = positive_megabytes("COCAT_OWNER_MAX_MB", bad)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                message.contains("COCAT_OWNER_MAX_MB"),
+                "the error does not name the variable: {message}"
+            );
+        }
+    }
 }

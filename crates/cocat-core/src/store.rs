@@ -99,6 +99,11 @@ impl FileRoomStore {
         self.file.metadata().map_or(0, |metadata| metadata.len())
     }
 
+    /// The file's size once the pending records are written.
+    pub fn total_size(&self) -> u64 {
+        self.size().saturating_add(self.pending.len() as u64)
+    }
+
     pub fn append(&mut self, update: Bytes) -> Result<(), StoreError> {
         write_varuint(update.len() as u64, &mut self.pending);
         self.pending.extend_from_slice(&update);

@@ -42,6 +42,8 @@ gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live
 |---|---|
 | `COCAT_SECRET` | Secret that signs the mailed links (verification, password reset) and the provider sign-in cookie. Session cookies carry an opaque token the server stores instead of a signature. When it is unset or empty, the server uses `<db_path>.secret`, creating it (mode 0600) on first start. |
 | `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded rooms. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A room is charged sixteen times its `.y` file size (a measured 37.8 MB room is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the room stays on disk. |
+| `COCAT_ROOM_MAX_MB` | Largest `.y` file one room may reach, 1024 by default. Unset or empty means the default; a value that is not a positive integer stops the server at startup and names the variable. An update that would take the file past the limit is refused: nothing is applied, appended or broadcast, and its sender is closed with 4507 while the other clients stay. |
+| `COCAT_OWNER_MAX_MB` | Total `.y` bytes the rooms one account owns may reach, 5120 by default, measured when a room opens. Editors' writes count against the owner. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
 | `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
 | `COCAT_PUBLIC_URL` | The address users reach this deployment at, scheme and host only (`https://cocat.example.org`; a path, query or fragment is dropped). Every mailed link is built from it plus `COCAT_PROXY_PREFIX`, never from the request's `Host` header, which any client can spoof. A mailer configured without it stops the server at startup and names the variable. |
 | `COCAT_PROXY_PREFIX` | Path prefix the reverse proxy adds in front of the application (`/cocat`), used to build links that survive the proxy. Unset or blank means none. |
@@ -70,6 +72,7 @@ restart.
 | 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
 | 1013 | try again later: the client fell more than 1024 frames behind, or the room would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
 | 1011 | internal error while attaching the socket |
+| 4507 | room storage limit reached: an update would take the room file past `COCAT_ROOM_MAX_MB` or its owner's quota |
 
 A handshake without a valid cookie, or from a user who is not a member of the room, is
 refused before the upgrade with HTTP 403.
