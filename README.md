@@ -236,6 +236,44 @@ flush and shutdown, so a power loss can lose at most one second of acknowledged 
 file is the `0.0.1` append-only format the Python server writes; a record cut by a crash is
 detected at open and dropped.
 
+## Moving from the Python server
+
+`import` copies a running Python cocat deployment into this server's database in one
+idempotent command:
+
+```sh
+cocat-server import --update-dir ./updates --db ./test.db --users ./python.db
+```
+
+`--users` is the Python `--db_path` (the SQLite file, not its `.secret` sibling);
+`--update-dir` is the directory both servers keep `<room_id>.y` in. `--owner
+you@example.org` names the Rust account that takes every room file in `--update-dir` the
+imported database does not list: `--users` and `--owner` may be given together, and at
+least one is required. `--dry-run` prints the same summary and writes nothing.
+
+Both Python schemas import. The released one stores each user's rooms as a JSON list:
+every listed room becomes a room named by its id, everyone listed is an editor, and an
+owner is picked by the rule of Python's migration (the first member by address whose local
+part names the room, else the first member by address); accounts from it come in verified.
+The rooms schema (`room`, `membership`, `invitation`, `oauth_account`) is copied as it
+stands.
+
+Users keep their id, address, password hash and flags. Login accepts the bcrypt hashes
+older Python accounts hold and rehashes them to Argon2 on the first successful sign-in.
+Rooms keep their name and timestamps, memberships their role, invitations their token hash
+(so a live link keeps working on this server) and uses, and linked accounts their provider
+and subject; the provider tokens are dropped.
+
+The Python database is opened read-only and its room files are never modified: running the
+command twice changes nothing the second time, and the Python server starts again
+afterwards on the same files. The import refuses to run when `--db` and `--users` name the
+same file, and stops before writing anything when an address already belongs to an account
+here.
+
+Keep the Python database, and the room files in `--update-dir`, until the Rust server has
+run for a while: the import is a copy, not a move, and nothing in the Python deployment is
+deleted or rewritten.
+
 ## Tests
 
 ```sh
