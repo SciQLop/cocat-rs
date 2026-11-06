@@ -276,6 +276,14 @@ pub async fn set_user_quota(
 }
 
 /// The storage limit a room carries, in MB, when an administrator set one.
+pub async fn room_exists(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
+    let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM room WHERE id = ?")
+        .bind(room_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(found.is_some())
+}
+
 pub async fn room_quota(pool: &SqlitePool, room_id: &str) -> Result<Option<u64>, DbError> {
     let quota: Option<i64> = sqlx::query_scalar("SELECT limit_mb FROM room WHERE id = ?")
         .bind(room_id)

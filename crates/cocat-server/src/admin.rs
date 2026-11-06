@@ -9,12 +9,12 @@ use std::fs;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use cocat_core::role::Role;
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::accounts::{self, AccountError, Change};
 use crate::db::{self, DbError, User};
-use crate::lifecycle::{self, LifecycleError};
 
 /// The largest quota an administrator may set, in MB (one terabyte).
 const MAX_QUOTA_MB: u64 = 1_048_576;
@@ -116,8 +116,6 @@ pub enum AdminError {
     Db(#[from] DbError),
     #[error(transparent)]
     Account(#[from] AccountError),
-    #[error(transparent)]
-    Room(#[from] LifecycleError),
 }
 
 fn require(actor: &User) -> Result<(), AdminError> {
@@ -311,6 +309,9 @@ pub async fn set_room_limit(
     Ok(())
 }
 
+/// Hands the room to any account, member or not, and also repairs a room whose owner was
+/// deleted. The lifecycle transfer would refuse both: it acts as the current owner and only
+/// promotes a member. The writes and the socket closing are the same.
 pub async fn set_room_owner(
     state: &AppState,
     actor: &User,
@@ -321,33 +322,27 @@ pub async fn set_room_owner(
     let target = db::user_by_email(&state.pool, owner_email)
         .await?
         .ok_or(AdminError::UnknownUser)?;
-    let current = db::room_owner(&state.pool, room)
-        .await?
-        .ok_or(AdminError::NotFound)?;
-    lifecycle::transfer_ownership(state, room, current, target.id)
-        .await
-        .map_err(refusal)?;
+    if !db::room_exists(&state.pool, room).await? {
+        return Err(AdminError::NotFound);
+    }
+    let previous = db::room_owner(&state.pool, room).await?;
+    db::add_member(&state.pool, room, target.id, Role::Editor).await?;
+    db::set_owner(&state.pool, room, target.id).await?;
+    for changed in previous.into_iter().chain([target.id]) {
+        state.rooms.revoke(room, changed).await;
+    }
     Ok(())
 }
 
+/// Deletes the room whoever owns it, an ownerless room included; the same removal and socket
+/// closing as `lifecycle::delete_room`, without its owner check.
 pub async fn delete_room(state: &AppState, actor: &User, room: &str) -> Result<(), AdminError> {
     require(actor)?;
-    let current = db::room_owner(&state.pool, room)
-        .await?
-        .ok_or(AdminError::NotFound)?;
-    // The superuser acts through the room's own owner, so the lifecycle checks and side
-    // effects run exactly as they do for the web UI.
-    lifecycle::delete_room(state, room, current)
-        .await
-        .map_err(refusal)?;
-    Ok(())
-}
-
-fn refusal(error: LifecycleError) -> AdminError {
-    match error {
-        LifecycleError::NotFound(_) | LifecycleError::Forbidden(_) => AdminError::NotFound,
-        other => AdminError::Room(other),
+    if !db::delete_room(&state.pool, room).await? {
+        return Err(AdminError::NotFound);
     }
+    state.rooms.delete(room).await;
+    Ok(())
 }
 
 /// The resident set size of this process, when the kernel exposes it.

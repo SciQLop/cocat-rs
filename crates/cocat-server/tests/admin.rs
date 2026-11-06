@@ -239,3 +239,69 @@ async fn the_user_list_filters_by_substring_ignoring_case() {
         3
     );
 }
+
+/// Deleting an account leaves the rooms it owned without an owner: the admin is who repairs
+/// them, so both actions must work on an ownerless room.
+#[tokio::test]
+async fn an_ownerless_room_can_be_given_an_owner_or_deleted() {
+    let fixture = Fixture::start().await;
+    let admin = superuser(&fixture, "admin@example.org").await;
+    let gone = db::create_user(&fixture.state.pool, "gone@example.org", "pwd", true, false)
+        .await
+        .unwrap();
+    let heir = db::create_user(&fixture.state.pool, "heir@example.org", "pwd", true, false)
+        .await
+        .unwrap();
+    room_with_file(&fixture, gone, "orphan", "Orphan", 10).await;
+    room_with_file(&fixture, gone, "doomed", "Doomed", 10).await;
+    admin::delete_user(&fixture.state, &admin, gone)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::room_owner(&fixture.state.pool, "orphan").await.unwrap(),
+        None
+    );
+
+    admin::set_room_owner(&fixture.state, &admin, "orphan", "heir@example.org")
+        .await
+        .expect("an ownerless room takes a new owner");
+    assert_eq!(
+        db::room_owner(&fixture.state.pool, "orphan").await.unwrap(),
+        Some(heir)
+    );
+
+    admin::delete_room(&fixture.state, &admin, "doomed")
+        .await
+        .expect("an ownerless room can be deleted");
+    assert!(!fixture.dir().join("rooms").join("doomed.y").exists());
+}
+
+/// The admin hands a room to anyone with an account, not only to its members.
+#[tokio::test]
+async fn the_new_owner_need_not_be_a_member() {
+    let fixture = Fixture::start().await;
+    let admin = superuser(&fixture, "admin@example.org").await;
+    let owner = db::create_user(&fixture.state.pool, "owner@example.org", "pwd", true, false)
+        .await
+        .unwrap();
+    let stranger = db::create_user(&fixture.state.pool, "new@example.org", "pwd", true, false)
+        .await
+        .unwrap();
+    room_with_file(&fixture, owner, "lab", "Lab", 10).await;
+
+    admin::set_room_owner(&fixture.state, &admin, "lab", "new@example.org")
+        .await
+        .expect("a non-member becomes the owner");
+
+    assert_eq!(
+        db::room_owner(&fixture.state.pool, "lab").await.unwrap(),
+        Some(stranger)
+    );
+    assert_eq!(
+        db::direct_role(&fixture.state.pool, "lab", owner)
+            .await
+            .unwrap(),
+        Some(Role::Editor),
+        "the previous owner stays as an editor"
+    );
+}
