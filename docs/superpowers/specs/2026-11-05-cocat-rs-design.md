@@ -180,9 +180,9 @@ against the Rust binary.
 
 ## Phases
 
-Status: phases 0 (spike), 1 (rooms and lifecycle) and 2 (auth, the REST API and user
-groups) are done, and so are the UI phases 3a (accounts) and 3b (rooms, invitations and
-groups); 3c (ORCID sign-in) is next.
+Status: phases 0 (spike), 1 (rooms and lifecycle), 2 (auth, the REST API and user groups)
+and 3 (the web UI: accounts, rooms and invitations, groups, and OpenID Connect sign-in) are
+done.
 
 0. **Spike (go/no-go).** `cocat-server` serving only `/room/{id}`: cookie check,
    membership/role from SQLite, Yjs sync with viewer write-blocking, `.y` storage.

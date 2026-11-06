@@ -51,6 +51,7 @@ gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live
 | `COCAT_SMTP_USERNAME` / `COCAT_SMTP_PASSWORD` | Relay credentials. Give both or neither: a username without a password stops the server at startup, and a password without a username is refused rather than ignored. |
 | `COCAT_SMTP_STARTTLS` | Whether to upgrade the connection before sending, on by default. `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive and trimmed; any other value stops the server at startup. |
 | `COCAT_MAIL_DIR` | Write one `.eml` file per message instead of talking to a relay, for tests and demos. The directory must already exist (a send that cannot write names the path). Mutually exclusive with `COCAT_SMTP_HOST`: setting both stops the server at startup. |
+| `COCAT_OAUTH_PROVIDERS` | JSON list of OpenID Connect providers, empty or unset for none (see [Provider sign-in](#provider-sign-in)). Every provider needs `COCAT_PUBLIC_URL`; a value that is not a JSON list, or a provider whose name is not `^[a-z0-9_-]{1,32}$`, stops the server at startup. A provider whose discovery document cannot be read at startup is skipped with a warning and the server still starts. |
 
 ### Login rate limit
 
@@ -153,6 +154,7 @@ scripts carry the browser side: `fragment.js` moves a mailed `#token` into a for
 | Page | Path |
 |---|---|
 | Sign in, resend verification | `/ui/login` |
+| Sign in with a provider | `/ui/oauth/{name}/login` |
 | Sign up | `/ui/signup` |
 | Forgot / reset password | `/ui/forgot-password`, `/ui/reset-password#token` |
 | Verify an address | `/ui/verify#token` |
@@ -181,6 +183,50 @@ Two deliberate differences from the Python UI:
    address is registered.
 2. The forgot-password and resend mails are sent in the background, so the answer time
    doesn't reveal whether the address has an account.
+
+### Provider sign-in
+
+Sign-in through OpenID Connect is configured with `COCAT_OAUTH_PROVIDERS`, a JSON list
+whose entries follow the Python configuration:
+
+```sh
+export COCAT_PUBLIC_URL=https://cocat.example.org
+export COCAT_OAUTH_PROVIDERS='[
+  {"name": "orcid",
+   "discovery_url": "https://orcid.org/.well-known/openid-configuration",
+   "client_id": "APP-...",
+   "client_secret": "...",
+   "scopes": ["openid"]}
+]'
+```
+
+`discovery_url` is the provider's discovery document; the redirect URI is
+`{COCAT_PUBLIC_URL}{COCAT_PROXY_PREFIX}/ui/oauth/{name}/callback`, built from the
+configuration and never from the request's `Host` header, so the provider must have that
+exact address registered as a client redirect URI. Each configured provider adds a "Sign
+in with {name}" link to the login page. The flow uses PKCE and a nonce; the verifier,
+nonce and CSRF state ride in one signed `cocat_oidc` cookie (ten minutes, scoped to
+`/ui/oauth/`), and no provider token is stored after the callback.
+
+An address the provider returns is believed only when the provider is marked
+`"verifies_email": true` and the address parses; otherwise the account gets
+`{subject}@{name}.placeholder.cocat.org` and is sent to `/ui/confirm-email` to name a real
+address. With a mailer configured, a trusted address links to an existing local account
+only when that account is already verified; an unverified one answers
+`/ui/login?error=exists`, and without a mailer no association is made at all. A
+placeholder address never links to an account and is never verified. A sign-in with a
+known subject reaches the same account every time.
+
+Differences from Python beyond the stored-token rule: the Python `Sec-Fetch-Site: none`
+refusal is dropped, so a bookmark or a typed `/ui/oauth/{name}/login` URL works (a
+cross-site one is still refused with 403); the login route's rate limit answers a 303 with
+`?error=too_many` rather than Python's 429; and the JSON API pair
+`/auth/{name}/authorize|callback` is not implemented.
+
+Providers are documented as ORCID first: `scopes` is `["openid"]`, which returns no address,
+and even with the email scope ORCID does not prove control of it, so a real deployment
+leaves `verifies_email` off. Every ORCID user therefore lands on `/ui/confirm-email` and
+names a real address after one click from the inbox.
 
 ## Durability
 
