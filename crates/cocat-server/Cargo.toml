@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 yrs.workspace = true
 
 [dev-dependencies]
+proptest = "1"
 tempfile = "3"
 tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }
