@@ -312,6 +312,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     .with_graceful_shutdown(shutdown)
     .await?;
     rooms.flush_all().await;
+    let _ = writeln!(io::stdout(), "Cocat server stopped.");
     Ok(())
 }
 

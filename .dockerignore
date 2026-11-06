@@ -1,0 +1,10 @@
+target
+.git
+.github
+docs
+bench
+*.db
+*.db.secret
+.hypothesis
+.ruff_cache
+.schemathesis

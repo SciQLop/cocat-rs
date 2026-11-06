@@ -12,6 +12,34 @@ cargo build --release -p cocat-server
 
 The binary is `target/release/cocat-server`.
 
+## Container
+
+```sh
+podman build -t cocat-server-rs -f docker/Dockerfile .
+podman run -d --name cocat -p 6570:6570 \
+    -v cocat-storage:/storage -v cocat-db:/db -v cocat-log:/log \
+    cocat-server-rs
+```
+
+The image runs as the `cocat` user and keeps the Python image's contract:
+`STORAGE_PATH=/storage` for the room files, `DB_PATH=/db` for `cocat-rs.db`, `LOG_PATH=/log`,
+`PORT` (build argument, 6570 by default), and the `COCAT_PROXY_PREFIX` and
+`COCAT_TRUSTED_PROXIES=1` it sets for a deployment behind one proxy. Every mount is declared
+as a volume. The entry point `exec`s the server, so `podman stop` sends it `SIGTERM` and the
+open rooms are flushed before it exits.
+
+Three wrappers take the same positional arguments as the Python image:
+
+```sh
+podman exec cocat create-user you@example.org secret
+podman exec cocat add-user-to-room them@example.org my-room
+podman exec cocat remove-user-from-room them@example.org my-room
+```
+
+`docker/build_and_push.sh testing|release` builds and pushes `:devel` or `:stable` to
+`129.104.6.172:32219/sciqlop/cocat-server-rs`; it is not run by anything here, and `:devel`
+shares no tag with the Python image.
+
 ## Seeding
 
 ```sh
