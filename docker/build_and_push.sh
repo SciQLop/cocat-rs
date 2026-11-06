@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -e
 BASEDIR=$(dirname "$0")
-IMAGE=129.104.6.172:32219/sciqlop/cocat-server-rs
+# Pushes go to port 5443 and need a login (podman login registry.lpp.polytechnique.fr:5443);
+# the host pulls anonymously from registry.lpp.polytechnique.fr.
+IMAGE=registry.lpp.polytechnique.fr:5443/sciqlop/cocat-server-rs
 
 BUILD_TYPE=${1:-"testing"}
 if [ "$BUILD_TYPE" = "release" ]; then

@@ -45,7 +45,8 @@ avoids surprises), then `nginx -t && systemctl reload nginx`.
 From a checkout, on a machine that can push to the registry:
 
 ```sh
-docker/build_and_push.sh testing     # sciqlop/cocat-server-rs:devel
+podman login registry.lpp.polytechnique.fr:5443   # pushes need a login, pulls do not
+docker/build_and_push.sh testing                  # sciqlop/cocat-server-rs:devel
 ```
 
 ## 2. Seed the data, then deploy
