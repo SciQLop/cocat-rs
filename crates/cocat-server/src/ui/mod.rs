@@ -4,6 +4,7 @@ mod account;
 mod frame;
 mod groups;
 mod invitation;
+mod landing;
 mod login;
 mod oauth;
 mod reset;
@@ -17,6 +18,8 @@ use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+
+pub(crate) use landing::landing;
 
 use crate::AppState;
 use crate::lifecycle::LifecycleError;

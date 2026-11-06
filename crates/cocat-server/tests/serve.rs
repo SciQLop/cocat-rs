@@ -147,7 +147,7 @@ async fn serve_prints_the_bound_port() {
 }
 
 #[tokio::test]
-async fn the_root_answers_404() {
+async fn the_root_answers_the_landing_page() {
     let mut server = Server::spawn().await;
     let mut stream = TcpStream::connect(server.addr).await.unwrap();
     stream
@@ -157,7 +157,8 @@ async fn the_root_answers_404() {
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
 
-    assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.contains("text/html"), "{response}");
 
     server.interrupt().await;
 }

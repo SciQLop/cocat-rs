@@ -110,6 +110,7 @@ struct Row {
 
 const ROWS: &[Row] = &[
     row("GET", "/docs", Guard::Public, Style::Api),
+    row("GET", "/", Guard::Public, Style::UiAction),
     row("GET", "/docs/", Guard::Public, Style::Api),
     row("GET", "/docs/{swagger}", Guard::Public, Style::Api),
     row("GET", "/openapi.json", Guard::Public, Style::Api),

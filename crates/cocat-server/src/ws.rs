@@ -58,6 +58,7 @@ pub fn router(state: AppState) -> Router {
         crate::openapi::api(&state.login_limit, &state.links);
     Router::new()
         .merge(router)
+        .route("/", get(ui::landing))
         .nest("/ui/", ui::router(&state))
         .route("/room/{room_id}", get(room_socket))
         .merge(crate::openapi::router(&state.links, document))

@@ -302,7 +302,7 @@ fn request_path(parts: &Parts) -> &str {
 
 /// A deactivated account reads as anonymous here: `auth::authenticate` refuses it, so a
 /// cookie minted before the deactivation cannot keep acting on a page.
-async fn signed_in_user(state: &AppState, headers: &HeaderMap) -> Option<User> {
+pub(crate) async fn signed_in_user(state: &AppState, headers: &HeaderMap) -> Option<User> {
     let id = auth::authenticate(&state.pool, headers).await.ok()?;
     match db::user_by_id(&state.pool, id).await {
         Ok(user) => user,
