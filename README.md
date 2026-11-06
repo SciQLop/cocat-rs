@@ -146,8 +146,9 @@ group, or unshare the room, to cut access.
 ## Web UI
 
 Server-rendered pages under `{COCAT_PROXY_PREFIX}/ui/`, with the paths and messages of the
-Python UI. Every action is a form POST answered by a 303 redirect; the only script is
-`fragment.js`, which moves a mailed `#token` into a form field.
+Python UI. Every action is a form POST answered by a 303 redirect. Three small static
+scripts carry the browser side: `fragment.js` moves a mailed `#token` into a form field,
+`confirm.js` asks before a destructive submit, and `copy.js` copies a share link.
 
 | Page | Path |
 |---|---|
@@ -156,6 +157,10 @@ Python UI. Every action is a form POST answered by a 303 redirect; the only scri
 | Forgot / reset password | `/ui/forgot-password`, `/ui/reset-password#token` |
 | Verify an address | `/ui/verify#token` |
 | Account, confirm email | `/ui/account`, `/ui/confirm-email` |
+| Rooms, one room | `/ui/rooms`, `/ui/rooms/{id}` |
+| Accept a room invitation | `/ui/invitation#token` |
+| Groups, one group | `/ui/groups`, `/ui/groups/{id}` |
+| Accept a group invitation | `/ui/groups/join#token` |
 
 - Sessions are the same `fastapiusersauth` cookie as the API.
 - Any POST under `/ui` coming from another site is refused with 403. The `Origin` must
@@ -163,6 +168,11 @@ Python UI. Every action is a form POST answered by a 303 redirect; the only scri
   same-site.
 - `?next=` after login only ever leads to a path on this site.
 - Login, sign-up, forgot-password and resend are rate-limited (10 per minute per client).
+- A message that names something (a room, a group, an address) travels in a short-lived
+  `cocat_flash` cookie written by the action's 303 and cleared by the next page view. A
+  share link made on a room or group page rides the same way in `cocat_share_link`.
+- Invitation tokens stay in the URL fragment or a POST body, so they reach neither an
+  access log nor a `Referer` header.
 
 Two deliberate differences from the Python UI:
 

@@ -180,8 +180,9 @@ against the Rust binary.
 
 ## Phases
 
-Status: phases 0 (spike), 1 (rooms and lifecycle), 2 (auth, the REST API and user groups) are
-done; ORCID moved to phase 3 with the UI, which is next.
+Status: phases 0 (spike), 1 (rooms and lifecycle) and 2 (auth, the REST API and user
+groups) are done, and so are the UI phases 3a (accounts) and 3b (rooms, invitations and
+groups); 3c (ORCID sign-in) is next.
 
 0. **Spike (go/no-go).** `cocat-server` serving only `/room/{id}`: cookie check,
    membership/role from SQLite, Yjs sync with viewer write-blocking, `.y` storage.
@@ -215,8 +216,9 @@ done; ORCID moved to phase 3 with the UI, which is next.
 2. **Auth and the REST API.** Register, verify, reset, ORCID via `openidconnect`, email
    via `lettre`, the rate limiter, rooms/members/invitations under `/api/*`, and the
    read-only catalogue API.
-3. **Web UI.** Server-rendered `askama` + htmx, same pages as the NiceGUI UI. Starts
-   with a new HTTP-level acceptance suite, because the NiceGUI tests cannot be reused.
+3. **Web UI.** Server-rendered `askama` pages with three small static scripts, same pages
+   as the NiceGUI UI. Starts with a new HTTP-level acceptance suite, because the NiceGUI
+   tests cannot be reused.
 4. **Security campaign, then the import tool**, then the Rust server ships. Against a
    local Rust instance with accounts in every role, SMTP to a sink, ORCID faked:
    two or three agents on different (cheap) models with the same attacker brief (enter
