@@ -135,6 +135,10 @@ impl Fixture {
     }
 
     /// Remove the sink, so the next send fails the way a refusing relay would.
+    pub fn dir(&self) -> &std::path::Path {
+        self._dir.path()
+    }
+
     pub fn break_mail(&self) {
         if let Some(dir) = &self.mail_dir {
             fs::remove_dir_all(dir).unwrap();

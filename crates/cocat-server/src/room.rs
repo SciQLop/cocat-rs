@@ -44,6 +44,13 @@ pub const MEMORY_PER_FILE_BYTE: u64 = 16;
 /// SciQLop syncs over the websocket, so these reads are rare and do not need one per core.
 pub const COLD_READ_SLOTS: usize = 2;
 
+/// One megabyte, the unit administrators set quotas in.
+const MEGABYTE: u64 = 1024 * 1024;
+
+fn megabytes(mb: u64) -> u64 {
+    mb.saturating_mul(MEGABYTE)
+}
+
 /// How large a room file may grow, and how much the files of one owner's rooms may total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageLimits {
@@ -242,8 +249,16 @@ impl RoomManager {
     /// opening together can each spend the remaining quota (overshoot ≤ remaining × open
     /// rooms). Upgrade path: one shared per-owner byte counter in the manager.
     pub async fn allowance(&self, pool: &SqlitePool, room_id: &str) -> Result<u64, RoomError> {
+        let room_limit = match crate::db::room_quota(pool, room_id).await? {
+            Some(mb) => megabytes(mb),
+            None => self.storage.room,
+        };
         let Some(owner) = crate::db::room_owner(pool, room_id).await? else {
-            return Ok(self.storage.room);
+            return Ok(room_limit);
+        };
+        let owner_limit = match crate::db::user_quota(pool, owner).await? {
+            Some(mb) => megabytes(mb),
+            None => self.storage.owner,
         };
         let mut used = 0u64;
         for owned in crate::db::owned_rooms(pool, owner).await? {
@@ -255,10 +270,7 @@ impl RoomManager {
                 );
             }
         }
-        Ok(self
-            .storage
-            .room
-            .min(self.storage.owner.saturating_sub(used)))
+        Ok(room_limit.min(owner_limit.saturating_sub(used)))
     }
 
     /// Closes every socket this user has in the room, whatever their client ids. A room
@@ -322,6 +334,52 @@ impl RoomManager {
 
     pub fn open_rooms(&self) -> usize {
         self.rooms.lock().map(|rooms| rooms.len()).unwrap_or(0)
+    }
+
+    /// The limits the process was configured with, before any per-account override.
+    pub fn limits(&self) -> StorageLimits {
+        self.storage
+    }
+
+    /// Whether the room is open right now, so its newest edits may not have reached the file.
+    pub fn is_open(&self, room_id: &str) -> bool {
+        self.rooms
+            .lock()
+            .map(|rooms| rooms.contains_key(room_id))
+            .unwrap_or(false)
+    }
+
+    /// Sockets open in `room_id` across every client id, or zero when it is not open.
+    pub async fn clients_of(&self, room_id: &str) -> u64 {
+        let handle = match self.rooms.lock() {
+            Ok(rooms) => rooms.get(room_id).cloned(),
+            Err(_) => None,
+        };
+        match handle {
+            Some(handle) => handle.clients().await,
+            None => 0,
+        }
+    }
+
+    /// How many rooms are open and how many sockets they hold together.
+    pub async fn open_counts(&self) -> (u64, u64) {
+        let handles: Vec<RoomHandle> = match self.rooms.lock() {
+            Ok(rooms) => rooms.values().cloned().collect(),
+            Err(_) => return (0, 0),
+        };
+        let open = handles.len() as u64;
+        let mut clients = 0u64;
+        for handle in handles {
+            clients = clients.saturating_add(handle.clients().await);
+        }
+        (open, clients)
+    }
+
+    /// The size of the room's file on disk, zero when no update has been written yet.
+    pub fn room_size(&self, room_id: &str) -> u64 {
+        fs::metadata(room_file(&self.update_dir, room_id))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
     }
 
     /// Flushes every open room, waiting for each file write to reach the disk.
@@ -539,6 +597,16 @@ impl RoomHandle {
         }
     }
 
+    /// How many sockets the room thread holds open right now.
+    pub async fn clients(&self) -> u64 {
+        let (done, count) = oneshot::channel();
+        if self.commands.send(RoomCommand::Clients { done }).is_ok() {
+            count.await.unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
     fn send(&self, command: RoomCommand) -> Result<(), RoomGone> {
         self.commands.send(command).map_err(|_| RoomGone)
     }
@@ -568,6 +636,10 @@ enum RoomCommand {
     },
     Flush {
         done: oneshot::Sender<()>,
+    },
+    /// Answers how many sockets the room still holds.
+    Clients {
+        done: oneshot::Sender<u64>,
     },
     /// Runs a question against the document on the room's own thread.
     Read {
@@ -719,6 +791,10 @@ fn room_loop(
                     RoomCommand::Flush { done } => {
                         flush(&mut store, &room_id);
                         let _ = done.send(());
+                        Step::Serving
+                    }
+                    RoomCommand::Clients { done } => {
+                        let _ = done.send(clients.len() as u64);
                         Step::Serving
                     }
                     RoomCommand::Read { read } => {
@@ -961,6 +1037,9 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             | RoomCommand::Revoke { done, .. }
             | RoomCommand::Delete { done } => {
                 let _ = done.send(());
+            }
+            RoomCommand::Clients { done } => {
+                let _ = done.send(0);
             }
             RoomCommand::Attach { .. } | RoomCommand::Frame { .. } | RoomCommand::Read { .. } => {}
             #[cfg(test)]

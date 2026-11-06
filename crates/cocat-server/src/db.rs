@@ -252,6 +252,172 @@ pub async fn owned_rooms(pool: &SqlitePool, user: Uuid) -> Result<Vec<String>, D
     )
 }
 
+/// The storage quota an account carries, in MB, when an administrator set one.
+pub async fn user_quota(pool: &SqlitePool, user: Uuid) -> Result<Option<u64>, DbError> {
+    let quota: Option<i64> = sqlx::query_scalar("SELECT quota_mb FROM \"user\" WHERE id = ?")
+        .bind(user.to_string())
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+    Ok(quota.and_then(|mb| u64::try_from(mb).ok()))
+}
+
+pub async fn set_user_quota(
+    pool: &SqlitePool,
+    user: Uuid,
+    quota_mb: Option<u64>,
+) -> Result<bool, DbError> {
+    let updated = sqlx::query("UPDATE \"user\" SET quota_mb = ? WHERE id = ?")
+        .bind(quota_mb.and_then(|mb| i64::try_from(mb).ok()))
+        .bind(user.to_string())
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+/// The storage limit a room carries, in MB, when an administrator set one.
+pub async fn room_quota(pool: &SqlitePool, room_id: &str) -> Result<Option<u64>, DbError> {
+    let quota: Option<i64> = sqlx::query_scalar("SELECT limit_mb FROM room WHERE id = ?")
+        .bind(room_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+    Ok(quota.and_then(|mb| u64::try_from(mb).ok()))
+}
+
+pub async fn set_room_quota(
+    pool: &SqlitePool,
+    room_id: &str,
+    limit_mb: Option<u64>,
+) -> Result<bool, DbError> {
+    let updated = sqlx::query("UPDATE room SET limit_mb = ? WHERE id = ?")
+        .bind(limit_mb.and_then(|mb| i64::try_from(mb).ok()))
+        .bind(room_id)
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+/// One account as the admin pages read it: the profile, the number of rooms it owns, and the
+/// quota an administrator set (NULL when the configured default applies).
+pub struct AdminUser {
+    pub id: Uuid,
+    pub email: String,
+    pub created_at: String,
+    pub is_active: bool,
+    pub is_verified: bool,
+    pub is_superuser: bool,
+    pub rooms_owned: u64,
+    pub quota_mb: Option<u64>,
+}
+
+pub async fn admin_users(
+    pool: &SqlitePool,
+    search: Option<&str>,
+) -> Result<Vec<AdminUser>, DbError> {
+    // A LIKE on a lowered pattern keeps the SQLite matching case-insensitive for ASCII even
+    // though the column's own collation is NOCASE only for equality.
+    let pattern = search
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("%{}%", term.to_lowercase()));
+    let rows = sqlx::query(
+        "SELECT u.id, u.email, u.created_at, u.is_active, u.is_verified, u.is_superuser, u.quota_mb,
+                (SELECT COUNT(*) FROM membership m
+                 WHERE m.user_id = u.id AND m.role = 'owner') AS rooms_owned
+         FROM \"user\" u
+         WHERE ?1 IS NULL OR LOWER(u.email) LIKE ?1
+         ORDER BY u.email COLLATE NOCASE",
+    )
+    .bind(pattern)
+    .fetch_all(pool)
+    .await?;
+    let mut users = Vec::with_capacity(rows.len());
+    for row in rows {
+        users.push(AdminUser {
+            id: {
+                let id: String = row.try_get("id")?;
+                Uuid::parse_str(&id).map_err(|error| sqlx::Error::Decode(Box::new(error)))?
+            },
+            email: row.try_get("email")?,
+            created_at: row.try_get("created_at")?,
+            is_active: row.try_get("is_active")?,
+            is_verified: row.try_get("is_verified")?,
+            is_superuser: row.try_get("is_superuser")?,
+            rooms_owned: row.try_get::<i64, _>("rooms_owned")?.max(0) as u64,
+            quota_mb: row
+                .try_get::<Option<i64>, _>("quota_mb")?
+                .and_then(|mb| u64::try_from(mb).ok()),
+        });
+    }
+    Ok(users)
+}
+
+/// One room as the admin pages read it, without its size (that comes from the file).
+pub struct AdminRoom {
+    pub id: String,
+    pub name: String,
+    pub owner: Option<String>,
+    pub members: u64,
+    pub limit_mb: Option<u64>,
+}
+
+pub async fn admin_rooms(pool: &SqlitePool) -> Result<Vec<AdminRoom>, DbError> {
+    let rows = sqlx::query(
+        "SELECT r.id, r.name, r.limit_mb,
+                (SELECT u.email FROM membership m JOIN \"user\" u ON u.id = m.user_id
+                 WHERE m.room_id = r.id AND m.role = 'owner') AS owner,
+                (SELECT COUNT(*) FROM membership m WHERE m.room_id = r.id) AS members
+         FROM room r
+         ORDER BY r.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut rooms = Vec::with_capacity(rows.len());
+    for row in rows {
+        rooms.push(AdminRoom {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            owner: row.try_get("owner")?,
+            members: row.try_get::<i64, _>("members")?.max(0) as u64,
+            limit_mb: row
+                .try_get::<Option<i64>, _>("limit_mb")?
+                .and_then(|mb| u64::try_from(mb).ok()),
+        });
+    }
+    Ok(rooms)
+}
+
+/// The account counts the admin overview shows: total, active, unverified, superusers and the
+/// accounts created in the last seven days.
+pub async fn admin_user_counts(pool: &SqlitePool) -> Result<(u64, u64, u64, u64, u64), DbError> {
+    let row = sqlx::query(
+        "SELECT COUNT(*) AS total,
+                COALESCE(SUM(is_active), 0) AS active,
+                COALESCE(SUM(NOT is_verified), 0) AS unverified,
+                COALESCE(SUM(is_superuser), 0) AS superusers,
+                COALESCE(SUM(created_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')), 0)
+                    AS recent
+         FROM \"user\"",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok((
+        row.try_get::<i64, _>("total")?.max(0) as u64,
+        row.try_get::<i64, _>("active")?.max(0) as u64,
+        row.try_get::<i64, _>("unverified")?.max(0) as u64,
+        row.try_get::<i64, _>("superusers")?.max(0) as u64,
+        row.try_get::<i64, _>("recent")?.max(0) as u64,
+    ))
+}
+
+pub async fn count_rooms(pool: &SqlitePool) -> Result<u64, DbError> {
+    let rooms: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM room")
+        .fetch_one(pool)
+        .await?;
+    Ok(rooms.max(0) as u64)
+}
+
 pub async fn create_user(
     pool: &SqlitePool,
     email: &str,

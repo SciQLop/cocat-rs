@@ -302,6 +302,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
 
     let listener = TcpListener::bind((host, port)).await?;
     let shutdown = shutdown_signal();
+    crate::admin::record_start();
     println!("listening on {}", listener.local_addr()?);
     io::stdout().flush()?;
 

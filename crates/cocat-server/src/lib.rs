@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod accounts_api;
+pub mod admin;
 pub mod api;
 pub mod auth;
 pub mod catalogues_api;
