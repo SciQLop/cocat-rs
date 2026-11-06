@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use email_address::EmailAddress;
 use lettre::message::Mailbox;
+use lettre::message::SinglePart;
+use lettre::message::header::ContentType;
 use lettre::transport::file::AsyncFileTransport;
 use lettre::transport::smtp::AsyncSmtpTransport;
 use lettre::transport::smtp::authentication::Credentials;
@@ -96,6 +98,15 @@ pub enum MailError {
     },
 }
 
+/// A UTF-8 text part with its MIME headers. Without `MIME-Version` and `Content-Type`,
+/// clients ignored the quoted-printable encoding lettre picks for long lines and showed a
+/// mailed link cut by `=` and a newline.
+fn plain_text(body: &str) -> SinglePart {
+    SinglePart::builder()
+        .header(ContentType::TEXT_PLAIN)
+        .body(body.to_string())
+}
+
 impl Mailer {
     /// Reads the sender from the environment, or `None` when none is configured.
     ///
@@ -162,7 +173,7 @@ impl Mailer {
             .from(self.sender().clone())
             .to(recipient)
             .subject(subject)
-            .body(body.to_string())
+            .singlepart(plain_text(body))
             .map_err(MailError::Build)
     }
 

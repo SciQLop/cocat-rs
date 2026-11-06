@@ -323,3 +323,63 @@ fn the_mail_texts_name_the_link_and_the_expiry() {
     assert!(body.contains(link), "{body}");
     assert!(body.contains("14 days"), "{body}");
 }
+
+/// A mailed link must reach the reader whole. A long link is sent quoted-printable, with
+/// soft line breaks; without MIME headers clients showed those breaks as `=` plus a newline.
+#[tokio::test]
+async fn a_long_link_arrives_on_one_line_with_mime_headers() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mailer = directory(dir.path())
+        .mailer()
+        .expect("a sink")
+        .expect("a mailer");
+    let link = format!(
+        "https://cocat.example.org/cocat-dev/ui/invitation#{}",
+        "OZIaQd2Y-j213Y3WYkc6mw-9-hdyMq6nbrJvOEduTGc".repeat(4)
+    );
+
+    mailer
+        .send(
+            "guest@example.org",
+            "Join",
+            &format!("Open this link:\n\n{link}\n\nÀ bientôt."),
+        )
+        .await
+        .expect("the message");
+
+    let written = std::fs::read_to_string(&eml_files(dir.path())[0]).expect("the message");
+    assert!(written.contains("MIME-Version: 1.0"), "{written}");
+    assert!(
+        written.contains("Content-Type: text/plain; charset=utf-8"),
+        "{written}"
+    );
+    assert!(
+        written.contains("Content-Transfer-Encoding: quoted-printable"),
+        "{written}"
+    );
+    let body = quoted_printable(written.split_once("\r\n\r\n").expect("a body").1);
+    assert!(body.lines().any(|line| line == link), "{body}");
+    assert!(body.contains("À bientôt."), "{body}");
+}
+
+/// What a mail client does with a quoted-printable body (RFC 2045 6.7): drop soft line
+/// breaks, decode `=XX`.
+fn quoted_printable(encoded: &str) -> String {
+    let joined = encoded.replace("=\r\n", "");
+    let bytes = joined.as_bytes();
+    let mut decoded = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'=' && at + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[at + 1..at + 3]).expect("ascii");
+            decoded.push(u8::from_str_radix(hex, 16).expect("an =XX escape"));
+            at += 3;
+        } else {
+            decoded.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .expect("utf-8")
+        .replace("\r\n", "\n")
+}
