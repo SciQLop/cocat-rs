@@ -349,6 +349,75 @@ scrape_configs:
       - targets: ["127.0.0.1:9187"]
 ```
 
+## Python package
+
+`crates/cocat-py` builds `cocat_rs`, a Python package over the same document: a room held in a
+directory, and either read and written locally or synchronised with a server.
+
+```sh
+# from a checkout, into the environment you are using
+maturin develop -m crates/cocat-py/Cargo.toml
+# or install the wheel it builds
+pip install target/wheels/cocat_rs-*.whl
+```
+
+**Script mode** works on the cached copy, as cocat's own API does:
+
+```python
+from cocat_rs import api
+
+api.set_config(host="http://localhost:8000", file_path="/tmp/cocat", room_id="my-room")
+api.log_in("you@example.org", "secret")
+catalogue = api.create_catalogue(name="events", author="you@example.org")
+api.save()
+```
+
+**Client mode** keeps the same `Room` in step with a server through the websocket:
+
+```python
+import cocat_rs
+
+room = cocat_rs.Room.open("/tmp/cocat", "my-room")
+room.connect("ws://localhost:8000/room/my-room", cookie, credentials=("you@example.org", "secret"))
+room.wait_synced(10)
+
+print(room.status)                      # offline, connecting, synced, unauthorized
+
+event = room.event("<a uuid>")
+print(event.catalogues)                 # the uuids of the catalogues listing it
+print(room.event_arrays([event], attributes=True))
+```
+
+`credentials` is what lets the client recover a session the server ended (a password change,
+a deactivation, a restart with a new database): the sync task logs in again once, swaps the
+cookie and retries, and only a refusal right after a fresh login, or a login that fails, ends
+in `unauthorized`. Without `credentials` a refused session is final, as before.
+`room.set_cookie(...)` replaces the cookie of a running connection.
+
+A listener hears the room's changes on the loop it was registered from:
+
+```python
+class Listener:
+    def status(self, value):
+        print("the room is now", value)
+
+    def catalogue_added(self, uuid):
+        print("new catalogue", uuid)
+
+    def changes_done(self):
+        pass
+
+handle = room.listen(Listener())
+handle.close()
+```
+
+`status` is called once with the current status right after registration, then on every
+change; a method the listener does not have is skipped, and one that raises is logged without
+stopping the batch. Unknown catalogues and events raise `cocat_rs.NotFound`, which subclasses
+both `LookupError` (what Python's mappings raise) and `RuntimeError` (what this package raised
+before it named the case), so both `except LookupError` and old `except RuntimeError` code
+still catches it.
+
 ## Tests
 
 ```sh
