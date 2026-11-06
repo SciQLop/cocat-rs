@@ -334,8 +334,9 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     let listener = TcpListener::bind((host, port)).await?;
     let shutdown = shutdown_signal();
     crate::admin::record_start();
+    let token = crate::telemetry::token_from_env(&|name| std::env::var(name).ok())?;
     if let Some(bind) = crate::telemetry::bind_from_env(&|name| std::env::var(name).ok())? {
-        crate::telemetry::install(bind)?;
+        crate::telemetry::install(bind, token)?;
         let _sampler = crate::telemetry::spawn_sampler(state.clone());
     }
     println!("listening on {}", listener.local_addr()?);

@@ -33,7 +33,7 @@ fn the_bind_comes_from_the_environment() {
 
 #[tokio::test]
 async fn every_signal_is_named_and_no_identifier_is_a_label() {
-    telemetry::install(parse("127.0.0.1:0")).expect("the recorder installs once");
+    telemetry::install(parse("127.0.0.1:0"), None).expect("the recorder installs once");
 
     let fixture = Fixture::start().await;
     let user = fixture.verified("metrics@example.org").await;
@@ -130,4 +130,81 @@ async fn every_signal_is_named_and_no_identifier_is_a_label() {
     for secret in ["metric-room", "metrics@example.org"] {
         assert!(!text.contains(secret), "no label carries {secret}: {text}");
     }
+}
+
+#[test]
+fn the_endpoint_token_comes_from_the_environment() {
+    assert_eq!(
+        cocat_server::telemetry::token_from_env(&|_| None).unwrap(),
+        None
+    );
+    assert_eq!(
+        cocat_server::telemetry::token_from_env(&|_| Some(String::new())).unwrap(),
+        None
+    );
+    assert_eq!(
+        cocat_server::telemetry::token_from_env(&|_| Some("0123456789abcdef".to_owned()))
+            .unwrap()
+            .as_deref(),
+        Some("0123456789abcdef")
+    );
+
+    let error = cocat_server::telemetry::token_from_env(&|_| Some("too short".to_owned()))
+        .expect_err("a short token is refused");
+    assert!(
+        error.to_string().contains("COCAT_METRICS_TOKEN"),
+        "the error names the variable: {error}"
+    );
+}
+
+async fn scrape(token: Option<&str>, auth: Option<&str>) -> axum::response::Response {
+    use tower::ServiceExt;
+
+    let router = cocat_server::telemetry::metrics_router(token.map(ToOwned::to_owned));
+    let mut request = axum::http::Request::builder().uri("/metrics");
+    if let Some(value) = auth {
+        request = request.header("authorization", value);
+    }
+    router
+        .oneshot(request.body(axum::body::Body::empty()).expect("a request"))
+        .await
+        .expect("the router answers")
+}
+
+#[tokio::test]
+async fn the_metrics_endpoint_checks_the_bearer_token() {
+    let token = "0123456789abcdef";
+    assert_eq!(
+        scrape(Some(token), Some("Bearer 0123456789abcdef"))
+            .await
+            .status(),
+        StatusCode::OK,
+        "the right token is let in"
+    );
+
+    let wrong = scrape(Some(token), Some("Bearer 0123456789abcdee")).await;
+    assert_eq!(
+        wrong.status(),
+        StatusCode::UNAUTHORIZED,
+        "a wrong token is refused"
+    );
+    assert_eq!(
+        wrong
+            .headers()
+            .get("www-authenticate")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer"),
+        "the refusal names the scheme"
+    );
+
+    assert_eq!(
+        scrape(Some(token), None).await.status(),
+        StatusCode::UNAUTHORIZED,
+        "a missing token is refused"
+    );
+    assert_eq!(
+        scrape(None, None).await.status(),
+        StatusCode::OK,
+        "without a configured token the endpoint stays open"
+    );
 }

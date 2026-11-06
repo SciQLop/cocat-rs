@@ -8,8 +8,9 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use axum::extract::{MatchedPath, Request};
+use axum::extract::{MatchedPath, Request, State};
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use axum::response::Response;
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
@@ -18,6 +19,8 @@ use tokio::task::JoinHandle;
 use crate::AppState;
 
 pub const BIND_VAR: &str = "COCAT_METRICS_BIND";
+pub const TOKEN_VAR: &str = "COCAT_METRICS_TOKEN";
+const MIN_TOKEN_CHARS: usize = 16;
 
 const SAMPLE_PERIOD: Duration = Duration::from_secs(60);
 
@@ -27,6 +30,8 @@ static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 pub enum TelemetryError {
     #[error("{BIND_VAR} must be an address such as 127.0.0.1:9187, got {value:?}")]
     InvalidBind { value: String },
+    #[error("{TOKEN_VAR} must be at least {MIN_TOKEN_CHARS} characters, got {length}")]
+    InvalidToken { length: usize },
     #[error("cannot serve {BIND_VAR} on {bind}: {source}")]
     Install {
         bind: SocketAddr,
@@ -57,7 +62,23 @@ pub fn bind_from_env(
         })
 }
 
-pub fn install(bind: SocketAddr) -> Result<(), TelemetryError> {
+pub fn token_from_env(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<String>, TelemetryError> {
+    let Some(token) = env(TOKEN_VAR) else {
+        return Ok(None);
+    };
+    if token.trim().is_empty() {
+        return Ok(None);
+    }
+    let length = token.chars().count();
+    if length < MIN_TOKEN_CHARS {
+        return Err(TelemetryError::InvalidToken { length });
+    }
+    Ok(Some(token))
+}
+
+pub fn install(bind: SocketAddr, token: Option<String>) -> Result<(), TelemetryError> {
     let handle = PrometheusBuilder::new()
         .install_recorder()
         .map_err(|source| TelemetryError::Install {
@@ -71,10 +92,8 @@ pub fn install(bind: SocketAddr) -> Result<(), TelemetryError> {
             bind,
             source: Box::new(source),
         })?;
-    let served = handle.clone();
     tokio::spawn(async move {
-        let route = axum::routing::get(move || async move { served.render() });
-        let _ = axum::serve(listener, axum::Router::new().route("/metrics", route)).await;
+        let _ = axum::serve(listener, metrics_router(token)).await;
     });
     let _ = HANDLE.set(handle);
     Ok(())
@@ -82,6 +101,46 @@ pub fn install(bind: SocketAddr) -> Result<(), TelemetryError> {
 
 pub fn render() -> Option<String> {
     HANDLE.get().map(PrometheusHandle::render)
+}
+
+pub fn metrics_router(token: Option<String>) -> axum::Router {
+    let route = axum::routing::get(metrics);
+    axum::Router::new()
+        .route("/metrics", route)
+        .with_state(token)
+}
+
+async fn metrics(State(token): State<Option<String>>, headers: axum::http::HeaderMap) -> Response {
+    if let Some(token) = token
+        && !carries(&headers, &token)
+    {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            "",
+        )
+            .into_response();
+    }
+    render().unwrap_or_default().into_response()
+}
+
+fn carries(headers: &axum::http::HeaderMap, token: &str) -> bool {
+    let Some(value) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(given) = value.strip_prefix("Bearer ") else {
+        return false;
+    };
+    same_bytes(given.as_bytes(), token.as_bytes())
+}
+
+fn same_bytes(left: &[u8], right: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+
+    left.len() == right.len() && bool::from(left.ct_eq(right))
 }
 
 pub async fn track_http(request: Request, next: Next) -> Response {
