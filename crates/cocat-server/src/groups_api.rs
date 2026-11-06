@@ -431,6 +431,7 @@ async fn revoke_invitation(
     responses(
         (status = 200, description = "The group the token invites to", body = GroupPreviewOut),
         (status = 400, description = "The token is spent or not ours", body = Detail),
+        (status = 404, description = "No invitation carries this token", body = Detail),
         (status = 422, description = "The body has no token", body = Detail),
     )
 )]
@@ -457,6 +458,7 @@ async fn preview_invitation(
         (status = 400, description = "The token is spent or not ours", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The invitation does not admit this account", body = Detail),
+        (status = 404, description = "No invitation carries this token", body = Detail),
         (status = 422, description = "The body has no token", body = Detail),
     )
 )]

@@ -331,6 +331,8 @@ fn refused(code: &'static str) -> Response {
     responses(
         (status = 204, description = "Signed in: the session cookie is set"),
         (status = 400, description = "Wrong password, inactive account, or unverified address", body = Detail),
+        (status = 415, description = "The body is not form-encoded"),
+        (status = 422, description = "The form has no username or password"),
         (status = 429, description = "Too many attempts", body = Detail),
     )
 )]
@@ -368,8 +370,8 @@ pub async fn login_handler(State(state): State<AppState>, Form(form): Form<Login
     security(("cookie" = [])),
     responses(
         (status = 204, description = "Signed out: the session is ended and the cookie cleared"),
-        (status = 401, description = "No valid session", body = Detail),
-        (status = 403, description = "The address is not verified", body = Detail),
+        (status = 401, description = "No valid session"),
+        (status = 403, description = "The address is not verified"),
     )
 )]
 pub async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -> Response {
