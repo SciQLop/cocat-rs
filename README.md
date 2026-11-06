@@ -40,6 +40,9 @@ podman exec cocat remove-user-from-room them@example.org my-room
 `129.104.6.172:32219/sciqlop/cocat-server-rs`; it is not run by anything here, and `:devel`
 shares no tag with the Python image.
 
+Running a development copy from production data, and the eventual switch-over, is
+documented step by step in [docs/deploy.md](docs/deploy.md).
+
 ## Seeding
 
 ```sh
