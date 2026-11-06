@@ -167,9 +167,10 @@ scripts carry the browser side: `fragment.js` moves a mailed `#token` into a for
 - Sessions are the same `fastapiusersauth` cookie as the API. Its value is an opaque
   random token; the server stores only its hash, so logging out, changing or resetting the
   password, and deactivating an account end the sessions that must stop.
-- Any POST under `/ui` coming from another site is refused with 403. The `Origin` must
-  match `Host`, and `Sec-Fetch-Site`, when the browser sends it, must be same-origin or
-  same-site.
+- Any request that is not a `GET`, `HEAD` or `OPTIONS` coming from another site is refused
+  with 403, on every route: the `Origin` (when sent) must match `Host`, and the
+  `Sec-Fetch-Site`, when the browser sends it, must be same-origin or same-site. A client
+  that sends neither header, such as the Python client or SciQLop, still passes.
 - `?next=` after login only ever leads to a path on this site.
 - Login, sign-up, forgot-password and resend are rate-limited (10 per minute per client).
 - A message that names something (a room, a group, an address) travels in a short-lived

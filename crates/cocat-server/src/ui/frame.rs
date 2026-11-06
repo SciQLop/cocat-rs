@@ -317,24 +317,22 @@ fn login_redirect(links: &Links, path: &str) -> Response {
     Redirect::temporary(&target).into_response()
 }
 
-/// Refuse a form post another site started, before any route can act on it.
+/// Refuse a write another site started, before any route can act on it.
 ///
-/// The layer sits on the whole server so a UI route cannot be added without it; only a POST
-/// under `/ui` is checked. Missing headers pass: that is a test client or an old browser, and
-/// the session cookie is `SameSite=Lax` besides. Python's `same_site` compares the Origin's
+/// The layer sits on the whole server so a route cannot be added without it; every method
+/// other than `GET`, `HEAD` and `OPTIONS` is checked, on every path. Missing headers pass:
+/// that is a test client, SciQLop or the Python client, none of which send them, and the
+/// session cookie is `SameSite=Lax` besides. Python's `same_site` compares the Origin's
 /// netloc with the Host header and accepts only a same-origin or same-site `Sec-Fetch-Site`.
 pub(crate) async fn same_site(request: Request, next: Next) -> Response {
-    if is_ui(request.uri().path())
-        && request.method() == Method::POST
-        && cross_site(request.headers())
-    {
+    let safe = matches!(
+        *request.method(),
+        Method::GET | Method::HEAD | Method::OPTIONS
+    );
+    if !safe && cross_site(request.headers()) {
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }
     next.run(request).await
-}
-
-fn is_ui(path: &str) -> bool {
-    path == "/ui" || path.starts_with("/ui/")
 }
 
 fn cross_site(headers: &HeaderMap) -> bool {
