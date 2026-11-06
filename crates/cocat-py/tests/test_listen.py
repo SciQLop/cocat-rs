@@ -82,11 +82,48 @@ async def test_one_transaction_is_one_merged_batch(room, other):
     finally:
         handle.close()
 
-    assert recorder.calls[0] == ("catalogue_added", catalogue.uuid)
-    assert recorder.calls[1][0] == "events_added"
-    assert recorder.calls[1][1] == catalogue.uuid
-    assert recorder.calls[1][2] == sorted(event.uuid for event in events)
+    assert recorder.calls[0] == ("status", "synced")
+    assert recorder.calls[1] == ("catalogue_added", catalogue.uuid)
+    assert recorder.calls[2][0] == "events_added"
+    assert recorder.calls[2][1] == catalogue.uuid
+    assert recorder.calls[2][2] == sorted(event.uuid for event in events)
     assert recorder.calls[-1] == ("changes_done",)
+
+
+async def test_a_listener_hears_the_status_it_registers_under(room, other):
+    recorder = Recorder()
+    handle = room.listen(recorder)
+    try:
+        await until(lambda: recorder.calls)
+        assert recorder.calls[0] == ("status", "synced")
+
+        with other.transaction():
+            other.create_catalogue(name="alpha", author="a@x.org")
+        await until(lambda: recorder.batches == 1)
+
+        assert recorder.calls[1][0] == "catalogue_added"
+        assert [call for call in recorder.calls if call[0] == "status"] == [
+            ("status", "synced")
+        ]
+    finally:
+        handle.close()
+
+
+async def test_an_unrelated_listener_hears_no_opening_status(room, other):
+    class OnlyDone:
+        batches = 0
+
+        def changes_done(self):
+            OnlyDone.batches += 1
+
+    handle = room.listen(OnlyDone())
+    try:
+        other.create_catalogue(name="alpha", author="a@x.org")
+        await until(lambda: OnlyDone.batches == 1)
+    finally:
+        handle.close()
+
+    assert OnlyDone.batches == 1
 
 
 async def test_the_listener_runs_on_the_loop_thread(room, other):
@@ -160,7 +197,7 @@ async def test_a_local_write_is_not_reported_to_its_own_listener(room):
     finally:
         handle.close()
 
-    assert recorder.calls == []
+    assert recorder.calls == [("status", "synced")]
 
 
 async def test_closing_the_handle_stops_the_calls(room, other):

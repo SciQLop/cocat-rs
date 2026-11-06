@@ -134,6 +134,10 @@ class Room:
         registration = _Registration(listener, loop)
         with self._lock:
             self._registrations.append(registration)
+            if (status := registration.methods.get("status")) is not None:
+                loop.call_soon_threadsafe(
+                    self._call, registration, "status", status, (self._room.status,)
+                )
             if self._thread is None:
                 self._running = True
                 self._thread = threading.Thread(
@@ -148,7 +152,7 @@ class Room:
                 self._registrations.remove(registration)
 
     def _dispatch(self):
-        # A listener hears status *changes*; the status it registers under is not news.
+        # Only later status changes are broadcast from here; listen() sends the current one.
         status = self._room.status
         while self._running:
             batch = self._room.next_batch(_POLL)
