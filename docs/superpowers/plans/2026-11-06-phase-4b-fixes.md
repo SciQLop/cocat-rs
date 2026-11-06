@@ -154,7 +154,38 @@ Test: `tests/auth.rs`, `tests/accounts_api.rs`.
 - [ ] Red, implement, gate. Run `bench/correctness/file_parity.py` and
   `wire_parity.py` once and paste PASS. Commit "Store only what an update changes".
 
-### Task 7: Report
+### Task 7: Storage limits per room and per owner (findings 3-02, 1-02 follow-up)
+
+User decision (2026-11-06): at most ~1 GB per room, and a limit per user. A user's usage is
+the total `.y` size of the rooms they **own** (editors' writes count against the owner, like
+a shared drive). Default 5 GB per owner (my default, user can change it).
+
+**Files:** `room.rs`, `cli.rs` (env), `lib.rs`/`AppState` if the limits travel there,
+`db.rs` (rooms owned by a user). Test: `room.rs` tests, `tests/websocket.rs`.
+- Env: `COCAT_ROOM_MAX_MB` (default 1024) and `COCAT_OWNER_MAX_MB` (default 5120); same
+  parsing rules as `COCAT_ROOM_MEMORY_BUDGET` (positive integer, else startup error naming
+  the variable; `0` is not allowed; unset/empty = default).
+- When a room opens, the room thread gets an **allowance** in bytes: `min(room max,
+  owner max − the size of the owner's other room files)`. `handle_update` refuses an update
+  whose append would take the file past the allowance: nothing applied, nothing appended,
+  nothing broadcast, and the sending client is closed with a new `CloseReason::Full`, code
+  **4507**, reason "room storage limit reached". Other clients stay connected. The refusal
+  is logged at `warn` with the room id.
+  `simplify:` the allowance is computed at open; two of one owner's rooms open at once can
+  each use the remaining quota (overshoot ≤ remaining × open rooms). Upgrade path: one
+  shared per-owner byte counter in the `RoomManager`.
+- Cold reads (Task 4's semaphore): a fixed **2** permits instead of one per core (user
+  decision: these reads are rare; SciQLop syncs over the websocket). One named constant.
+- [ ] Tests: `update_past_the_room_limit_is_refused` (tiny limit through a test
+  constructor; the file and the doc are unchanged, the sender gets 4507, another client
+  stays connected and still receives a later small update... from an editor under the
+  limit, if the limit allows it — pick sizes so it does), `owner_quota_counts_other_rooms`
+  (two rooms of one owner, the second's allowance is reduced by the first's file size),
+  `limits_from_env` (defaults, a bad value is a startup error naming the variable).
+- [ ] Red, implement, gate. README: the two variables in the environment table, 4507 in
+  the close codes table. Commit "Limit room storage per room and per owner".
+
+### Task 8: Report
 
 - [ ] `docs/superpowers/reports/2026-11-06-phase-4b.md`: the models and their run times,
   every finding (who found it, reproducer test, fix commit), the attackers' "did not work"
