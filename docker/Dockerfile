@@ -30,10 +30,12 @@ RUN dnf install -y ca-certificates \
 COPY --from=build /build/target/release/cocat-server /usr/local/bin/cocat-server
 COPY docker/entry_point.sh /home/cocat/entry_point.sh
 COPY docker/create-user.sh /usr/local/bin/create-user
+COPY docker/set-superuser.sh /usr/local/bin/set-superuser
 COPY docker/add-user-to-room.sh /usr/local/bin/add-user-to-room
 COPY docker/remove-user-from-room.sh /usr/local/bin/remove-user-from-room
 RUN chmod 0755 /home/cocat/entry_point.sh /usr/local/bin/create-user \
-    /usr/local/bin/add-user-to-room /usr/local/bin/remove-user-from-room
+    /usr/local/bin/set-superuser /usr/local/bin/add-user-to-room \
+    /usr/local/bin/remove-user-from-room
 
 USER cocat
 WORKDIR /home/cocat

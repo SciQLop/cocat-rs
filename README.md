@@ -47,6 +47,7 @@ documented step by step in [docs/deploy.md](docs/deploy.md).
 
 ```sh
 cocat-server create-user --email you@example.org --password secret [--is-superuser]
+cocat-server set-superuser --email you@example.org [--revoke]
 cocat-server create-room --owner you@example.org [--room-id my-room] [--name "My room"]
 cocat-server add-user-to-room --email them@example.org --room_id my-room [--role editor]
 cocat-server remove-user-from-room --email them@example.org --room_id my-room

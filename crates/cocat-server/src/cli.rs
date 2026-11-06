@@ -85,6 +85,15 @@ enum Command {
         #[arg(long = "db_path", default_value = "./test.db")]
         db_path: PathBuf,
     },
+    /// Grant or revoke the administrator flag on an account.
+    SetSuperuser {
+        #[arg(long)]
+        email: String,
+        #[arg(long)]
+        revoke: bool,
+        #[arg(long = "db_path", default_value = "./test.db")]
+        db_path: PathBuf,
+    },
     /// Copy a running Python cocat deployment into this database.
     Import {
         #[arg(long = "update-dir", default_value = ".")]
@@ -168,6 +177,11 @@ pub async fn run() -> Result<(), CliError> {
             room_id,
             db_path,
         } => set_room_owner(&db_path, &email, &room_id).await,
+        Command::SetSuperuser {
+            email,
+            revoke,
+            db_path,
+        } => set_superuser(&db_path, &email, revoke).await,
         Command::Import {
             update_dir,
             db_path,
@@ -215,6 +229,21 @@ async fn create_user(
     let id = db::create_user(&pool, email, password, is_superuser, true).await?;
     db::create_personal_room(&pool, id).await?;
     println!("User {email} created ({id})");
+    Ok(())
+}
+
+async fn set_superuser(db_path: &Path, email: &str, revoke: bool) -> Result<(), CliError> {
+    let pool = db::open(db_path).await?;
+    let mut user = db::user_by_email(&pool, email)
+        .await?
+        .ok_or_else(|| CliError::NoSuchUser(email.to_owned()))?;
+    user.is_superuser = !revoke;
+    db::save_user(&pool, &user).await?;
+    if revoke {
+        println!("User {email} is no longer an administrator");
+    } else {
+        println!("User {email} is now an administrator");
+    }
     Ok(())
 }
 

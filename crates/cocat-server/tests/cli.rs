@@ -360,3 +360,75 @@ fn a_malformed_budget_is_a_startup_error() {
         "the error does not name the variable: {stderr}"
     );
 }
+
+#[tokio::test]
+async fn the_cli_grants_and_revokes_superuser() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    run_cli(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "admin@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+
+    let granted = run_cli_output(&db_path, &["set-superuser", "--email", "admin@example.org"]);
+    assert!(
+        granted.status.success(),
+        "set-superuser failed: {}",
+        String::from_utf8_lossy(&granted.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&granted.stdout)
+            .contains("User admin@example.org is now an administrator"),
+        "the grant message is wrong: {}",
+        String::from_utf8_lossy(&granted.stdout)
+    );
+    let pool = db::open(&db_path).await.unwrap();
+    let user = db::user_by_email(&pool, "admin@example.org")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(user.is_superuser, "the CLI did not grant the flag");
+
+    let revoked = run_cli_output(
+        &db_path,
+        &["set-superuser", "--email", "admin@example.org", "--revoke"],
+    );
+    assert!(revoked.status.success());
+    assert!(
+        String::from_utf8_lossy(&revoked.stdout)
+            .contains("User admin@example.org is no longer an administrator"),
+        "the revoke message is wrong: {}",
+        String::from_utf8_lossy(&revoked.stdout)
+    );
+    let user = db::user_by_email(&pool, "admin@example.org")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!user.is_superuser, "the CLI did not revoke the flag");
+
+    let unknown = run_cli_output(
+        &db_path,
+        &["set-superuser", "--email", "nobody@example.org"],
+    );
+    assert!(!unknown.status.success(), "an unknown address was accepted");
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("no user with email nobody@example.org"),
+        "the error does not name the address: {}",
+        String::from_utf8_lossy(&unknown.stderr)
+    );
+}
+
+fn run_cli_output(db_path: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_cocat-server"))
+        .args(args)
+        .arg("--db_path")
+        .arg(db_path)
+        .output()
+        .unwrap()
+}
