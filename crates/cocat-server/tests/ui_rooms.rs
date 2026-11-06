@@ -326,7 +326,7 @@ async fn unknown_and_existing_ids_answer_alike() {
         .unwrap();
     let missing = Uuid::new_v4();
 
-    for caller in [stranger, viewer] {
+    for caller in [owner, stranger, viewer] {
         let token = fixture.token(caller).await;
         for route in ["role", "remove", "owner"] {
             let existing = answers(&fixture, &token, &id, known, route).await;

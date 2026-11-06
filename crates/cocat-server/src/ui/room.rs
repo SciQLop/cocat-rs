@@ -18,6 +18,9 @@ use crate::{AppState, db, groups, invitations, lifecycle, mail};
 /// Python's `INVITATION_LIFETIME`: every invitation this page makes lasts two weeks.
 const INVITATION_DAYS: u32 = 14;
 
+/// A caller who may act gets this for an id that is not a member, known or not.
+const NOT_A_MEMBER: &str = "That user is not a member here.";
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct RoleForm {
     #[serde(default)]
@@ -320,9 +323,9 @@ pub(crate) async fn set_role(
             String::new(),
         );
     }
-    let email = match member_email(&state, member).await {
+    let email = match member_answer(&state, &room_id, member).await {
         Ok(email) => email,
-        Err(status) => return status.into_response(),
+        Err(response) => return *response,
     };
     let result = lifecycle::set_member_role(&state, &room_id, user.id, member, role).await;
     let done = format!("{email} is now a {}", role.as_str());
@@ -347,9 +350,9 @@ pub(crate) async fn remove(
             String::new(),
         );
     }
-    let email = match member_email(&state, member).await {
+    let email = match member_answer(&state, &room_id, member).await {
         Ok(email) => email,
-        Err(status) => return status.into_response(),
+        Err(response) => return *response,
     };
     let result = lifecycle::remove_member(&state, &room_id, user.id, member).await;
     answer(
@@ -373,9 +376,9 @@ pub(crate) async fn transfer(
             String::new(),
         );
     }
-    let email = match member_email(&state, member).await {
+    let email = match member_answer(&state, &room_id, member).await {
         Ok(email) => email,
-        Err(status) => return status.into_response(),
+        Err(response) => return *response,
     };
     let result = lifecycle::transfer_ownership(&state, &room_id, user.id, member).await;
     answer(
@@ -514,13 +517,21 @@ fn opened_link(state: &AppState, target: &str, notice: &str, token: &str) -> Res
     frame::share_link(&state.links, response, &link)
 }
 
-async fn member_email(state: &AppState, id: Uuid) -> Result<String, StatusCode> {
-    match db::user_by_id(&state.pool, id).await {
-        Ok(Some(user)) => Ok(user.email),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
+async fn member_answer(
+    state: &AppState,
+    room_id: &str,
+    member: Uuid,
+) -> Result<String, Box<Response>> {
+    match db::member_email(&state.pool, room_id, member).await {
+        Ok(Some(email)) => Ok(email),
+        Ok(None) => Err(Box::new(redirect(
+            state,
+            &format!("/rooms/{room_id}"),
+            NOT_A_MEMBER,
+        ))),
         Err(error) => {
             tracing::warn!(%error, "cannot read a member");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))
         }
     }
 }

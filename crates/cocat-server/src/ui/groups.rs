@@ -15,6 +15,9 @@ use crate::{AppState, db, lifecycle, mail};
 
 /// Python's `INVITATION_LIFETIME`: every invitation this page makes lasts two weeks.
 const INVITATION_DAYS: u32 = 14;
+
+/// A caller who may act gets this for an id that is not a member, known or not.
+const NOT_A_MEMBER: &str = "That user is not a member here.";
 const INVALID: &str = "This invitation is not valid anymore";
 const UNKNOWN_INVITER: &str = "Someone";
 
@@ -386,9 +389,9 @@ pub(crate) async fn remove_member(
     if let Err(error) = allowed {
         return answer(&state, Err(error), "/groups", String::new());
     }
-    let email = match member_email(&state, member).await {
+    let email = match member_answer(&state, &group_id, member).await {
         Ok(email) => email,
-        Err(status) => return status.into_response(),
+        Err(response) => return *response,
     };
     match groups::remove_member(&state, &group_id, user.id, member).await {
         Ok(()) => redirect(
@@ -579,13 +582,17 @@ fn opened_link(state: &AppState, target: &str, notice: &str, token: &str) -> Res
     frame::share_link(&state.links, response, &link)
 }
 
-async fn member_email(state: &AppState, id: Uuid) -> Result<String, StatusCode> {
-    match db::user_by_id(&state.pool, id).await {
-        Ok(Some(user)) => Ok(user.email),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
+async fn member_answer(
+    state: &AppState,
+    group_id: &str,
+    member: Uuid,
+) -> Result<String, Box<Response>> {
+    match db::group_member_email(&state.pool, group_id, member).await {
+        Ok(Some(email)) => Ok(email),
+        Ok(None) => Err(Box::new(redirect(state, "/groups", NOT_A_MEMBER))),
         Err(error) => {
             tracing::warn!(%error, "cannot read a member");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))
         }
     }
 }

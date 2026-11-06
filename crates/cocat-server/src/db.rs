@@ -151,6 +151,41 @@ pub async fn list_members(pool: &SqlitePool, room_id: &str) -> Result<Vec<(User,
         .collect()
 }
 
+/// The email of a user reached through their own membership of a room. A user who is not a
+/// member has no email here, whether or not an account carries that id.
+pub async fn member_email(
+    pool: &SqlitePool,
+    room_id: &str,
+    user_id: Uuid,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT \"user\".email FROM membership
+           JOIN \"user\" ON \"user\".id = membership.user_id
+         WHERE membership.room_id = ? AND membership.user_id = ?",
+    )
+    .bind(room_id)
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// The email of a user reached through their own membership of a group.
+pub async fn group_member_email(
+    pool: &SqlitePool,
+    group_id: &str,
+    user_id: Uuid,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT \"user\".email FROM group_member
+           JOIN \"user\" ON \"user\".id = group_member.user_id
+         WHERE group_member.group_id = ? AND group_member.user_id = ?",
+    )
+    .bind(group_id)
+    .bind(user_id.to_string())
+    .fetch_optional(pool)
+    .await?)
+}
+
 /// The role a user holds on a room through their own membership alone.
 pub async fn direct_role(
     pool: &SqlitePool,

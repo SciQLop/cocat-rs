@@ -476,7 +476,7 @@ async fn unknown_and_existing_ids_answer_alike() {
     let plain = member_of(&fixture, &id, MEMBER).await;
     let missing = Uuid::new_v4();
 
-    for caller in [stranger, plain] {
+    for caller in [owner, stranger, plain] {
         let token = fixture.token(caller).await;
         let existing = removal_answer(&fixture, &token, &id, known).await;
         let unknown = removal_answer(&fixture, &token, &id, missing).await;
