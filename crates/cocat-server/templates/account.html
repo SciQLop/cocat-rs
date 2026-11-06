@@ -2,10 +2,10 @@
 {% block content %}
 <article class="card">
 <h1>Account</h1>
-<p class="email">{{ email }}</p>
+<p class="email muted">{{ email }}</p>
 {% match confirm_href %}
 {% when Some with (href) %}
-<p><a href="{{ href }}" role="button" class="secondary">Confirm your email</a></p>
+<p><a href="{{ href }}" role="button" class="quiet">Confirm your email</a></p>
 {% when None %}
 {% endmatch %}
 {% match signs_in_with %}

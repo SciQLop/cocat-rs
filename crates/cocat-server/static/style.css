@@ -1,114 +1,421 @@
-/* Additions to Pico: a narrow column for forms, badges, and inline table actions. */
-.muted {
-  color: var(--pico-muted-color);
+/* cocat's one stylesheet. The look borrows from what cocat stores: intervals on a time
+   axis. The brand mark is three event spans and a tick ruler runs under the header; the
+   rest stays quiet. */
+
+:root {
+  --page: #f5f6f8;
+  --surface: #ffffff;
+  --ink: #1c2331;
+  --muted: #5f6b7e;
+  --rule: #e1e5ec;
+  --accent: #2753b8;
+  --accent-ink: #ffffff;
+  --accent-soft: #e8eefb;
+  --span: #f0ad2e;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --radius: 6px;
+  --focus: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  color-scheme: light;
 }
 
-main > article.card {
-  max-width: 28rem;
-  margin-inline: auto;
-  margin-top: 3rem;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #11151d;
+    --surface: #181e29;
+    --ink: #e4e8ef;
+    --muted: #97a1b3;
+    --rule: #283041;
+    --accent: #7c9ff2;
+    --accent-ink: #0f1420;
+    --accent-soft: #1f2a44;
+    --span: #f0ad2e;
+    --danger: #f2786d;
+    --danger-soft: #3a1d1d;
+    color-scheme: dark;
+  }
 }
 
-.badge,
-.role {
-  display: inline-block;
-  padding: 0.1rem 0.6rem;
-  border-radius: 1rem;
-  background: var(--pico-primary);
-  color: var(--pico-primary-inverse);
-  font-size: 0.8em;
-  font-weight: 600;
-  vertical-align: middle;
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--page);
+  -webkit-text-size-adjust: 100%;
 }
 
-.error {
-  color: var(--pico-del-color);
-  font-weight: 600;
+body { margin: 0; }
+
+a { color: var(--accent); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+
+h1, h2, h3 { line-height: 1.25; margin: 0; }
+h1 { font-size: 1.75rem; font-weight: 650; letter-spacing: -0.01em; }
+h2 { font-size: 1.125rem; font-weight: 600; margin: 2.5rem 0 0.75rem; }
+h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; }
+p { margin: 0 0 1rem; }
+
+:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--radius); }
+
+/* Header: brand, navigation, who is signed in, and the time-axis ruler under it. */
+
+.site-header {
+  background: var(--surface);
+  position: relative;
 }
 
-.error:empty {
-  display: none;
+.site-header::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 7px;
+  border-top: 1px solid var(--rule);
+  background:
+    repeating-linear-gradient(90deg, var(--rule) 0 1px, transparent 1px 64px) 0 0 / 100% 7px,
+    repeating-linear-gradient(90deg, var(--rule) 0 1px, transparent 1px 16px) 0 0 / 100% 3px;
+  background-repeat: no-repeat;
 }
 
-.notice {
-  border-left: 4px solid var(--pico-primary);
-  padding: 0.5rem 1rem;
-  background: var(--pico-card-background-color);
+.site-header .bar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 0.85rem 1.25rem 1.1rem;
 }
 
-table td.actions {
-  white-space: nowrap;
-}
-
-table td.actions form {
+.brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  margin: 0 0.35rem 0 0;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: var(--ink);
+  text-decoration: none;
 }
 
-table td.actions select,
-table td.actions input {
-  width: auto;
-  margin: 0;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.875rem;
+.brand svg { display: block; }
+
+.site-nav { display: flex; gap: 1.25rem; flex: 1; }
+.site-nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
+.site-nav a:hover, .site-nav a[aria-current="page"] { color: var(--ink); }
+
+.who { display: flex; align-items: center; gap: 0.75rem; }
+.who .email { color: var(--muted); font-size: 0.875rem; }
+.who form { margin: 0; }
+
+main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 2.25rem 1.25rem 4rem;
 }
 
-table td.actions input[name="name"] {
-  width: 9rem;
-}
+/* Page heading: the title, what the reader is to this object, and its one main action. */
 
-table td.actions button {
-  margin: 0;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.875rem;
-  width: auto;
-}
-
-[role="group"] select {
-  flex: 0 1 auto;
-  width: auto;
-}
-
-[role="group"] button {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-form.section-form fieldset {
-  max-width: 46rem;
-}
-
-.invitation-forms {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
   gap: 1rem;
-}
-
-.empty {
-  color: var(--pico-muted-color);
-  font-style: italic;
-}
-
-.danger {
-  color: var(--pico-del-color);
-  border-color: var(--pico-del-color);
-}
-
-h1 .badge {
-  margin-left: 0.5rem;
-}
-
-.section-form {
+  flex-wrap: wrap;
   margin-bottom: 1.5rem;
 }
 
-.section-form label {
+.crumbs { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; }
+.crumbs a { color: var(--muted); }
+.meta { color: var(--muted); margin: 0.25rem 0 0; }
+
+/* Controls. */
+
+input, select, button, .button {
+  font: inherit;
+  font-size: 0.9375rem;
+  border-radius: var(--radius);
+}
+
+input, select {
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 0.45rem 0.65rem;
+  min-height: 2.25rem;
+}
+
+input:focus, select:focus { border-color: var(--accent); outline: none; box-shadow: var(--focus); }
+input[readonly] { background: var(--page); }
+
+label { display: block; font-size: 0.875rem; font-weight: 500; margin: 0 0 0.3rem; }
+
+button, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 550;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover, .button:hover { filter: brightness(1.08); }
+
+button.quiet, .button.quiet {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--rule);
+}
+button.quiet:hover, .button.quiet:hover { border-color: var(--muted); filter: none; }
+
+button.danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+button.danger:hover { background: var(--danger-soft); filter: none; }
+
+.small, td button, td select, td input {
+  min-height: 1.9rem;
+  padding: 0.2rem 0.6rem;
   font-size: 0.875rem;
 }
 
-.section-form select,
-.section-form input {
-  margin-bottom: 0.25rem;
+/* A line of controls that belong together: field(s) then the button. */
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+.inline input[type="text"], .inline input[type="email"] { flex: 1 1 14rem; min-width: 0; }
+
+/* Stacked forms on cards and the account page. */
+
+.stack { display: grid; gap: 0.9rem; margin: 0; }
+.stack input, .stack select { width: 100%; }
+.stack button { justify-self: start; }
+
+/* Tables: the lists of rooms, groups, members and invitations. */
+
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--rule);
+}
+td { padding: 0.6rem 1rem; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+td.email, td.name { font-weight: 500; }
+td.actions { text-align: right; white-space: nowrap; }
+td.actions > * { display: inline-flex; vertical-align: middle; margin: 0 0 0 0.4rem; }
+td.actions form { gap: 0.4rem; align-items: center; }
+
+/* Rename lives behind a disclosure so a row stays one line until it is wanted. */
+
+details.edit { display: inline-block; position: relative; }
+details.edit > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.875rem;
+  font-weight: 550;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+details.edit > summary::-webkit-details-marker { display: none; }
+details.edit[open] > summary { border-color: var(--muted); }
+details.edit > form {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 2;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.12);
+}
+details.edit > form input { width: 14rem; }
+
+/* What a reader is to a room or group. */
+
+.role {
+  display: inline-block;
+  padding: 0.05rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 550;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Panels: the two ways to invite, and the share link once it exists. */
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem 1.1rem;
+}
+.panel p { color: var(--muted); font-size: 0.875rem; }
+
+.add-row { margin: 0 0 0.75rem; }
+.add-row label { color: var(--muted); }
+
+.share-link { margin-bottom: 1rem; }
+
+.empty {
+  color: var(--muted);
+  padding: 1rem 1.1rem;
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  margin: 0 0 1rem;
+}
+
+.notice {
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  padding: 0.65rem 1rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin-bottom: 1.5rem;
+}
+
+.error { color: var(--danger); font-weight: 550; margin: 0; }
+.error:empty { display: none; }
+.muted { color: var(--muted); }
+
+/* Sign-in, sign-up and the other one-form pages. */
+
+.card {
+  max-width: 25rem;
+  margin: 1.5rem auto 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 1.75rem 1.75rem 1.5rem;
+}
+.card h1 { font-size: 1.5rem; margin-bottom: 1.25rem; }
+.card .links { font-size: 0.875rem; margin: 1.25rem 0 0; color: var(--muted); }
+.card details { margin-top: 1rem; font-size: 0.875rem; }
+.card details summary { cursor: pointer; color: var(--muted); }
+.card details form { margin-top: 0.75rem; }
+
+/* Landing: a strip of event spans on a time axis, the name, and the two ways in. */
+
+.landing { max-width: 34rem; margin: 3rem auto 0; }
+.landing h1 { font-size: 2.5rem; letter-spacing: -0.02em; margin-bottom: 0.5rem; }
+.landing .lead { font-size: 1.125rem; color: var(--muted); max-width: 30rem; }
+.landing .ways { display: flex; gap: 0.6rem; margin: 1.5rem 0 1.25rem; }
+.landing .more { font-size: 0.875rem; color: var(--muted); }
+
+.axis {
+  position: relative;
+  height: 3.25rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--muted);
+  background: repeating-linear-gradient(90deg, var(--muted) 0 1px, transparent 1px 2rem)
+    0 100% / 100% 6px no-repeat;
+}
+.axis span {
+  position: absolute;
+  height: 0.6rem;
+  border-radius: 2px;
+  background: var(--span);
+}
+.axis span:nth-child(2n) { background: var(--accent); }
+
+@media (max-width: 40rem) {
+  .site-header .bar { flex-wrap: wrap; gap: 0.75rem 1rem; }
+  .site-nav { order: 3; flex-basis: 100%; }
+  .who .email { display: none; }
+  td.actions { white-space: normal; }
+}
+
+/* One-form pages keep their plain markup: label, field, label, field, button. */
+
+.card form { display: grid; gap: 0.35rem; margin: 0 0 0.5rem; }
+.card form input, .card form select { width: 100%; margin-bottom: 0.6rem; }
+.card form button { justify-self: start; margin-top: 0.25rem; }
+.card fieldset { display: flex; gap: 0.5rem; border: 0; padding: 0; margin: 0; }
+.card fieldset input { margin-bottom: 0; }
+.card details form { margin-top: 0.75rem; }
+.card > p:last-child { margin-bottom: 0; }
+
+a[role="button"] {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.95rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 550;
+  text-decoration: none;
+}
+a[role="button"].quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
+
+.page-head > form.inline { flex-wrap: nowrap; }
+.page-head > form.inline input { width: 18rem; flex: 0 1 18rem; }
+th.actions { text-align: right; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  .page-head > form.inline { flex-wrap: wrap; width: 100%; }
+  .page-head > form.inline input { flex: 1 1 auto; width: auto; }
+}
+
+/* On a phone each row becomes a small block: who, then the role, then the actions. */
+@media (max-width: 40rem) {
+  .who { margin-left: auto; }
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; }
+  .table-wrap thead { display: none; }
+  .table-wrap tr { padding: 0.7rem 1rem; border-bottom: 1px solid var(--rule); }
+  .table-wrap tr:last-child { border-bottom: 0; }
+  .table-wrap td { padding: 0.1rem 0; border: 0; }
+  .table-wrap td.actions { text-align: left; white-space: normal; margin-top: 0.4rem; }
+  .table-wrap td.actions > * { margin: 0 0.4rem 0.4rem 0; }
+  .table-wrap td.actions:empty { display: none; }
+  details.edit > form { left: 0; right: auto; }
+  details.edit > form input { width: 11rem; }
 }

@@ -11,14 +11,14 @@
   <button type="submit">Log in</button>
   {% include "message.html" %}
 </form>
-<p><a href="{{ sign_up }}">Sign up</a>
+<p class="links"><a href="{{ sign_up }}">Create an account</a>
 &middot; <a href="{{ forgot }}">Forgot your password?</a></p>
 <details>
   <summary>Didn't get the verification mail?</summary>
   <form method="post" action="{{ resend_action }}">
     <label for="resend-email">Email</label>
     <input id="resend-email" name="email" type="email" autocomplete="email" required>
-    <button type="submit" class="secondary">Resend the verification mail</button>
+    <button type="submit" class="quiet">Resend the verification mail</button>
   </form>
 </details>
 {% for provider in providers %}

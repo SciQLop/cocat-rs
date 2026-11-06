@@ -17,13 +17,11 @@ use crate::db::User;
 use crate::links::Links;
 use crate::{AppState, auth, db};
 
-const PICO: &str = include_str!("../../static/pico.min.css");
 const STYLE: &str = include_str!("../../static/style.css");
 const FRAGMENT: &str = include_str!("../../static/fragment.js");
 const CONFIRM: &str = include_str!("../../static/confirm.js");
 const COPY: &str = include_str!("../../static/copy.js");
-const ASSETS: [(&str, &str, &str); 5] = [
-    ("pico.min.css", PICO, "text/css; charset=utf-8"),
+const ASSETS: [(&str, &str, &str); 4] = [
     ("style.css", STYLE, "text/css; charset=utf-8"),
     ("fragment.js", FRAGMENT, "text/javascript; charset=utf-8"),
     ("confirm.js", CONFIRM, "text/javascript; charset=utf-8"),
@@ -90,8 +88,8 @@ pub(crate) struct Header {
 /// What every page passes to `base.html`.
 pub(crate) struct Frame {
     pub title: &'static str,
-    pub pico_href: String,
     pub style_href: String,
+    pub home_href: String,
     pub scripts: Vec<String>,
     pub header: Option<Header>,
     pub flash: Option<String>,
@@ -101,11 +99,11 @@ impl Frame {
     pub(crate) fn new(links: &Links, user: Option<&User>, title: &'static str) -> Self {
         Self {
             title,
-            pico_href: links.path("/static/pico.min.css"),
-            style_href: links.path("/static/style.css"),
+            style_href: asset_href(links, "style.css"),
+            home_href: links.app("/"),
             scripts: ["fragment.js", "confirm.js", "copy.js"]
                 .into_iter()
-                .map(|script| links.path(&format!("/static/{script}")))
+                .map(|script| asset_href(links, script))
                 .collect(),
             header: user.map(|user| Header {
                 email: user.email.clone(),
@@ -375,6 +373,24 @@ pub(crate) async fn index(State(state): State<AppState>) -> Response {
     Redirect::temporary(&state.links.path("/rooms")).into_response()
 }
 
+/// An asset's URL, named by its content: the assets are cached for a year, so a changed file
+/// must get a new URL or browsers keep the old one.
+fn asset_href(links: &Links, name: &str) -> String {
+    let source = ASSETS
+        .iter()
+        .find(|(asset, _, _)| *asset == name)
+        .map_or("", |(_, source, _)| *source);
+    links.path(&format!("/static/{name}?v={}", version(source)))
+}
+
+/// A short fingerprint of an asset's text; only equality matters, not the algorithm.
+fn version(source: &str) -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 pub(crate) async fn static_asset(Path(file): Path<String>) -> Response {
     let Some((_, source, content_type)) = ASSETS.iter().find(|(name, _, _)| *name == file) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -392,7 +408,13 @@ pub(crate) async fn static_asset(Path(file): Path<String>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{cross_site, message};
+    use super::{cross_site, message, version};
+
+    #[test]
+    fn a_changed_asset_gets_a_new_version() {
+        assert_eq!(version("a { color: red }"), version("a { color: red }"));
+        assert_ne!(version("a { color: red }"), version("a { color: blue }"));
+    }
     use axum::http::{HeaderMap, header};
     use std::collections::HashMap;
 

@@ -165,8 +165,7 @@ async fn static_assets_served_with_cache_headers() {
     let fixture = Fixture::start().await;
 
     for (path, content_type, marker) in [
-        ("/ui/static/style.css", "text/css", "--pico-muted-color"),
-        ("/ui/static/pico.min.css", "text/css", "Pico CSS"),
+        ("/ui/static/style.css", "text/css", "--accent"),
         (
             "/ui/static/fragment.js",
             "text/javascript",
@@ -203,7 +202,7 @@ async fn prefix_applies_to_links_and_redirects() {
     assert!(page.contains(r#"href="/cocat/ui/account""#), "{page}");
     assert!(page.contains(r#"action="/cocat/ui/logout""#), "{page}");
     assert!(
-        page.contains(r#"href="/cocat/ui/static/style.css""#),
+        page.contains(r#"href="/cocat/ui/static/style.css?v="#),
         "{page}"
     );
 
@@ -292,5 +291,31 @@ async fn cross_site_posts_are_refused() {
             StatusCode::FORBIDDEN,
             "{path} refused a same-site post"
         );
+    }
+}
+
+/// The assets are cached for a year, so a page must name them by content: a new stylesheet
+/// gets a new URL, and a browser never keeps the old one next to the new pages.
+#[tokio::test]
+async fn pages_name_their_assets_by_content() {
+    let fixture = Fixture::start().await;
+
+    let page = body_text(fixture.get("/ui/login", None).await).await;
+
+    for asset in ["style.css", "fragment.js", "confirm.js", "copy.js"] {
+        let marker = format!("/ui/static/{asset}?v=");
+        let start = page
+            .find(&marker)
+            .unwrap_or_else(|| panic!("{asset} is linked without a version: {page}"))
+            + marker.len();
+        let version: String = page[start..]
+            .chars()
+            .take_while(char::is_ascii_hexdigit)
+            .collect();
+        assert_eq!(version.len(), 16, "{asset}: {version:?}");
+        let served = fixture
+            .get(&format!("/ui/static/{asset}?v={version}"), None)
+            .await;
+        assert_eq!(served.status(), StatusCode::OK, "{asset}");
     }
 }

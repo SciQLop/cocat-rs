@@ -1,31 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ name }} <span class="badge">{{ role }}</span></h1>
-<p><a href="{{ groups_href }}">My groups</a></p>
-<p>Your role: {{ role }}</p>
+<div class="page-head">
+  <div>
+    <p class="crumbs"><a href="{{ groups_href }}">My groups</a> /</p>
+    <h1>{{ name }}</h1>
+    <p class="meta">Your role: {{ role }}</p>
+  </div>
 {% match leave %}
 {% when Some with (form) %}
-<form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
-  <button type="submit" class="secondary outline">Leave</button>
-</form>
+  <form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
+    <button type="submit" class="quiet">Leave</button>
+  </form>
 {% when None %}
 {% endmatch %}
+</div>
 
 <h2>Members</h2>
+<div class="table-wrap">
 <table class="members">
   <thead>
-    <tr><th>Member</th><th>Role</th><th>Actions</th></tr>
+    <tr><th>Member</th><th>Role</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for member in members %}
     <tr data-member="{{ member.id }}">
       <td class="email">{{ member.email }}</td>
-      <td><span class="role badge">{{ member.role }}</span></td>
+      <td><span class="role">{{ member.role }}</span></td>
       <td class="actions">
 {% match member.remove %}
 {% when Some with (remove) %}
         <form method="post" action="{{ remove.action }}" data-confirm="{{ remove.confirm }}">
-          <button type="submit" class="contrast outline">Remove</button>
+          <button type="submit" class="danger">Remove</button>
         </form>
 {% when None %}
 {% endmatch %}
@@ -34,54 +39,67 @@
 {% endfor %}
   </tbody>
 </table>
+</div>
 
 <h2>Rooms shared with this group</h2>
 {% if rooms.is_empty() %}
-<p class="empty">No room is shared with this group.</p>
+<p class="empty">No room is shared with this group. Share one from the room's page.</p>
 {% else %}
-<ul class="rooms">
+<div class="table-wrap">
+<table class="rooms">
+  <thead>
+    <tr><th>Room</th><th>Role</th></tr>
+  </thead>
+  <tbody>
 {% for room in rooms %}
-  <li class="room"><a href="{{ room.href }}">{{ room.name }}</a> <span class="role">{{ room.role }}</span></li>
+    <tr class="room"><td class="name"><a href="{{ room.href }}">{{ room.name }}</a></td><td><span class="role">{{ room.role }}</span></td></tr>
 {% endfor %}
-</ul>
+  </tbody>
+</table>
+</div>
 {% endif %}
 
+<h2>Invitations</h2>
 {% match panel %}
 {% when Some with (panel) %}
-<h2>Invitations</h2>
-<div class="invitation-forms">
-  <article>
+<div class="panels">
+  <section class="panel">
     <h3>Share link</h3>
-    <form method="post" action="{{ panel.action }}">
+    <p>Anyone with the link can join until it expires.</p>
+    <form method="post" action="{{ panel.action }}" class="inline">
       <input type="hidden" name="kind" value="link">
       <button type="submit">Create share link</button>
     </form>
-  </article>
-  <article>
+  </section>
+  <section class="panel">
     <h3>Invite by email</h3>
-    <form method="post" action="{{ panel.action }}">
+    <p>We send the link to this address.</p>
+    <form method="post" action="{{ panel.action }}" class="inline">
       <input type="hidden" name="kind" value="email">
-      <label for="email">Invite by email</label>
-      <input id="email" name="email" type="email" autocomplete="off">
+      <input id="email" name="email" type="email" autocomplete="off"
+             placeholder="name@example.org" aria-label="Invite by email">
       <button type="submit">Send invitation</button>
     </form>
-  </article>
+  </section>
 </div>
 {% match panel.share_link %}
 {% when Some with (link) %}
-<label for="share-link">Share link</label>
-<fieldset role="group">
-  <input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
-  <button type="button" data-copy="share-link">Copy</button>
-</fieldset>
+<div class="panel share-link">
+  <label for="share-link">Your new share link</label>
+  <div class="inline">
+    <input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
+    <button type="button" class="quiet" data-copy="share-link">Copy</button>
+  </div>
+</div>
 {% when None %}
 {% endmatch %}
 {% if panel.invitations.is_empty() %}
 <p class="empty">No pending invitation.</p>
 {% else %}
+<div class="table-wrap">
 <table class="invitations">
   <thead>
-    <tr><th>Invitation</th><th>Expires</th><th>Usage</th><th>Actions</th></tr>
+    <tr><th>Invitation</th><th>Expires</th><th>Usage</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for invitation in panel.invitations %}
@@ -92,15 +110,16 @@
       <td class="actions">
         <form method="post" action="{{ invitation.action }}"
               data-confirm="Revoke this invitation?">
-          <button type="submit" class="contrast outline">Revoke</button>
+          <button type="submit" class="danger">Revoke</button>
         </form>
       </td>
     </tr>
 {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 {% when None %}
-<p>Only the owner can manage invitations.</p>
+<p class="empty">Only the owner can manage invitations.</p>
 {% endmatch %}
 {% endblock %}

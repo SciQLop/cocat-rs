@@ -1,14 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
-<article class="card">
-<h1>cocat</h1>
-<p>Shared catalogues of time-interval events, edited together from SciQLop or Python
-scripts.</p>
-<p class="actions">
+<section class="landing">
+<div class="axis" aria-hidden="true">
+  <span style="left: 4%; width: 18%; bottom: 1.9rem"></span>
+  <span style="left: 15%; width: 9%; bottom: 0.9rem"></span>
+  <span style="left: 31%; width: 26%; bottom: 1.4rem"></span>
+  <span style="left: 52%; width: 7%; bottom: 0.6rem"></span>
+  <span style="left: 64%; width: 14%; bottom: 2.1rem"></span>
+  <span style="left: 82%; width: 11%; bottom: 1rem"></span>
+</div>
+<h1>Event catalogues, shared</h1>
+<p class="lead">Mark time intervals in SciQLop or from Python, and edit the same catalogues
+with your colleagues, live. cocat keeps everyone's copy in step.</p>
+<p class="ways">
   <a href="{{ sign_in }}" role="button">Sign in</a>
-  <a href="{{ sign_up }}" role="button" class="secondary">Create an account</a>
+  <a href="{{ sign_up }}" role="button" class="quiet">Create an account</a>
 </p>
-<p><a href="{{ docs }}">API documentation</a> &middot;
+<p class="more"><a href="{{ docs }}">API documentation</a> &middot;
 <a href="{{ sciqlop }}">SciQLop</a></p>
-</article>
+</section>
 {% endblock %}

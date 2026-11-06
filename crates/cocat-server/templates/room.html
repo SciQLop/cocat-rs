@@ -1,26 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ name }} <span class="badge">{{ role }}</span></h1>
-<p><a href="{{ rooms_href }}">My rooms</a></p>
-<p>Your role: {{ role }}</p>
+<div class="page-head">
+  <div>
+    <p class="crumbs"><a href="{{ rooms_href }}">My rooms</a> /</p>
+    <h1>{{ name }}</h1>
+    <p class="meta">Your role: {{ role }}</p>
+  </div>
 {% match leave %}
 {% when Some with (form) %}
-<form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
-  <button type="submit" class="secondary outline">Leave</button>
-</form>
+  <form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
+    <button type="submit" class="quiet">Leave</button>
+  </form>
 {% when None %}
 {% endmatch %}
+</div>
 
 <h2>Members</h2>
+<div class="table-wrap">
 <table class="members">
   <thead>
-    <tr><th>Member</th><th>Role</th><th>Actions</th></tr>
+    <tr><th>Member</th><th>Role</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for member in members %}
     <tr data-member="{{ member.id }}">
       <td class="email">{{ member.email }}</td>
-      <td><span class="role badge">{{ member.role }}</span></td>
+      <td><span class="role">{{ member.role }}</span></td>
       <td class="actions">
 {% match member.controls %}
 {% when Some with (controls) %}
@@ -29,48 +34,48 @@
             <option value="editor"{% if member.role == "editor" %} selected{% endif %}>editor</option>
             <option value="viewer"{% if member.role == "viewer" %} selected{% endif %}>viewer</option>
           </select>
-          <button type="submit" class="secondary outline">Change role</button>
-        </form>
-        <form method="post" action="{{ controls.remove_action }}"
-              data-confirm="{{ controls.remove_confirm }}">
-          <button type="submit" class="contrast outline">Remove</button>
+          <button type="submit" class="quiet">Change role</button>
         </form>
         <form method="post" action="{{ controls.owner_action }}"
               data-confirm="{{ controls.transfer_confirm }}">
-          <button type="submit" class="secondary outline">Transfer ownership</button>
+          <button type="submit" class="quiet">Transfer ownership</button>
+        </form>
+        <form method="post" action="{{ controls.remove_action }}"
+              data-confirm="{{ controls.remove_confirm }}">
+          <button type="submit" class="danger">Remove</button>
         </form>
 {% when None %}
-<span class="empty">—</span>
 {% endmatch %}
       </td>
     </tr>
 {% endfor %}
   </tbody>
 </table>
+</div>
 
 <h2>Groups</h2>
 {% if !groups.picker.is_empty() %}
-<form method="post" action="{{ groups.action }}" class="section-form">
-  <fieldset role="group">
-    <select name="group" aria-label="Group">
+<form method="post" action="{{ groups.action }}" class="inline add-row">
+  <label for="share-group">Share with a group</label>
+  <select id="share-group" name="group" aria-label="Group">
 {% for option in groups.picker %}
-      <option value="{{ option.value }}">{{ option.label }}</option>
+    <option value="{{ option.value }}">{{ option.label }}</option>
 {% endfor %}
-    </select>
-    <select name="role" aria-label="Role">
-      <option value="editor">editor</option>
-      <option value="viewer">viewer</option>
-    </select>
-    <button type="submit">Share with group</button>
-  </fieldset>
+  </select>
+  <select name="role" aria-label="Role">
+    <option value="editor">editor</option>
+    <option value="viewer">viewer</option>
+  </select>
+  <button type="submit" class="quiet">Share with group</button>
 </form>
 {% endif %}
 {% if groups.groups.is_empty() %}
 <p class="empty">No group has access to this room.</p>
 {% else %}
+<div class="table-wrap">
 <table class="groups">
   <thead>
-    <tr><th>Group</th><th>Role</th><th>Actions</th></tr>
+    <tr><th>Group</th><th>Role</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for group in groups.groups %}
@@ -86,11 +91,11 @@
             <option value="editor"{% if group.role == "editor" %} selected{% endif %}>editor</option>
             <option value="viewer"{% if group.role == "viewer" %} selected{% endif %}>viewer</option>
           </select>
-          <button type="submit" class="secondary outline">Change role</button>
+          <button type="submit" class="quiet">Change role</button>
         </form>
         <form method="post" action="{{ controls.remove_action }}"
               data-confirm="{{ controls.confirm }}">
-          <button type="submit" class="contrast outline">Remove</button>
+          <button type="submit" class="danger">Remove</button>
         </form>
 {% when None %}
 {% endmatch %}
@@ -99,74 +104,79 @@
 {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 
+<h2>Invitations</h2>
 {% match panel %}
 {% when Some with (panel) %}
-<h2>Invitations</h2>
-<div class="invitation-forms">
-  <article>
+<div class="panels">
+  <section class="panel">
     <h3>Share link</h3>
-    <form method="post" action="{{ panel.action }}">
+    <p>Anyone with the link can join until it expires.</p>
+    <form method="post" action="{{ panel.action }}" class="inline">
       <input type="hidden" name="kind" value="link">
-      <label for="share-role">Role</label>
-      <select id="share-role" name="role">
+      <select id="share-role" name="role" aria-label="Role">
         <option value="editor">editor</option>
         <option value="viewer">viewer</option>
       </select>
       <button type="submit">Create share link</button>
     </form>
-  </article>
-  <article>
+  </section>
+  <section class="panel">
     <h3>Invite by email</h3>
-    <form method="post" action="{{ panel.action }}">
+    <p>We send the link to this address.</p>
+    <form method="post" action="{{ panel.action }}" class="inline">
       <input type="hidden" name="kind" value="email">
-      <label for="email">Email</label>
-      <input id="email" name="email" type="email" autocomplete="off">
-      <label for="email-role">Role</label>
-      <select id="email-role" name="role">
+      <input id="email" name="email" type="email" autocomplete="off"
+             placeholder="name@example.org" aria-label="Email">
+      <select id="email-role" name="role" aria-label="Role">
         <option value="editor">editor</option>
         <option value="viewer">viewer</option>
       </select>
       <button type="submit">Send invitation</button>
     </form>
-  </article>
+  </section>
 </div>
 {% match panel.share_link %}
 {% when Some with (link) %}
-<label for="share-link">Share link</label>
-<fieldset role="group">
-  <input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
-  <button type="button" data-copy="share-link">Copy</button>
-</fieldset>
+<div class="panel share-link">
+  <label for="share-link">Your new share link</label>
+  <div class="inline">
+    <input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
+    <button type="button" class="quiet" data-copy="share-link">Copy</button>
+  </div>
+</div>
 {% when None %}
 {% endmatch %}
 {% if panel.invitations.is_empty() %}
 <p class="empty">No pending invitation.</p>
 {% else %}
+<div class="table-wrap">
 <table class="invitations">
   <thead>
-    <tr><th>Invitation</th><th>Role</th><th>Expires</th><th>Uses</th><th>Actions</th></tr>
+    <tr><th>Invitation</th><th>Role</th><th>Expires</th><th>Uses</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for invitation in panel.invitations %}
     <tr data-invitation="{{ invitation.id }}">
       <td class="who">{{ invitation.label }}</td>
-      <td><span class="role badge">{{ invitation.role }}</span></td>
+      <td><span class="role">{{ invitation.role }}</span></td>
       <td class="expires">{{ invitation.expires }}</td>
-      <td>{% if invitation.usage.is_empty() %}—{% else %}<span class="usage">{{ invitation.usage }}</span>{% endif %}</td>
+      <td>{% if invitation.usage.is_empty() %}<span class="muted">—</span>{% else %}<span class="usage">{{ invitation.usage }}</span>{% endif %}</td>
       <td class="actions">
         <form method="post" action="{{ invitation.action }}"
               data-confirm="Revoke this invitation?">
-          <button type="submit" class="contrast outline">Revoke</button>
+          <button type="submit" class="danger">Revoke</button>
         </form>
       </td>
     </tr>
 {% endfor %}
   </tbody>
 </table>
+</div>
 {% endif %}
 {% when None %}
-<p>Only the owner can manage invitations.</p>
+<p class="empty">Only the owner can manage invitations.</p>
 {% endmatch %}
 {% endblock %}
