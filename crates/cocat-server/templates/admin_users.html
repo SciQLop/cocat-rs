@@ -14,7 +14,7 @@
 <p class="empty">No account matches “{{ search }}”.</p>
 {% else %}
 <div class="table-wrap">
-<table class="users">
+<table class="users" data-sortable>
   <thead>
     <tr><th>Account</th><th>Joined</th><th>Rooms</th><th>Storage</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
@@ -28,8 +28,8 @@
         {% if !user.is_active %}<span class="tag danger">deactivated</span>{% endif %}
       </td>
       <td class="muted nowrap">{{ user.joined }}</td>
-      <td class="nowrap">{{ user.rooms_owned }} owned</td>
-      <td>{% include "admin_usage_user.html" %}</td>
+      <td class="nowrap" data-sort="{{ user.rooms_owned }}">{{ user.rooms_owned }} owned</td>
+      <td data-sort="{{ user.used_bytes }}">{% include "admin_usage_user.html" %}</td>
       <td class="actions">
         <details class="edit">
           <summary>Quota</summary>

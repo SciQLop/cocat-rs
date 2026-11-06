@@ -302,7 +302,13 @@ async fn pages_name_their_assets_by_content() {
 
     let page = body_text(fixture.get("/ui/login", None).await).await;
 
-    for asset in ["style.css", "fragment.js", "confirm.js", "copy.js"] {
+    for asset in [
+        "style.css",
+        "fragment.js",
+        "confirm.js",
+        "copy.js",
+        "sort.js",
+    ] {
         let marker = format!("/ui/static/{asset}?v=");
         let start = page
             .find(&marker)

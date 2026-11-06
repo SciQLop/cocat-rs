@@ -522,3 +522,16 @@ main:has(.tabs.admin), .site-header:has(~ main .tabs.admin) .bar { max-width: 80
 td.nowrap { white-space: nowrap; }
 td.owner, td.email { overflow-wrap: anywhere; }
 .meter { flex: none; }
+
+/* Sortable headings: the heading text is a button; the arrow shows the current order. */
+th button.sort {
+  all: unset;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+th button.sort:hover { color: var(--ink); }
+th button.sort:focus-visible { box-shadow: var(--focus); border-radius: 3px; }
+th[aria-sort] { color: var(--ink); }
+th[aria-sort="ascending"] button.sort::after { content: " ↑"; }
+th[aria-sort="descending"] button.sort::after { content: " ↓"; }

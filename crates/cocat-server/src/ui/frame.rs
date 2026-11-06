@@ -21,11 +21,13 @@ const STYLE: &str = include_str!("../../static/style.css");
 const FRAGMENT: &str = include_str!("../../static/fragment.js");
 const CONFIRM: &str = include_str!("../../static/confirm.js");
 const COPY: &str = include_str!("../../static/copy.js");
-const ASSETS: [(&str, &str, &str); 4] = [
+const SORT: &str = include_str!("../../static/sort.js");
+const ASSETS: [(&str, &str, &str); 5] = [
     ("style.css", STYLE, "text/css; charset=utf-8"),
     ("fragment.js", FRAGMENT, "text/javascript; charset=utf-8"),
     ("confirm.js", CONFIRM, "text/javascript; charset=utf-8"),
     ("copy.js", COPY, "text/javascript; charset=utf-8"),
+    ("sort.js", SORT, "text/javascript; charset=utf-8"),
 ];
 
 /// Python's `ui/auth.py::MESSAGES`, which pages look up by query flag. `password_changed` is
@@ -102,7 +104,7 @@ impl Frame {
             title,
             style_href: asset_href(links, "style.css"),
             home_href: links.app("/"),
-            scripts: ["fragment.js", "confirm.js", "copy.js"]
+            scripts: ["fragment.js", "confirm.js", "copy.js", "sort.js"]
                 .into_iter()
                 .map(|script| asset_href(links, script))
                 .collect(),

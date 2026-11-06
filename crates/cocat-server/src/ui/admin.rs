@@ -86,6 +86,7 @@ struct ServerView {
 
 /// One account as the tables show it, with the forms that act on it.
 struct UserView {
+    used_bytes: u64,
     email: String,
     joined: String,
     is_active: bool,
@@ -107,6 +108,7 @@ struct UserView {
 
 /// One room as the tables show it, with the forms that act on it.
 struct RoomView {
+    size_bytes: u64,
     id: String,
     name: String,
     owner: String,
@@ -347,6 +349,7 @@ fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
     UserView {
         joined: row.created_at.chars().take(10).collect(),
         is_self: row.id == actor.id,
+        used_bytes: row.used_bytes,
         used: bytes(row.used_bytes),
         quota: bytes(row.quota_bytes),
         percent: percent(row.used_bytes, row.quota_bytes),
@@ -380,6 +383,7 @@ fn room_view(state: &AppState, row: RoomRow) -> RoomView {
     };
     RoomView {
         owner: row.owner.clone().unwrap_or_default(),
+        size_bytes: row.size_bytes,
         size: bytes(row.size_bytes),
         limit: bytes(row.limit_bytes),
         percent: percent(row.size_bytes, row.limit_bytes),
