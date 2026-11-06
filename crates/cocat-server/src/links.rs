@@ -48,9 +48,10 @@ impl Links {
         format!("{}{}", self.origin, self.path(path_and_fragment))
     }
 
-    /// The page that accepts a group invitation, whose token sits in the path.
+    /// The page that accepts a group invitation, whose token sits in the fragment so it
+    /// never reaches an access log or a Referer header.
     pub fn group_invitation(&self, token: &str) -> String {
-        self.ui(&format!("/groups/join/{token}"))
+        self.ui(&format!("/groups/join#{token}"))
     }
 }
 

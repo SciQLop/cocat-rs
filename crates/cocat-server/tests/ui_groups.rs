@@ -324,7 +324,8 @@ async fn invite_by_email() {
     assert_eq!(flashed(&response), format!("Invitation sent to {GUEST}"));
     let mail = fixture.wait_for_mail(GUEST).await;
     let link = mail.replace("=\r\n", "").replace("=\n", "");
-    assert!(link.contains("/ui/groups/join/"), "{mail}");
+    assert!(link.contains("/ui/groups/join#"), "{mail}");
+    assert!(!link.contains("/ui/groups/join/"), "{mail}");
     let page = page_after(&fixture, &response, &token, &format!("/ui/groups/{id}")).await;
     assert!(page.contains(GUEST), "{page}");
 }
@@ -430,4 +431,35 @@ async fn rooms_shared_with_group_listed() {
         page.contains(r#"<span class="role">editor</span>"#),
         "{page}"
     );
+}
+
+#[tokio::test]
+async fn a_mailed_group_link_keeps_the_token_out_of_the_path() {
+    let fixture = Fixture::start_with_mail().await;
+    let owner = fixture.verified(OWNER).await;
+    let token = fixture.token(owner);
+    let id = group_owned_by(&fixture, owner, "friends").await;
+
+    let response = fixture
+        .post(
+            &format!("/ui/groups/{id}/invitations"),
+            Some(&token),
+            &form(&[("kind", "email"), ("email", GUEST)]),
+        )
+        .await;
+    assert_eq!(location(&response), format!("/ui/groups/{id}"));
+
+    let mail = fixture.wait_for_mail(GUEST).await;
+    let mail = mail.replace("=\r\n", "").replace("=\n", "");
+    assert!(mail.contains("/ui/groups/join#"), "{mail}");
+    assert!(!mail.contains("/ui/groups/join/"), "{mail}");
+}
+
+#[tokio::test]
+async fn a_token_in_the_path_is_not_a_page() {
+    let fixture = Fixture::start().await;
+
+    let response = fixture.get("/ui/groups/join/some-token", None).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

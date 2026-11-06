@@ -71,7 +71,6 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(groups::join_page).post(groups::join_preview),
         )
         .route("/groups/join/accept", post(groups::join_accept))
-        .route("/groups/join/{token}", get(groups::join_path))
         .route("/groups/{group_id}", get(groups::detail))
         .route("/groups/{group_id}/rename", post(groups::rename))
         .route("/groups/{group_id}/delete", post(groups::delete))

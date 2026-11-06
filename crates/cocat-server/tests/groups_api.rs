@@ -971,7 +971,7 @@ async fn mailed_invitation_hides_the_token() {
         "{mails:?}"
     );
 
-    let token = link_token(&mails, "/ui/groups/join/");
+    let token = link_token(&mails, "/ui/groups/join#");
     let (status, body) = fixture
         .post(
             "/api/group-invitations/accept",
@@ -994,8 +994,12 @@ async fn link_uses_public_url() {
 
     let mail = flattened(&fixture.mails()[0]);
     assert!(
-        mail.contains(&format!("{PUBLIC_URL}/ui/groups/join/")),
+        mail.contains(&format!("{PUBLIC_URL}/ui/groups/join#")),
         "{mail}"
+    );
+    assert!(
+        !mail.contains(&format!("{PUBLIC_URL}/ui/groups/join/")),
+        "the token must not travel in the path: {mail}"
     );
 }
 

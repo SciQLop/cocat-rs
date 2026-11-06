@@ -475,15 +475,6 @@ pub(crate) async fn join_preview(
     preview_page(&state, user.as_ref(), wanted).await
 }
 
-/// The mailed link carries its token in the path, so it lands here instead of the paste box.
-pub(crate) async fn join_path(
-    Path(token): Path<String>,
-    MaybeUser(user): MaybeUser,
-    State(state): State<AppState>,
-) -> Response {
-    preview_page(&state, user.as_ref(), token).await
-}
-
 async fn preview_page(state: &AppState, user: Option<&db::User>, wanted: String) -> Response {
     match groups::preview_invitation(state, &wanted).await {
         Ok(preview) => frame::page(JoinPage {
