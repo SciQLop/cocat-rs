@@ -140,7 +140,21 @@ Test: `tests/auth.rs`, `tests/accounts_api.rs`.
   and viewer callers).
 - [ ] Red, implement, gate. Commit "Check rights before looking a member up".
 
-### Task 6: Report
+### Task 6: Persist only what changed (finding 3-02)
+
+**Files:** `room.rs` (`handle_update`). Test: `room.rs` tests.
+- Today the incoming update bytes are appended to the `.y` file and broadcast even when
+  applying them changes nothing (a repeated 4 MB update grows the file ~300 MB/s while the
+  document stays small). Append and broadcast the change yrs itself reports for the
+  transaction (`observe_update_v1` on the room's doc, or the transaction's
+  `encode_update_v1` diff), and nothing when it reports none.
+- [ ] Tests: `repeated_update_appends_nothing` (apply the same update twice: one record in
+  the file, one broadcast), `delete_only_update_is_kept` (an update that only deletes is
+  persisted and survives a reopen), and the existing file-parity tests still pass.
+- [ ] Red, implement, gate. Run `bench/correctness/file_parity.py` and
+  `wire_parity.py` once and paste PASS. Commit "Store only what an update changes".
+
+### Task 7: Report
 
 - [ ] `docs/superpowers/reports/2026-11-06-phase-4b.md`: the models and their run times,
   every finding (who found it, reproducer test, fix commit), the attackers' "did not work"
