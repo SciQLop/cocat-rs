@@ -401,6 +401,11 @@ impl RoomHandle {
             .map_err(|_| RoomGone)
     }
 
+    #[cfg(test)]
+    pub fn panic(&self) {
+        let _ = self.commands.send(RoomCommand::Panic);
+    }
+
     pub fn frame(&self, client: ClientId, frame: Bytes) {
         let _ = self.commands.send(RoomCommand::Frame { client, frame });
     }
@@ -480,6 +485,9 @@ enum RoomCommand {
     Read {
         read: Box<dyn FnOnce(&Doc) + Send>,
     },
+    /// Only the tests send this: the room thread has to survive its own panic.
+    #[cfg(test)]
+    Panic,
 }
 
 struct Client {
@@ -562,55 +570,83 @@ fn room_loop(
                     }
                     Next::Closed => break Unload::Detached(None),
                 };
-            let mut broadcast = None;
-            match command {
-                RoomCommand::Attach {
-                    client,
-                    user,
-                    role,
-                    out,
-                } => {
-                    attach(&doc, &mut clients, client, Client { user, role, out });
-                }
-                RoomCommand::Frame { client, frame } => {
-                    broadcast = handle_frame(
-                        &doc,
-                        &mut store,
-                        &mut full_state,
-                        &mut clients,
+            let stepped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut broadcast = None;
+                let step = match command {
+                    RoomCommand::Attach {
                         client,
-                        frame,
-                    );
-                }
-                RoomCommand::Detach { client, done } => {
-                    clients.remove(&client);
-                    if clients.is_empty() {
-                        break Unload::Detached(Some(done));
+                        user,
+                        role,
+                        out,
+                    } => {
+                        attach(&doc, &mut clients, client, Client { user, role, out });
+                        Step::Serving
                     }
-                    let _ = done.send(());
+                    RoomCommand::Frame { client, frame } => {
+                        broadcast = handle_frame(
+                            &doc,
+                            &mut store,
+                            &mut full_state,
+                            &mut clients,
+                            client,
+                            frame,
+                        );
+                        Step::Serving
+                    }
+                    RoomCommand::Detach { client, done } => {
+                        clients.remove(&client);
+                        if clients.is_empty() {
+                            Step::Detach(Some(done))
+                        } else {
+                            let _ = done.send(());
+                            Step::Serving
+                        }
+                    }
+                    RoomCommand::Revoke { user, done } => {
+                        close_user(&mut clients, user, CloseReason::Revoked);
+                        let _ = done.send(());
+                        Step::Serving
+                    }
+                    RoomCommand::Delete { done } => {
+                        close_all(&mut clients, CloseReason::Revoked);
+                        Step::Delete(done)
+                    }
+                    RoomCommand::Flush { done } => {
+                        flush(&mut store, &room_id);
+                        let _ = done.send(());
+                        Step::Serving
+                    }
+                    RoomCommand::Read { read } => {
+                        read(&doc);
+                        Step::Serving
+                    }
+                    #[cfg(test)]
+                    RoomCommand::Panic => panic!("a command asked the room to panic"),
+                };
+                drain(&commands, &mut backlog);
+                // Written before the broadcast so a client that sees an update can read it
+                // back from the file; the fsync follows on the timer.
+                if backlog.is_empty() {
+                    write(&mut store, &room_id);
                 }
-                RoomCommand::Revoke { user, done } => {
-                    close_user(&mut clients, user, CloseReason::Revoked);
-                    let _ = done.send(());
+                if let Some(frame) = broadcast {
+                    broadcast_to(&mut clients, frame);
                 }
-                RoomCommand::Delete { done } => {
-                    close_all(&mut clients, CloseReason::Revoked);
-                    break Unload::Deleted(done);
+                step
+            }));
+            match stepped {
+                Ok(Step::Serving) => {}
+                Ok(Step::Detach(done)) => break Unload::Detached(done),
+                Ok(Step::Delete(done)) => break Unload::Deleted(done),
+                Err(_) => {
+                    // A room that keeps its registry entry after a panic can never be
+                    // reached again, so the whole room is abandoned instead.
+                    tracing::error!(room = %room_id, "a room thread panicked; unloading the room");
+                    close_all(&mut clients, CloseReason::Failed);
+                    drop_queued(&mut commands, &mut backlog, &update_dir, &room_id);
+                    remove_entry(&room_id, &registry);
+                    break 'serving;
                 }
-                RoomCommand::Flush { done } => {
-                    flush(&mut store, &room_id);
-                    let _ = done.send(());
-                }
-                RoomCommand::Read { read } => read(&doc),
-            }
-            drain(&commands, &mut backlog);
-            // Written before the broadcast so a client that sees an update can read it
-            // back from the file; the fsync follows on the timer.
-            if backlog.is_empty() {
-                write(&mut store, &room_id);
-            }
-            if let Some(frame) = broadcast {
-                broadcast_to(&mut clients, frame);
             }
         };
 
@@ -647,6 +683,45 @@ enum Unload {
     Detached(Option<oneshot::Sender<()>>),
     /// The room is being deleted: no final write, and the file goes too.
     Deleted(oneshot::Sender<()>),
+}
+
+/// What one command asked of the serving loop.
+enum Step {
+    Serving,
+    Detach(Option<oneshot::Sender<()>>),
+    Delete(oneshot::Sender<()>),
+}
+
+/// After a panic nobody will serve what is queued, so waiting attachments are told the
+/// room failed and a queued delete still removes the file.
+fn drop_queued(
+    commands: &mut Option<Receiver<RoomCommand>>,
+    backlog: &mut VecDeque<RoomCommand>,
+    update_dir: &Path,
+    room_id: &str,
+) {
+    let mut waiting: Vec<RoomCommand> = backlog.drain(..).collect();
+    if let Some(receiver) = commands.take() {
+        waiting.extend(receiver.try_iter());
+    }
+    for command in waiting {
+        match command {
+            RoomCommand::Attach { out, .. } => {
+                let _ = out.close.send(CloseReason::Failed);
+            }
+            RoomCommand::Delete { done } => {
+                let _ = std::fs::remove_file(cocat_core::store::room_file(update_dir, room_id));
+                let _ = done.send(());
+            }
+            _ => {}
+        }
+    }
+}
+
+fn remove_entry(room_id: &str, registry: &Rooms) {
+    if let Ok(mut rooms) = registry.lock() {
+        rooms.remove(room_id);
+    }
 }
 
 /// When the room thread should fsync next. It only arms while records are unsynced.
@@ -783,6 +858,8 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
                 let _ = done.send(());
             }
             RoomCommand::Attach { .. } | RoomCommand::Frame { .. } | RoomCommand::Read { .. } => {}
+            #[cfg(test)]
+            RoomCommand::Panic => {}
         }
     }
 }
@@ -987,19 +1064,33 @@ fn handle_update(doc: &Doc, store: &mut FileRoomStore, payload: Vec<u8>) -> Opti
 }
 
 fn apply(doc: &Doc, payload: &[u8]) -> bool {
-    let update =
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Update::decode_v1(payload)))
-        {
-            Ok(Ok(update)) => update,
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "skipping a record that is not a v1 update");
-                return false;
-            }
-            Err(_) => {
-                tracing::warn!("skipping a record the decoder cannot represent");
-                return false;
-            }
-        };
+    // yrs asserts inside its decoders and its integrator on values it cannot represent, and
+    // a record that cannot be applied must not take the room thread (or every later load)
+    // with it.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply_record(doc, payload))) {
+        Ok(applied) => applied,
+        Err(_) => {
+            tracing::warn!("skipping a record the document cannot represent");
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) const POISON_RECORD: &[u8] = b"a record only the tests write";
+
+fn apply_record(doc: &Doc, payload: &[u8]) -> bool {
+    #[cfg(test)]
+    if payload == POISON_RECORD {
+        panic!("a poisoned record");
+    }
+    let update = match Update::decode_v1(payload) {
+        Ok(update) => update,
+        Err(error) => {
+            tracing::warn!(%error, "skipping a record that is not a v1 update");
+            return false;
+        }
+    };
     match doc.transact_mut().apply_update(update) {
         Ok(()) => true,
         Err(error) => {
@@ -1050,6 +1141,128 @@ mod tests {
             commands: Some(receiver),
             backlog: VecDeque::new(),
         }
+    }
+
+    async fn full_state(room: &RoomHandle, client: ClientId) -> Doc {
+        let (out, mut inbox) = outbox();
+        room.attach(client, Uuid::new_v4(), Role::Editor, out)
+            .expect("the room is open");
+        room.frame(
+            client,
+            Bytes::from(Message::Sync(SyncMessage::SyncStep1(StateVector::default())).encode_v1()),
+        );
+        let doc = Doc::new();
+        while let Ok(Some(frame)) = timeout(WAIT, inbox.frames.recv()).await {
+            if let Ok(Message::Sync(SyncMessage::SyncStep2(update))) = Message::decode_v1(&frame) {
+                doc.transact_mut()
+                    .apply_update(Update::decode_v1(&update).expect("a decodable update"))
+                    .expect("an update that applies");
+                break;
+            }
+        }
+        let _ = room.detach(client).await;
+        doc
+    }
+
+    fn has_key(doc: &Doc, key: &str) -> bool {
+        doc.get_or_insert_map("content")
+            .get(&doc.transact(), key)
+            .is_some()
+    }
+
+    #[tokio::test]
+    async fn a_panicking_command_closes_the_clients_and_unloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_path_buf(), None);
+        let room = manager.get_or_open("lab").unwrap();
+
+        let owner = Uuid::new_v4();
+        let (out, _owner) = outbox();
+        room.attach(1, owner, Role::Owner, out).unwrap();
+        let (out, _editor) = outbox();
+        room.attach(2, owner, Role::Editor, out).unwrap();
+        let (out, mut observer) = outbox();
+        room.attach(3, owner, Role::Viewer, out).unwrap();
+
+        room.frame(
+            2,
+            Bytes::from(Message::Sync(SyncMessage::Update(update_with("a", "1"))).encode_v1()),
+        );
+        let mut relayed = false;
+        while let Ok(Some(frame)) = timeout(WAIT, observer.frames.recv()).await {
+            if let Ok(Message::Sync(SyncMessage::Update(_))) = Message::decode_v1(&frame) {
+                relayed = true;
+                break;
+            }
+        }
+        assert!(relayed, "the update reached the other client");
+
+        room.panic();
+        let closed = timeout(WAIT, observer.close)
+            .await
+            .expect("the room closes its clients")
+            .expect("a reason");
+        assert_eq!(closed.reason(), CloseReason::Failed.reason());
+        assert_eq!(manager.open_rooms(), 0);
+
+        let reopened = manager.get_or_open("lab").unwrap();
+        let doc = full_state(&reopened, 3).await;
+        assert!(has_key(&doc, "a"), "the pre-panic state came back");
+    }
+
+    #[test]
+    fn a_poisoned_record_is_skipped_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "lab").unwrap();
+        store.append(Bytes::from(update_with("a", "1"))).unwrap();
+        store.append(Bytes::from_static(POISON_RECORD)).unwrap();
+        store.write().unwrap();
+
+        let (mut store, records) = FileRoomStore::open(dir.path(), "lab").unwrap();
+        let doc = Doc::new();
+        for record in records {
+            apply(&doc, &record);
+        }
+        let mut clients = HashMap::new();
+        let frame =
+            Bytes::from(Message::Sync(SyncMessage::SyncStep1(StateVector::default())).encode_v1());
+        let (out, mut inbox) = outbox();
+        clients.insert(
+            1,
+            Client {
+                user: Uuid::new_v4(),
+                role: Role::Owner,
+                out,
+            },
+        );
+        assert!(
+            handle_frame(&doc, &mut store, &mut None, &mut clients, 1, frame).is_none(),
+            "a state request is answered to its asker only"
+        );
+        let answer = inbox.frames.try_recv().expect("the room serves its state");
+        let Ok(Message::Sync(SyncMessage::SyncStep2(update))) = Message::decode_v1(&answer) else {
+            panic!("the room answers a state request with an update");
+        };
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(&update).unwrap())
+            .unwrap();
+        assert!(has_key(&doc, "a"), "the good record survived the poison");
+
+        let (out, _inbox) = outbox();
+        clients.insert(
+            2,
+            Client {
+                user: Uuid::new_v4(),
+                role: Role::Owner,
+                out,
+            },
+        );
+        let frame =
+            Bytes::from(Message::Sync(SyncMessage::Update(update_with("b", "2"))).encode_v1());
+        assert!(
+            handle_frame(&doc, &mut store, &mut None, &mut clients, 2, frame).is_some(),
+            "the room still accepts updates"
+        );
     }
 
     #[test]
