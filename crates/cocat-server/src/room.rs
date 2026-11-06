@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -1200,9 +1201,10 @@ fn handle_update(
 
 /// Applies one live update and says whether it changed the document: a block for a client
 /// the room has not seen that far, or a deletion that removed something. `seen` is the
-/// room's own state vector, raised with every update it takes; asking yrs (`state_vector`,
-/// `encode_update_v1`) instead would walk every client of the document on every frame,
-/// which a client inventing ids can turn into quadratic work.
+/// room's own state vector, raised only through the ranges that continue it, so an update
+/// that arrives ahead of a gap is stored without claiming the blocks before the gap;
+/// asking yrs (`state_vector`, `encode_update_v1`) instead would walk every client of the
+/// document on every frame, which a client inventing ids can turn into quadratic work.
 fn took_update(doc: &Doc, seen: &mut StateVector, payload: &[u8]) -> bool {
     // yrs asserts inside its decoders and its integrator on values it cannot represent, and
     // a record that cannot be applied must not take the room thread (or every later load)
@@ -1230,23 +1232,31 @@ fn take_record(doc: &Doc, seen: &mut StateVector, payload: &[u8]) -> bool {
             return false;
         }
     };
-    let mut upper: Vec<(ClientID, u32)> = Vec::new();
+    let mut insertions: Vec<(ClientID, Vec<Range<u32>>)> = Vec::new();
     for (client, ranges) in update.insertions(true).iter() {
-        if let Some(end) = ranges.iter().map(|range| range.end).max() {
-            upper.push((*client, end));
-        }
+        insertions.push((*client, ranges.iter().cloned().collect()));
     }
-    let carries_new = upper
+    let carries_new = insertions
         .iter()
-        .any(|(client, clock)| *clock > seen.get(client));
+        .any(|(client, ranges)| ranges.iter().any(|range| range.end > seen.get(client)));
     let mut transaction = doc.transact_mut();
     if let Err(error) = transaction.apply_update(update) {
         tracing::warn!(%error, "skipping a record that does not apply");
         return false;
     }
     let changed = carries_new || !transaction.delete_set().is_empty();
-    for (client, clock) in &upper {
-        seen.set_max(*client, *clock);
+    for (client, ranges) in &insertions {
+        let seen_clock = seen.get(client);
+        let mut clock = seen_clock;
+        for range in ranges {
+            if range.start > clock {
+                break;
+            }
+            clock = clock.max(range.end);
+        }
+        if clock > seen_clock {
+            seen.set_max(*client, clock);
+        }
     }
     changed
 }
@@ -1715,6 +1725,53 @@ mod tests {
             records.len(),
             1,
             "the repeated update was written to the file"
+        );
+    }
+
+    #[test]
+    fn out_of_order_updates_survive_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "room-out-of-order").unwrap();
+        let doc = Doc::new();
+        let mut seen = StateVector::default();
+
+        let writer = Doc::new();
+        let content = writer.get_or_insert_map("content");
+        content.insert(&mut writer.transact_mut(), "first", "value");
+        let first = writer
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let after_first = writer.transact().state_vector();
+        content.insert(&mut writer.transact_mut(), "second", "value");
+        let second = writer.transact().encode_state_as_update_v1(&after_first);
+
+        assert!(
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, second)
+                .unwrap()
+                .is_some(),
+            "an update ahead of its neighbour is kept"
+        );
+        assert!(
+            handle_update(&doc, &mut store, &mut seen, u64::MAX, first)
+                .unwrap()
+                .is_some(),
+            "the update that fills the gap is kept"
+        );
+        store.write().unwrap();
+
+        let (_, records) = FileRoomStore::open(dir.path(), "room-out-of-order").unwrap();
+        let reopened = Doc::new();
+        for record in &records {
+            apply(&reopened, record);
+        }
+        assert_eq!(
+            reopened.transact().state_vector(),
+            writer.transact().state_vector(),
+            "the reopened room holds every block the writer made"
+        );
+        assert!(
+            has_key(&reopened, "first") && has_key(&reopened, "second"),
+            "both edits survive the reopen"
         );
     }
 
