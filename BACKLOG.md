@@ -33,6 +33,18 @@ choice; the LPP Grafana reads Graphite today, so decide at planning time between
 Prometheus, a Graphite push, or both. The endpoint must not be public (superuser, a
 token, or a separate listen address).
 
+## Rich catalogue app in the browser (Leptos)
+
+Browse and edit catalogues live in the browser, with diff and history views. The browser
+becomes a real cocat client: yrs compiles to WebAssembly, so a Leptos app (web-first,
+`leptos_axum` for server rendering + hydration) can reuse `cocat-core` and most of
+`cocat-client` and sync over the same websocket. Mounted under `/app` beside the askama
+pages, which stay for accounts, rooms and administration; it reuses their Pico stylesheet.
+Needs: a browser websocket transport for `cocat-client` (tokio-tungstenite does not run in
+wasm), `cargo-leptos` in CI, a ~1 MB wasm bundle budget. History and rollback views depend
+on the `ysr` engine (phase 6). Own phase, design first. Chosen over Dioxus (multi-platform,
+which SciQLop's Qt desktop makes moot), 2026-11-06.
+
 ## Leads from the attacker campaign (not proven)
 
 See `docs/superpowers/reports/2026-11-06-phase-4b.md`, "Leads not proven": export blocking
