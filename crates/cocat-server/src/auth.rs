@@ -19,6 +19,7 @@ use argon2::password_hash::phc::PasswordHash;
 use axum::Form;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use cookie::{Cookie, SameSite};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
@@ -26,11 +27,14 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use thiserror::Error;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::db::{self, DbError};
 use crate::openapi::Detail;
+use crate::ratelimit::{self, LoginLimit};
 
 pub const COOKIE_NAME: &str = "fastapiusersauth";
 pub const SECRET_ENV: &str = "COCAT_SECRET";
@@ -399,9 +403,14 @@ fn secret_path(db_path: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// The session routes as the OpenAPI document lists them; the live router is `ws::router`.
-pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
-    utoipa_axum::router::OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(login_handler))
-        .routes(utoipa_axum::routes!(logout_handler))
+/// Signing in spends a password hash, so that route alone carries the login limiter;
+/// logging out costs nothing and stays unlimited.
+pub(crate) fn router(limit: &LoginLimit) -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(login_handler))
+        .layer(middleware::from_fn_with_state(
+            limit.clone(),
+            ratelimit::limit,
+        ))
+        .routes(routes!(logout_handler))
 }

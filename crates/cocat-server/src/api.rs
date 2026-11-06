@@ -2,16 +2,16 @@
 //! Every error is `{"detail": "<message>"}`, as FastAPI sends it.
 
 use axum::Json;
-use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection};
 use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
 use cocat_core::role::Role;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::accounts::AccountError;
@@ -21,17 +21,16 @@ use crate::openapi::Detail;
 use crate::room::RoomError;
 use crate::{AppState, auth};
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/me", get(me))
-        .route("/rooms", get(list_rooms).post(create_room))
-        .route("/rooms/{room_id}", patch(rename_room).delete(delete_room))
-        .route("/rooms/{room_id}/members", get(list_members))
-        .route(
-            "/rooms/{room_id}/members/{user_id}",
-            patch(set_member_role).delete(remove_member),
-        )
-        .route("/rooms/{room_id}/owner", post(transfer_ownership))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(me))
+        .routes(routes!(list_rooms, create_room))
+        .routes(routes!(rename_room, delete_room))
+        .routes(routes!(list_members))
+        .routes(routes!(set_member_role, remove_member))
+        .routes(routes!(transfer_ownership))
+        .routes(routes!(legacy_rooms))
+        .routes(routes!(legacy_room_users))
         .merge(crate::catalogues_api::router())
         .merge(crate::groups_api::router())
         .merge(crate::invitations_api::router())
@@ -560,20 +559,4 @@ pub async fn legacy_room_users(
             .map(|(member, _)| member.email)
             .collect(),
     }))
-}
-
-/// The room routes as the OpenAPI document lists them; the live router is `router`.
-///
-/// `routes!` registers one path per call: every handler in a call shares the same path and
-/// must answer a different method.
-pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
-    utoipa_axum::router::OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(me))
-        .routes(utoipa_axum::routes!(list_rooms, create_room))
-        .routes(utoipa_axum::routes!(rename_room, delete_room))
-        .routes(utoipa_axum::routes!(list_members))
-        .routes(utoipa_axum::routes!(set_member_role, remove_member))
-        .routes(utoipa_axum::routes!(transfer_ownership))
-        .routes(utoipa_axum::routes!(legacy_rooms))
-        .routes(utoipa_axum::routes!(legacy_room_users))
 }

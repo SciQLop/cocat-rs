@@ -4,17 +4,17 @@
 //! paging through a 100k-event catalogue never costs a client's worth of memory.
 
 use axum::Json;
-use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use cocat_core::model::{self, CatalogueSummary, EventRecord};
 use cocat_core::time::Timestamp;
 use cocat_core::votable;
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use yrs::Transact;
 
 use crate::AppState;
@@ -25,14 +25,11 @@ const VOTABLE_SUFFIX: &str = ".votable";
 const DEFAULT_LIMIT: usize = 1000;
 const MAX_LIMIT: usize = 10_000;
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/rooms/{room_id}/catalogues", get(list))
-        .route("/rooms/{room_id}/catalogues/{catalogue}", get(one))
-        .route(
-            "/rooms/{room_id}/catalogues/{catalogue}/events",
-            get(events),
-        )
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(one))
+        .routes(routes!(events))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -279,12 +276,4 @@ fn cursor(text: &str) -> Result<(i128, String), ApiError> {
         .parse()
         .map_err(|_| invalid("the cursor is not valid"))?;
     Ok((micros, uuid.to_owned()))
-}
-
-/// The catalogue routes as the OpenAPI document lists them; the live router is `router`.
-pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
-    utoipa_axum::router::OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(list))
-        .routes(utoipa_axum::routes!(one))
-        .routes(utoipa_axum::routes!(events))
 }

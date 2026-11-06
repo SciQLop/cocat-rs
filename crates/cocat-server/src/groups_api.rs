@@ -2,11 +2,11 @@
 //! `groups`, this module only owns the HTTP shape.
 
 use axum::Json;
-use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::{delete, get, patch, post, put};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -18,30 +18,18 @@ use crate::invitations_api::{self, ExpiresInDays, MaxUses, TokenBody};
 use crate::mail::Address;
 use crate::openapi::Detail;
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/groups", get(list).post(create))
-        .route("/groups/{group_id}", patch(rename).delete(remove))
-        .route("/groups/{group_id}/members", get(members))
-        .route(
-            "/groups/{group_id}/members/{user_id}",
-            delete(remove_member),
-        )
-        .route(
-            "/groups/{group_id}/invitations",
-            get(list_invitations).post(create_invitation),
-        )
-        .route(
-            "/groups/{group_id}/invitations/{invitation_id}",
-            delete(revoke_invitation),
-        )
-        .route("/group-invitations/preview", post(preview_invitation))
-        .route("/group-invitations/accept", post(accept_invitation))
-        .route("/rooms/{room_id}/groups", get(room_groups))
-        .route(
-            "/rooms/{room_id}/groups/{group_id}",
-            put(grant).delete(ungrant),
-        )
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list, create))
+        .routes(routes!(rename, remove))
+        .routes(routes!(members))
+        .routes(routes!(remove_member))
+        .routes(routes!(list_invitations, create_invitation))
+        .routes(routes!(revoke_invitation))
+        .routes(routes!(preview_invitation))
+        .routes(routes!(accept_invitation))
+        .routes(routes!(room_groups))
+        .routes(routes!(grant, ungrant))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -479,19 +467,4 @@ async fn accept_invitation(
 ) -> Result<Json<GroupOut>, ApiError> {
     let group = groups::accept_invitation(&state, &body.token, &user).await?;
     Ok(Json(GroupOut::new(group, GroupRole::Member.as_str())))
-}
-
-/// The group routes as the OpenAPI document lists them; the live router is `router`.
-pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
-    utoipa_axum::router::OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(list, create))
-        .routes(utoipa_axum::routes!(rename, remove))
-        .routes(utoipa_axum::routes!(members))
-        .routes(utoipa_axum::routes!(remove_member))
-        .routes(utoipa_axum::routes!(list_invitations, create_invitation))
-        .routes(utoipa_axum::routes!(revoke_invitation))
-        .routes(utoipa_axum::routes!(preview_invitation))
-        .routes(utoipa_axum::routes!(accept_invitation))
-        .routes(utoipa_axum::routes!(room_groups))
-        .routes(utoipa_axum::routes!(grant, ungrant))
 }

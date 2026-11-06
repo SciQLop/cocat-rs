@@ -2,40 +2,37 @@
 //! and their requests. Logout lives in `auth` because it is the cookie's business.
 
 use axum::Json;
-use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::middleware;
-use axum::routing::{get, patch, post};
 use serde::Deserialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::api::{ApiError, CurrentUser, JsonBody, UserRead};
 use crate::mail::{self, Address};
 use crate::openapi::Detail;
-use crate::ratelimit;
+use crate::ratelimit::{self, LoginLimit};
 use crate::{AppState, accounts, db};
 
 /// The routes that cost a mail or a password hash share the login limiter, one budget per
 /// path; confirming a link and spending one are cheap and stay unlimited.
-pub fn router(state: &AppState) -> Router<AppState> {
-    let limited = Router::new()
-        .route("/auth/register", post(register))
-        .route("/auth/request-verify-token", post(request_verify_token))
-        .route("/auth/forgot-password", post(forgot_password))
-        .route("/users/me", patch(update_me))
+pub fn router(limit: &LoginLimit) -> OpenApiRouter<AppState> {
+    let limited = OpenApiRouter::new()
+        .routes(routes!(register))
+        .routes(routes!(request_verify_token))
+        .routes(routes!(forgot_password))
+        .routes(routes!(update_me))
         .layer(middleware::from_fn_with_state(
-            state.clone(),
+            limit.clone(),
             ratelimit::limit,
         ));
     limited
-        .route("/auth/verify", post(verify))
-        .route("/auth/reset-password", post(reset_password))
-        .route("/users/me", get(me))
-        .route(
-            "/users/{user_id}",
-            get(read_user).patch(update_user).delete(delete_user),
-        )
+        .routes(routes!(verify))
+        .routes(routes!(reset_password))
+        .routes(routes!(me))
+        .routes(routes!(read_user, update_user, delete_user))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -341,16 +338,4 @@ async fn find(state: &AppState, raw: &str) -> Result<db::User, ApiError> {
 
 fn not_found() -> ApiError {
     ApiError::NotFound("Not found".to_owned())
-}
-
-/// The account routes as the OpenAPI document lists them; the live router is `router`.
-pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
-    utoipa_axum::router::OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(register))
-        .routes(utoipa_axum::routes!(request_verify_token))
-        .routes(utoipa_axum::routes!(forgot_password))
-        .routes(utoipa_axum::routes!(verify))
-        .routes(utoipa_axum::routes!(reset_password))
-        .routes(utoipa_axum::routes!(me, update_me))
-        .routes(utoipa_axum::routes!(read_user, update_user, delete_user))
 }

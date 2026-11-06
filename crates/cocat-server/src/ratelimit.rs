@@ -13,8 +13,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
-use crate::AppState;
-
 pub const LOGIN_CALLS: u32 = 10;
 pub const LOGIN_PERIOD: Duration = Duration::from_secs(60);
 pub const MAX_KEYS: usize = 10_000;
@@ -155,8 +153,7 @@ pub fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>, trusted_proxies
 
 /// Refuses the eleventh call in a minute from one client. Every route keeps its own budget:
 /// a flood of logins must not lock a client out of registration, or the other way round.
-pub async fn limit(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    let limit = &state.login_limit;
+pub async fn limit(State(limit): State<LoginLimit>, request: Request, next: Next) -> Response {
     let peer = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()

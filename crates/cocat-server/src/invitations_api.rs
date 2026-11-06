@@ -2,11 +2,11 @@
 //! `api` owns rooms and members, `invitations` owns the rules, this module the HTTP shape.
 
 use axum::Json;
-use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, RoomOut};
 use crate::lifecycle::LifecycleError;
@@ -16,18 +16,12 @@ use crate::{AppState, invitations};
 
 const INVITATION_LIFETIME_DAYS: u32 = 14;
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/rooms/{room_id}/invitations",
-            get(list_invitations).post(create_invitation),
-        )
-        .route(
-            "/rooms/{room_id}/invitations/{invitation_id}",
-            delete(revoke_invitation),
-        )
-        .route("/invitations/preview", post(preview_invitation))
-        .route("/invitations/accept", post(accept_invitation))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_invitations, create_invitation))
+        .routes(routes!(revoke_invitation))
+        .routes(routes!(preview_invitation))
+        .routes(routes!(accept_invitation))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -260,13 +254,4 @@ pub(crate) fn address(email: Address) -> Result<String, ApiError> {
         return Err(LifecycleError::Invalid("Enter a valid email address").into());
     }
     Ok(email.0)
-}
-
-/// The invitation routes as the OpenAPI document lists them; the live router is `router`.
-pub(crate) fn documented() -> utoipa_axum::router::OpenApiRouter<AppState> {
-    utoipa_axum::router::OpenApiRouter::new()
-        .routes(utoipa_axum::routes!(list_invitations, create_invitation))
-        .routes(utoipa_axum::routes!(revoke_invitation))
-        .routes(utoipa_axum::routes!(preview_invitation))
-        .routes(utoipa_axum::routes!(accept_invitation))
 }

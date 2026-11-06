@@ -243,14 +243,14 @@ async fn prefix_reaches_servers_and_docs() {
         Links::from_env(&|name| (name == "COCAT_PROXY_PREFIX").then(|| "/cocat".to_owned()))
             .expect("a prefix alone is a valid link set");
 
-    let document =
-        serde_json::to_value(openapi::document(&links)).expect("the document serializes");
+    let document = openapi::document(&links);
+    let published = serde_json::to_value(&document).expect("the document serializes");
     assert_eq!(
-        document["servers"][0]["url"], "/cocat",
+        published["servers"][0]["url"], "/cocat",
         "the document names the path the proxy adds"
     );
 
-    let response = openapi::router(&links)
+    let response = openapi::router(&links, document.clone())
         .with_state(fixture.state.clone())
         .oneshot(
             Request::builder()
@@ -262,7 +262,7 @@ async fn prefix_reaches_servers_and_docs() {
         .await
         .expect("the docs router answers");
     body_text(response).await;
-    let initializer = openapi::router(&links)
+    let initializer = openapi::router(&links, document.clone())
         .with_state(fixture.state.clone())
         .oneshot(
             Request::builder()

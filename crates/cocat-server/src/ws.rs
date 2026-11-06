@@ -10,7 +10,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use cocat_core::role::Role;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -20,7 +20,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
-use crate::{AppState, accounts_api, api, auth, db, ratelimit, ui};
+use crate::{AppState, auth, db, ui};
 
 pub const INTERNAL_ERROR: u16 = 1011;
 
@@ -54,20 +54,13 @@ enum AttachError {
 }
 
 pub fn router(state: AppState) -> Router {
-    let login = post(auth::login_handler).layer(middleware::from_fn_with_state(
-        state.clone(),
-        ratelimit::limit,
-    ));
+    let crate::openapi::Api { router, document } =
+        crate::openapi::api(&state.login_limit, &state.links);
     Router::new()
-        .route("/auth/jwt/login", login)
-        .route("/auth/jwt/logout", post(auth::logout_handler))
-        .merge(accounts_api::router(&state))
+        .merge(router)
         .nest("/ui/", ui::router(&state))
         .route("/room/{room_id}", get(room_socket))
-        .route("/rooms", get(api::legacy_rooms))
-        .route("/room/{room_id}/users", get(api::legacy_room_users))
-        .nest("/api", api::router())
-        .merge(crate::openapi::router(&state.links))
+        .merge(crate::openapi::router(&state.links, document))
         .layer(middleware::from_fn(ui::same_site))
         .with_state(state)
 }

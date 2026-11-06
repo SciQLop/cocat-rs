@@ -1081,19 +1081,39 @@ fn every_route_is_in_the_matrix() {
     );
 }
 
-/// Read the route literals out of the router's own source. axum keeps its route table
-/// private, so the source is the only place that knows every path; the check is what stops
-/// a new route from slipping past the matrix.
+/// Every route the server registers: the JSON API comes from its own document (so a route
+/// cannot be served without being published, or published without being served), and the
+/// rest from the source of the routers that still spell their paths out.
 fn registered() -> Vec<(String, String)> {
-    const FILES: [(&str, &str); 7] = [
-        ("ws.rs", ""),
-        ("accounts_api.rs", ""),
-        ("api.rs", "/api"),
-        ("catalogues_api.rs", "/api"),
-        ("groups_api.rs", "/api"),
-        ("invitations_api.rs", "/api"),
-        ("ui/mod.rs", "/ui"),
-    ];
+    let mut routes = documented();
+    routes.extend(hand_written());
+    routes
+}
+
+/// The JSON API as the generated document lists it.
+fn documented() -> Vec<(String, String)> {
+    let links = Links::from_env(&|_| None).expect("no environment is a valid link set");
+    let document = serde_json::to_value(cocat_server::openapi::document(&links))
+        .expect("the document serializes");
+    let mut routes = Vec::new();
+    for (path, item) in document["paths"]
+        .as_object()
+        .expect("the document has paths")
+    {
+        for method in ["get", "put", "post", "delete", "patch", "head", "options"] {
+            if item.get(method).is_some() {
+                routes.push((method.to_uppercase(), normalize(path)));
+            }
+        }
+    }
+    routes
+}
+
+/// The routes still declared with `.route(..)`: the rendered pages, the websocket and the
+/// documentation itself. axum keeps its route table private, so the source is the only place
+/// that knows them.
+fn hand_written() -> Vec<(String, String)> {
+    const FILES: [(&str, &str); 3] = [("ws.rs", ""), ("openapi.rs", ""), ("ui/mod.rs", "/ui")];
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut routes = Vec::new();
     for (file, prefix) in FILES {
