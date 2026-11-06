@@ -184,3 +184,19 @@ def test_event_arrays_are_numpy_timestamps_in_time_order(room):
         {"q": 1.5, "flag": True},
         {"q": 1.5, "flag": True},
     ]
+
+
+def test_event_arrays_can_carry_the_attributes_from_the_same_read(room):
+    """Two reads could straddle a remote change and misalign the lists; one read cannot."""
+    catalogue = a_catalogue(room)
+    later = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
+    earlier = room.create_event(
+        start=START, stop=STOP, author="a@x.org", attributes={"q": 0.5}
+    )
+    catalogue.add_events([later, earlier])
+
+    arrays = catalogue.event_arrays(attributes=True)
+
+    assert arrays["uuid"] == [earlier.uuid, later.uuid]
+    assert arrays["attributes"] == [{"q": 0.5}, {"q": 1.5, "flag": True}]
+    assert "attributes" not in catalogue.event_arrays()

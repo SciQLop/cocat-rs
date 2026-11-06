@@ -380,7 +380,10 @@ impl Catalogue {
             .write(|txn| model::delete_catalogue(txn, &self.uuid));
     }
 
-    fn event_arrays(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+    /// Uuids, start and stop times, and with `attributes=True` each event's attributes, all
+    /// from one read of the document, so a remote change cannot fall between them.
+    #[pyo3(signature = (attributes=false))]
+    fn event_arrays(&self, py: Python<'_>, attributes: bool) -> Result<Py<PyAny>> {
         let records = self.records()?;
         let uuids: Vec<String> = records.iter().map(|record| record.uuid.clone()).collect();
         let starts: Vec<i64> = records
@@ -395,6 +398,13 @@ impl Catalogue {
         arrays.set_item("uuid", uuids)?;
         arrays.set_item("start", datetime_array(py, starts)?)?;
         arrays.set_item("stop", datetime_array(py, stops)?)?;
+        if attributes {
+            let rows = PyList::empty(py);
+            for record in &records {
+                rows.append(to_python_map(py, &record.attributes)?)?;
+            }
+            arrays.set_item("attributes", rows)?;
+        }
         Ok(arrays.into_any().unbind())
     }
 
