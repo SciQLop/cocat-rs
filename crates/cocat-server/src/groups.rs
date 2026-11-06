@@ -614,7 +614,7 @@ async fn group_role(
     Ok(name.as_deref().map(role_from_name).transpose()?)
 }
 
-async fn require_member(
+pub(crate) async fn require_member(
     state: &AppState,
     group_id: &str,
     actor: Uuid,
@@ -624,7 +624,7 @@ async fn require_member(
         .ok_or_else(|| not_found(group_id))
 }
 
-async fn require_owner(
+pub(crate) async fn require_owner(
     state: &AppState,
     group_id: &str,
     actor: Uuid,

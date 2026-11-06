@@ -463,3 +463,46 @@ async fn a_token_in_the_path_is_not_a_page() {
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+/// Removing a member answers a caller who may not act the same way whether the id names an
+/// account or nothing at all.
+#[tokio::test]
+async fn unknown_and_existing_ids_answer_alike() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(OWNER).await;
+    let known = fixture.verified("known@example.org").await;
+    let stranger = fixture.verified("stranger@example.org").await;
+    let id = group_owned_by(&fixture, owner, "friends").await;
+    let plain = member_of(&fixture, &id, MEMBER).await;
+    let missing = Uuid::new_v4();
+
+    for caller in [stranger, plain] {
+        let token = fixture.token(caller).await;
+        let existing = removal_answer(&fixture, &token, &id, known).await;
+        let unknown = removal_answer(&fixture, &token, &id, missing).await;
+        assert_eq!(
+            existing, unknown,
+            "the removal answer betrays whether the member id exists"
+        );
+    }
+}
+
+async fn removal_answer(
+    fixture: &Fixture,
+    token: &str,
+    group_id: &str,
+    member: Uuid,
+) -> (StatusCode, String, Option<String>) {
+    let response = fixture
+        .post(
+            &format!("/ui/groups/{group_id}/members/{member}/remove"),
+            Some(token),
+            "",
+        )
+        .await;
+    (
+        response.status(),
+        location(&response),
+        flash_cookie(&response),
+    )
+}

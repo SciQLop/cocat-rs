@@ -376,6 +376,16 @@ pub(crate) async fn remove_member(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
+    let allowed = if member == user.id {
+        groups::require_member(&state, &group_id, user.id)
+            .await
+            .map(|_| ())
+    } else {
+        groups::require_owner(&state, &group_id, user.id).await
+    };
+    if let Err(error) = allowed {
+        return answer(&state, Err(error), "/groups", String::new());
+    }
     let email = match member_email(&state, member).await {
         Ok(email) => email,
         Err(status) => return status.into_response(),

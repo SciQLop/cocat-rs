@@ -312,6 +312,14 @@ pub(crate) async fn set_role(
     if role == Role::Owner {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, Role::Owner).await {
+        return answer(
+            &state,
+            Err(error),
+            &format!("/rooms/{room_id}"),
+            String::new(),
+        );
+    }
     let email = match member_email(&state, member).await {
         Ok(email) => email,
         Err(status) => return status.into_response(),
@@ -326,6 +334,19 @@ pub(crate) async fn remove(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
+    let minimum = if member == user.id {
+        Role::Viewer
+    } else {
+        Role::Owner
+    };
+    if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, minimum).await {
+        return answer(
+            &state,
+            Err(error),
+            &format!("/rooms/{room_id}"),
+            String::new(),
+        );
+    }
     let email = match member_email(&state, member).await {
         Ok(email) => email,
         Err(status) => return status.into_response(),
@@ -344,6 +365,14 @@ pub(crate) async fn transfer(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
+    if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, Role::Owner).await {
+        return answer(
+            &state,
+            Err(error),
+            &format!("/rooms/{room_id}"),
+            String::new(),
+        );
+    }
     let email = match member_email(&state, member).await {
         Ok(email) => email,
         Err(status) => return status.into_response(),

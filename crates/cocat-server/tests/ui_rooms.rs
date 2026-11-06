@@ -310,3 +310,52 @@ async fn forged_flash_is_escaped() {
     assert!(!page.contains("<script>alert(1)</script>"), "{page}");
     assert!(page.contains("&#60;script&#62;"), "{page}");
 }
+
+/// Every member action on a room answers a caller who may not act the same way whether the
+/// id names an account or nothing at all.
+#[tokio::test]
+async fn unknown_and_existing_ids_answer_alike() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let known = fixture.verified("known@example.org").await;
+    let viewer = fixture.verified(OTHER).await;
+    let stranger = fixture.verified("stranger@example.org").await;
+    let id = room_owned_by(&fixture, owner, "lab").await;
+    db::add_member(&fixture.state.pool, &id, viewer, Role::Viewer)
+        .await
+        .unwrap();
+    let missing = Uuid::new_v4();
+
+    for caller in [stranger, viewer] {
+        let token = fixture.token(caller).await;
+        for route in ["role", "remove", "owner"] {
+            let existing = answers(&fixture, &token, &id, known, route).await;
+            let unknown = answers(&fixture, &token, &id, missing, route).await;
+            assert_eq!(
+                existing, unknown,
+                "the {route} answer betrays whether the member id exists"
+            );
+        }
+    }
+}
+
+async fn answers(
+    fixture: &Fixture,
+    token: &str,
+    room_id: &str,
+    member: Uuid,
+    route: &str,
+) -> (StatusCode, String, Option<String>) {
+    let path = format!("/ui/rooms/{room_id}/members/{member}/{route}");
+    let body = if route == "role" {
+        form(&[("role", "editor")])
+    } else {
+        String::new()
+    };
+    let response = fixture.post(&path, Some(token), &body).await;
+    (
+        response.status(),
+        location(&response),
+        flash_cookie(&response),
+    )
+}
