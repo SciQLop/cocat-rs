@@ -24,12 +24,12 @@ fi
 # inside, a subordinate uid outside), so the copy runs inside podman's user namespace.
 podman unshare bash -c '
     set -e
-    rm -rf "$1"
+    find "$1" -mindepth 1 -delete   # keep the directory: its parent belongs to root
     mkdir -p "$1/copy" "$1/db" "$1/mail"
     cp -a "$2/storage" "$1/storage"
     python3 -c "import sqlite3, sys; sqlite3.connect(sys.argv[1]).backup(sqlite3.connect(sys.argv[2]))" \
         "$2/db/users.db" "$1/copy/users.db"
-    chown -R 1000:1000 "$1"
+    chown -R 1000:1000 "$1"/*
 ' seed "$DATA" "$PROD"
 
 podman run --rm --entrypoint /usr/local/bin/cocat-server \
