@@ -13,12 +13,17 @@ use std::fmt;
 use serde::{Serialize, Serializer};
 use time::OffsetDateTime;
 use time::UtcOffset;
+use time::error::Format;
 use time::format_description::BorrowedFormatItem;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
 
 const OUTPUT: &[BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]Z");
+const PYTHON: &[BorrowedFormatItem<'_>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+const PYTHON_FRACTION: &[BorrowedFormatItem<'_>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timestamp(OffsetDateTime);
@@ -32,6 +37,18 @@ impl Timestamp {
 
     pub fn unix_micros(self) -> i128 {
         self.0.unix_timestamp_nanos() / 1_000
+    }
+
+    /// The text Python's `str(datetime)` writes for the same instant: a space between the
+    /// date and the time, and microseconds only when there are any. The offset is left out
+    /// because a timestamp read from a document has already been normalised to UTC, and a
+    /// value without one is UTC for every cocat client.
+    pub fn as_text(self) -> Result<String, Format> {
+        let format = match self.0.microsecond() {
+            0 => PYTHON,
+            _ => PYTHON_FRACTION,
+        };
+        self.0.format(format)
     }
 }
 
@@ -94,5 +111,17 @@ mod tests {
     fn a_fraction_keeps_its_microseconds() {
         let parsed = Timestamp::parse("2025-01-31T01:02:03.0045Z").unwrap();
         assert_eq!(parsed.to_string(), "2025-01-31T01:02:03.004500Z");
+    }
+
+    #[test]
+    fn python_text_has_a_space_and_keeps_microseconds() {
+        let utc = Timestamp::parse("2025-01-31 00:00:00").unwrap();
+        assert_eq!(utc.as_text().unwrap(), "2025-01-31 00:00:00");
+
+        let precise = Timestamp::parse("2025-01-31T01:02:03.0045Z").unwrap();
+        assert_eq!(precise.as_text().unwrap(), "2025-01-31 01:02:03.004500");
+
+        let offset = Timestamp::parse("2025-01-31 02:00:00+02:00").unwrap();
+        assert_eq!(offset.as_text().unwrap(), "2025-01-31 00:00:00");
     }
 }
