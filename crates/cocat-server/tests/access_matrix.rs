@@ -110,6 +110,8 @@ struct Row {
 
 const ROWS: &[Row] = &[
     row("GET", "/docs", Guard::Public, Style::Api),
+    row("GET", "/docs/", Guard::Public, Style::Api),
+    row("GET", "/docs/{swagger}", Guard::Public, Style::Api),
     row("GET", "/openapi.json", Guard::Public, Style::Api),
     row("POST", "/auth/jwt/login", Guard::Public, Style::Api),
     row("POST", "/auth/jwt/logout", Guard::Public, Style::Api),
@@ -711,6 +713,7 @@ impl World {
             .replace("{member}", &self.target.to_string())
             .replace("{name}", "orcid")
             .replace("{file}", "style.css")
+            .replace("{swagger}", "swagger-ui.css")
     }
 
     async fn call(&self, row: &Row, token: Option<&str>) -> (StatusCode, Option<String>) {

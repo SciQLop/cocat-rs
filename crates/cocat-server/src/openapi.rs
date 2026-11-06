@@ -3,13 +3,17 @@
 //! Both are public: a browser that has never signed in can read the shape of the API, and
 //! the document itself says which operations need the session cookie.
 
-use axum::Json;
-use axum::Router;
+use std::sync::Arc;
+
+use axum::extract::Path;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
+use axum::{Json, Router};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
-use utoipa_swagger_ui::SwaggerUi;
+use utoipa_swagger_ui::Config;
 
 use crate::links::Links;
 use crate::ratelimit::LoginLimit;
@@ -76,12 +80,45 @@ pub fn document(links: &Links) -> utoipa::openapi::OpenApi {
 ///
 /// The proxy prefix is part of the document's server and of the URL the page fetches; the
 /// routes themselves stay where the proxy forwards them, unprefixed.
+///
+/// The page is served through `utoipa_swagger_ui::serve` rather than its `SwaggerUi` router,
+/// whose `/docs` → `/docs/` redirect ignores the proxy prefix and would leave the proxy.
 pub fn router(links: &Links, document: utoipa::openapi::OpenApi) -> Router<AppState> {
-    let fetch = links.app("/openapi.json");
+    let config = Arc::new(Config::new([links.app("/openapi.json")]));
+    let page = links.app("/docs/");
+    let index = Arc::clone(&config);
     Router::new()
         .route(
             "/openapi.json",
             get(move || async move { Json(document.clone()) }),
         )
-        .merge(SwaggerUi::new("/docs").config(utoipa_swagger_ui::Config::new([fetch])))
+        .route("/docs", get(move || async move { Redirect::to(&page) }))
+        .route(
+            "/docs/",
+            get(move || async move { swagger_file("", index) }),
+        )
+        .route(
+            "/docs/{*file}",
+            get(move |Path(file): Path<String>| async move { swagger_file(&file, config) }),
+        )
+}
+
+/// One file of the bundled Swagger UI; `index.html` for the page itself.
+fn swagger_file(file: &str, config: Arc<Config<'static>>) -> Response {
+    match utoipa_swagger_ui::serve(file, config) {
+        Ok(Some(file)) if file.gzpipped => (
+            [
+                (header::CONTENT_TYPE, file.content_type),
+                (header::CONTENT_ENCODING, "gzip".to_owned()),
+            ],
+            file.bytes,
+        )
+            .into_response(),
+        Ok(Some(file)) => ([(header::CONTENT_TYPE, file.content_type)], file.bytes).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::warn!(%error, "cannot serve a Swagger UI file");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }

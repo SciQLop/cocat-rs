@@ -297,3 +297,31 @@ async fn the_rest_of_the_router_still_answers() {
         .expect("the router answers");
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+/// Behind a proxy the browser only reaches paths under the prefix, so the slash the page
+/// needs must be added inside it, not at the host's root.
+#[tokio::test]
+async fn docs_redirect_keeps_the_prefix() {
+    let fixture = Fixture::start().await;
+    let links =
+        Links::from_env(&|name| (name == "COCAT_PROXY_PREFIX").then(|| "/cocat".to_owned()))
+            .expect("a prefix alone is a valid link set");
+    let document = openapi::document(&links);
+    let response = openapi::router(&links, document)
+        .with_state(fixture.state.clone())
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/docs")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the docs router answers");
+    assert!(response.status().is_redirection());
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/cocat/docs/",
+        "the redirect leaves the proxy's prefix"
+    );
+}
