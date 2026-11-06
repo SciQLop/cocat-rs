@@ -19,7 +19,7 @@ assets (`style.css`, `fragment.js`) embedded with `include_str!` and served with
 cache headers. No CDN.
 
 **Spec:** `docs/superpowers/specs/2026-11-05-cocat-rs-design.md` phase 3. Behaviour
-reference: the Python test checkout `/home/jeandet/Documents/prog/cocat-python-tests`,
+reference: the Python test checkout `../cocat-python-tests`,
 `src/cocat/ui/{__init__,auth,login,signup,reset,verify,account,confirm_email,layout,token}.py`
 and their tests `tests/test_ui_{mount,login,signup,reset,verify,account,confirm_email}.py`,
 `tests/test_prefix.py`. Read the Python page *and* its test before each task: the test
@@ -27,7 +27,7 @@ names below come from them.
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   Rules file, TDD, one build/test command at a time in the foreground, full gate after the
   last edit of each task:
   `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace`.

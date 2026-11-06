@@ -27,8 +27,8 @@ SciQLop's current usage was mapped from `SciQLop/plugins/collaborative_catalogs/
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, work in the worktree
-  `/home/jeandet/Documents/prog/cocat-rs-5a` on branch `phase-5a` (another agent works on
+- This repo, work in the worktree
+  `../cocat-rs-5a` on branch `phase-5a` (another agent works on
   `main` at the same time); commit per task, never push, never merge. ONE cargo or
   maturin command at a time, in the foreground. Full gate (fmt, clippy -D warnings,
   `cargo test --workspace`, and from Task 3 the pytest suite) before each commit.
@@ -176,7 +176,7 @@ path)`, and the save-on-exit hook.
   the loop thread, same-kind changes merged, `changes_done` once per batch, missing methods
   skipped; a raising method is logged and the rest of the batch and the next batch still run;
   **cross-client**: Python cocat (the existing venv at
-  `/home/jeandet/Documents/prog/cocat-python-tests`, read-only, never install into it) and
+  `../cocat-python-tests`, read-only, never install into it) and
   `cocat_rs` in the same room, each writes every field, the other reads identical values.
 - [ ] Measure `catalogues()` and `event_arrays()` on the bench 100k-event room; write the
   numbers into the commit message. Gate (cargo + pytest), commit "Add the cocat_rs

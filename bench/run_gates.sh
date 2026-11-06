@@ -15,8 +15,10 @@ bench=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo=$(dirname -- "$bench")
 work="$bench/work"
 results="$bench/results"
-python_bin=${PYTHON:-/home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/python}
-python_cli=/home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/cocat
+# A checkout of the Python cocat tests with its .venv (pycrdt, websockets, cocat).
+python_tests=${COCAT_PYTHON_TESTS:?set COCAT_PYTHON_TESTS to a Python cocat checkout with a .venv}
+python_bin=${PYTHON:-$python_tests/.venv/bin/python}
+python_cli=$python_tests/.venv/bin/cocat
 rust_cli="$repo/target/release/cocat-server"
 email=bench@test.org
 password=pwd

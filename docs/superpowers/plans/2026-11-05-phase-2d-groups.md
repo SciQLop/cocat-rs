@@ -25,7 +25,7 @@ group closes the user's sockets in every room it reached, after the change commi
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   Rules file, TDD, and the full gate after the *last* edit of each task:
   `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace`.
   One build or test command at a time, in the foreground.

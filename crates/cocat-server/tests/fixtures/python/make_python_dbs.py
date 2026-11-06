@@ -2,7 +2,7 @@
 
 Run once with the Python test checkout's interpreter:
 
-    /home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/python make_python_dbs.py
+    "$COCAT_PYTHON_TESTS"/.venv/bin/python make_python_dbs.py
 """
 
 import hashlib

@@ -17,13 +17,13 @@ crate.
 (a `data-copy` button copies a field with `navigator.clipboard`). No inline scripts.
 
 **Spec:** design phase 3, plus phase 2d's groups. Behaviour reference: the Python test
-checkout `/home/jeandet/Documents/prog/cocat-python-tests`, `src/cocat/ui/{rooms,room,
+checkout `../cocat-python-tests`, `src/cocat/ui/{rooms,room,
 invitation,token}.py` and `tests/test_ui_{rooms,room,invitation}.py`. Read them before each
 task. The group pages have no Python counterpart: they mirror the room pages.
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   Rules file (including "use established crates"), TDD, one build/test command at a time in
   the foreground, full gate after the last edit of each task:
   `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace`.

@@ -30,7 +30,7 @@ unverified local account never taken over).
 
 ## Global Constraints
 
-- Worktree `/home/jeandet/Documents/prog/cocat-rs-p1`, branch `phase-1`; never the
+- Worktree `../cocat-rs-p1`, branch `phase-1`; never the
   `cocat-rs` main checkout. Rules file, TDD and the gate as before.
 - Error bodies as fastapi-users: `{"detail": "<CODE>"}` for its error codes
   (`REGISTER_USER_ALREADY_EXISTS`, `LOGIN_BAD_CREDENTIALS`, `LOGIN_USER_NOT_VERIFIED`,

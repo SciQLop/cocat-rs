@@ -22,7 +22,7 @@ cocat-python-tests `rust-spike`, `src/cocat/{models.py,event.py,catalogue.py,vot
 
 ## Global Constraints
 
-- Worktree `/home/jeandet/Documents/prog/cocat-rs-p1`, branch `phase-1`. TDD, rules file,
+- Worktree `../cocat-rs-p1`, branch `phase-1`. TDD, rules file,
   and the full gate after the *last* edit of each task:
   `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test --workspace`.
   One build or test command at a time, in the foreground, never backgrounded.

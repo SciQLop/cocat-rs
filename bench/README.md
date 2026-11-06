@@ -5,7 +5,8 @@ Rust spike, so the two JSON files can be compared field by field.
 
 The harness lives with the Rust code because the plan and the docs are here, but it is
 a Python client: run it with a venv that has `pycrdt`, `websockets` and `cocat`
-installed (`/home/jeandet/Documents/prog/cocat-python-tests/.venv` at the time of the spike).
+installed. The scripts find it through `COCAT_PYTHON_TESTS`, a checkout of the Python cocat
+tests with its `.venv`.
 
 ## Rooms
 

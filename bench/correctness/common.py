@@ -45,7 +45,7 @@ CLIS = {
     "python": Path(
         os.environ.get(
             "COCAT_PYTHON_CLI",
-            "/home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/cocat",
+            os.path.join(os.environ.get("COCAT_PYTHON_TESTS", "."), ".venv/bin/cocat"),
         )
     ),
 }

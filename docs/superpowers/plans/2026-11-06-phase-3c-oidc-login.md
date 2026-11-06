@@ -25,7 +25,7 @@ test checkout `src/cocat/app/oauth.py`, `src/cocat/ui/oauth.py`, `src/cocat/app/
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   Rules file (established crates), TDD, one build/test command at a time in the
   foreground, full gate after the last edit of each task.
 - Configuration, as Python: `COCAT_OAUTH_PROVIDERS` = JSON list of `{name:

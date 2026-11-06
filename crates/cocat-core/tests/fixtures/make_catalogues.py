@@ -10,7 +10,7 @@ an event that does not exist.
 Run from the repository root with cocat-python-tests's environment, then commit both
 files this script writes:
 
-    /home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/python \
+    "$COCAT_PYTHON_TESTS"/.venv/bin/python \
         crates/cocat-core/tests/fixtures/make_catalogues.py
 """
 

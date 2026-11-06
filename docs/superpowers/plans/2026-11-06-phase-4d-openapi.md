@@ -22,7 +22,7 @@ time, no CDN at runtime).
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   Rules file, TDD, ONE cargo command at a time in the foreground, full gate after the last
   edit of each task.
 - **In the document:** every route under `/api`, `/auth` (including `/auth/jwt/login` and

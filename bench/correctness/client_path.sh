@@ -7,7 +7,7 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-ui=/home/jeandet/Documents/prog/cocat-python-tests
+ui=${COCAT_PYTHON_TESTS:?set COCAT_PYTHON_TESTS to the Python cocat test checkout}
 server=${SERVER:-rust}
 
 case "$server" in

@@ -16,12 +16,12 @@ hashing.
 
 **Spec:** design phase 4: "Every claimed finding is verified with a reproducing test before
 it is fixed; the reproducers stay in the suite." Findings: the attacker worktrees
-`/home/jeandet/Documents/prog/cocat-rs-attack-N/attack/findings/` (read the one each task
+`../cocat-rs-attack-N/attack/findings/` (read the one each task
 names; its Python reproducer shows the exact requests).
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, one commit per task, never
+- This repo, branch `main`, one commit per task, never
   push. Rules file, TDD (reproducer red first, named after the bug), one build/test command
   at a time in the foreground, full gate (`cargo fmt --all --check`, `cargo clippy
   --all-targets -- -D warnings`, `cargo test --workspace`) after the last edit of each task.

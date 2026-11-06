@@ -22,7 +22,7 @@ dev server, like the speasy proxy, production only when sure.
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   ONE cargo or container build at a time, in the foreground.
 - Registry and naming: `129.104.6.172:32219/sciqlop/cocat-server-rs:devel` (later
   `:stable`). Never push to `sciqlop/cocat-server` (the Python image).

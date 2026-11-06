@@ -26,7 +26,7 @@ reproducers stay in the suite."
 
 ## Global Constraints
 
-- Repo `/home/jeandet/Documents/prog/cocat-rs`, branch `main`, commit per task, never push.
+- This repo, branch `main`, commit per task, never push.
   Rules file, TDD where code changes, one build/test command at a time in the foreground,
   full gate after the last edit of each task.
 - **A failure found by these tests is a finding, not a test to loosen.** Fix it in the code
