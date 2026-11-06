@@ -20,7 +20,7 @@ use crate::links::{Links, LinksError};
 use crate::mail::{MailError, Mailer};
 use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
-use crate::{AppState, auth, db, ws};
+use crate::{AppState, auth, db, oidc, ws};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -116,6 +116,8 @@ pub enum CliError {
     Mail(#[from] MailError),
     #[error(transparent)]
     Links(#[from] LinksError),
+    #[error(transparent)]
+    Oidc(#[from] oidc::OidcError),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -242,6 +244,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     let env = |name: &str| std::env::var(name).ok();
     let mailer = Mailer::from_env(&env)?;
     let links = Links::from_env(&env)?;
+    let oidc = oidc::discover(oidc::providers_from_env(&env)?, &links).await;
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
@@ -256,6 +259,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         login_limit: LoginLimit::new(trusted_proxies),
         mailer,
         links,
+        oidc,
     };
 
     let listener = TcpListener::bind((host, port)).await?;

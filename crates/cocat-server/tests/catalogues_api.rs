@@ -52,6 +52,7 @@ impl Fixture {
             login_limit: LoginLimit::default(),
             mailer: None,
             links: Links::default(),
+            oidc: Vec::new(),
         };
         Self {
             state,

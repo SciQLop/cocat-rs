@@ -14,6 +14,7 @@ pub mod invitations_api;
 pub mod lifecycle;
 pub mod links;
 pub mod mail;
+pub mod oidc;
 pub mod ratelimit;
 pub mod room;
 pub mod ui;
@@ -26,6 +27,7 @@ use sqlx::SqlitePool;
 
 use crate::links::Links;
 use crate::mail::Mailer;
+use crate::oidc::Provider;
 use crate::ratelimit::LoginLimit;
 use crate::room::RoomManager;
 
@@ -42,4 +44,6 @@ pub struct AppState {
     pub login_limit: LoginLimit,
     pub mailer: Option<Mailer>,
     pub links: Links,
+    /// The providers that answered discovery at startup; empty keeps the password login alone.
+    pub oidc: Vec<Provider>,
 }

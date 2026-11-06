@@ -81,6 +81,7 @@ impl Fixture {
             login_limit: LoginLimit::default(),
             mailer: Mailer::from_env(&lookup).unwrap(),
             links: Links::from_env(&lookup).unwrap(),
+            oidc: Vec::new(),
         };
         Self {
             state,

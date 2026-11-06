@@ -184,6 +184,11 @@ impl SmtpMailer {
 ///
 /// `placeholder.cocat.org` is reserved for that stand-in, one subdomain per provider, and
 /// nothing is ever mailed to it.
+/// The stand-in address an account gets when its provider does not prove a real one.
+pub fn placeholder_address(provider: &str, subject: &str) -> String {
+    format!("{subject}@{provider}.{PLACEHOLDER_DOMAIN}")
+}
+
 pub fn is_placeholder(email: &str) -> bool {
     let domain = match email.rsplit_once('@') {
         Some((_, domain)) => domain.to_lowercase(),

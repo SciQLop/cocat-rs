@@ -203,6 +203,7 @@ async fn login_sets_a_cookie_for_the_right_password() {
         login_limit: LoginLimit::default(),
         mailer: None,
         links: Links::default(),
+        oidc: Vec::new(),
     };
 
     let response =
@@ -242,6 +243,7 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         login_limit: LoginLimit::default(),
         mailer: None,
         links: Links::default(),
+        oidc: Vec::new(),
     };
 
     let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2", false).await;

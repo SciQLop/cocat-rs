@@ -65,13 +65,16 @@ pub async fn begin_immediate(pool: &SqlitePool) -> Result<Transaction<'static, S
     Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
 }
 
-pub async fn user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<User>, DbError> {
+pub async fn user_by_email<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    email: &str,
+) -> Result<Option<User>, DbError> {
     let row = sqlx::query(
         r#"SELECT id, email, hashed_password, is_active, is_superuser, is_verified
            FROM "user" WHERE email = ?"#,
     )
     .bind(email)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
     Ok(row.as_ref().map(user_from_row).transpose()?)
 }
@@ -200,7 +203,28 @@ pub async fn create_user(
     is_verified: bool,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::new_v4();
-    let hashed_password = hash_password(password)?;
+    insert_user(
+        pool,
+        id,
+        email,
+        &hash_password(password)?,
+        is_superuser,
+        is_verified,
+    )
+    .await?;
+    Ok(id)
+}
+
+/// Insert a user row wherever the caller is writing: its own pool, or the transaction that also
+/// creates the account an OpenID Connect sign-in just proved.
+pub async fn insert_user<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    id: Uuid,
+    email: &str,
+    hashed_password: &str,
+    is_superuser: bool,
+    is_verified: bool,
+) -> Result<(), DbError> {
     sqlx::query(
         r#"INSERT INTO "user" (id, email, hashed_password, is_active, is_verified, is_superuser)
            VALUES (?, ?, ?, TRUE, ?, ?)"#,
@@ -210,10 +234,58 @@ pub async fn create_user(
     .bind(hashed_password)
     .bind(is_verified)
     .bind(is_superuser)
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(|error| taken_email(error, email))?;
-    Ok(id)
+    Ok(())
+}
+
+/// The account a provider subject already signs in as, if the visitor linked one.
+pub async fn oauth_user<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    provider: &str,
+    subject: &str,
+) -> Result<Option<User>, DbError> {
+    let row = sqlx::query(
+        r#"SELECT "user".id, "user".email, "user".hashed_password, "user".is_active,
+                  "user".is_superuser, "user".is_verified
+           FROM oauth_account JOIN "user" ON "user".id = oauth_account.user_id
+           WHERE oauth_account.provider = ? AND oauth_account.subject = ?"#,
+    )
+    .bind(provider)
+    .bind(subject)
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.as_ref().map(user_from_row).transpose()?)
+}
+
+pub async fn link_oauth_account<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    provider: &str,
+    subject: &str,
+    user_id: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(r#"INSERT INTO oauth_account (provider, subject, user_id) VALUES (?, ?, ?)"#)
+        .bind(provider)
+        .bind(subject)
+        .bind(user_id.to_string())
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+pub async fn linked_providers<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    user_id: Uuid,
+) -> Result<Vec<String>, DbError> {
+    let rows =
+        sqlx::query(r#"SELECT provider FROM oauth_account WHERE user_id = ? ORDER BY provider"#)
+            .bind(user_id.to_string())
+            .fetch_all(executor)
+            .await?;
+    rows.iter()
+        .map(|row| row.try_get("provider").map_err(DbError::from))
+        .collect()
 }
 
 /// Write every mutable column of `user`. The address is unique, so a duplicate is reported as
