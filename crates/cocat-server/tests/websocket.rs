@@ -183,6 +183,15 @@ fn update_with(key: &str, value: &str) -> Vec<u8> {
         .encode_state_as_update_v1(&StateVector::default())
 }
 
+/// The next update of a client that keeps writing, so the room's document stays a handful
+/// of clients wide instead of growing one per tick.
+fn update_from(doc: &Doc, key: &str, value: &str) -> Vec<u8> {
+    let content = doc.get_or_insert_map("content");
+    let mut transaction = doc.transact_mut();
+    content.insert(&mut transaction, key, value);
+    transaction.encode_update_v1()
+}
+
 fn sync_frame(message: Message) -> WsMessage {
     WsMessage::Binary(Bytes::from(message.encode_v1()))
 }
@@ -375,8 +384,9 @@ async fn a_client_that_does_not_read_is_closed_1013() {
     next_message(&mut writer).await;
 
     let padding = "x".repeat(SLOW_PADDING);
+    let producer = Doc::new();
     for tick in 0..SLOW_UPDATES {
-        let update = update_with(&format!("key-{tick}"), &padding);
+        let update = update_from(&producer, &format!("key-{tick}"), &padding);
         writer
             .send(sync_frame(Message::Sync(SyncMessage::Update(update))))
             .await

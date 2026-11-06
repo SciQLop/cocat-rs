@@ -319,7 +319,7 @@ impl RoomManager {
             let _charged = charged;
             let doc = Doc::new();
             for update in read_updates(&update_dir, &id)? {
-                apply(&doc, &update);
+                let _ = apply(&doc, &update);
             }
             let read = reader.lock().ok().and_then(|mut slot| slot.take());
             Ok::<_, StoreError>(read.map(|read| read(&doc)))
@@ -579,7 +579,7 @@ fn room_loop(
     let mut full_state = None;
     let mut commands = Some(commands);
     for update in updates {
-        apply(&doc, &update);
+        let _ = apply(&doc, &update);
     }
 
     'serving: loop {
@@ -1077,26 +1077,27 @@ fn handle_update(doc: &Doc, store: &mut FileRoomStore, payload: Vec<u8>) -> Opti
     if payload == [0, 0] {
         return None;
     }
-    if !apply(doc, &payload) {
-        return None;
-    }
-    if let Err(error) = store.append(Bytes::from(payload.clone())) {
+    let change = apply(doc, &payload)?;
+    if let Err(error) = store.append(Bytes::from(change.clone())) {
         tracing::warn!(%error, "cannot append to the room file, the update is in memory only");
     }
     Some(Bytes::from(
-        Message::Sync(SyncMessage::Update(payload)).encode_v1(),
+        Message::Sync(SyncMessage::Update(change)).encode_v1(),
     ))
 }
 
-fn apply(doc: &Doc, payload: &[u8]) -> bool {
+/// The change the document actually took, or `None` when the payload changed nothing (a
+/// repeated update). Storing and broadcasting what yrs reports, instead of the frame that
+/// arrived, keeps a client from inflating a room file with updates it already sent.
+fn apply(doc: &Doc, payload: &[u8]) -> Option<Vec<u8>> {
     // yrs asserts inside its decoders and its integrator on values it cannot represent, and
     // a record that cannot be applied must not take the room thread (or every later load)
     // with it.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply_record(doc, payload))) {
-        Ok(applied) => applied,
+        Ok(change) => change,
         Err(_) => {
             tracing::warn!("skipping a record the document cannot represent");
-            false
+            None
         }
     }
 }
@@ -1104,7 +1105,7 @@ fn apply(doc: &Doc, payload: &[u8]) -> bool {
 #[cfg(test)]
 pub(crate) const POISON_RECORD: &[u8] = b"a record only the tests write";
 
-fn apply_record(doc: &Doc, payload: &[u8]) -> bool {
+fn apply_record(doc: &Doc, payload: &[u8]) -> Option<Vec<u8>> {
     #[cfg(test)]
     if payload == POISON_RECORD {
         panic!("a poisoned record");
@@ -1113,17 +1114,21 @@ fn apply_record(doc: &Doc, payload: &[u8]) -> bool {
         Ok(update) => update,
         Err(error) => {
             tracing::warn!(%error, "skipping a record that is not a v1 update");
-            return false;
+            return None;
         }
     };
-    match doc.transact_mut().apply_update(update) {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(%error, "skipping a record that does not apply");
-            false
-        }
+    let mut transaction = doc.transact_mut();
+    if let Err(error) = transaction.apply_update(update) {
+        tracing::warn!(%error, "skipping a record that does not apply");
+        return None;
     }
+    let change = transaction.encode_update_v1();
+    (!change.as_slice().eq(EMPTY_UPDATE)).then_some(change)
 }
+
+/// What `encode_update_v1` writes for a transaction that changed nothing: an empty state
+/// vector and an empty delete set.
+const EMPTY_UPDATE: &[u8] = &[0, 0];
 
 #[cfg(test)]
 mod tests {
@@ -1246,7 +1251,7 @@ mod tests {
         let (mut store, records) = FileRoomStore::open(dir.path(), "lab").unwrap();
         let doc = Doc::new();
         for record in records {
-            apply(&doc, &record);
+            let _ = apply(&doc, &record);
         }
         let mut clients = HashMap::new();
         let frame =
@@ -1519,5 +1524,71 @@ mod tests {
         );
         room.detach(1).await;
         room.detach(2).await;
+    }
+
+    #[test]
+    fn repeated_update_appends_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, records) = FileRoomStore::open(dir.path(), "room-repeat").unwrap();
+        assert!(records.is_empty());
+        let doc = Doc::new();
+        let update = update_with("key", "value");
+
+        assert!(
+            handle_update(&doc, &mut store, update.clone()).is_some(),
+            "the first update is broadcast"
+        );
+        assert!(
+            handle_update(&doc, &mut store, update).is_none(),
+            "a repeated update changes nothing and is broadcast again"
+        );
+        store.write().unwrap();
+
+        let (_, records) = FileRoomStore::open(dir.path(), "room-repeat").unwrap();
+        assert_eq!(
+            records.len(),
+            1,
+            "the repeated update was written to the file"
+        );
+    }
+
+    #[test]
+    fn delete_only_update_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "room-delete").unwrap();
+        let doc = Doc::new();
+        let insert = update_with("key", "value");
+        handle_update(&doc, &mut store, insert.clone()).expect("the insert is broadcast");
+
+        let writer = Doc::new();
+        writer
+            .transact_mut()
+            .apply_update(Update::decode_v1(&insert).unwrap())
+            .unwrap();
+        let content = writer.get_or_insert_map("content");
+        let mut txn = writer.transact_mut();
+        content.remove(&mut txn, "key");
+        let deletion = txn.encode_update_v1();
+        drop(txn);
+
+        assert!(
+            handle_update(&doc, &mut store, deletion).is_some(),
+            "an update that only deletes is broadcast"
+        );
+        store.write().unwrap();
+
+        let (_, records) = FileRoomStore::open(dir.path(), "room-delete").unwrap();
+        assert_eq!(records.len(), 2, "the deletion was written to the file");
+        let replayed = Doc::new();
+        for record in records {
+            replayed
+                .transact_mut()
+                .apply_update(Update::decode_v1(&record).unwrap())
+                .unwrap();
+        }
+        assert!(
+            !has_key(&replayed, "key"),
+            "the deletion did not survive the reopen"
+        );
     }
 }

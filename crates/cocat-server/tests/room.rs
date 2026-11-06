@@ -319,9 +319,11 @@ async fn a_client_whose_queue_is_full_is_dropped_with_too_slow() {
     let mut reader = attach(&room, 2, Role::Editor);
     next(&mut reader).await;
 
-    let payload = update_with("key", "value");
-    for _ in 0..OUTBOUND_FRAMES + 1 {
-        room.frame(2, update_frame(&payload));
+    for round in 0..OUTBOUND_FRAMES + 1 {
+        room.frame(
+            2,
+            update_frame(&update_with(&format!("key{round}"), "value")),
+        );
         // The sender must keep reading or it overflows too: awaiting each broadcast
         // keeps its queue at one frame, so only the silent client is dropped.
         next(&mut reader).await;
@@ -343,9 +345,11 @@ async fn frames_from_a_dropped_client_are_ignored() {
     let mut reader = attach(&room, 2, Role::Editor);
     next(&mut reader).await;
 
-    let payload = update_with("key", "value");
-    for _ in 0..OUTBOUND_FRAMES + 1 {
-        room.frame(2, update_frame(&payload));
+    for round in 0..OUTBOUND_FRAMES + 1 {
+        room.frame(
+            2,
+            update_frame(&update_with(&format!("key{round}"), "value")),
+        );
         next(&mut reader).await;
     }
     timeout(WAIT, silent.close)
@@ -365,7 +369,10 @@ async fn frames_from_a_dropped_client_are_ignored() {
     };
     let doc = apply(&reply);
     assert_eq!(content(&doc, "dropped"), None);
-    assert_eq!(content(&doc, "key").as_deref(), Some("value"));
+    assert_eq!(
+        content(&doc, &format!("key{OUTBOUND_FRAMES}")).as_deref(),
+        Some("value")
+    );
     room.detach(2).await;
 }
 
