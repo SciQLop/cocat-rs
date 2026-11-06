@@ -89,6 +89,17 @@ the rooms, the API and the websocket stay open: SciQLop and scripts sign in and 
 block sits in `/etc/nginx/conf.d/sciqlop.conf` before the `/cocat-dev` location; a backup of
 the file before the change is in `/root/sciqlop.conf.before-cocat-dev-anubis-*`.
 
+## Metrics
+
+The app exports Prometheus metrics on `127.0.0.1:9188` (`COCAT_METRICS_BIND`), guarded by a
+bearer token (`COCAT_METRICS_TOKEN`, in `~sciqlop/.config/cocat-rs-dev/metrics.env`, mode
+600). nginx serves them to the cluster on `https://sciqlop.lpp.polytechnique.fr:9187/metrics`
+with the site certificate, and both nginx and firewalld admit only `129.104.6.0/24`, the
+cluster nodes: their VictoriaMetrics scrapes it every 60 s (job `cocat`, label `env: dev`),
+with the token from a Secret on the cluster side. `docker/cocat-metrics-host.sh` (as root)
+sets up the token, the nginx listener and the firewall rule; it is idempotent. The series
+end up in the public Grafana org: labels carry no user, room, email or address, by design.
+
 ## Sending real mail
 
 Without configuration the dev server writes each mail as a file in `/DATA/cocat_rs_dev/mail`.

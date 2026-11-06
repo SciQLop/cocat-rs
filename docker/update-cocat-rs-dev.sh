@@ -26,12 +26,20 @@ if podman container exists "$NAME"; then
     podman stop "$NAME"
     podman rename "$NAME" "${NAME}_old"
 fi
+# The metrics bearer token (COCAT_METRICS_TOKEN): nginx serves the metrics to the cluster
+# on :9187 over TLS and the app checks the token. See docs/deploy.md.
+METRICS_ENV=~/.config/cocat-rs-dev/metrics.env
+METRICS=()
+if [[ -f $METRICS_ENV ]]; then
+    METRICS=(--env-file "$METRICS_ENV")
+fi
 # systemd owns restarts (Restart=on-failure in the generated unit), as for cocat-server.
 podman run --ulimit nofile=262144:262144 --network=host -d \
     -e PORT=6575 \
     -e COCAT_PROXY_PREFIX=cocat-dev \
     -e COCAT_PUBLIC_URL=https://sciqlop.lpp.polytechnique.fr \
-    -e COCAT_METRICS_BIND=127.0.0.1:9187 \
+    -e COCAT_METRICS_BIND=127.0.0.1:9188 \
+    "${METRICS[@]}" \
     "${MAIL[@]}" \
     -v "$DATA/storage:/storage:Z" -v "$DATA/db:/db:Z" -v "$DATA/mail:/mail:Z" \
     --stop-timeout 30 \
