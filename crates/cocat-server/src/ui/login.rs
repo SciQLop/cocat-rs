@@ -139,7 +139,9 @@ fn failed(state: &AppState, key: &str) -> Response {
 /// The value is resolved against a placeholder origin the way a browser resolves a
 /// `Location`, so tab, carriage return and newline are stripped and a backslash counts
 /// as a slash before the host is compared. Only the path, query and fragment of the
-/// resolved URL are returned, so no unparsed input reaches the `Location` header.
+/// resolved URL are returned, so no unparsed input reaches the `Location` header. The
+/// result carries the reverse-proxy prefix: the proxy strips it from the request, and a
+/// `next` value is a path on this site either way.
 pub(crate) fn safe_next(value: Option<&str>, links: &crate::links::Links) -> String {
     let default = links.path("/rooms");
     let Some(value) = value else {
@@ -171,5 +173,5 @@ pub(crate) fn safe_next(value: Option<&str>, links: &crate::links::Links) -> Str
         target.push('#');
         target.push_str(fragment);
     }
-    target
+    links.prefixed(&target)
 }

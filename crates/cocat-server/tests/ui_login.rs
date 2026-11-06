@@ -171,6 +171,14 @@ impl Fixture {
         self.post(&path, None, &form).await
     }
 
+    fn with_prefix(mut self, prefix: &str) -> Self {
+        let prefix = prefix.to_owned();
+        self.state.links =
+            Links::from_env(&move |name| (name == "COCAT_PROXY_PREFIX").then(|| prefix.clone()))
+                .unwrap();
+        self
+    }
+
     fn mails(&self) -> Vec<String> {
         let Some(dir) = &self.mail_dir else {
             return Vec::new();
@@ -539,4 +547,51 @@ async fn login_flood_does_not_block_signup() {
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(location(&response), "/ui/rooms");
+}
+
+#[tokio::test]
+async fn next_keeps_the_proxy_prefix() {
+    let fixture = Fixture::start().await.with_prefix("/cocat-dev");
+    fixture.verified("member@example.org").await;
+
+    let response = fixture
+        .login("member@example.org", PASSWORD, Some("/ui/rooms"))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/cocat-dev/ui/rooms");
+}
+
+#[tokio::test]
+async fn next_carrying_the_prefix_is_not_doubled() {
+    let fixture = Fixture::start().await.with_prefix("/cocat-dev");
+    fixture.verified("member@example.org").await;
+
+    let response = fixture
+        .login(
+            "member@example.org",
+            PASSWORD,
+            Some("/cocat-dev/ui/rooms?tag=a#top"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/cocat-dev/ui/rooms?tag=a#top");
+}
+
+#[tokio::test]
+async fn off_site_next_falls_back_inside_the_prefix() {
+    let fixture = Fixture::start().await.with_prefix("/cocat-dev");
+    fixture.verified("member@example.org").await;
+
+    let response = fixture
+        .login(
+            "member@example.org",
+            PASSWORD,
+            Some("https://evil.example/x"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/cocat-dev/ui/rooms");
 }

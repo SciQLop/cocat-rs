@@ -47,6 +47,23 @@ impl Links {
         format!("{}{}", self.prefix, path_and_fragment)
     }
 
+    /// `path` with the reverse-proxy prefix, unless it already carries it.
+    ///
+    /// The prefix is stripped by the proxy before the request reaches the server, so a
+    /// path taken from a request or from a `next` parameter names the route without it;
+    /// a path this server built already has it.
+    pub fn prefixed(&self, path: &str) -> String {
+        let carries = path == self.prefix
+            || path
+                .strip_prefix(&self.prefix)
+                .is_some_and(|rest| rest.starts_with('/'));
+        if self.prefix.is_empty() || carries {
+            path.to_owned()
+        } else {
+            format!("{}{}", self.prefix, path)
+        }
+    }
+
     /// Absolute browser path of a page, reverse-proxy prefix included.
     ///
     /// A link is opened from someone else's browser, so its origin is not the `Host` header
