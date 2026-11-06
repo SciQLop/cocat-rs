@@ -1,94 +1,86 @@
 # Running a development copy
 
-The dev instance is a copy of production, never a bind of its volumes: the Python server and
-the Rust one keep writing to the same `.y` files and the same SQLite database, so a shared
-mount would let one corrupt the other. Everything below happens on the machine that runs the
-containers; the production volumes are only read.
+On the `sciqlop` host the Python server runs as the `cocat-server` container (image
+`sciqlop/cocat-server:devel`, host network, port 6570, `COCAT_PROXY_PREFIX=cocat`), deployed by
+`/usr/bin/update-cocat-server` as the `sciqlop` user, with its data in `/DATA/cocat_server`
+(`storage/` for the room files, `db/users.db`). nginx serves it at `/cocat`.
 
-`DEV` is the directory that holds the copy, the new database and the logs. The devel image is
-`129.104.6.172:32219/sciqlop/cocat-server-rs:devel`.
+The Rust dev server runs beside it, on its own copy of that data, never on the production
+directories:
 
-## 1. Copy the production data
+| | Python production | Rust dev |
+|---|---|---|
+| container, systemd user unit | `cocat-server` | `cocat-rs-dev` |
+| image | `sciqlop/cocat-server:devel` | `sciqlop/cocat-server-rs:devel` |
+| port (host network) | 6570 | 6575 |
+| URL | `/cocat` | `/cocat-dev` |
+| data | `/DATA/cocat_server` | `/DATA/cocat_rs_dev` |
+| mail | as configured | written as files to `/DATA/cocat_rs_dev/mail` |
 
-Stop the Python container for the copy: it flushes its open rooms on `SIGTERM`, and a copy
-taken while it runs can hold half-written room files or an SQLite journal.
+## 0. Once: install the scripts and the nginx route
 
-```sh
-export DEV=~/cocat-dev
-mkdir -p "$DEV/copy/storage" "$DEV/copy/db" "$DEV/db" "$DEV/log"
-
-podman stop cocat
-podman cp cocat:/storage/. "$DEV/copy/storage/"
-podman cp cocat:/db/users.db "$DEV/copy/db/users.db"
-podman start cocat
-```
-
-## 2. Import the copy
-
-Dry run first and read the summary: it names how many users, rooms, memberships and
-invitations were found. `--users` is the Python database file, `--update-dir` the directory
-holding the room files, `--db` the new Rust database. `--owner` names the account that takes
-every room file the imported database does not list; `--users` and `--owner` may be given
-together, and at least one is required.
+As root:
 
 ```sh
-podman run --rm \
-    --entrypoint /usr/local/bin/cocat-server \
-    -v "$DEV/copy:/copy:Z" -v "$DEV/db:/db:Z" \
-    129.104.6.172:32219/sciqlop/cocat-server-rs:devel \
-    import --update-dir /copy/storage --db /db/cocat-rs.db \
-    --users /copy/db/users.db --owner you@example.org --dry-run
+install -m 0755 docker/update-cocat-rs-dev.sh /usr/bin/update-cocat-rs-dev
+install -m 0755 docker/seed-cocat-rs-dev.sh /usr/bin/seed-cocat-rs-dev
+ss -ltn | grep -q ':6575 ' && echo "6575 is taken, pick another port in both scripts"
+mkdir -p /DATA/cocat_rs_dev && chown sciqlop: /DATA/cocat_rs_dev
 ```
 
-Run the same command again without `--dry-run` once the summary looks right. It is
-idempotent: a second run changes nothing.
+In `/etc/nginx/conf.d/sciqlop.conf`, copy the whole `location /cocat{ ... }` block (it carries the
+websocket headers), and in the copy change the three lines:
 
-## 3. Run the development server
+```nginx
+location /cocat-dev {
+    rewrite /cocat-dev(.*) $1  break;
+    proxy_pass http://localhost:6575;
+```
 
-The image already sets `COCAT_PROXY_PREFIX=""` and `COCAT_TRUSTED_PROXIES=1`; override them
-for the dev deployment. `COCAT_PUBLIC_URL` is required as soon as a mailer is configured;
-without one, registration and password reset have nothing to deliver.
+Put it before the `/cocat` block (nginx picks the longest prefix, but keeping them ordered
+avoids surprises), then `nginx -t && systemctl reload nginx`.
 
-| Variable | What the dev instance needs |
-|---|---|
-| `COCAT_PUBLIC_URL` | the address users reach the dev instance at, scheme and host only |
-| `COCAT_PROXY_PREFIX` | the path the reverse proxy adds, empty when it is served at the root |
-| `COCAT_TRUSTED_PROXIES` | how many proxies stand in front, `1` behind one |
-| `COCAT_SMTP_HOST`, `COCAT_SMTP_PORT`, `COCAT_SMTP_USERNAME`, `COCAT_SMTP_PASSWORD`, `COCAT_SMTP_STARTTLS` | the relay, or leave them unset and use `COCAT_MAIL_DIR` with `COCAT_MAIL_FROM` |
-| `COCAT_ROOM_MAX_MB`, `COCAT_OWNER_MAX_MB` | the room and per-owner storage limits, 1024 and 5120 by default |
+## 1. Build and push the image
+
+From a checkout, on a machine that can push to the registry:
 
 ```sh
-podman run -d --name cocat-dev -p 6571:6570 \
-    -v "$DEV/copy/storage:/storage:Z" -v "$DEV/db:/db:Z" -v "$DEV/log:/log:Z" \
-    -e COCAT_PUBLIC_URL=https://cocat-dev.example.org \
-    -e COCAT_PROXY_PREFIX=/cocat-dev \
-    -e COCAT_TRUSTED_PROXIES=1 \
-    -e COCAT_ROOM_MAX_MB=1024 -e COCAT_OWNER_MAX_MB=5120 \
-    129.104.6.172:32219/sciqlop/cocat-server-rs:devel
+docker/build_and_push.sh testing     # sciqlop/cocat-server-rs:devel
 ```
 
-The server keeps its database in `/db/cocat-rs.db` and its room files in `/storage`, which is
-the copy, so it never touches the production volumes. `podman stop cocat-dev` flushes the
-open rooms before it exits.
+## 2. Seed the data, then deploy
 
-## 4. Check the dev instance
-
-- `/docs` answers and the document loads.
-- A Python account imported from the copy signs in; the rooms it saw on Python are listed
-  with the same roles.
-- SciQLop opens one room through the Python client and shows its catalogues and events.
-- The same room's event count matches production.
-
-## 5. Refresh the dev data
+As the `sciqlop` user (`su - sciqlop`):
 
 ```sh
-podman stop cocat-dev
-podman rm cocat-dev
-rm -rf "$DEV/copy" "$DEV/db/cocat-rs.db" "$DEV/db/cocat-rs.db.secret"
+seed-cocat-rs-dev [owner@example.org]   # copy production, import it
+update-cocat-rs-dev                     # pull the image, (re)start cocat-rs-dev
 ```
 
-Then repeat steps 1 to 3. Starting over is quicker than importing on top and keeps the dev
-instance honest.
+`seed-cocat-rs-dev` stops the dev server, deletes `/DATA/cocat_rs_dev`, copies the room files
+and the user database while production keeps running (SQLite's online backup for the
+database; a room file copied mid-append ends in a partial record the Rust server drops), then
+runs `cocat-server import`. The optional address takes the room files no Python account
+lists. Read the import summary it prints: users, rooms, memberships and invitations.
+
+`update-cocat-rs-dev` is the same procedure as `update-cocat-server`: pull, keep the previous
+container as `cocat-rs-dev_old`, run, regenerate the systemd unit and enable it with `--now`
+so systemd restarts it after a crash.
+
+## 3. Check the dev instance
+
+- `https://sciqlop.lpp.polytechnique.fr/cocat-dev/docs` answers and the document loads.
+- An imported account signs in at `/cocat-dev/ui/login`; its rooms are listed with the same
+  roles as on Python.
+- SciQLop pointed at `https://sciqlop.lpp.polytechnique.fr/cocat-dev` opens one room through
+  the Python client and shows its catalogues and events; the event count matches production.
+- `podman logs cocat-rs-dev` shows no error; `ls /DATA/cocat_rs_dev/mail` holds the mails a
+  sign-up or a reset would have sent.
+
+## 4. Refresh the dev data
+
+Run step 2 again. Starting over is quicker than importing on top, and keeps the dev
+instance honest. Anything written on the dev server since the last seed is lost.
 
 ## Switching production
 
