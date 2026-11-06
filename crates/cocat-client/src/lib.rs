@@ -11,5 +11,5 @@ mod room;
 mod sync;
 
 pub use changes::Change;
-pub use login::{LoginError, RoomInfo, login, rooms};
+pub use login::{Credentials, LoginError, RoomInfo, login, rooms};
 pub use room::{Room, RoomError, Status};

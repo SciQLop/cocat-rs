@@ -9,6 +9,24 @@ use url::Url;
 /// The cookie the server sets on a successful login and reads on every later request.
 pub(crate) const COOKIE: &str = "fastapiusersauth";
 
+/// What a room logs in with again when the server refuses its cookie.
+///
+/// Deliberately not `Debug`: a password must not reach a log line.
+#[derive(Clone)]
+pub struct Credentials {
+    pub username: String,
+    pub password: String,
+}
+
+impl Credentials {
+    pub fn new(username: impl Into<String>, password: impl Into<String>) -> Credentials {
+        Credentials {
+            username: username.into(),
+            password: password.into(),
+        }
+    }
+}
+
 /// One room of a user, with the role the server gives that user there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoomInfo {

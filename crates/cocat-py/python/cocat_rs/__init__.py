@@ -105,8 +105,10 @@ class Room:
     def __getattr__(self, name):
         return getattr(self._room, name)
 
-    def connect(self, url, cookie):
-        self._room.connect(url, cookie)
+    def connect(
+        self, url: str, cookie: str, credentials: tuple[str, str] | None = None
+    ) -> None:
+        self._room.connect(url, cookie, credentials)
 
     def set_cookie(self, cookie):
         self._room.set_cookie(cookie)

@@ -17,6 +17,7 @@ use yrs::updates::decoder::Decode;
 use yrs::{Doc, Origin, ReadTxn, StateVector, Transact, TransactionMut, Update, WriteTxn};
 
 use crate::changes::{self, Change, Observation, Root};
+use crate::login::Credentials;
 
 /// The origin of a transaction that applies what the server sent.
 pub(crate) const REMOTE_ORIGIN: &str = "cocat-client:remote";
@@ -354,6 +355,17 @@ impl Room {
     /// Starts a session on a runtime the room owns and returns at once. A previous session is
     /// dropped first, so this doubles as "use this cookie now".
     pub fn connect(&self, url: &str, cookie: &str) -> Result<(), RoomError> {
+        self.connect_with(url, cookie, None)
+    }
+
+    /// Like [`Room::connect`], and when the server refuses the cookie the session logs in
+    /// again with `credentials`, once, before it gives up as [`Status::Unauthorized`].
+    pub fn connect_with(
+        &self,
+        url: &str,
+        cookie: &str,
+        credentials: Option<Credentials>,
+    ) -> Result<(), RoomError> {
         let url = websocket_url(url, &self.inner.room_id)?;
         self.stop();
         // Set before spawning: a caller that just gave a new cookie must not read the old
@@ -367,7 +379,7 @@ impl Room {
             .map_err(RoomError::Runtime)?;
         let inner = Arc::clone(&self.inner);
         let cookie = cookie.to_owned();
-        let task = runtime.spawn(crate::sync::run(inner, url, cookie));
+        let task = runtime.spawn(crate::sync::run(inner, url, cookie, credentials));
         *lock(&self.session) = Some(Session { runtime, task });
         Ok(())
     }

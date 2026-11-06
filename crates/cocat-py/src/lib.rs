@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use cocat_client::{Change, Room as ClientRoom, RoomInfo as ClientRoomInfo};
+use cocat_client::{Change, Credentials, Room as ClientRoom, RoomInfo as ClientRoomInfo};
 use cocat_core::model::{self, NewCatalogue, NewEvent};
 use cocat_core::time::Timestamp;
 use cocat_core::votable;
@@ -587,6 +587,7 @@ pub struct Room {
     room: Arc<ClientRoom>,
     batches: Mutex<Receiver<Vec<Change>>>,
     url: Mutex<Option<String>>,
+    credentials: Mutex<Option<(String, String)>>,
 }
 
 #[pymethods]
@@ -607,14 +608,27 @@ impl Room {
             room,
             batches: Mutex::new(batches),
             url: Mutex::new(None),
+            credentials: Mutex::new(None),
         })
     }
 
-    fn connect(&self, url: String, cookie: String) -> Result<()> {
+    /// Connects, and keeps `(username, password)` so a session the server refuses can log in
+    /// again; `set_cookie` reuses them.
+    #[pyo3(signature = (url, cookie, credentials=None))]
+    fn connect(
+        &self,
+        url: String,
+        cookie: String,
+        credentials: Option<(String, String)>,
+    ) -> Result<()> {
+        let login = credentials
+            .clone()
+            .map(|(username, password)| Credentials::new(username, password));
         self.room
-            .connect(&url, &cookie)
+            .connect_with(&url, &cookie, login)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         *lock(&self.url) = Some(url);
+        *lock(&self.credentials) = credentials;
         Ok(())
     }
 
@@ -622,8 +636,11 @@ impl Room {
         let Some(url) = lock(&self.url).clone() else {
             return Err(PyRuntimeError::new_err("this room never connected"));
         };
+        let login = lock(&self.credentials)
+            .clone()
+            .map(|(username, password)| Credentials::new(username, password));
         self.room
-            .connect(&url, &cookie)
+            .connect_with(&url, &cookie, login)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 

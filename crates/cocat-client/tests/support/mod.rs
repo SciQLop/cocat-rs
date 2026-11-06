@@ -47,6 +47,8 @@ pub const WAIT: Duration = Duration::from_secs(15);
 pub struct Server {
     pub addr: SocketAddr,
     pub pool: SqlitePool,
+    /// How many times a client posted to the login route, so a test can see a retry loop.
+    pub logins: Arc<AtomicUsize>,
     dir: TempDir,
     rooms_dir: PathBuf,
     stop: Option<oneshot::Sender<()>>,
@@ -62,6 +64,7 @@ impl Server {
         let mut server = Self {
             addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             pool,
+            logins: Arc::new(AtomicUsize::new(0)),
             dir,
             rooms_dir,
             stop: None,
@@ -107,6 +110,7 @@ impl Server {
             oidc: Vec::new(),
         };
         let (ready, listening) = std::sync::mpsc::channel();
+        let logins = Arc::clone(&self.logins);
         let thread = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -115,9 +119,22 @@ impl Server {
             runtime.block_on(async move {
                 let listener = TcpListener::bind(addr).await.unwrap();
                 ready.send(listener.local_addr().unwrap()).unwrap();
+                let counter = move |request: axum::extract::Request,
+                                    next: axum::middleware::Next| {
+                    let logins = Arc::clone(&logins);
+                    async move {
+                        if request.uri().path().ends_with("/auth/jwt/login") {
+                            logins.fetch_add(1, Ordering::SeqCst);
+                        }
+                        next.run(request).await
+                    }
+                };
                 tokio::select! {
                     () = async { let _ = stopped.await; } => {}
-                    served = axum::serve(listener, ws::router(state)) => {
+                    served = axum::serve(
+                        listener,
+                        ws::router(state).layer(axum::middleware::from_fn(counter)),
+                    ) => {
                         served.expect("the server keeps serving");
                     }
                 }

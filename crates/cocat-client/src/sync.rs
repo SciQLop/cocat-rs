@@ -18,6 +18,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ReadTxn, Transact, Update};
 
+use crate::login::Credentials;
 use crate::room::{Inner, Outgoing, REMOTE_ORIGIN, Status};
 
 /// The first wait after a dropped session, doubling up to [`MAX_BACKOFF`].
@@ -25,18 +26,47 @@ const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 /// Keeps one room connected until the server refuses the session.
-pub(crate) async fn run(inner: Arc<Inner>, url: Url, cookie: String) {
+///
+/// A refusal with credentials logs in once and tries again; a refusal of the cookie that
+/// login just gave, or a failed login, is final.
+pub(crate) async fn run(
+    inner: Arc<Inner>,
+    url: Url,
+    mut cookie: String,
+    credentials: Option<Credentials>,
+) {
     let mut backoff = INITIAL_BACKOFF;
+    let mut fresh_login = false;
     loop {
         inner.status.set(Status::Connecting);
         match session(&inner, &url, &cookie).await {
             Ending::Refused => {
-                inner.status.set(Status::Unauthorized);
-                return;
+                let Some(credentials) = &credentials else {
+                    inner.status.set(Status::Unauthorized);
+                    return;
+                };
+                if fresh_login {
+                    inner.status.set(Status::Unauthorized);
+                    return;
+                }
+                match log_in_again(&url, credentials).await {
+                    Some(renewed) => {
+                        cookie = renewed;
+                        fresh_login = true;
+                        backoff = INITIAL_BACKOFF;
+                        continue;
+                    }
+                    None => {
+                        inner.status.set(Status::Unauthorized);
+                        return;
+                    }
+                }
             }
             Ending::Lost { synced } => {
                 if synced {
                     backoff = INITIAL_BACKOFF;
+                    // The cookie opened a session, so a refusal from now on is news.
+                    fresh_login = false;
                 }
             }
         }
@@ -48,6 +78,38 @@ pub(crate) async fn run(inner: Arc<Inner>, url: Url, cookie: String) {
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
     }
+}
+
+/// Logs in with the credentials the caller gave, without ever putting them in a log line.
+async fn log_in_again(url: &Url, credentials: &Credentials) -> Option<String> {
+    let Some(base) = http_base(url) else {
+        tracing::warn!("the room url has no http form to log in on");
+        return None;
+    };
+    match crate::login::login(base.as_str(), &credentials.username, &credentials.password).await {
+        Ok(cookie) => Some(cookie),
+        Err(error) => {
+            tracing::warn!(%error, "the session was refused and logging in failed");
+            None
+        }
+    }
+}
+
+/// The server's address as a directory: the websocket url without the room it names.
+fn http_base(url: &Url) -> Option<Url> {
+    let mut base = url.clone();
+    let scheme = match base.scheme() {
+        "ws" => "http",
+        "wss" => "https",
+        _ => return None,
+    };
+    base.set_scheme(scheme).ok()?;
+    {
+        let mut segments = base.path_segments_mut().ok()?;
+        segments.pop();
+        segments.pop();
+    }
+    Some(base)
 }
 
 /// How one connection ended.

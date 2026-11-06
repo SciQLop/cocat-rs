@@ -46,6 +46,16 @@ def test_a_refused_handshake_is_unauthorized_and_set_cookie_recovers(server, cac
         room.close()
 
 
+def test_credentials_log_in_again_when_the_cookie_is_stale(server, cache):
+    room = cc.Room.open(str(cache), server.room_id)
+    try:
+        room.connect(server.url, "not-a-session", (server.email, "hunter2"))
+        room.wait_synced(15)
+        assert room.status == "synced"
+    finally:
+        room.close()
+
+
 @pytest.mark.asyncio
 async def test_synced_awaits_the_first_sync(server, cache):
     room = cc.Room.open(str(cache), server.room_id)
