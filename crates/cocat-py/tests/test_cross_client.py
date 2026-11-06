@@ -3,8 +3,8 @@ import json
 import subprocess
 from pathlib import Path
 
-PYTHON_COCAT = Path("/home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/python")
-PYTHON_COCAT_ROOT = "/home/jeandet/Documents/prog/cocat-python-tests"
+from python_cocat import interpreter
+
 UTC = datetime.timezone.utc
 
 
@@ -42,10 +42,11 @@ def test_python_cocat_and_cocat_rs_read_each_other(room, other, server, tmp_path
         lambda: any(seen.uuid == catalogue.uuid for seen in other.catalogues())
     )
 
+    python, environment = interpreter()
     output = tmp_path / "cross.json"
     run = subprocess.run(
         [
-            str(PYTHON_COCAT),
+            python,
             str(Path(__file__).parent / "cross_client.py"),
             server.url,
             str(server.url.rsplit(":", 1)[1]),
@@ -56,7 +57,7 @@ def test_python_cocat_and_cocat_rs_read_each_other(room, other, server, tmp_path
         ],
         check=False,
         capture_output=True,
-        env={"PYTHONPATH": f"{PYTHON_COCAT_ROOT}/src", "PATH": "/usr/bin:/bin"},
+        env=environment,
         timeout=60,
     )
     assert run.returncode == 0, run.stderr.decode()

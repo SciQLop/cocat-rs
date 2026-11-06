@@ -1,7 +1,6 @@
 """VOTable import and export, and the exchange with Python cocat."""
 
 import json
-import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,9 +9,8 @@ import pytest
 
 import cocat_rs
 from cocat_rs import api
+from python_cocat import interpreter
 
-PYTHON = Path("/home/jeandet/Documents/prog/cocat-python-tests/.venv/bin/python")
-CHECKOUT = Path("/home/jeandet/Documents/prog/cocat")
 SCRIPT = Path(__file__).parent / "votable_client.py"
 
 ALPHA = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60"
@@ -29,10 +27,9 @@ def wallet(monkeypatch):
 
 
 def python_cocat(mode: str, path: Path, output: Path) -> dict:
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = str(CHECKOUT / "src")
+    python, environment = interpreter()
     subprocess.run(
-        [str(PYTHON), str(SCRIPT), mode, str(path), str(output)],
+        [python, str(SCRIPT), mode, str(path), str(output)],
         check=True,
         capture_output=True,
         env=environment,
