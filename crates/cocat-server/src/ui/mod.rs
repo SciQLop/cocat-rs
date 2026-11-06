@@ -2,6 +2,7 @@
 
 mod account;
 mod frame;
+mod groups;
 mod invitation;
 mod login;
 mod reset;
@@ -11,10 +12,13 @@ mod signup;
 mod verify;
 
 use axum::Router;
+use axum::http::StatusCode;
 use axum::middleware;
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 
 use crate::AppState;
+use crate::lifecycle::LifecycleError;
 
 pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
@@ -61,7 +65,26 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/rooms/{room_id}/invitations/{invitation}/revoke",
             post(room::revoke),
         )
-        .route("/groups", get(frame::groups))
+        .route("/groups", get(groups::page).post(groups::create))
+        .route(
+            "/groups/join",
+            get(groups::join_page).post(groups::join_preview),
+        )
+        .route("/groups/join/accept", post(groups::join_accept))
+        .route("/groups/join/{token}", get(groups::join_path))
+        .route("/groups/{group_id}", get(groups::detail))
+        .route("/groups/{group_id}/rename", post(groups::rename))
+        .route("/groups/{group_id}/delete", post(groups::delete))
+        .route("/groups/{group_id}/leave", post(groups::leave))
+        .route(
+            "/groups/{group_id}/members/{member}/remove",
+            post(groups::remove_member),
+        )
+        .route("/groups/{group_id}/invitations", post(groups::invite))
+        .route(
+            "/groups/{group_id}/invitations/{invitation}/revoke",
+            post(groups::revoke),
+        )
         .route("/account", get(account::page))
         .route("/account/password", post(account::password))
         .route(
@@ -98,6 +121,34 @@ pub(crate) fn token_from_text(text: &str) -> String {
         .next()
         .unwrap_or_default()
         .to_owned()
+}
+
+/// Turn a rule-module outcome into the redirect the page expects, flashing either the
+/// caller's success text or the error detail the module gave.
+pub(crate) fn answer(
+    state: &AppState,
+    result: Result<(), LifecycleError>,
+    target: &str,
+    done: String,
+) -> Response {
+    let text = match result {
+        Ok(()) => done,
+        Err(LifecycleError::NotFound(text)) | Err(LifecycleError::Forbidden(text)) => text,
+        Err(LifecycleError::Conflict(text)) | Err(LifecycleError::Invalid(text)) => text.to_owned(),
+        Err(error) => {
+            tracing::warn!(%error, "a page action failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    redirect(state, target, &text)
+}
+
+pub(crate) fn redirect(state: &AppState, target: &str, text: &str) -> Response {
+    frame::flash(&state.links, redirect_to(state, target), text)
+}
+
+pub(crate) fn redirect_to(state: &AppState, target: &str) -> Response {
+    Redirect::to(&state.links.path(target)).into_response()
 }
 
 #[cfg(test)]

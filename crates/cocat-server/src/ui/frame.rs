@@ -365,22 +365,6 @@ pub(crate) async fn index(State(state): State<AppState>) -> Response {
     Redirect::temporary(&state.links.path("/rooms")).into_response()
 }
 
-#[derive(Template)]
-#[template(path = "groups.html")]
-struct GroupsPage {
-    frame: Frame,
-}
-
-/// Until the group pages land, the header's link still answers.
-pub(crate) async fn groups(
-    RequireUser(user): RequireUser,
-    State(state): State<AppState>,
-) -> Response {
-    page(GroupsPage {
-        frame: Frame::new(&state.links, Some(&user), "My groups"),
-    })
-}
-
 pub(crate) async fn static_asset(Path(file): Path<String>) -> Response {
     let Some((_, source, content_type)) = ASSETS.iter().find(|(name, _, _)| *name == file) else {
         return StatusCode::NOT_FOUND.into_response();

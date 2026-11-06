@@ -6,12 +6,13 @@ use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use cocat_core::role::Role;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
+use crate::ui::{answer, redirect, redirect_to};
 use crate::{AppState, db, groups, invitations, lifecycle, mail};
 
 /// Python's `INVITATION_LIFETIME`: every invitation this page makes lasts two weeks.
@@ -482,34 +483,6 @@ fn opened_link(state: &AppState, target: &str, notice: &str, token: &str) -> Res
     let link = state.links.ui(&format!("/invitation#{token}"));
     let response = frame::flash(&state.links, redirect_to(state, target), notice);
     frame::share_link(&state.links, response, &link)
-}
-
-fn answer(
-    state: &AppState,
-    result: Result<(), lifecycle::LifecycleError>,
-    target: &str,
-    done: String,
-) -> Response {
-    let text = match result {
-        Ok(()) => done,
-        Err(lifecycle::LifecycleError::NotFound(text))
-        | Err(lifecycle::LifecycleError::Forbidden(text)) => text,
-        Err(lifecycle::LifecycleError::Conflict(text))
-        | Err(lifecycle::LifecycleError::Invalid(text)) => text.to_owned(),
-        Err(error) => {
-            tracing::warn!(%error, "a room action failed");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-    redirect(state, target, &text)
-}
-
-fn redirect(state: &AppState, target: &str, text: &str) -> Response {
-    frame::flash(&state.links, redirect_to(state, target), text)
-}
-
-fn redirect_to(state: &AppState, target: &str) -> Response {
-    Redirect::to(&state.links.path(target)).into_response()
 }
 
 async fn member_email(state: &AppState, id: Uuid) -> Result<String, StatusCode> {

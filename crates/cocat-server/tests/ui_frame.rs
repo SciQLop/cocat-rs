@@ -43,6 +43,15 @@ const UI_POSTS: &[&str] = &[
     "/ui/rooms/00000000000000000000000000000000/groups/00000000000000000000000000000000/remove",
     "/ui/invitation",
     "/ui/invitation/accept",
+    "/ui/groups",
+    "/ui/groups/join",
+    "/ui/groups/join/accept",
+    "/ui/groups/00000000000000000000000000000000/rename",
+    "/ui/groups/00000000000000000000000000000000/delete",
+    "/ui/groups/00000000000000000000000000000000/leave",
+    "/ui/groups/00000000000000000000000000000000/members/00000000000000000000000000000000/remove",
+    "/ui/groups/00000000000000000000000000000000/invitations",
+    "/ui/groups/00000000000000000000000000000000/invitations/1/revoke",
 ];
 
 struct Fixture {

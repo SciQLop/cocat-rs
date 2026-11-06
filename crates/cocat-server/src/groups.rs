@@ -312,6 +312,35 @@ pub async fn room_groups(
     Ok(groups)
 }
 
+/// The rooms shared with a group, for any member of the group.
+pub async fn shared_rooms(
+    state: &AppState,
+    group_id: &str,
+    actor: Uuid,
+) -> Result<Vec<(db::RoomRow, Role)>, LifecycleError> {
+    require_member(state, group_id, actor).await?;
+    let rows = sqlx::query(
+        "SELECT room.id, room.name, room_group.role
+         FROM room_group JOIN room ON room.id = room_group.room_id
+         WHERE room_group.group_id = ?
+         ORDER BY room.name, room.id",
+    )
+    .bind(group_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let mut rooms = Vec::new();
+    for row in &rows {
+        rooms.push((
+            db::RoomRow {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+            },
+            row.try_get::<String, _>("role")?.parse::<Role>()?,
+        ));
+    }
+    Ok(rooms)
+}
+
 /// A link that admits its bearer to the group as a member. The token comes back empty when it
 /// was mailed, so a reply cannot carry a second copy of a link that travelled to its addressee.
 pub async fn create_invitation(

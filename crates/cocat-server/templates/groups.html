@@ -1,5 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>My groups</h1>
-<p>No groups page yet</p>
+<form method="post" action="{{ action }}">
+  <label for="new-group-name">New group name</label>
+  <input id="new-group-name" name="name" type="text" required>
+  <button type="submit">Create</button>
+</form>
+<ul class="groups">
+{% for group in groups %}
+  <li class="group" data-group="{{ group.id }}">
+    <a href="{{ group.href }}">{{ group.name }}</a>
+    <span class="role">{{ group.role }}</span>
+{% match group.owner %}
+{% when Some with (owner) %}
+    <form method="post" action="{{ owner.rename_action }}">
+      <input name="name" type="text" value="{{ group.name }}">
+      <button type="submit">Rename</button>
+    </form>
+    <form method="post" action="{{ owner.delete_action }}"
+          data-confirm="{{ owner.delete_confirm }}">
+      <button type="submit">Delete</button>
+    </form>
+{% when None %}
+{% endmatch %}
+{% match group.leave %}
+{% when Some with (leave) %}
+    <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
+      <button type="submit">Leave</button>
+    </form>
+{% when None %}
+{% endmatch %}
+  </li>
+{% endfor %}
+</ul>
 {% endblock %}

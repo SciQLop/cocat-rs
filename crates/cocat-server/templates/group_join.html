@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Join a group</h1>
+<form method="post" action="{{ action }}"{% if submit_on_load %} data-submit-fragment{% endif %}>
+  <input type="hidden" name="token" value="">
+</form>
+{% if paste %}
+<form method="post" action="{{ action }}">
+  <label for="link">Invitation link</label>
+  <input id="link" name="link" type="text" autocomplete="off">
+  <button type="submit">Continue</button>
+</form>
+{% endif %}
+{% if !message.is_empty() %}
+<p class="error">{{ message }}</p>
+{% endif %}
+{% match offer %}
+{% when Some with (offer) %}
+<p>{{ offer.inviter }} invites you to the group {{ offer.group_name }}</p>
+<p>The invitation lasts until {{ offer.expires }}</p>
+{% if offer.signed_in %}
+<form method="post" action="{{ accept_action }}">
+  <input type="hidden" name="token" value="{{ offer.token }}">
+  <button type="submit">Accept</button>
+</form>
+{% else %}
+<p><a href="{{ login_href }}">Log in to accept</a></p>
+<p>Signing in leaves this page behind: paste the link again.</p>
+{% endif %}
+{% when None %}
+{% endmatch %}
+{% endblock %}
