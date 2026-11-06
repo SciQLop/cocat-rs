@@ -10,8 +10,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use argon2::Argon2;
+use argon2::password_hash::PasswordHasher;
 use argon2::password_hash::PasswordVerifier;
 use argon2::password_hash::phc::PasswordHash;
 use axum::Form;
@@ -35,7 +37,21 @@ pub const SECRET_ENV: &str = "COCAT_SECRET";
 /// fastapi-users' error codes, which its login route sends as `{"detail": "<code>"}`.
 const BAD_CREDENTIALS: &str = "LOGIN_BAD_CREDENTIALS";
 const NOT_VERIFIED: &str = "LOGIN_USER_NOT_VERIFIED";
-const DUMMY_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$YGXUcrLDsAk2cwaSUXo9kg$kDCnwbFPV9Go5Cw1ADnZFM0j/t7ythVDk0kxfS6Ve+Q";
+
+/// What an unknown address is checked against, made once at the first miss with the same
+/// parameters as a real hash: a miss and a wrong password must cost the same, or the login
+/// timing tells which addresses have accounts. `None` only if argon2 cannot hash at all.
+static DUMMY_HASH: LazyLock<Option<String>> = LazyLock::new(|| {
+    Argon2::default()
+        .hash_password(b"cocat dummy password")
+        .ok()
+        .map(|hash| hash.to_string())
+});
+
+/// The dummy hash a login for an unknown address spends its time on.
+pub fn dummy_hash() -> Option<&'static str> {
+    DUMMY_HASH.as_deref()
+}
 
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -57,6 +73,8 @@ pub enum AuthError {
     },
     #[error("cannot draw a session token: {0}")]
     Random(#[from] getrandom::Error),
+    #[error("the password task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
     #[error(transparent)]
     Db(#[from] DbError),
 }
@@ -216,12 +234,14 @@ pub async fn login(
     requires_verification: bool,
 ) -> Result<String, AuthError> {
     let Some(user) = db::user_by_email(pool, email).await? else {
-        // fastapi-users hashes on a miss too, so an unknown email costs one argon2 run.
-        verify_password(password, DUMMY_HASH)?;
+        // fastapi-users hashes on a miss too, at the same cost as a real hash.
+        if let Some(dummy) = dummy_hash() {
+            verify_password(password, dummy).await?;
+        }
         return Err(AuthError::BadCredentials);
     };
     let needs_rehash = is_bcrypt(&user.hashed_password);
-    verify_password(password, &user.hashed_password)?;
+    verify_password(password, &user.hashed_password).await?;
     if !user.is_active {
         return Err(AuthError::InactiveUser);
     }
@@ -231,7 +251,7 @@ pub async fn login(
     if needs_rehash {
         // A failed rewrite leaves a hash that still works, so it never blocks the sign-in.
         let mut updated = user.clone();
-        updated.hashed_password = crate::db::hash_password(password)?;
+        updated.hashed_password = crate::db::hash_password(password).await?;
         if let Err(error) = db::save_user(pool, &updated).await {
             tracing::warn!(%error, "cannot rehash a password");
         }
@@ -239,19 +259,30 @@ pub async fn login(
     start_session(pool, user.id).await
 }
 
-/// Older Python accounts hold bcrypt hashes, which the argon2 crate cannot read; they keep
-/// working here and are rewritten as argon2 on the next successful sign-in.
-pub fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
-    if is_bcrypt(hashed) {
-        return match bcrypt::verify(password, hashed) {
-            Ok(true) => Ok(()),
-            _ => Err(AuthError::BadCredentials),
-        };
+/// Check a password on the blocking pool, so the CPU argon2 wants never stops an async
+/// worker from answering other requests.
+pub async fn verify_password(password: &str, hashed: &str) -> Result<(), AuthError> {
+    let (password, hashed) = (password.to_owned(), hashed.to_owned());
+    let matches = tokio::task::spawn_blocking(move || password_matches(&password, &hashed))
+        .await
+        .map_err(AuthError::Task)?;
+    if matches {
+        Ok(())
+    } else {
+        Err(AuthError::BadCredentials)
     }
-    let hash = PasswordHash::new(hashed).map_err(|_| AuthError::BadCredentials)?;
+}
+
+fn password_matches(password: &str, hashed: &str) -> bool {
+    if is_bcrypt(hashed) {
+        return bcrypt::verify(password, hashed).unwrap_or(false);
+    }
+    let Ok(hash) = PasswordHash::new(hashed) else {
+        return false;
+    };
     Argon2::default()
         .verify_password(password.as_bytes(), &hash)
-        .map_err(|_| AuthError::BadCredentials)
+        .is_ok()
 }
 
 fn is_bcrypt(hashed: &str) -> bool {

@@ -24,6 +24,8 @@ pub enum DbError {
     Migrations(#[from] sqlx::migrate::MigrateError),
     #[error("hashing a password: {0}")]
     Hash(#[from] argon2::password_hash::Error),
+    #[error("the password task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
     #[error(transparent)]
     InvalidRoomId(#[from] InvalidRoomId),
     #[error("{user_id} is not a member of room {room_id}")]
@@ -203,15 +205,8 @@ pub async fn create_user(
     is_verified: bool,
 ) -> Result<Uuid, DbError> {
     let id = Uuid::new_v4();
-    insert_user(
-        pool,
-        id,
-        email,
-        &hash_password(password)?,
-        is_superuser,
-        is_verified,
-    )
-    .await?;
+    let hashed_password = hash_password(password).await?;
+    insert_user(pool, id, email, &hashed_password, is_superuser, is_verified).await?;
     Ok(id)
 }
 
@@ -324,7 +319,16 @@ pub async fn delete_user(
     Ok(deleted.rows_affected() > 0)
 }
 
-pub fn hash_password(password: &str) -> Result<String, DbError> {
+/// Hash on the blocking pool: argon2 wants 19 MB and tens of milliseconds, which must not
+/// park an async worker while other requests wait.
+pub async fn hash_password(password: &str) -> Result<String, DbError> {
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || hash_password_blocking(&password))
+        .await
+        .map_err(DbError::from)?
+}
+
+fn hash_password_blocking(password: &str) -> Result<String, DbError> {
     Ok(Argon2::default()
         .hash_password(password.as_bytes())?
         .to_string())
@@ -340,19 +344,20 @@ pub async fn set_verified(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> 
     Ok(updated.rows_affected() > 0)
 }
 
-/// Replace a password whose hash is still `expected`. The argon2 hash is what a reset link's
-/// fingerprint is compared against, so comparing it inside the write is also what spends the
-/// link: of two requests holding the same link only the first finds the old hash still there.
+/// Replace a password whose hash is still `expected` with `new_hash`. The argon2 hash is what
+/// a reset link's fingerprint is compared against, so comparing it inside the write is also
+/// what spends the link: of two requests holding the same link only the first finds the old
+/// hash still there.
 pub async fn replace_password<'e, E: Executor<'e, Database = Sqlite>>(
     executor: E,
     id: Uuid,
     expected: &str,
-    password: &str,
+    new_hash: &str,
 ) -> Result<bool, DbError> {
     let updated = sqlx::query(
         r#"UPDATE "user" SET hashed_password = ? WHERE id = ? AND hashed_password = ?"#,
     )
-    .bind(hash_password(password)?)
+    .bind(new_hash)
     .bind(id.to_string())
     .bind(expected)
     .execute(executor)

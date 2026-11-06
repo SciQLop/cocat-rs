@@ -146,8 +146,9 @@ pub async fn reset_password(
     if !user.is_active {
         return Err(AccountError::BadResetToken);
     }
+    let new_hash = db::hash_password(password).await?;
     let mut tx = db::begin_immediate(&state.pool).await?;
-    if !db::replace_password(&mut *tx, user.id, &user.hashed_password, password).await? {
+    if !db::replace_password(&mut *tx, user.id, &user.hashed_password, &new_hash).await? {
         return Err(AccountError::BadResetToken);
     }
     db::end_sessions_of(&mut *tx, user.id).await?;
@@ -190,7 +191,7 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
         updated.is_verified = false;
     }
     if let Some(password) = change.password {
-        updated.hashed_password = db::hash_password(&password)?;
+        updated.hashed_password = db::hash_password(&password).await?;
         ends_sessions = true;
     }
     ends_sessions |= was_active && !updated.is_active;

@@ -229,11 +229,12 @@ pub async fn sign_in(
     let id = Uuid::new_v4();
     // Nobody is ever told this password: the provider is the only way into the account.
     let password = Uuid::new_v4().to_string();
+    let hashed_password = db::hash_password(&password).await?;
     db::insert_user(
         &mut *transaction,
         id,
         &email,
-        &db::hash_password(&password)?,
+        &hashed_password,
         false,
         trusted,
     )

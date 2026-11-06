@@ -926,7 +926,7 @@ async fn token(state: &AppState, user: Uuid) -> String {
 async fn every_route_answers_every_caller_as_the_table_says() {
     let fake = oidc_support::Fake::start().await;
     let providers = oidc::discover(vec![fake.config(true, "orcid")], &Links::default()).await;
-    let hashed = db::hash_password(PASSWORD).unwrap();
+    let hashed = db::hash_password(PASSWORD).await.unwrap();
     let mut wrong = Vec::new();
     for row in ROWS {
         for kind in CALLERS {

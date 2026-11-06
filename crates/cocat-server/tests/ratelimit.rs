@@ -144,6 +144,45 @@ async fn the_window_resets_after_the_period() {
 }
 
 #[tokio::test]
+async fn profile_changes_are_rate_limited() {
+    let fixture = Fixture::start().await;
+    let user = fixture.user("profile@example.org").await;
+    let cookie = format!("fastapiusersauth={}", fixture.token(user).await);
+
+    for attempt in 1..=10 {
+        assert_eq!(
+            fixture
+                .call(
+                    Method::PATCH,
+                    "/users/me",
+                    PEER,
+                    Some(cookie.clone()),
+                    Some("application/json"),
+                    Some("{}".to_owned()),
+                )
+                .await,
+            StatusCode::OK,
+            "profile change {attempt} was refused"
+        );
+    }
+
+    assert_eq!(
+        fixture
+            .call(
+                Method::PATCH,
+                "/users/me",
+                PEER,
+                Some(cookie),
+                Some("application/json"),
+                Some("{}".to_owned()),
+            )
+            .await,
+        StatusCode::TOO_MANY_REQUESTS,
+        "an unlimited profile route still spends a password hash per request"
+    );
+}
+
+#[tokio::test]
 async fn routes_have_separate_budgets() {
     let fixture = Fixture::start().await;
     let user = fixture.user("many@example.org").await;

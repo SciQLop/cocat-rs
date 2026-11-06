@@ -73,7 +73,7 @@ pub(crate) async fn password(
     if form.new != form.repeat {
         return account_page(&state, &user, PASSWORD_MISMATCH).await;
     }
-    if let Err(error) = auth::verify_password(&form.current, &user.hashed_password) {
+    if let Err(error) = auth::verify_password(&form.current, &user.hashed_password).await {
         return match error {
             auth::AuthError::BadCredentials => account_page(&state, &user, WRONG_PASSWORD).await,
             error => {

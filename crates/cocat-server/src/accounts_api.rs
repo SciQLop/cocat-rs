@@ -6,7 +6,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/auth/register", post(register))
         .route("/auth/request-verify-token", post(request_verify_token))
         .route("/auth/forgot-password", post(forgot_password))
+        .route("/users/me", patch(update_me))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             ratelimit::limit,
@@ -29,7 +30,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     limited
         .route("/auth/verify", post(verify))
         .route("/auth/reset-password", post(reset_password))
-        .route("/users/me", get(me).patch(update_me))
+        .route("/users/me", get(me))
         .route(
             "/users/{user_id}",
             get(read_user).patch(update_user).delete(delete_user),

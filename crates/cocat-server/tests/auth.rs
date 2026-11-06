@@ -46,15 +46,64 @@ fn the_cookie_is_read_from_the_headers() {
     assert_eq!(auth::session_cookie(&HeaderMap::new()), None);
 }
 
-#[test]
-fn verify_password_checks_the_hash() {
-    let hashed = db::hash_password("hunter2").unwrap();
+#[tokio::test]
+async fn verify_password_checks_the_hash() {
+    let hashed = db::hash_password("hunter2").await.unwrap();
 
-    assert!(auth::verify_password("hunter2", &hashed).is_ok());
+    assert!(auth::verify_password("hunter2", &hashed).await.is_ok());
     assert!(matches!(
-        auth::verify_password("wrong", &hashed),
+        auth::verify_password("wrong", &hashed).await,
         Err(AuthError::BadCredentials)
     ));
+}
+
+/// A current-thread runtime makes the difference observable without timing: a hash taken on
+/// the worker would return `Ready` from the first poll, and only the blocking pool can leave
+/// the future pending while another task would have run.
+#[test]
+fn hashing_leaves_the_worker_free() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut hashing = std::pin::pin!(db::hash_password("hunter2"));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(
+            matches!(hashing.as_mut().poll(&mut context), Poll::Pending),
+            "the password hash ran on the async worker instead of the blocking pool"
+        );
+        let hashed = hashing.await.unwrap();
+
+        let mut checking = std::pin::pin!(auth::verify_password("hunter2", &hashed));
+        assert!(
+            matches!(checking.as_mut().poll(&mut context), Poll::Pending),
+            "the password check ran on the async worker instead of the blocking pool"
+        );
+        checking.await.unwrap();
+    });
+}
+
+#[test]
+fn dummy_hash_uses_the_default_cost() {
+    use argon2::PasswordHasher;
+    use argon2::password_hash::phc::PasswordHash;
+
+    let dummy = auth::dummy_hash().expect("a dummy hash to compare against");
+    let parsed = PasswordHash::new(dummy).unwrap();
+    let fresh = argon2::Argon2::default()
+        .hash_password(b"anything")
+        .unwrap();
+
+    assert_eq!(parsed.algorithm, fresh.algorithm);
+    assert_eq!(
+        parsed.params.to_string(),
+        fresh.params.to_string(),
+        "an unknown address costs a different hash than a wrong password"
+    );
 }
 
 #[test]
@@ -204,23 +253,25 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
 
 const BCRYPT: &str = "$2b$10$0aQWymGJbVF/FHfPIDH/UeRJ9lquQk7rS2dC5egTYDuJwtoSu/sgC";
 
-#[test]
-fn bcrypt_hash_verifies() {
-    auth::verify_password("hunter2", BCRYPT).expect("an older hash still verifies");
+#[tokio::test]
+async fn bcrypt_hash_verifies() {
+    auth::verify_password("hunter2", BCRYPT)
+        .await
+        .expect("an older hash still verifies");
 }
 
-#[test]
-fn wrong_password_on_bcrypt_refused() {
+#[tokio::test]
+async fn wrong_password_on_bcrypt_refused() {
     assert!(matches!(
-        auth::verify_password("wrong", BCRYPT),
+        auth::verify_password("wrong", BCRYPT).await,
         Err(AuthError::BadCredentials)
     ));
 }
 
-#[test]
-fn unknown_hash_format_refused() {
+#[tokio::test]
+async fn unknown_hash_format_refused() {
     assert!(matches!(
-        auth::verify_password("hunter2", "not-a-hash"),
+        auth::verify_password("hunter2", "not-a-hash").await,
         Err(AuthError::BadCredentials)
     ));
 }
