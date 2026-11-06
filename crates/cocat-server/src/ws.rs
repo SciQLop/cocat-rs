@@ -63,6 +63,7 @@ pub fn router(state: AppState) -> Router {
         .route("/room/{room_id}", get(room_socket))
         .merge(crate::openapi::router(&state.links, document))
         .layer(middleware::from_fn(ui::same_site))
+        .layer(middleware::from_fn(crate::telemetry::track_http))
         .with_state(state)
 }
 
@@ -115,6 +116,7 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
                 "refusing a socket: the room does not fit in the memory budget"
             );
             let refusal = CloseReason::OverBudget;
+            crate::telemetry::ws_closed(refusal.label());
             return close(socket, refusal.code(), refusal.reason()).await;
         }
         Err(error) => {
@@ -134,6 +136,7 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
         }
     };
 
+    crate::telemetry::ws_connected(1);
     let (mut sink, mut stream) = socket.split();
     let (too_large, too_large_request) = oneshot::channel();
     let mut writer = tokio::spawn(async move {
@@ -154,7 +157,10 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
                 break;
             }
             frame = stream.next() => match frame {
-                Some(Ok(Message::Binary(bytes))) => room.frame(client, bytes),
+                Some(Ok(Message::Binary(bytes))) => {
+                    crate::telemetry::ws_frame(crate::telemetry::Direction::In, bytes.len());
+                    room.frame(client, bytes)
+                }
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Err(error)) => {
                     if is_too_large(&error) {
@@ -174,6 +180,7 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
     // client for an oversized message before the bridge gives up on it.
     drop(stream);
     room.detach(client).await;
+    crate::telemetry::ws_connected(-1);
     if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
         let _ = writer.await;
@@ -215,6 +222,9 @@ async fn write_until_closed(
         Some(reason) => Some(reason),
         None => drain_until_close(sink, &mut inbox, too_large).await?,
     };
+    if let Some(reason) = reason {
+        crate::telemetry::ws_closed(reason.label());
+    }
     let frame = reason.map(|reason| CloseFrame {
         code: reason.code(),
         reason: reason.reason().into(),
@@ -238,6 +248,7 @@ async fn drain_until_close(
                 None => return Ok(None),
             },
         };
+        crate::telemetry::ws_frame(crate::telemetry::Direction::Out, frame.len());
         write(sink, Message::Binary(frame)).await?;
     }
 }

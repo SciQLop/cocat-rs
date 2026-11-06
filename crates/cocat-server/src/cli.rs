@@ -140,6 +140,8 @@ pub enum CliError {
     #[error(transparent)]
     Mail(#[from] MailError),
     #[error(transparent)]
+    Telemetry(#[from] crate::telemetry::TelemetryError),
+    #[error(transparent)]
     Links(#[from] LinksError),
     #[error(transparent)]
     Oidc(#[from] oidc::OidcError),
@@ -332,6 +334,10 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     let listener = TcpListener::bind((host, port)).await?;
     let shutdown = shutdown_signal();
     crate::admin::record_start();
+    if let Some(bind) = crate::telemetry::bind_from_env(&|name| std::env::var(name).ok())? {
+        crate::telemetry::install(bind)?;
+        let _sampler = crate::telemetry::spawn_sampler(state.clone());
+    }
     println!("listening on {}", listener.local_addr()?);
     io::stdout().flush()?;
 

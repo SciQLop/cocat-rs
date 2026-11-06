@@ -100,6 +100,18 @@ impl CloseReason {
             Self::Failed => "the room could not be loaded",
         }
     }
+
+    /// The label the metrics carry; fixed strings only, never a room id.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Revoked => "revoked",
+            Self::TooSlow => "too_slow",
+            Self::OverBudget => "over_budget",
+            Self::TooLarge => "too_large",
+            Self::Full => "full",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 /// The room's end of one client's queue, and the signal that closes that client.
@@ -222,6 +234,7 @@ impl RoomManager {
                     needed.saturating_add(handle.estimate)
                 });
             if needed > budget {
+                crate::telemetry::refused("cold_read_busy");
                 return Err(RoomError::OverBudget {
                     room_id: room_id.to_owned(),
                     needed,
@@ -239,6 +252,7 @@ impl RoomManager {
             .map_err(RoomError::Spawn)?;
         let handle = RoomHandle { commands, estimate };
         rooms.insert(room_id.to_owned(), handle.clone());
+        crate::telemetry::rooms_open(rooms.len());
         Ok(handle)
     }
 
@@ -435,6 +449,7 @@ impl RoomManager {
         let charged = self.admit_cold_read(room_id)?;
         let update_dir = self.update_dir.clone();
         let id = room_id.to_owned();
+        let started = Instant::now();
         let loaded = tokio::task::spawn_blocking(move || {
             let _slot = slot;
             let _charged = charged;
@@ -450,6 +465,7 @@ impl RoomManager {
             tracing::error!(%error, "a cold read panicked");
             RoomError::Unanswered
         })??;
+        crate::telemetry::room_opened(started.elapsed().as_secs_f64());
         loaded.ok_or(RoomError::Unanswered)
     }
 
@@ -470,6 +486,7 @@ impl RoomManager {
                     needed.saturating_add(handle.estimate)
                 });
             if needed > budget {
+                crate::telemetry::refused("cold_read_busy");
                 return Err(RoomError::OverBudget {
                     room_id: room_id.to_owned(),
                     needed,
@@ -666,10 +683,14 @@ fn load_room(
     commands: Receiver<RoomCommand>,
     registry: Rooms,
 ) {
+    let started = Instant::now();
     match FileRoomStore::open(&update_dir, &room_id) {
-        Ok((store, updates)) => room_loop(
-            room_id, update_dir, allowance, store, updates, commands, registry,
-        ),
+        Ok((store, updates)) => {
+            crate::telemetry::room_opened(started.elapsed().as_secs_f64());
+            room_loop(
+                room_id, update_dir, allowance, store, updates, commands, registry,
+            )
+        }
         Err(error) => {
             tracing::error!(room = %room_id, %error, "the room file cannot be loaded");
             abandon_room(&room_id, &registry, commands);
@@ -685,6 +706,7 @@ fn abandon_room(room_id: &str, registry: &Rooms, commands: Receiver<RoomCommand>
     match registry.lock() {
         Ok(mut rooms) => {
             rooms.remove(room_id);
+            crate::telemetry::rooms_open(rooms.len());
             refuse(commands);
         }
         Err(_) => {
@@ -789,7 +811,9 @@ fn room_loop(
                         Step::Delete(done)
                     }
                     RoomCommand::Flush { done } => {
+                        let started = Instant::now();
                         flush(&mut store, &room_id);
+                        crate::telemetry::room_flushed(started.elapsed().as_secs_f64());
                         let _ = done.send(());
                         Step::Serving
                     }
@@ -902,6 +926,7 @@ fn drop_queued(
 fn remove_entry(room_id: &str, registry: &Rooms) {
     if let Ok(mut rooms) = registry.lock() {
         rooms.remove(room_id);
+        crate::telemetry::rooms_open(rooms.len());
     }
 }
 
@@ -976,6 +1001,7 @@ fn close_room(
                 return true;
             }
             rooms.remove(room_id);
+            crate::telemetry::rooms_open(rooms.len());
             // Dropping the receiver under the registry lock turns every later attach into
             // `RoomGone`, so a handle from `get_or_open` cannot target a dying room.
             commands.take();
@@ -1010,6 +1036,7 @@ fn remove_room(
         }
     };
     rooms.remove(room_id);
+    crate::telemetry::rooms_open(rooms.len());
     drop(store);
     delete_file(update_dir, room_id);
     commands.take();
@@ -1265,6 +1292,7 @@ fn handle_update(
     // applied so a refused update leaves the document and the file as they were. A repeated
     // update at the boundary is refused with the rest: it costs a reconnection, not data.
     if store.total_size().saturating_add(payload.len() as u64) > limit {
+        crate::telemetry::refused("storage_quota");
         return Err(CloseReason::Full);
     }
     if !took_update(doc, seen, &payload) {

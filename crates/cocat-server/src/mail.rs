@@ -141,7 +141,7 @@ impl Mailer {
 
     pub async fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), MailError> {
         let message = self.message(to, subject, body)?;
-        match self {
+        let sent = match self {
             Mailer::Smtp(smtp) => {
                 smtp.transport
                     .send(message)
@@ -161,7 +161,9 @@ impl Mailer {
                     path: directory.path.display().to_string(),
                     source,
                 }),
-        }
+        };
+        crate::telemetry::mail(if sent.is_ok() { "sent" } else { "failed" });
+        sent
     }
 
     fn message(&self, to: &str, subject: &str, body: &str) -> Result<Message, MailError> {

@@ -161,6 +161,7 @@ pub async fn limit(State(limit): State<LoginLimit>, request: Request, next: Next
     if limit.hit(request.uri().path(), request.headers(), peer) {
         next.run(request).await
     } else {
+        crate::telemetry::refused("rate_limit");
         (
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({ "detail": "Too Many Requests" })),

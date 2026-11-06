@@ -21,6 +21,7 @@ pub mod oidc;
 pub mod openapi;
 pub mod ratelimit;
 pub mod room;
+pub mod telemetry;
 pub mod ui;
 pub mod ws;
 

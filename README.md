@@ -76,6 +76,7 @@ gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live
 | `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded rooms. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A room is charged sixteen times its `.y` file size (a measured 37.8 MB room is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the room stays on disk. |
 | `COCAT_ROOM_MAX_MB` | Largest `.y` file one room may reach, 1024 by default. Unset or empty means the default; a value that is not a positive integer stops the server at startup and names the variable. An update that would take the file past the limit is refused: nothing is applied, appended or broadcast, and its sender is closed with 4507 while the other clients stay. |
 | `COCAT_OWNER_MAX_MB` | Total `.y` bytes the rooms one account owns may reach, 5120 by default, measured when a room opens. Editors' writes count against the owner. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
+| `COCAT_METRICS_BIND` | Address for the Prometheus endpoint, such as `127.0.0.1:9187`. Unset or empty exports nothing; a value that is not an address stops the server at startup and names the variable. The endpoint is a separate listener, never the public port. |
 | `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
 | `COCAT_PUBLIC_URL` | The address users reach this deployment at, scheme and host only (`https://cocat.example.org`; a path, query or fragment is dropped). Every mailed link is built from it plus `COCAT_PROXY_PREFIX`, never from the request's `Host` header, which any client can spoof. A mailer configured without it stops the server at startup and names the variable. |
 | `COCAT_PROXY_PREFIX` | Path prefix the reverse proxy adds in front of the application (`/cocat`), used to build links that survive the proxy. Unset or blank means none. |
@@ -326,6 +327,21 @@ a session. The rendered pages and the websocket handshake are not part of it.
 
 Behind a reverse proxy, `COCAT_PROXY_PREFIX` reaches the document's `servers` entry and the
 URL the page fetches, while the routes themselves stay where the proxy forwards them.
+
+## Metrics
+
+`COCAT_METRICS_BIND=127.0.0.1:9187` serves the Prometheus text at
+`http://127.0.0.1:9187/metrics`, on its own listener so nothing appears on the public port.
+Labels are fixed route templates, never a room id, an address or a request URI, and the
+counters on the websocket path allocate nothing per frame. Databases counts and file sizes
+are sampled every 60 seconds, so a scrape never queries the database or walks the disk.
+
+```yaml
+scrape_configs:
+  - job_name: cocat
+    static_configs:
+      - targets: ["127.0.0.1:9187"]
+```
 
 ## Tests
 
