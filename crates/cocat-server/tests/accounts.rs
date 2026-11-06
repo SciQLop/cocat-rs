@@ -437,7 +437,7 @@ async fn logout_clears_the_cookie() {
 async fn with_a_mailer_an_unverified_cookie_cannot_log_out() {
     let fixture = Fixture::start_with_mail().await;
     let id = fixture.unverified("pending@example.org").await;
-    let token = auth::mint_token(id, &fixture.state.secret, SystemTime::now()).unwrap();
+    let token = auth::start_session(&fixture.state.pool, id).await.unwrap();
 
     let response = fixture
         .post_form("/auth/jwt/logout", "", Some(&token))
@@ -858,6 +858,19 @@ async fn a_user_cannot_raise_their_own_flags() {
     assert_eq!(user["is_superuser"], false);
     assert_eq!(user["is_active"], true);
     assert_eq!(user["is_verified"], true);
+
+    let ended = fixture
+        .get("/users/00000000-0000-0000-0000-000000000000", Some(&token))
+        .await;
+    assert_eq!(
+        ended.status(),
+        StatusCode::UNAUTHORIZED,
+        "the password change ended the session that made it"
+    );
+
+    let reissued = fixture.login("known@example.org", "new-password").await;
+    assert_eq!(reissued.status(), StatusCode::NO_CONTENT);
+    let token = cookie_token(&reissued);
 
     let forbidden = fixture
         .get("/users/00000000-0000-0000-0000-000000000000", Some(&token))

@@ -40,7 +40,7 @@ gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live
 
 | Variable | Meaning |
 |---|---|
-| `COCAT_SECRET` | Secret that signs the `fastapiusersauth` cookie. When it is unset or empty, the server uses `<db_path>.secret`, creating it (mode 0600) on first start. |
+| `COCAT_SECRET` | Secret that signs the mailed links (verification, password reset) and the provider sign-in cookie. Session cookies carry an opaque token the server stores instead of a signature. When it is unset or empty, the server uses `<db_path>.secret`, creating it (mode 0600) on first start. |
 | `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded rooms. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A room is charged sixteen times its `.y` file size (a measured 37.8 MB room is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the room stays on disk. |
 | `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
 | `COCAT_PUBLIC_URL` | The address users reach this deployment at, scheme and host only (`https://cocat.example.org`; a path, query or fragment is dropped). Every mailed link is built from it plus `COCAT_PROXY_PREFIX`, never from the request's `Host` header, which any client can spoof. A mailer configured without it stops the server at startup and names the variable. |
@@ -164,7 +164,9 @@ scripts carry the browser side: `fragment.js` moves a mailed `#token` into a for
 | Groups, one group | `/ui/groups`, `/ui/groups/{id}` |
 | Accept a group invitation | `/ui/groups/join#token` |
 
-- Sessions are the same `fastapiusersauth` cookie as the API.
+- Sessions are the same `fastapiusersauth` cookie as the API. Its value is an opaque
+  random token; the server stores only its hash, so logging out, changing or resetting the
+  password, and deactivating an account end the sessions that must stop.
 - Any POST under `/ui` coming from another site is refused with 403. The `Origin` must
   match `Host`, and `Sec-Fetch-Site`, when the browser sends it, must be same-origin or
   same-site.
@@ -273,6 +275,9 @@ here.
 Keep the Python database, and the room files in `--update-dir`, until the Rust server has
 run for a while: the import is a copy, not a move, and nothing in the Python deployment is
 deleted or rewritten.
+
+Session cookies do not survive the move. The Python server signs them and this one keeps
+its own session table, so every user signs in once again after the switch.
 
 ## Tests
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::net::SocketAddr;
 use std::process::Command;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
@@ -46,8 +46,8 @@ impl Fixture {
             .unwrap()
     }
 
-    fn token(&self, user: uuid::Uuid) -> String {
-        auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
+    async fn token(&self, user: uuid::Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     async fn send(
@@ -147,7 +147,7 @@ async fn the_window_resets_after_the_period() {
 async fn routes_have_separate_budgets() {
     let fixture = Fixture::start().await;
     let user = fixture.user("many@example.org").await;
-    let cookie = format!("fastapiusersauth={}", fixture.token(user));
+    let cookie = format!("fastapiusersauth={}", fixture.token(user).await);
 
     for _ in 0..=10 {
         fixture.login(PEER, "many@example.org").await;

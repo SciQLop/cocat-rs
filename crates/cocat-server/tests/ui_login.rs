@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
@@ -103,8 +103,8 @@ impl Fixture {
         .unwrap();
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     async fn get(&self, path: &str, token: Option<&str>) -> Response {
@@ -271,7 +271,7 @@ async fn login_page_shows_the_message() {
 async fn login_page_redirects_a_signed_in_visitor() {
     let fixture = Fixture::start().await;
     let user = fixture.verified("member@example.org").await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture.get("/ui/login", Some(&token)).await;
 
@@ -448,7 +448,7 @@ async fn cross_site_login_has_no_side_effect() {
 async fn logout_clears_cookie() {
     let fixture = Fixture::start().await;
     let user = fixture.verified("member@example.org").await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture.post("/ui/logout", Some(&token), "").await;
 
@@ -472,7 +472,7 @@ async fn logout_without_a_cookie() {
 async fn logout_not_rate_limited() {
     let fixture = Fixture::start().await;
     let user = fixture.verified("member@example.org").await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     for _ in 0..10 {
         fixture.login("member@example.org", "wrong", None).await;
     }

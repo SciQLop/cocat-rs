@@ -146,9 +146,12 @@ pub async fn reset_password(
     if !user.is_active {
         return Err(AccountError::BadResetToken);
     }
-    if !db::replace_password(&state.pool, user.id, &user.hashed_password, password).await? {
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    if !db::replace_password(&mut *tx, user.id, &user.hashed_password, password).await? {
         return Err(AccountError::BadResetToken);
     }
+    db::end_sessions_of(&mut *tx, user.id).await?;
+    tx.commit().await.map_err(DbError::from)?;
     Ok(())
 }
 
@@ -172,6 +175,7 @@ pub struct Change {
 pub async fn change(state: &AppState, user: User, change: Change) -> Result<User, AccountError> {
     let mut updated = user;
     let was_active = updated.is_active;
+    let mut ends_sessions = false;
     let moved = change
         .email
         .as_deref()
@@ -187,13 +191,21 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
     }
     if let Some(password) = change.password {
         updated.hashed_password = db::hash_password(&password)?;
+        ends_sessions = true;
     }
-    db::save_user(&state.pool, &updated)
-        .await
-        .map_err(|error| match error {
-            DbError::EmailTaken { .. } => AccountError::EmailInUse,
-            other => AccountError::Db(other),
-        })?;
+    ends_sessions |= was_active && !updated.is_active;
+    if ends_sessions {
+        let mut tx = db::begin_immediate(&state.pool).await?;
+        db::save_user(&mut *tx, &updated)
+            .await
+            .map_err(account_error)?;
+        db::end_sessions_of(&mut *tx, updated.id).await?;
+        tx.commit().await.map_err(DbError::from)?;
+    } else {
+        db::save_user(&state.pool, &updated)
+            .await
+            .map_err(account_error)?;
+    }
     if was_active && !updated.is_active {
         revoke_sockets(
             state,
@@ -206,6 +218,14 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
         send_verification(state, mailer, updated.id, &updated.email).await;
     }
     Ok(updated)
+}
+
+/// A duplicate address is the profile route's conflict; anything else is the database's.
+fn account_error(error: DbError) -> AccountError {
+    match error {
+        DbError::EmailTaken { .. } => AccountError::EmailInUse,
+        other => AccountError::Db(other),
+    }
 }
 
 /// Remove the account and then close every socket it still has. The rooms themselves and their

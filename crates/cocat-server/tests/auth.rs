@@ -1,7 +1,6 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Form;
 use axum::extract::State;
@@ -10,11 +9,8 @@ use cocat_server::auth::{self, AuthError, LoginForm};
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, db, links::Links, ratelimit::LoginLimit};
 use cookie::{Cookie, SameSite};
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use serde::Serialize;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
-use uuid::Uuid;
 
 async fn seeded_db() -> (TempDir, SqlitePool) {
     let dir = TempDir::new().unwrap();
@@ -34,71 +30,6 @@ fn form(email: &str, password: &str) -> Form<LoginForm> {
         username: email.to_owned(),
         password: password.to_owned(),
     })
-}
-
-fn now_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
-}
-
-#[derive(Serialize)]
-struct ForeignClaims {
-    sub: String,
-    aud: Vec<String>,
-    exp: i64,
-}
-
-#[test]
-fn a_minted_token_verifies_to_the_user_id() {
-    let id = Uuid::new_v4();
-
-    let token = auth::mint_token(id, "secret", SystemTime::now()).unwrap();
-
-    assert_eq!(auth::verify_token(&token, "secret").unwrap(), id);
-}
-
-#[test]
-fn a_token_for_another_audience_is_rejected() {
-    let claims = ForeignClaims {
-        sub: Uuid::new_v4().to_string(),
-        aud: vec!["other".to_owned()],
-        exp: now_seconds() + 3600,
-    };
-    let token = jsonwebtoken::encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(b"secret"),
-    )
-    .unwrap();
-
-    assert!(matches!(
-        auth::verify_token(&token, "secret").unwrap_err(),
-        AuthError::BadToken
-    ));
-}
-
-#[test]
-fn an_expired_token_is_rejected() {
-    let now = SystemTime::now() - Duration::from_secs(2 * 3600);
-
-    let token = auth::mint_token(Uuid::new_v4(), "secret", now).unwrap();
-
-    assert!(matches!(
-        auth::verify_token(&token, "secret").unwrap_err(),
-        AuthError::BadToken
-    ));
-}
-
-#[test]
-fn a_token_signed_with_another_secret_is_rejected() {
-    let token = auth::mint_token(Uuid::new_v4(), "other-secret", SystemTime::now()).unwrap();
-
-    assert!(matches!(
-        auth::verify_token(&token, "secret").unwrap_err(),
-        AuthError::BadToken
-    ));
 }
 
 #[test]
@@ -221,12 +152,7 @@ async fn login_sets_a_cookie_for_the_right_password() {
     let session = format!("{}={}", cookie.name(), cookie.value());
     let mut headers = HeaderMap::new();
     headers.insert(header::COOKIE, session.parse().unwrap());
-    assert_eq!(
-        auth::authenticate(&state.pool, &headers, &state.secret)
-            .await
-            .unwrap(),
-        id
-    );
+    assert_eq!(auth::authenticate(&state.pool, &headers).await.unwrap(), id);
 }
 
 #[tokio::test]
@@ -246,13 +172,13 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         oidc: Vec::new(),
     };
 
-    let unknown = auth::login(&pool, &state.secret, "nobody@example.org", "hunter2", false).await;
+    let unknown = auth::login(&pool, "nobody@example.org", "hunter2", false).await;
     assert!(matches!(unknown.unwrap_err(), AuthError::BadCredentials));
 
     let wrong = auth::login_handler(State(state.clone()), form("user@example.org", "wrong")).await;
     assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
 
-    let token = auth::login(&pool, &state.secret, "user@example.org", "hunter2", false)
+    let token = auth::login(&pool, "user@example.org", "hunter2", false)
         .await
         .unwrap();
     sqlx::query(r#"UPDATE "user" SET is_active = FALSE WHERE email = ?"#)
@@ -271,9 +197,7 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         format!("fastapiusersauth={token}").parse().unwrap(),
     );
     assert!(matches!(
-        auth::authenticate(&pool, &headers, &state.secret)
-            .await
-            .unwrap_err(),
+        auth::authenticate(&pool, &headers).await.unwrap_err(),
         AuthError::InactiveUser
     ));
 }

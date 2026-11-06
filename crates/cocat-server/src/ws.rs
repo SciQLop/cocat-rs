@@ -80,9 +80,7 @@ async fn room_socket(
 }
 
 async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(Uuid, Role)> {
-    let user = auth::authenticate(&state.pool, headers, &state.secret)
-        .await
-        .ok()?;
+    let user = auth::authenticate(&state.pool, headers).await.ok()?;
     let role = db::role_in(&state.pool, room_id, user).await.ok()?;
     Some((user, role?))
 }

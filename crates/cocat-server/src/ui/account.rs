@@ -3,7 +3,7 @@
 use askama::Template;
 use axum::Form;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
@@ -13,7 +13,6 @@ use crate::{AppState, accounts, auth, db, mail, oidc};
 const EMPTY_PASSWORD: &str = "Enter a new password";
 const PASSWORD_MISMATCH: &str = "The new passwords differ";
 const WRONG_PASSWORD: &str = "Wrong password";
-const CHANGED: &str = "Password changed";
 
 const EMPTY_EMAIL: &str = "Enter your email address";
 const MALFORMED_EMAIL: &str = "That is not an email address";
@@ -88,12 +87,25 @@ pub(crate) async fn password(
         ..accounts::Change::default()
     };
     match accounts::change(&state, user, change).await {
-        Ok(updated) => account_page(&state, &updated, CHANGED).await,
+        Ok(_) => password_changed(&state),
         Err(error) => {
             tracing::warn!(%error, "cannot change a password");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// The change ended every session, this one included, so the browser is sent back to the
+/// sign-in page with the reason.
+fn password_changed(state: &AppState) -> Response {
+    (
+        [(header::SET_COOKIE, auth::clear_cookie())],
+        Redirect::to(&format!(
+            "{}?error=password_changed",
+            state.links.path("/login")
+        )),
+    )
+        .into_response()
 }
 
 pub(crate) async fn confirm_page(

@@ -1,8 +1,3 @@
-use std::collections::HashMap;
-use std::fs;
-use std::net::SocketAddr;
-use std::time::SystemTime;
-
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode, header};
@@ -12,6 +7,9 @@ use cocat_server::mail::Mailer;
 use cocat_server::ratelimit::LoginLimit;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, ws};
+use std::collections::HashMap;
+use std::fs;
+use std::net::SocketAddr;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -92,8 +90,8 @@ impl Fixture {
             .unwrap()
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     async fn get(&self, path: &str, token: Option<&str>) -> Response {
@@ -195,7 +193,7 @@ async fn static_assets_served_with_cache_headers() {
 async fn prefix_applies_to_links_and_redirects() {
     let fixture = Fixture::with_env(&[("COCAT_PROXY_PREFIX", "/cocat")]).await;
     let user = fixture.user("member@example.org").await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let rooms = fixture.get("/ui/rooms", Some(&token)).await;
     assert_eq!(rooms.status(), StatusCode::OK);
@@ -221,7 +219,7 @@ async fn user_text_is_escaped() {
     let user = fixture
         .user(r#"<script>alert("x")</script>@example.org"#)
         .await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
 

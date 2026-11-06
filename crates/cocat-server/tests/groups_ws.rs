@@ -4,7 +4,7 @@
 use std::fs;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use bytes::Bytes;
 use cocat_server::room::RoomManager;
@@ -82,8 +82,8 @@ impl Fixture {
         }
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, SECRET, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.pool, user).await.unwrap()
     }
 
     async fn connect(&self, room_id: &str, token: &str) -> Socket {
@@ -199,8 +199,8 @@ async fn group_member_syncs_the_room() {
         .unwrap()
         .id;
 
-    let mut direct = fixture.connect(ROOM, &fixture.token(owner)).await;
-    let mut granted = fixture.connect(ROOM, &fixture.token(editor)).await;
+    let mut direct = fixture.connect(ROOM, &fixture.token(owner).await).await;
+    let mut granted = fixture.connect(ROOM, &fixture.token(editor).await).await;
     next_message(&mut direct).await;
     next_message(&mut granted).await;
 
@@ -237,7 +237,7 @@ async fn group_viewer_writes_are_dropped() {
         .unwrap()
         .id;
 
-    let mut socket = fixture.connect(ROOM, &fixture.token(viewer)).await;
+    let mut socket = fixture.connect(ROOM, &fixture.token(viewer).await).await;
     next_message(&mut socket).await;
 
     socket
@@ -290,7 +290,7 @@ async fn removed_from_group_mid_handshake_is_closed() {
         .unwrap()
         .id;
 
-    let mut socket = fixture.connect(ROOM, &fixture.token(member)).await;
+    let mut socket = fixture.connect(ROOM, &fixture.token(member).await).await;
 
     // The handshake saw the grant; the membership went before the attach, so the post-attach
     // re-read finds no role and the socket must not keep the editor it was granted.
@@ -334,7 +334,7 @@ async fn a_former_member_cannot_reconnect() {
         .unwrap();
     request.headers_mut().insert(
         "cookie",
-        format!("fastapiusersauth={}", fixture.token(member))
+        format!("fastapiusersauth={}", fixture.token(member).await)
             .parse()
             .unwrap(),
     );

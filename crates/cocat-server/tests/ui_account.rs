@@ -2,7 +2,7 @@ mod ui_support;
 
 use axum::http::StatusCode;
 use cocat_server::{accounts, db};
-use ui_support::{Fixture, PASSWORD, body_text, form, location};
+use ui_support::{Fixture, PASSWORD, body_text, form, location, set_cookie};
 
 const MEMBER: &str = "member@example.org";
 const NEW_PASSWORD: &str = "brand-new-password";
@@ -28,7 +28,7 @@ async fn placeholder(fixture: &Fixture, email: &str) -> String {
     )
     .await
     .unwrap();
-    fixture.token(id)
+    fixture.token(id).await
 }
 
 #[tokio::test]
@@ -45,7 +45,7 @@ async fn requires_login() {
 async fn shows_the_signed_in_email() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let page = body_text(fixture.get("/ui/account", Some(&token)).await).await;
 
@@ -78,7 +78,7 @@ async fn a_placeholder_address_offers_a_confirmation_link() {
 async fn change_password() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -92,9 +92,12 @@ async fn change_password() {
         )
         .await;
 
-    assert_eq!(response.status(), StatusCode::OK);
-    let page = body_text(response).await;
-    assert!(page.contains("Password changed"), "{page}");
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/ui/login?error=password_changed");
+    let cleared = set_cookie(&response).expect("the session cookie is cleared");
+    assert!(cleared.contains("Max-Age=0"), "{cleared}");
+    let ended = fixture.get("/ui/rooms", Some(&token)).await;
+    assert_eq!(location(&ended), "/ui/login?next=%2Fui%2Frooms");
     let signed_in = fixture.login(MEMBER, NEW_PASSWORD, None).await;
     assert_eq!(location(&signed_in), "/ui/rooms");
     let old = fixture.login(MEMBER, PASSWORD, None).await;
@@ -105,7 +108,7 @@ async fn change_password() {
 async fn wrong_current_password_changes_nothing() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -132,7 +135,7 @@ async fn wrong_current_password_changes_nothing() {
 async fn a_mismatched_repeat_is_refused() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -154,7 +157,7 @@ async fn a_mismatched_repeat_is_refused() {
 async fn an_empty_new_password_is_refused() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -172,7 +175,7 @@ async fn an_empty_new_password_is_refused() {
 async fn deactivated_cookie_is_anonymous() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     fixture.deactivate(MEMBER).await;
 
     let page = fixture.get("/ui/account", Some(&token)).await;
@@ -323,7 +326,7 @@ async fn a_malformed_address_is_refused() {
 async fn a_proven_address_is_sent_to_the_account_page() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture.get("/ui/confirm-email", Some(&token)).await;
 

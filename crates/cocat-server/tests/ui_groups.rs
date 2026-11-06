@@ -69,7 +69,7 @@ async fn login_required() {
 async fn create_list_rename_delete() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let created = fixture
         .post("/ui/groups", Some(&token), &form(&[("name", "friends")]))
@@ -129,7 +129,7 @@ async fn leave() {
     let owner = fixture.verified(OWNER).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
     let member = member_of(&fixture, &id, MEMBER).await;
-    let token = fixture.token(member);
+    let token = fixture.token(member).await;
 
     let page = body_text(fixture.get(&format!("/ui/groups/{id}"), Some(&token)).await).await;
     assert!(page.contains("data-confirm=\"Leave friends?\""), "{page}");
@@ -148,7 +148,7 @@ async fn leave() {
 async fn owner_cannot_leave() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
 
     let response = fixture
@@ -165,7 +165,7 @@ async fn owner_cannot_leave() {
 async fn members_and_remove() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
     let member = member_of(&fixture, &id, MEMBER).await;
 
@@ -199,7 +199,7 @@ async fn members_and_remove() {
 async fn remove_closes_sockets_in_shared_rooms() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let group = group_owned_by(&fixture, owner, "friends").await;
     let member = member_of(&fixture, &group, MEMBER).await;
     let room = lifecycle::create_room(&fixture.state, owner, "lab")
@@ -238,10 +238,10 @@ async fn remove_closes_sockets_in_shared_rooms() {
 async fn share_link_and_join() {
     let fixture = Fixture::start_with_mail().await;
     let owner = fixture.verified(OWNER).await;
-    let owner_token = fixture.token(owner);
+    let owner_token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
     let member = fixture.verified(MEMBER).await;
-    let token = fixture.token(member);
+    let token = fixture.token(member).await;
 
     let created = fixture
         .post(
@@ -309,7 +309,7 @@ async fn share_link_and_join() {
 async fn invite_by_email() {
     let fixture = Fixture::start_with_mail().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
 
     let response = fixture
@@ -334,7 +334,7 @@ async fn invite_by_email() {
 async fn revoke() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
     let (invitation, _) =
         groups::create_invitation(&fixture.state, &id, owner, Some(GUEST), 14, None)
@@ -368,7 +368,7 @@ async fn not_found_for_strangers() {
     let owner = fixture.verified(OWNER).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
     let stranger = fixture.verified(MEMBER).await;
-    let token = fixture.token(stranger);
+    let token = fixture.token(stranger).await;
 
     let page = fixture.get(&format!("/ui/groups/{id}"), Some(&token)).await;
 
@@ -386,7 +386,7 @@ async fn not_found_for_strangers() {
 async fn remove_from_foreign_group_refused() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let theirs = group_owned_by(&fixture, fixture.verified(OTHER).await, "theirs").await;
     let member = member_of(&fixture, &theirs, GUEST).await;
 
@@ -410,7 +410,7 @@ async fn remove_from_foreign_group_refused() {
 async fn rooms_shared_with_group_listed() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
     let room = lifecycle::create_room(&fixture.state, owner, "lab")
         .await
@@ -437,7 +437,7 @@ async fn rooms_shared_with_group_listed() {
 async fn a_mailed_group_link_keeps_the_token_out_of_the_path() {
     let fixture = Fixture::start_with_mail().await;
     let owner = fixture.verified(OWNER).await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;
 
     let response = fixture

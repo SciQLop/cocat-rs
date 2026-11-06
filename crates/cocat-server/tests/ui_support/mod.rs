@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
@@ -130,8 +130,8 @@ impl Fixture {
         .unwrap();
     }
 
-    pub fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
+    pub async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     /// Remove the sink, so the next send fails the way a refusing relay would.

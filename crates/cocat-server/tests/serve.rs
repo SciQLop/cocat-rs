@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use bytes::Bytes;
 use cocat_core::store::FileRoomStore;
@@ -30,7 +30,6 @@ struct Server {
     child: Child,
     addr: SocketAddr,
     update_dir: PathBuf,
-    secret: String,
     owner: Uuid,
     _dir: TempDir,
 }
@@ -49,7 +48,6 @@ impl Server {
             .await
             .unwrap();
         pool.close().await;
-        let secret = auth::load_secret(&db_path).unwrap();
 
         let mut child = Command::new(env!("CARGO_BIN_EXE_cocat-server"))
             .arg("serve")
@@ -79,7 +77,6 @@ impl Server {
             child,
             addr,
             update_dir,
-            secret,
             owner,
             _dir: dir,
         }
@@ -167,7 +164,8 @@ async fn the_root_answers_404() {
 
 async fn the_room_survives_a_signal(signal: &str) {
     let mut server = Server::spawn().await;
-    let token = auth::mint_token(server.owner, &server.secret, SystemTime::now()).unwrap();
+    let pool = db::open(&server._dir.path().join("test.db")).await.unwrap();
+    let token = auth::start_session(&pool, server.owner).await.unwrap();
     let mut socket = connect(&server, &token).await;
     next_message(&mut socket).await;
 

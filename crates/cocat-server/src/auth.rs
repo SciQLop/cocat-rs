@@ -1,13 +1,15 @@
-//! Tokens and cookies compatible with the Python server (fastapi-users): the same
-//! `fastapiusersauth` cookie, the same HMAC secret from `COCAT_SECRET` or
-//! `<db_path>.secret`, and the same claims, so a cookie one server mints the other accepts.
+//! Sign-in sessions and the cookies that carry them: the same `fastapiusersauth` cookie as the
+//! Python server, but holding an opaque random token instead of a JWT. The server keeps only
+//! the token's hash, so a logout, a password change, or a deactivation can end a session
+//! before it expires. The `COCAT_SECRET` HMAC key is still what signs the mailed links.
+//!
+//! Cookies minted by the Python server stop working at the cutover: users sign in once more.
 
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::Argon2;
 use argon2::password_hash::PasswordVerifier;
@@ -30,12 +32,9 @@ use crate::db::{self, DbError};
 pub const COOKIE_NAME: &str = "fastapiusersauth";
 pub const SECRET_ENV: &str = "COCAT_SECRET";
 
-const AUDIENCE: &str = "fastapi-users:auth";
-
 /// fastapi-users' error codes, which its login route sends as `{"detail": "<code>"}`.
 const BAD_CREDENTIALS: &str = "LOGIN_BAD_CREDENTIALS";
 const NOT_VERIFIED: &str = "LOGIN_USER_NOT_VERIFIED";
-const LIFETIME_SECONDS: u64 = 3600;
 const DUMMY_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$YGXUcrLDsAk2cwaSUXo9kg$kDCnwbFPV9Go5Cw1ADnZFM0j/t7ythVDk0kxfS6Ve+Q";
 
 #[derive(Debug, Error)]
@@ -56,15 +55,10 @@ pub enum AuthError {
         #[source]
         source: io::Error,
     },
+    #[error("cannot draw a session token: {0}")]
+    Random(#[from] getrandom::Error),
     #[error(transparent)]
     Db(#[from] DbError),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    aud: Vec<String>,
-    exp: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,22 +136,20 @@ fn secret_error(path: &Path, source: io::Error) -> AuthError {
     }
 }
 
-pub fn mint_token(user_id: Uuid, secret: &str, now: SystemTime) -> Result<String, AuthError> {
-    let issued_at = now
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| AuthError::BadToken)?
-        .as_secs();
-    let claims = Claims {
-        sub: user_id.to_string(),
-        aud: vec![AUDIENCE.to_owned()],
-        exp: i64::try_from(issued_at + LIFETIME_SECONDS).map_err(|_| AuthError::BadToken)?,
-    };
-    signed_claims(&claims, secret)
+/// Start a session and return the token for the cookie; only its hash is stored.
+pub async fn start_session(pool: &SqlitePool, user_id: Uuid) -> Result<String, AuthError> {
+    let (token, hash) = crate::invitations::new_token()?;
+    db::create_session(pool, &hash, user_id).await?;
+    Ok(token)
 }
 
-pub fn verify_token(token: &str, secret: &str) -> Result<Uuid, AuthError> {
-    let claims: Claims = read_claims(token, secret, AUDIENCE)?;
-    Uuid::parse_str(&claims.sub).map_err(|_| AuthError::BadToken)
+/// End the session the request's cookie names, if it names one.
+pub async fn end_session(pool: &SqlitePool, headers: &HeaderMap) -> Result<(), AuthError> {
+    let Some(token) = session_cookie(headers) else {
+        return Ok(());
+    };
+    db::delete_session(pool, &crate::invitations::hash(&token)).await?;
+    Ok(())
 }
 
 /// Sign one claim set with the server secret. Every token kind is one of these and is told
@@ -200,14 +192,9 @@ pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
         .map(|cookie| cookie.value().to_owned())
 }
 
-pub async fn authenticate(
-    pool: &SqlitePool,
-    headers: &HeaderMap,
-    secret: &str,
-) -> Result<Uuid, AuthError> {
+pub async fn authenticate(pool: &SqlitePool, headers: &HeaderMap) -> Result<Uuid, AuthError> {
     let token = session_cookie(headers).ok_or(AuthError::MissingCookie)?;
-    let user_id = verify_token(&token, secret)?;
-    let user = db::user_by_id(pool, user_id)
+    let user = db::session_user(pool, &crate::invitations::hash(&token))
         .await?
         .ok_or(AuthError::BadToken)?;
     if !user.is_active {
@@ -216,7 +203,7 @@ pub async fn authenticate(
     Ok(user.id)
 }
 
-/// Check the password and hand out a session token.
+/// Check the password and start a session.
 ///
 /// `requires_verification` is Python's `requires_verification=mail is not None`: a deployment
 /// that cannot mail a confirmation must not lock out the accounts it cannot confirm. The
@@ -224,7 +211,6 @@ pub async fn authenticate(
 /// for a verified and an unverified account alike.
 pub async fn login(
     pool: &SqlitePool,
-    secret: &str,
     email: &str,
     password: &str,
     requires_verification: bool,
@@ -250,7 +236,7 @@ pub async fn login(
             tracing::warn!(%error, "cannot rehash a password");
         }
     }
-    mint_token(user.id, secret, SystemTime::now())
+    start_session(pool, user.id).await
 }
 
 /// Older Python accounts hold bcrypt hashes, which the argon2 crate cannot read; they keep
@@ -305,7 +291,6 @@ fn refused(code: &'static str) -> Response {
 pub async fn login_handler(State(state): State<AppState>, Form(form): Form<LoginForm>) -> Response {
     match login(
         &state.pool,
-        &state.secret,
         &form.username,
         &form.password,
         state.mailer.is_some(),
@@ -332,7 +317,7 @@ pub async fn login_handler(State(state): State<AppState>, Form(form): Form<Login
 /// None`), and its authenticator answers 403 when the cookie is good but the account is
 /// unverified, so the two refusals are kept apart.
 pub async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let Ok(user_id) = authenticate(&state.pool, &headers, &state.secret).await else {
+    let Ok(user_id) = authenticate(&state.pool, &headers).await else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
     if state.mailer.is_some() {
@@ -344,6 +329,10 @@ pub async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
         }
+    }
+    if let Err(error) = end_session(&state.pool, &headers).await {
+        tracing::warn!(%error, "cannot end the session");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     (
         StatusCode::NO_CONTENT,

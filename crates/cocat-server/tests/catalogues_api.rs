@@ -1,7 +1,3 @@
-use std::fs;
-use std::path::PathBuf;
-use std::time::SystemTime;
-
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -12,6 +8,8 @@ use cocat_core::store::FileRoomStore;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -67,8 +65,8 @@ impl Fixture {
             .unwrap()
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     async fn room(&self, owner: Uuid) {
@@ -280,7 +278,7 @@ async fn lists_catalogues_for_a_viewer() {
     let (status, body) = fixture
         .get(
             "/api/rooms/room-read/catalogues",
-            Some(&fixture.token(viewer)),
+            Some(&fixture.token(viewer).await),
         )
         .await;
 
@@ -308,7 +306,7 @@ async fn non_member_gets_404() {
     let (status, body) = fixture
         .get(
             "/api/rooms/room-read/catalogues",
-            Some(&fixture.token(stranger)),
+            Some(&fixture.token(stranger).await),
         )
         .await;
 
@@ -329,7 +327,7 @@ async fn anonymous_gets_401() {
 #[tokio::test]
 async fn unknown_catalogue_404() {
     let (fixture, owner) = fixture_with_library().await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let (status, body) = fixture
         .get(
@@ -359,7 +357,7 @@ async fn one_catalogue() {
     let (status, body) = fixture
         .get(
             &format!("/api/rooms/room-read/catalogues/{ALPHA}"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 
@@ -377,7 +375,7 @@ async fn events_are_sorted_and_iso_utc() {
     let (status, body) = fixture
         .get(
             &format!("/api/rooms/room-read/catalogues/{ALPHA}/events"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 
@@ -415,7 +413,7 @@ async fn time_range_keeps_overlapping_events() {
             &format!(
                 "/api/rooms/room-read/catalogues/{ALPHA}/events?start=2025-01-31T10:30:00Z&stop=2025-01-31T11:30:00Z"
             ),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 
@@ -438,7 +436,7 @@ async fn start_after_stop_is_422() {
             &format!(
                 "/api/rooms/room-read/catalogues/{ALPHA}/events?start=2025-01-31T12:00:00Z&stop=2025-01-31T11:00:00Z"
             ),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 
@@ -448,7 +446,7 @@ async fn start_after_stop_is_422() {
     let (status, _) = fixture
         .get(
             &format!("/api/rooms/room-read/catalogues/{ALPHA}/events?start=not-a-time"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -457,7 +455,7 @@ async fn start_after_stop_is_422() {
 #[tokio::test]
 async fn limit_out_of_range_is_422() {
     let (fixture, owner) = fixture_with_library().await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     for limit in ["0", "10001", "many"] {
         let (status, _) = fixture
@@ -480,7 +478,7 @@ async fn paging_with_equal_starts_returns_each_event_once() {
     let owner = fixture.user("owner@example.org").await;
     fixture.room(owner).await;
     fixture.seed(ROOM, &paged());
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let (status, unpaged) = fixture
         .get(
@@ -523,7 +521,7 @@ async fn paging_with_equal_starts_returns_each_event_once() {
 #[tokio::test]
 async fn bad_cursor_is_422() {
     let (fixture, owner) = fixture_with_library().await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     for cursor in ["!!!", "Z2FyYmFnZQ"] {
         let (status, _) = fixture
@@ -547,7 +545,7 @@ async fn votable_suffix_returns_xml() {
     let response = fixture
         .raw(
             &format!("/api/rooms/room-read/catalogues/{ALPHA}.votable"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 
@@ -575,7 +573,7 @@ async fn votable_mixed_types_is_422() {
     let (status, body) = fixture
         .get(
             &format!("/api/rooms/room-read/catalogues/{MIXED}.votable"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 
@@ -592,7 +590,7 @@ async fn votable_mixed_types_is_422() {
 #[tokio::test]
 async fn rest_read_does_not_open_the_room() {
     let (fixture, owner) = fixture_with_library().await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let paths = [
         "/api/rooms/room-read/catalogues".to_owned(),
@@ -621,7 +619,7 @@ async fn over_budget_is_503() {
     let (status, body) = fixture
         .get(
             "/api/rooms/room-read/catalogues",
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
 

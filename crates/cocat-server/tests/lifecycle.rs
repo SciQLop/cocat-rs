@@ -1,7 +1,7 @@
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use bytes::Bytes;
 use cocat_core::role::Role;
@@ -86,8 +86,8 @@ impl Fixture {
         user
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, SECRET, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     async fn handshake(&self, room_id: &str, token: Option<&str>) -> Result<Socket, u16> {
@@ -113,7 +113,7 @@ impl Fixture {
     }
 
     async fn connect(&self, room_id: &str, user: Uuid) -> Socket {
-        self.handshake(room_id, Some(&self.token(user)))
+        self.handshake(room_id, Some(&self.token(user).await))
             .await
             .unwrap_or_else(|status| panic!("the handshake was refused with {status}"))
     }
@@ -208,7 +208,7 @@ async fn removed_member_is_closed_1008_and_refused_403_on_reconnect() {
 
     expect_close(&mut socket, 1008).await;
     let refused = fixture
-        .handshake("room-kick", Some(&fixture.token(editor)))
+        .handshake("room-kick", Some(&fixture.token(editor).await))
         .await
         .err();
     assert_eq!(refused, Some(403));

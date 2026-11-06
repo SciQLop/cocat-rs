@@ -6,10 +6,6 @@
 
 mod oidc_support;
 
-use std::fs;
-use std::path::Path;
-use std::time::SystemTime;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cocat_core::role::Role;
@@ -18,6 +14,8 @@ use cocat_server::{
     AppState, auth, db, groups, invitations, lifecycle, links::Links, oidc, ratelimit::LoginLimit,
     ws,
 };
+use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -664,16 +662,16 @@ impl World {
 
         let tokens = vec![
             (Kind::Anonymous, String::new()),
-            (Kind::Unverified, token(&state, unverified)),
-            (Kind::Deactivated, token(&state, deactivated)),
-            (Kind::Stranger, token(&state, stranger)),
-            (Kind::Viewer, token(&state, viewer)),
-            (Kind::Editor, token(&state, editor)),
-            (Kind::Owner, token(&state, owner)),
-            (Kind::GroupViewer, token(&state, group_viewer)),
-            (Kind::GroupEditor, token(&state, group_editor)),
-            (Kind::GroupOwner, token(&state, group_owner)),
-            (Kind::Superuser, token(&state, admin)),
+            (Kind::Unverified, token(&state, unverified).await),
+            (Kind::Deactivated, token(&state, deactivated).await),
+            (Kind::Stranger, token(&state, stranger).await),
+            (Kind::Viewer, token(&state, viewer).await),
+            (Kind::Editor, token(&state, editor).await),
+            (Kind::Owner, token(&state, owner).await),
+            (Kind::GroupViewer, token(&state, group_viewer).await),
+            (Kind::GroupEditor, token(&state, group_editor).await),
+            (Kind::GroupOwner, token(&state, group_owner).await),
+            (Kind::Superuser, token(&state, admin).await),
         ];
         Self {
             state,
@@ -920,8 +918,8 @@ async fn promote(state: &AppState, group: &str, user: Uuid) {
         .unwrap();
 }
 
-fn token(state: &AppState, user: Uuid) -> String {
-    auth::mint_token(user, &state.secret, SystemTime::now()).unwrap()
+async fn token(state: &AppState, user: Uuid) -> String {
+    auth::start_session(&state.pool, user).await.unwrap()
 }
 
 #[tokio::test]

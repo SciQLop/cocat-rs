@@ -82,7 +82,7 @@ async fn preview_shows_what_you_are_joining() {
     let fixture = Fixture::start().await;
     let invited = invitation(&fixture, None, None).await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -110,7 +110,7 @@ async fn accept_joins_the_room() {
     let fixture = Fixture::start().await;
     let invited = invitation(&fixture, None, None).await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -143,7 +143,7 @@ async fn a_second_accept_when_exhausted_is_refused() {
     let fixture = Fixture::start().await;
     let invited = invitation(&fixture, None, Some(1)).await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     fixture
         .post(
@@ -174,7 +174,7 @@ async fn an_addressed_invitation_refuses_another_address() {
     let fixture = Fixture::start().await;
     let invited = invitation(&fixture, Some(OTHER), None).await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post(
@@ -271,7 +271,7 @@ async fn the_token_travels_only_in_post_bodies() {
     let fixture = Fixture::start().await;
     let invited = invitation(&fixture, None, None).await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let page = body_text(
         fixture

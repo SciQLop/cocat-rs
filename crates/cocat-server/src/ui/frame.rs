@@ -28,8 +28,9 @@ const ASSETS: [(&str, &str, &str); 4] = [
     ("copy.js", COPY, "text/javascript; charset=utf-8"),
 ];
 
-/// Python's `ui/auth.py::MESSAGES`, which pages look up by query flag.
-const MESSAGES: [(&str, &str); 10] = [
+/// Python's `ui/auth.py::MESSAGES`, which pages look up by query flag. `password_changed` is
+/// ours: ending the session on a password change is the one behaviour Python does not have.
+const MESSAGES: [(&str, &str); 11] = [
     ("credentials", "Wrong email or password."),
     ("too_many", "Too many attempts. Try again in a minute."),
     ("exists", "That email is already registered."),
@@ -49,6 +50,10 @@ const MESSAGES: [(&str, &str); 10] = [
     ),
     ("email", "That is not an email address."),
     ("provider", "The provider could not sign you in. Try again."),
+    (
+        "password_changed",
+        "Password changed, please sign in again.",
+    ),
 ];
 
 /// Python's `error_key` rule: the first truthy flag among the four success flags, else
@@ -293,9 +298,7 @@ fn request_path(parts: &Parts) -> &str {
 /// A deactivated account reads as anonymous here: `auth::authenticate` refuses it, so a
 /// cookie minted before the deactivation cannot keep acting on a page.
 async fn signed_in_user(state: &AppState, headers: &HeaderMap) -> Option<User> {
-    let id = auth::authenticate(&state.pool, headers, &state.secret)
-        .await
-        .ok()?;
+    let id = auth::authenticate(&state.pool, headers).await.ok()?;
     match db::user_by_id(&state.pool, id).await {
         Ok(user) => user,
         Err(error) => {

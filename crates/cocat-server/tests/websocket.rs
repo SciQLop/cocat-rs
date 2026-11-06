@@ -2,7 +2,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
@@ -117,8 +117,8 @@ impl Fixture {
             .unwrap()
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, SECRET, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.pool, user).await.unwrap()
     }
 
     async fn handshake(&self, room_id: &str, token: Option<&str>) -> Result<Socket, u16> {
@@ -208,7 +208,7 @@ async fn a_non_member_handshake_is_refused_with_403() {
     let outsider = fixture.user("outsider@example.org").await;
 
     let status = fixture
-        .handshake("room-members", Some(&fixture.token(outsider)))
+        .handshake("room-members", Some(&fixture.token(outsider).await))
         .await
         .err();
 
@@ -223,7 +223,7 @@ async fn a_member_receives_the_sync_step2() {
         .await
         .unwrap();
     let mut socket = fixture
-        .connect("room-step", Some(&fixture.token(owner)))
+        .connect("room-step", Some(&fixture.token(owner).await))
         .await;
 
     assert!(matches!(
@@ -251,10 +251,10 @@ async fn an_editor_update_reaches_another_socket() {
         .await
         .unwrap();
     let mut first = fixture
-        .connect("room-editors", Some(&fixture.token(owner)))
+        .connect("room-editors", Some(&fixture.token(owner).await))
         .await;
     let mut second = fixture
-        .connect("room-editors", Some(&fixture.token(editor)))
+        .connect("room-editors", Some(&fixture.token(editor).await))
         .await;
     next_message(&mut first).await;
     next_message(&mut second).await;
@@ -285,7 +285,7 @@ async fn viewer_update_does_not_land() {
         .await
         .unwrap();
     let mut socket = fixture
-        .connect("room-viewer", Some(&fixture.token(viewer)))
+        .connect("room-viewer", Some(&fixture.token(viewer).await))
         .await;
     next_message(&mut socket).await;
 
@@ -316,7 +316,7 @@ async fn short_frames_do_not_close_the_socket() {
         .await
         .unwrap();
     let mut socket = fixture
-        .connect("room-short", Some(&fixture.token(owner)))
+        .connect("room-short", Some(&fixture.token(owner).await))
         .await;
     next_message(&mut socket).await;
 
@@ -344,7 +344,7 @@ async fn a_client_that_does_not_read_is_closed_1013() {
     db::create_room(&fixture.pool, owner, "room-slow", "Slow")
         .await
         .unwrap();
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let mut silent = fixture.connect("room-slow", Some(&token)).await;
     let mut writer = fixture.connect("room-slow", Some(&token)).await;
     next_message(&mut writer).await;
@@ -383,7 +383,7 @@ async fn a_client_that_stops_reading_does_not_pin_the_room() {
         .await
         .unwrap();
     let (mut sink, _never_read) = fixture
-        .connect("room-pinned", Some(&fixture.token(owner)))
+        .connect("room-pinned", Some(&fixture.token(owner).await))
         .await
         .split();
 
@@ -460,7 +460,9 @@ async fn a_downgrade_between_handshake_and_attach_is_honoured() {
         .unwrap()
         .unwrap()
         .id;
-    let mut socket = fixture.connect(ROOM, Some(&fixture.token(editor))).await;
+    let mut socket = fixture
+        .connect(ROOM, Some(&fixture.token(editor).await))
+        .await;
 
     // The handshake saw an editor; the role changed before the socket attached, so the
     // socket must not keep the editor it was granted.
@@ -496,7 +498,7 @@ async fn an_over_budget_room_closes_1013() {
     store.flush().unwrap();
 
     let mut socket = fixture
-        .connect("room-budget", Some(&fixture.token(owner)))
+        .connect("room-budget", Some(&fixture.token(owner).await))
         .await;
 
     loop {
@@ -522,7 +524,7 @@ async fn an_over_budget_room_closes_1013() {
 async fn deleting_over_http_closes_the_sockets_and_the_file() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     db::create_room(&fixture.pool, owner, "room-deleted", "Deleted")
         .await
         .unwrap();
@@ -577,7 +579,7 @@ async fn accepting_a_higher_invitation_closes_the_old_socket() {
     let (_, token) = invitations::create(&state, "room-grant", owner, Role::Editor, None, 14, None)
         .await
         .unwrap();
-    let guest_token = fixture.token(guest);
+    let guest_token = fixture.token(guest).await;
     let mut socket = fixture.connect("room-grant", Some(&guest_token)).await;
     next_message(&mut socket).await;
 
@@ -612,7 +614,7 @@ async fn deleting_a_user_closes_their_sockets() {
         .await
         .unwrap();
     let mut socket = fixture
-        .connect("room-a", Some(&fixture.token(victim)))
+        .connect("room-a", Some(&fixture.token(victim).await))
         .await;
     next_ws(&mut socket).await;
 
@@ -621,7 +623,7 @@ async fn deleting_a_user_closes_their_sockets() {
         .uri(format!("/users/{victim}"))
         .header(
             header::COOKIE,
-            format!("fastapiusersauth={}", fixture.token(admin)),
+            format!("fastapiusersauth={}", fixture.token(admin).await),
         )
         .body(Body::empty())
         .unwrap();
@@ -650,6 +652,7 @@ async fn deleting_a_user_closes_their_sockets() {
 async fn deleting_a_user_refuses_the_next_handshake() {
     let fixture = Fixture::start().await;
     let victim = fixture.user("victim@example.org").await;
+    let victim_token = fixture.token(victim).await;
     let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
         .await
         .unwrap();
@@ -662,7 +665,7 @@ async fn deleting_a_user_refuses_the_next_handshake() {
         .uri(format!("/users/{victim}"))
         .header(
             header::COOKIE,
-            format!("fastapiusersauth={}", fixture.token(admin)),
+            format!("fastapiusersauth={}", fixture.token(admin).await),
         )
         .body(Body::empty())
         .unwrap();
@@ -680,10 +683,7 @@ async fn deleting_a_user_refuses_the_next_handshake() {
             .is_none()
     );
     assert_eq!(
-        fixture
-            .handshake("room-a", Some(&fixture.token(victim)))
-            .await
-            .err(),
+        fixture.handshake("room-a", Some(&victim_token)).await.err(),
         Some(403),
         "a deleted account cannot join a room it no longer belongs to"
     );
@@ -700,7 +700,7 @@ async fn deactivating_a_user_closes_their_sockets() {
         .await
         .unwrap();
     let mut socket = fixture
-        .connect("room-a", Some(&fixture.token(victim)))
+        .connect("room-a", Some(&fixture.token(victim).await))
         .await;
     next_ws(&mut socket).await;
 
@@ -709,7 +709,7 @@ async fn deactivating_a_user_closes_their_sockets() {
         .uri(format!("/users/{victim}"))
         .header(
             header::COOKIE,
-            format!("fastapiusersauth={}", fixture.token(admin)),
+            format!("fastapiusersauth={}", fixture.token(admin).await),
         )
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"is_active": false}"#))
@@ -734,7 +734,7 @@ async fn deactivating_a_user_closes_their_sockets() {
     );
     assert_eq!(
         fixture
-            .handshake("room-a", Some(&fixture.token(victim)))
+            .handshake("room-a", Some(&fixture.token(victim).await))
             .await
             .err(),
         Some(403),

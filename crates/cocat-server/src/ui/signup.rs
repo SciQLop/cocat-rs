@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::SystemTime;
 
 use askama::Template;
 use axum::extract::{ConnectInfo, Form, Query, State};
@@ -58,7 +57,7 @@ pub(crate) async fn signup(
     let asks_verification = state.mailer.is_some();
     match accounts::register(&state, &address.0, &form.password).await {
         Ok(_) if asks_verification => created(&state),
-        Ok(id) => signed_in(&state, id),
+        Ok(id) => signed_in(&state, id).await,
         Err(accounts::AccountError::Duplicate) if asks_verification => {
             let background = state.clone();
             let email = address.0;
@@ -80,8 +79,8 @@ fn created(state: &AppState) -> Response {
 }
 
 /// Without a mailer registration verified the account on the spot, so the visitor is in.
-fn signed_in(state: &AppState, id: uuid::Uuid) -> Response {
-    match auth::mint_token(id, &state.secret, SystemTime::now()) {
+async fn signed_in(state: &AppState, id: uuid::Uuid) -> Response {
+    match auth::start_session(&state.pool, id).await {
         Ok(token) => (
             [(header::SET_COOKIE, auth::set_cookie(&token))],
             Redirect::to(&state.links.path("/rooms")),

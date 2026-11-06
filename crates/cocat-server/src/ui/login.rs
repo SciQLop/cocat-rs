@@ -84,15 +84,7 @@ pub(crate) async fn login(
         return failed(&state, "too_many");
     }
     let verified_only = state.mailer.is_some();
-    match auth::login(
-        &state.pool,
-        &state.secret,
-        &form.username,
-        &form.password,
-        verified_only,
-    )
-    .await
-    {
+    match auth::login(&state.pool, &form.username, &form.password, verified_only).await {
         Ok(token) => {
             let target = safe_next(query.get("next").map(String::as_str), &state.links);
             (
@@ -110,7 +102,10 @@ pub(crate) async fn login(
     }
 }
 
-pub(crate) async fn logout(State(state): State<AppState>) -> Response {
+pub(crate) async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(error) = auth::end_session(&state.pool, &headers).await {
+        tracing::warn!(%error, "cannot end the session");
+    }
     (
         [(header::SET_COOKIE, auth::clear_cookie())],
         Redirect::to(&state.links.path("/login")),

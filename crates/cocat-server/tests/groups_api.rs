@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -100,7 +100,7 @@ impl Fixture {
     ) -> (StatusCode, Value) {
         let mut request = Request::builder().method(method).uri(path);
         if let Some(user) = user {
-            let token = auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap();
+            let token = auth::start_session(&self.state.pool, user).await.unwrap();
             request = request.header(header::COOKIE, format!("fastapiusersauth={token}"));
         }
         let body = match body {

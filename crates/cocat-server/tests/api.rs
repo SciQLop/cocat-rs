@@ -1,6 +1,3 @@
-use std::fs;
-use std::time::SystemTime;
-
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -8,6 +5,7 @@ use cocat_core::role::Role;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
+use std::fs;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -42,8 +40,8 @@ impl Fixture {
             .unwrap()
     }
 
-    fn token(&self, user: Uuid) -> String {
-        auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap()
+    async fn token(&self, user: Uuid) -> String {
+        auth::start_session(&self.state.pool, user).await.unwrap()
     }
 
     fn router(&self) -> Router {
@@ -136,7 +134,9 @@ async fn me_returns_the_user() {
     let fixture = Fixture::start().await;
     let user = fixture.user("owner@example.org").await;
 
-    let (status, body) = fixture.get("/api/me", Some(&fixture.token(user))).await;
+    let (status, body) = fixture
+        .get("/api/me", Some(&fixture.token(user).await))
+        .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["id"], user.to_string());
@@ -153,7 +153,9 @@ async fn legacy_rooms_lists_room_ids() {
     fixture.room(owner, "zeta", "Zeta").await;
     fixture.room(owner, "alpha", "Alpha").await;
 
-    let (status, body) = fixture.get("/rooms", Some(&fixture.token(owner))).await;
+    let (status, body) = fixture
+        .get("/rooms", Some(&fixture.token(owner).await))
+        .await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"rooms": ["alpha", "zeta"]}));
@@ -169,10 +171,10 @@ async fn legacy_room_users_needs_membership() {
     fixture.member("room-1", member, Role::Viewer).await;
 
     let (denied, _) = fixture
-        .get("/room/room-1/users", Some(&fixture.token(outsider)))
+        .get("/room/room-1/users", Some(&fixture.token(outsider).await))
         .await;
     let (status, body) = fixture
-        .get("/room/room-1/users", Some(&fixture.token(member)))
+        .get("/room/room-1/users", Some(&fixture.token(member).await))
         .await;
 
     assert_eq!(denied, StatusCode::NOT_FOUND);
@@ -187,7 +189,7 @@ async fn legacy_room_users_needs_membership() {
 async fn create_list_rename_delete_room() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let (status, room) = fixture
         .post("/api/rooms", Some(&token), json!({"name": "Lab"}))
@@ -228,7 +230,7 @@ async fn member_management() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let editor = fixture.user("editor@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-members", "Members").await;
     fixture.member("room-members", editor, Role::Editor).await;
 
@@ -265,7 +267,7 @@ async fn member_management() {
     let (status, _) = fixture
         .delete(
             &format!("/api/rooms/room-members/members/{owner}"),
-            Some(&fixture.token(editor)),
+            Some(&fixture.token(editor).await),
         )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -289,7 +291,7 @@ async fn errors_map_to_status() {
     let (renamed, _) = fixture
         .patch(
             "/api/rooms/room-status",
-            Some(&fixture.token(editor)),
+            Some(&fixture.token(editor).await),
             json!({"name": "X"}),
         )
         .await;
@@ -298,11 +300,14 @@ async fn errors_map_to_status() {
     let (stranger_denied, _) = fixture
         .get(
             "/api/rooms/room-status/members",
-            Some(&fixture.token(stranger)),
+            Some(&fixture.token(stranger).await),
         )
         .await;
     let (missing_denied, _) = fixture
-        .get("/api/rooms/missing/members", Some(&fixture.token(owner)))
+        .get(
+            "/api/rooms/missing/members",
+            Some(&fixture.token(owner).await),
+        )
         .await;
     assert_eq!(stranger_denied, StatusCode::NOT_FOUND);
     assert_eq!(missing_denied, StatusCode::NOT_FOUND);
@@ -310,7 +315,7 @@ async fn errors_map_to_status() {
     let (leaving, _) = fixture
         .delete(
             &format!("/api/rooms/room-status/members/{owner}"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
         )
         .await;
     assert_eq!(leaving, StatusCode::CONFLICT);
@@ -324,7 +329,7 @@ async fn a_blank_room_name_is_a_bad_request() {
     let (status, body) = fixture
         .post(
             "/api/rooms",
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
             json!({"name": "   "}),
         )
         .await;
@@ -342,14 +347,14 @@ async fn a_room_name_with_control_characters_is_refused() {
     let (created, _) = fixture
         .post(
             "/api/rooms",
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
             json!({"name": "a\tb"}),
         )
         .await;
     let (renamed, body) = fixture
         .patch(
             "/api/rooms/room-named",
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
             json!({"name": "a\u{7f}b"}),
         )
         .await;
@@ -366,7 +371,7 @@ async fn a_room_name_with_control_characters_is_refused() {
 async fn a_too_long_room_name_is_422() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let (empty, body) = fixture
         .post("/api/rooms", Some(&token), json!({"name": ""}))
@@ -384,7 +389,7 @@ async fn a_too_long_room_name_is_422() {
 async fn a_malformed_json_body_is_422() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-body", "Body").await;
     fixture
         .member(
@@ -417,7 +422,7 @@ async fn a_malformed_json_body_is_422() {
 async fn a_bad_path_id_is_422() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-path", "Path").await;
 
     let (status, body) = fixture
@@ -443,7 +448,7 @@ async fn the_owner_can_assign_the_viewer_role() {
     let (status, _) = fixture
         .patch(
             &format!("/api/rooms/room-role/members/{member}"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
             json!({"role": "viewer"}),
         )
         .await;
@@ -468,7 +473,7 @@ async fn the_owner_role_is_not_assignable_over_http() {
     let (status, body) = fixture
         .patch(
             &format!("/api/rooms/room-owner/members/{member}"),
-            Some(&fixture.token(owner)),
+            Some(&fixture.token(owner).await),
             json!({"role": "owner"}),
         )
         .await;
@@ -488,7 +493,7 @@ async fn invite_link_flow() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let guest = fixture.user("guest@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     let (status, room) = fixture
         .post("/api/rooms", Some(&token), json!({"name": "Lab"}))
         .await;
@@ -523,7 +528,7 @@ async fn invite_link_flow() {
     let (accepted, joined) = fixture
         .post(
             "/api/invitations/accept",
-            Some(&fixture.token(guest)),
+            Some(&fixture.token(guest).await),
             json!({"token": invitation_token}),
         )
         .await;
@@ -549,7 +554,7 @@ async fn invite_link_flow() {
 async fn invitations_are_listed_and_revoked() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-invites", "Invites").await;
 
     let (_, created) = fixture
@@ -591,7 +596,7 @@ async fn invitations_are_listed_and_revoked() {
 async fn a_malformed_invitation_address_is_422() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-bad-mail", "Bad mail").await;
 
     for address in ["", "   ", "not-an-address", "a@b"] {
@@ -616,11 +621,11 @@ async fn a_malformed_invitation_address_is_422() {
 async fn the_error_messages_are_pythons() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let owner_token = fixture.token(owner);
+    let owner_token = fixture.token(owner).await;
     fixture.room(owner, "room-words", "Words").await;
     let viewer = fixture.user("viewer@example.org").await;
     fixture.member("room-words", viewer, Role::Viewer).await;
-    let viewer_token = fixture.token(viewer);
+    let viewer_token = fixture.token(viewer).await;
     let stranger = Uuid::new_v4();
 
     let (status, body) = fixture
@@ -663,7 +668,9 @@ async fn the_error_messages_are_pythons() {
         )
         .await;
     let token = created["token"].as_str().expect("no token").to_owned();
-    let guest_token = fixture.token(fixture.user("stranger@example.org").await);
+    let guest_token = fixture
+        .token(fixture.user("stranger@example.org").await)
+        .await;
     let (status, body) = fixture
         .post(
             "/api/invitations/accept",
@@ -682,7 +689,7 @@ async fn the_error_messages_are_pythons() {
 async fn a_placeholder_address_is_refused() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-mail", "Mail").await;
 
     let (status, body) = fixture
@@ -701,7 +708,7 @@ async fn a_placeholder_address_is_refused() {
 async fn an_invitation_cannot_grant_owner_over_http() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
     fixture.room(owner, "room-grant", "Grant").await;
 
     let (status, body) = fixture

@@ -56,7 +56,7 @@ async fn not_found_for_strangers() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let foreign = room_owned_by(&fixture, other, "theirs").await;
 
     let foreign_page = fixture
@@ -81,7 +81,7 @@ async fn not_found_for_strangers() {
 async fn owner_view() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let member = member_of(&fixture, &id, OTHER, Role::Editor).await;
 
@@ -115,7 +115,7 @@ async fn editor_view_has_no_role_picker() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "theirs").await;
     member_of(&fixture, &id, MEMBER, Role::Editor).await;
 
@@ -140,7 +140,7 @@ async fn viewer_view() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "theirs").await;
     member_of(&fixture, &id, MEMBER, Role::Viewer).await;
 
@@ -155,7 +155,7 @@ async fn viewer_view() {
 async fn change_role_closes_their_socket() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let member = member_of(&fixture, &id, GUEST, Role::Editor).await;
     let room = fixture.state.rooms.get_or_open(&id).unwrap();
@@ -187,7 +187,7 @@ async fn change_role_closes_their_socket() {
 async fn remove() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let member = member_of(&fixture, &id, GUEST, Role::Editor).await;
 
@@ -212,7 +212,7 @@ async fn remove() {
 async fn transfer() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let member = member_of(&fixture, &id, OTHER, Role::Editor).await;
 
@@ -247,7 +247,7 @@ async fn leave() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "theirs").await;
     member_of(&fixture, &id, MEMBER, Role::Editor).await;
 
@@ -289,7 +289,7 @@ async fn share_link_uses_public_url() {
 async fn share_link_survives_a_newline_free_flash() {
     let fixture = Fixture::start_with_mail().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let path = format!("/ui/rooms/{id}");
 
@@ -336,7 +336,7 @@ async fn share_link_survives_a_newline_free_flash() {
 /// Create a share link as the owner and read the page the flash redirects to.
 async fn share_link_page(fixture: &Fixture, role: Role) -> String {
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(fixture, user, "lab").await;
     let path = format!("/ui/rooms/{id}");
     let response = fixture
@@ -354,7 +354,7 @@ async fn share_link_page(fixture: &Fixture, role: Role) -> String {
 async fn revoke() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let (invitation, _) =
         invitations::create(&fixture.state, &id, user, Role::Editor, None, 14, None)
@@ -382,7 +382,7 @@ async fn revoke() {
 async fn invite_by_email_with_mailer() {
     let fixture = Fixture::start_with_mail().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
 
     let response = fixture
@@ -407,7 +407,7 @@ async fn invite_by_email_with_mailer() {
 async fn invite_by_email_without_mailer_shows_link() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
 
     let response = fixture
@@ -433,7 +433,7 @@ async fn refused_after_losing_access() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "theirs").await;
     member_of(&fixture, &id, MEMBER, Role::Editor).await;
     db::remove_member(&fixture.state.pool, &id, user)
@@ -458,7 +458,7 @@ async fn refused_after_losing_access() {
 async fn deactivated_session_is_refused() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     fixture.deactivate(MEMBER).await;
 
@@ -485,7 +485,7 @@ async fn revoke_foreign_invitation_is_refused() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let mine = room_owned_by(&fixture, user, "mine").await;
     let theirs = room_owned_by(&fixture, other, "theirs").await;
     let (invitation, _) =
@@ -521,7 +521,7 @@ async fn revoke_foreign_invitation_is_refused() {
 async fn an_invitation_row_shows_usage() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     let guest = fixture.verified(GUEST).await;
     invitations::create(
@@ -580,7 +580,7 @@ async fn grants_are_listed_for_viewers() {
     groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
         .await
         .unwrap();
-    let token = fixture.token(viewer);
+    let token = fixture.token(viewer).await;
 
     let page = body_text(
         fixture
@@ -613,7 +613,7 @@ async fn the_owner_picker_lists_only_their_ungranted_groups() {
     groups::grant(&fixture.state, &room, &granted, owner, Role::Editor)
         .await
         .unwrap();
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let page = body_text(
         fixture
@@ -643,7 +643,7 @@ async fn share_with_group() {
     let owner = fixture.verified(MEMBER).await;
     let room = room_owned_by(&fixture, owner, "lab").await;
     let group = group_owned_by(&fixture, owner, "friends").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let response = fixture
         .post(
@@ -674,7 +674,7 @@ async fn change_the_role_of_a_granted_group() {
     groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
         .await
         .unwrap();
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let response = fixture
         .post(
@@ -701,7 +701,7 @@ async fn stop_sharing_with_a_group() {
     groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
         .await
         .unwrap();
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let page = body_text(
         fixture
@@ -742,7 +742,7 @@ async fn a_foreign_group_is_refused() {
     let other = fixture.verified(OTHER).await;
     let room = room_owned_by(&fixture, owner, "lab").await;
     let foreign = group_owned_by(&fixture, other, "theirs").await;
-    let token = fixture.token(owner);
+    let token = fixture.token(owner).await;
 
     let response = fixture
         .post(

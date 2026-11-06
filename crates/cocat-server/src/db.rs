@@ -290,7 +290,10 @@ pub async fn linked_providers<'e, E: Executor<'e, Database = Sqlite>>(
 
 /// Write every mutable column of `user`. The address is unique, so a duplicate is reported as
 /// one; the caller decides whether that is a conflict or a bad request.
-pub async fn save_user(pool: &SqlitePool, user: &User) -> Result<(), DbError> {
+pub async fn save_user<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    user: &User,
+) -> Result<(), DbError> {
     sqlx::query(
         r#"UPDATE "user"
            SET email = ?, hashed_password = ?, is_active = ?, is_superuser = ?, is_verified = ?
@@ -302,7 +305,7 @@ pub async fn save_user(pool: &SqlitePool, user: &User) -> Result<(), DbError> {
     .bind(user.is_superuser)
     .bind(user.is_verified)
     .bind(user.id.to_string())
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(|error| taken_email(error, &user.email))?;
     Ok(())
@@ -340,8 +343,8 @@ pub async fn set_verified(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> 
 /// Replace a password whose hash is still `expected`. The argon2 hash is what a reset link's
 /// fingerprint is compared against, so comparing it inside the write is also what spends the
 /// link: of two requests holding the same link only the first finds the old hash still there.
-pub async fn replace_password(
-    pool: &SqlitePool,
+pub async fn replace_password<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
     id: Uuid,
     expected: &str,
     password: &str,
@@ -352,9 +355,74 @@ pub async fn replace_password(
     .bind(hash_password(password)?)
     .bind(id.to_string())
     .bind(expected)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(updated.rows_affected() > 0)
+}
+
+/// Record a session for the cookie value whose hash this is. Expired sessions of the same
+/// account go in the same transaction, so the table only holds sessions someone still has.
+pub async fn create_session(
+    pool: &SqlitePool,
+    token_hash: &str,
+    user_id: Uuid,
+) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        r#"DELETE FROM session
+           WHERE user_id = ? AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
+    )
+    .bind(user_id.to_string())
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO session (token_hash, user_id, expires_at)
+           VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+3600 seconds'))"#,
+    )
+    .bind(token_hash)
+    .bind(user_id.to_string())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The account a live session belongs to. An expired or deleted session is the same miss as an
+/// unknown token, so callers have one refusal to answer.
+pub async fn session_user(pool: &SqlitePool, token_hash: &str) -> Result<Option<User>, DbError> {
+    let row = sqlx::query(
+        r#"SELECT "user".id, "user".email, "user".hashed_password, "user".is_active,
+                  "user".is_superuser, "user".is_verified
+           FROM session JOIN "user" ON "user".id = session.user_id
+           WHERE session.token_hash = ?
+             AND session.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
+    )
+    .bind(token_hash)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(user_from_row).transpose()?)
+}
+
+/// Drop one session; a token that is not there is not an error, since the cookie is going away
+/// either way.
+pub async fn delete_session(pool: &SqlitePool, token_hash: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM session WHERE token_hash = ?")
+        .bind(token_hash)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Drop every session of an account, for the writes that must leave no old cookie working.
+pub async fn end_sessions_of<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    user_id: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM session WHERE user_id = ?")
+        .bind(user_id.to_string())
+        .execute(executor)
+        .await?;
+    Ok(())
 }
 
 /// The address column is unique, case-insensitively: a second account for the same person is

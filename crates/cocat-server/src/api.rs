@@ -68,7 +68,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let id = auth::authenticate(&state.pool, &parts.headers, &state.secret)
+        let id = auth::authenticate(&state.pool, &parts.headers)
             .await
             .map_err(|_| ApiError::Unauthorized)?;
         let user = db::user_by_id(&state.pool, id)

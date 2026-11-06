@@ -292,7 +292,7 @@ fn invitation_from_row(row: &SqliteRow) -> Result<Invitation, LifecycleError> {
     })
 }
 
-pub(crate) fn new_token() -> Result<(String, String), LifecycleError> {
+pub(crate) fn new_token() -> Result<(String, String), getrandom::Error> {
     let mut bytes = [0u8; TOKEN_BYTES];
     getrandom::fill(&mut bytes)?;
     let token = URL_SAFE_NO_PAD.encode(bytes);

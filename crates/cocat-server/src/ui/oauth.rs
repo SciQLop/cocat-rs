@@ -129,7 +129,7 @@ pub(crate) async fn callback(
     };
     match oidc::sign_in(&state, &provider.config, identity).await {
         Ok(user) if !user.is_active => cleared(&state, failed(&state, "credentials")),
-        Ok(user) => signed_in(&state, user),
+        Ok(user) => signed_in(&state, user).await,
         Err(oidc::SignInError::Exists) => cleared(&state, failed(&state, "exists")),
         Err(error) => {
             tracing::warn!(%error, "cannot sign a provider account in");
@@ -185,10 +185,13 @@ async fn user_info_email(
     Ok(claims.email().map(|email| email.as_str().to_owned()))
 }
 
-fn signed_in(state: &AppState, user: crate::db::User) -> Response {
-    let Ok(token) = auth::mint_token(user.id, &state.secret, SystemTime::now()) else {
-        tracing::warn!("cannot mint a session for a provider sign-in");
-        return cleared(state, StatusCode::INTERNAL_SERVER_ERROR.into_response());
+async fn signed_in(state: &AppState, user: crate::db::User) -> Response {
+    let token = match auth::start_session(&state.pool, user.id).await {
+        Ok(token) => token,
+        Err(error) => {
+            tracing::warn!(%error, "cannot start a session for a provider sign-in");
+            return cleared(state, StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
     };
     let target = if mail::is_placeholder(&user.email) {
         state.links.path("/confirm-email")

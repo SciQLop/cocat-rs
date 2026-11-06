@@ -35,7 +35,7 @@ async fn login_required() {
 async fn lists_rooms_with_roles() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
 
     let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
@@ -58,7 +58,7 @@ async fn lists_rooms_reached_through_a_group() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "shared-lab").await;
     let group = groups::create(&fixture.state, other, "team").await.unwrap();
     sqlx::query("INSERT INTO group_member (group_id, user_id, role) VALUES (?, ?, 'member')")
@@ -84,7 +84,7 @@ async fn lists_rooms_reached_through_a_group() {
 async fn create() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post("/ui/rooms", Some(&token), &form(&[("name", "new-lab")]))
@@ -103,7 +103,7 @@ async fn create() {
 async fn create_requires_a_name() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post("/ui/rooms", Some(&token), &form(&[("name", " ")]))
@@ -129,7 +129,7 @@ async fn create_requires_a_name() {
 async fn create_refuses_control_characters() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let response = fixture
         .post("/ui/rooms", Some(&token), &form(&[("name", "lab\u{1}")]))
@@ -151,7 +151,7 @@ async fn create_refuses_control_characters() {
 async fn create_refuses_a_name_over_200_characters() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let long = "a".repeat(201);
     let response = fixture
@@ -174,7 +174,7 @@ async fn create_refuses_a_name_over_200_characters() {
 async fn rename() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
 
     let response = fixture
@@ -196,7 +196,7 @@ async fn rename() {
 async fn delete() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
 
     let response = fixture
@@ -217,7 +217,7 @@ async fn leave() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "lab").await;
     db::add_member(&fixture.state.pool, &id, user, Role::Editor)
         .await
@@ -240,7 +240,7 @@ async fn leave() {
 async fn owner_has_no_leave() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
 
     let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
@@ -253,7 +253,7 @@ async fn owner_has_no_leave() {
 async fn action_refused_after_deactivation() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     fixture.deactivate(MEMBER).await;
 
     let response = fixture
@@ -274,7 +274,7 @@ async fn action_refused_after_deactivation() {
 async fn flash_shown_once() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
     let response = fixture
         .post("/ui/rooms", Some(&token), &form(&[("name", "lab")]))
         .await;
@@ -294,7 +294,7 @@ async fn flash_shown_once() {
 async fn forged_flash_is_escaped() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user);
+    let token = fixture.token(user).await;
 
     let page = body_text(
         fixture

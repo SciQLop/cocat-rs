@@ -1,5 +1,5 @@
 use std::fs;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -58,7 +58,7 @@ impl Fixture {
     }
 
     async fn get(&self, path: &str, user: Uuid) -> (StatusCode, serde_json::Value) {
-        let token = auth::mint_token(user, &self.state.secret, SystemTime::now()).unwrap();
+        let token = auth::start_session(&self.state.pool, user).await.unwrap();
         let request = Request::builder()
             .method(Method::GET)
             .uri(path)
