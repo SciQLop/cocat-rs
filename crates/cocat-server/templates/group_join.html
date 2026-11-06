@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<article class="card">
 <h1>Join a group</h1>
 <form method="post" action="{{ action }}"{% if submit_on_load %} data-submit-fragment{% endif %}>
   <input type="hidden" name="token" value="">
@@ -7,8 +8,10 @@
 {% if paste %}
 <form method="post" action="{{ action }}">
   <label for="link">Invitation link</label>
-  <input id="link" name="link" type="text" autocomplete="off">
-  <button type="submit">Continue</button>
+  <fieldset role="group">
+    <input id="link" name="link" type="text" autocomplete="off">
+    <button type="submit">Continue</button>
+  </fieldset>
 </form>
 {% endif %}
 {% if !message.is_empty() %}
@@ -24,9 +27,10 @@
   <button type="submit">Accept</button>
 </form>
 {% else %}
-<p><a href="{{ login_href }}">Log in to accept</a></p>
-<p>Signing in leaves this page behind: paste the link again.</p>
+<p><a href="{{ login_href }}" role="button">Log in to accept</a></p>
+<p><small>Signing in leaves this page behind: paste the link again.</small></p>
 {% endif %}
 {% when None %}
 {% endmatch %}
+</article>
 {% endblock %}

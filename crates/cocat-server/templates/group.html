@@ -1,71 +1,105 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>{{ name }}</h1>
+<h1>{{ name }} <span class="badge">{{ role }}</span></h1>
 <p><a href="{{ groups_href }}">My groups</a></p>
 <p>Your role: {{ role }}</p>
 {% match leave %}
 {% when Some with (form) %}
 <form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
-  <button type="submit">Leave</button>
+  <button type="submit" class="secondary outline">Leave</button>
 </form>
 {% when None %}
 {% endmatch %}
+
 <h2>Members</h2>
-<ul class="members">
+<table class="members">
+  <thead>
+    <tr><th>Member</th><th>Role</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
 {% for member in members %}
-  <li class="member" data-member="{{ member.id }}">
-    <span class="email">{{ member.email }}</span>
+    <tr data-member="{{ member.id }}">
+      <td class="email">{{ member.email }}</td>
+      <td><span class="role badge">{{ member.role }}</span></td>
+      <td class="actions">
 {% match member.remove %}
 {% when Some with (remove) %}
-    <form method="post" action="{{ remove.action }}" data-confirm="{{ remove.confirm }}">
-      <button type="submit">Remove</button>
-    </form>
+        <form method="post" action="{{ remove.action }}" data-confirm="{{ remove.confirm }}">
+          <button type="submit" class="contrast outline">Remove</button>
+        </form>
 {% when None %}
 {% endmatch %}
-  </li>
+      </td>
+    </tr>
 {% endfor %}
-</ul>
+  </tbody>
+</table>
+
 <h2>Rooms shared with this group</h2>
+{% if rooms.is_empty() %}
+<p class="empty">No room is shared with this group.</p>
+{% else %}
 <ul class="rooms">
 {% for room in rooms %}
   <li class="room"><a href="{{ room.href }}">{{ room.name }}</a> <span class="role">{{ room.role }}</span></li>
 {% endfor %}
 </ul>
+{% endif %}
+
 {% match panel %}
 {% when Some with (panel) %}
 <h2>Invitations</h2>
-<form method="post" action="{{ panel.action }}">
-  <input type="hidden" name="kind" value="link">
-  <button type="submit">Create share link</button>
-</form>
-<form method="post" action="{{ panel.action }}">
-  <input type="hidden" name="kind" value="email">
-  <label for="email">Invite by email</label>
-  <input id="email" name="email" type="email" autocomplete="off">
-  <button type="submit">Send invitation</button>
-</form>
+<div class="invitation-forms">
+  <article>
+    <h3>Share link</h3>
+    <form method="post" action="{{ panel.action }}">
+      <input type="hidden" name="kind" value="link">
+      <button type="submit">Create share link</button>
+    </form>
+  </article>
+  <article>
+    <h3>Invite by email</h3>
+    <form method="post" action="{{ panel.action }}">
+      <input type="hidden" name="kind" value="email">
+      <label for="email">Invite by email</label>
+      <input id="email" name="email" type="email" autocomplete="off">
+      <button type="submit">Send invitation</button>
+    </form>
+  </article>
+</div>
 {% match panel.share_link %}
 {% when Some with (link) %}
 <label for="share-link">Share link</label>
-<input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
-<button type="button" data-copy="share-link">Copy</button>
+<fieldset role="group">
+  <input id="share-link" name="share-link" type="text" value="{{ link }}" readonly>
+  <button type="button" data-copy="share-link">Copy</button>
+</fieldset>
 {% when None %}
 {% endmatch %}
-<ul class="invitations">
+{% if panel.invitations.is_empty() %}
+<p class="empty">No pending invitation.</p>
+{% else %}
+<table class="invitations">
+  <thead>
+    <tr><th>Invitation</th><th>Expires</th><th>Usage</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
 {% for invitation in panel.invitations %}
-  <li class="invitation" data-invitation="{{ invitation.id }}">
-    <span class="who">{{ invitation.label }}</span>
-    <span class="expires">{{ invitation.expires }}</span>
-{% if !invitation.usage.is_empty() %}
-    <span class="usage">{{ invitation.usage }}</span>
-{% endif %}
-    <form method="post" action="{{ invitation.action }}"
-          data-confirm="Revoke this invitation?">
-      <button type="submit">Revoke</button>
-    </form>
-  </li>
+    <tr data-invitation="{{ invitation.id }}">
+      <td class="who">{{ invitation.label }}</td>
+      <td class="expires">{{ invitation.expires }}</td>
+      <td>{% if !invitation.usage.is_empty() %}<span class="usage">{{ invitation.usage }}</span>{% endif %}</td>
+      <td class="actions">
+        <form method="post" action="{{ invitation.action }}"
+              data-confirm="Revoke this invitation?">
+          <button type="submit" class="contrast outline">Revoke</button>
+        </form>
+      </td>
+    </tr>
 {% endfor %}
-</ul>
+  </tbody>
+</table>
+{% endif %}
 {% when None %}
 <p>Only the owner can manage invitations.</p>
 {% endmatch %}

@@ -90,6 +90,7 @@ struct MemberRemoval {
 struct MemberLine {
     id: Uuid,
     email: String,
+    role: &'static str,
     remove: Option<MemberRemoval>,
 }
 
@@ -289,6 +290,7 @@ async fn members_of(
             MemberLine {
                 id: member.user_id,
                 email: member.email,
+                role: member.role.as_str(),
                 remove,
             }
         })

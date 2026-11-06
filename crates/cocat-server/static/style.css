@@ -1,64 +1,114 @@
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
+/* Additions to Pico: a narrow column for forms, badges, and inline table actions. */
+.muted {
+  color: var(--pico-muted-color);
 }
 
-body {
-  margin: 0 auto;
-  max-width: 48rem;
-  padding: 1rem;
+main > article.card {
+  max-width: 28rem;
+  margin-inline: auto;
+  margin-top: 3rem;
 }
 
-header {
-  align-items: center;
-  border-bottom: 1px solid currentColor;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  padding-bottom: 0.5rem;
+.badge,
+.role {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 1rem;
+  background: var(--pico-primary);
+  color: var(--pico-primary-inverse);
+  font-size: 0.8em;
+  font-weight: 600;
+  vertical-align: middle;
 }
 
-header form {
-  margin-left: auto;
-}
-
-.brand {
-  font-weight: bold;
+.error {
+  color: var(--pico-del-color);
+  font-weight: 600;
 }
 
 .error:empty {
   display: none;
 }
 
-.error {
-  color: #b00020;
-}
-
 .notice {
-  border-left: 3px solid currentColor;
-  padding-left: 0.75rem;
+  border-left: 4px solid var(--pico-primary);
+  padding: 0.5rem 1rem;
+  background: var(--pico-card-background-color);
 }
 
-label {
-  display: block;
-  margin-top: 0.75rem;
+table td.actions {
+  white-space: nowrap;
 }
 
-input,
-button {
-  font: inherit;
+table td.actions form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0.35rem 0 0;
+}
+
+table td.actions select,
+table td.actions input {
+  width: auto;
+  margin: 0;
   padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
 }
 
-button {
-  margin-top: 0.75rem;
+table td.actions input[name="name"] {
+  width: 9rem;
 }
 
-.actions a {
-  display: inline-block;
-  font: inherit;
-  padding: 0.25rem 0.5rem;
-  margin-top: 0.75rem;
-  margin-right: 0.5rem;
+table td.actions button {
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.875rem;
+  width: auto;
+}
+
+[role="group"] select {
+  flex: 0 1 auto;
+  width: auto;
+}
+
+[role="group"] button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+form.section-form fieldset {
+  max-width: 46rem;
+}
+
+.invitation-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.empty {
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+.danger {
+  color: var(--pico-del-color);
+  border-color: var(--pico-del-color);
+}
+
+h1 .badge {
+  margin-left: 0.5rem;
+}
+
+.section-form {
+  margin-bottom: 1.5rem;
+}
+
+.section-form label {
+  font-size: 0.875rem;
+}
+
+.section-form select,
+.section-form input {
+  margin-bottom: 0.25rem;
 }

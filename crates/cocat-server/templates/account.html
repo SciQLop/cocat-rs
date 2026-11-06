@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+<article class="card">
 <h1>Account</h1>
 <p class="email">{{ email }}</p>
 {% match confirm_href %}
 {% when Some with (href) %}
-<p><a href="{{ href }}">Confirm your email</a></p>
+<p><a href="{{ href }}" role="button" class="secondary">Confirm your email</a></p>
 {% when None %}
 {% endmatch %}
 {% match signs_in_with %}
@@ -23,4 +24,5 @@
   {% include "message.html" %}
 </form>
 {% endmatch %}
+</article>
 {% endblock %}

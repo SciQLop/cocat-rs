@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<article class="card">
 <h1>Choose a new password</h1>
 <form method="post" action="{{ action }}">
   <input type="hidden" name="token" value="">
@@ -12,4 +13,5 @@
   <button type="submit">Change password</button>
   {% include "message.html" %}
 </form>
+</article>
 {% endblock %}

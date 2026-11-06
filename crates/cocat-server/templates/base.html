@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ frame.title }}</title>
+  <link rel="stylesheet" href="{{ frame.pico_href }}">
   <link rel="stylesheet" href="{{ frame.style_href }}">
   {% for script in frame.scripts %}<script src="{{ script }}" defer></script>
   {% endfor %}
@@ -11,22 +12,28 @@
 <body>
 {% match frame.header %}
 {% when Some with (header) %}
-<header>
-  <span class="brand">cocat</span>
-  <a href="{{ header.rooms_href }}">My rooms</a>
-  <a href="{{ header.groups_href }}">My groups</a>
-  <a href="{{ header.account_href }}">Account</a>
-  <span class="email">{{ header.email }}</span>
-  <form method="post" action="{{ header.logout_action }}">
-    <button type="submit">Log out</button>
-  </form>
+<header class="container">
+  <nav>
+    <ul><li><strong>cocat</strong></li></ul>
+    <ul>
+      <li><a href="{{ header.rooms_href }}">My rooms</a></li>
+      <li><a href="{{ header.groups_href }}">My groups</a></li>
+      <li><a href="{{ header.account_href }}">Account</a></li>
+      <li><small class="muted">{{ header.email }}</small></li>
+      <li>
+        <form method="post" action="{{ header.logout_action }}">
+          <button type="submit" class="outline secondary">Log out</button>
+        </form>
+      </li>
+    </ul>
+  </nav>
 </header>
 {% when None %}
 {% endmatch %}
-<main>
+<main class="container">
 {% match frame.flash %}
 {% when Some with (flash) %}
-<p class="notice">{{ flash }}</p>
+<p class="notice" role="status">{{ flash }}</p>
 {% when None %}
 {% endmatch %}
 {% block content %}{% endblock %}

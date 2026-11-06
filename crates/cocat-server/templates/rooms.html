@@ -1,36 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>My rooms</h1>
-<form method="post" action="{{ action }}">
-  <label for="new-room-name">New room name</label>
-  <input id="new-room-name" name="name" type="text" required>
-  <button type="submit">Create</button>
+<form method="post" action="{{ action }}" class="section-form">
+  <fieldset role="group">
+    <input id="new-room-name" name="name" type="text" required
+           placeholder="New room name" aria-label="New room name">
+    <button type="submit">Create</button>
+  </fieldset>
 </form>
-<ul class="rooms">
+{% if rooms.is_empty() %}
+<p class="empty">You are not a member of any room yet.</p>
+{% else %}
+<table class="rooms">
+  <thead>
+    <tr><th>Room</th><th>Role</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
 {% for room in rooms %}
-  <li class="room">
-    <a href="{{ room.href }}">{{ room.name }}</a>
-    <span class="role">{{ room.role }}</span>
-    {% match room.owner %}
-    {% when Some with (owner) %}
-    <form method="post" action="{{ owner.rename_action }}">
-      <label for="rename-{{ room.id }}">New name</label>
-      <input id="rename-{{ room.id }}" name="name" type="text" value="{{ room.name }}">
-      <button type="submit">Rename</button>
-    </form>
-    <form method="post" action="{{ owner.delete_action }}" data-confirm="{{ owner.delete_confirm }}">
-      <button type="submit">Delete</button>
-    </form>
-    {% when None %}
-    {% match room.leave %}
-    {% when Some with (leave) %}
-    <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
-      <button type="submit">Leave</button>
-    </form>
-    {% when None %}
-    {% endmatch %}
-    {% endmatch %}
-  </li>
+    <tr class="room" data-room="{{ room.id }}">
+      <td><a href="{{ room.href }}">{{ room.name }}</a></td>
+      <td><span class="role">{{ room.role }}</span></td>
+      <td class="actions">
+{% match room.owner %}
+{% when Some with (owner) %}
+        <form method="post" action="{{ owner.rename_action }}">
+          <input id="rename-{{ room.id }}" name="name" type="text" value="{{ room.name }}"
+                 aria-label="New name">
+          <button type="submit" class="secondary outline">Rename</button>
+        </form>
+        <form method="post" action="{{ owner.delete_action }}" data-confirm="{{ owner.delete_confirm }}">
+          <button type="submit" class="contrast outline">Delete</button>
+        </form>
+{% when None %}
+{% match room.leave %}
+{% when Some with (leave) %}
+        <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
+          <button type="submit" class="contrast outline">Leave</button>
+        </form>
+{% when None %}
+{% endmatch %}
+{% endmatch %}
+      </td>
+    </tr>
 {% endfor %}
-</ul>
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}

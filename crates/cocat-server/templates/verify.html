@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<article class="card">
 <h1>Verify your address</h1>
 <form method="post" action="{{ action }}"{% if submit_on_load %} data-submit-fragment{% endif %}>
   <input type="hidden" name="token" value="">
@@ -7,4 +8,5 @@
   <button type="submit">Verify</button>
 </form>
 <p><a href="{{ rooms_href }}">My rooms</a></p>
+</article>
 {% endblock %}

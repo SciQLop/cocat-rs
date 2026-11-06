@@ -17,11 +17,13 @@ use crate::db::User;
 use crate::links::Links;
 use crate::{AppState, auth, db};
 
+const PICO: &str = include_str!("../../static/pico.min.css");
 const STYLE: &str = include_str!("../../static/style.css");
 const FRAGMENT: &str = include_str!("../../static/fragment.js");
 const CONFIRM: &str = include_str!("../../static/confirm.js");
 const COPY: &str = include_str!("../../static/copy.js");
-const ASSETS: [(&str, &str, &str); 4] = [
+const ASSETS: [(&str, &str, &str); 5] = [
+    ("pico.min.css", PICO, "text/css; charset=utf-8"),
     ("style.css", STYLE, "text/css; charset=utf-8"),
     ("fragment.js", FRAGMENT, "text/javascript; charset=utf-8"),
     ("confirm.js", CONFIRM, "text/javascript; charset=utf-8"),
@@ -88,6 +90,7 @@ pub(crate) struct Header {
 /// What every page passes to `base.html`.
 pub(crate) struct Frame {
     pub title: &'static str,
+    pub pico_href: String,
     pub style_href: String,
     pub scripts: Vec<String>,
     pub header: Option<Header>,
@@ -98,6 +101,7 @@ impl Frame {
     pub(crate) fn new(links: &Links, user: Option<&User>, title: &'static str) -> Self {
         Self {
             title,
+            pico_href: links.path("/static/pico.min.css"),
             style_href: links.path("/static/style.css"),
             scripts: ["fragment.js", "confirm.js", "copy.js"]
                 .into_iter()

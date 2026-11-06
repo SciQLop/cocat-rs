@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<article class="card">
 <h1>Confirm your email</h1>
 <form method="post" action="{{ action }}">
   <label for="email">Email address</label>
@@ -7,4 +8,5 @@
   <button type="submit">Save</button>
   {% include "message.html" %}
 </form>
+</article>
 {% endblock %}

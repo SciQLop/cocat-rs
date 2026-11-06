@@ -1,36 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>My groups</h1>
-<form method="post" action="{{ action }}">
-  <label for="new-group-name">New group name</label>
-  <input id="new-group-name" name="name" type="text" required>
-  <button type="submit">Create</button>
+<form method="post" action="{{ action }}" class="section-form">
+  <fieldset role="group">
+    <input id="new-group-name" name="name" type="text" required
+           placeholder="New group name" aria-label="New group name">
+    <button type="submit">Create</button>
+  </fieldset>
 </form>
-<ul class="groups">
+{% if groups.is_empty() %}
+<p class="empty">You are not a member of any group yet.</p>
+{% else %}
+<table class="groups">
+  <thead>
+    <tr><th>Group</th><th>Role</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
 {% for group in groups %}
-  <li class="group" data-group="{{ group.id }}">
-    <a href="{{ group.href }}">{{ group.name }}</a>
-    <span class="role">{{ group.role }}</span>
+    <tr class="group" data-group="{{ group.id }}">
+      <td><a href="{{ group.href }}">{{ group.name }}</a></td>
+      <td><span class="role">{{ group.role }}</span></td>
+      <td class="actions">
 {% match group.owner %}
 {% when Some with (owner) %}
-    <form method="post" action="{{ owner.rename_action }}">
-      <input name="name" type="text" value="{{ group.name }}">
-      <button type="submit">Rename</button>
-    </form>
-    <form method="post" action="{{ owner.delete_action }}"
-          data-confirm="{{ owner.delete_confirm }}">
-      <button type="submit">Delete</button>
-    </form>
+        <form method="post" action="{{ owner.rename_action }}">
+          <input name="name" type="text" value="{{ group.name }}" aria-label="New name">
+          <button type="submit" class="secondary outline">Rename</button>
+        </form>
+        <form method="post" action="{{ owner.delete_action }}"
+              data-confirm="{{ owner.delete_confirm }}">
+          <button type="submit" class="contrast outline">Delete</button>
+        </form>
 {% when None %}
 {% endmatch %}
 {% match group.leave %}
 {% when Some with (leave) %}
-    <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
-      <button type="submit">Leave</button>
-    </form>
+        <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
+          <button type="submit" class="contrast outline">Leave</button>
+        </form>
 {% when None %}
 {% endmatch %}
-  </li>
+      </td>
+    </tr>
 {% endfor %}
-</ul>
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}

@@ -136,7 +136,7 @@ fn location(response: &Response) -> String {
 }
 
 async fn body_text(response: Response) -> String {
-    let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let bytes = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 
@@ -165,7 +165,8 @@ async fn static_assets_served_with_cache_headers() {
     let fixture = Fixture::start().await;
 
     for (path, content_type, marker) in [
-        ("/ui/static/style.css", "text/css", "body"),
+        ("/ui/static/style.css", "text/css", "--pico-muted-color"),
+        ("/ui/static/pico.min.css", "text/css", "Pico CSS"),
         (
             "/ui/static/fragment.js",
             "text/javascript",
