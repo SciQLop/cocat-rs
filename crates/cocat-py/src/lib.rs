@@ -15,9 +15,12 @@ use cocat_core::model::{self, NewCatalogue, NewEvent};
 use cocat_core::time::Timestamp;
 use cocat_core::votable;
 use numpy::PyArray1;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDateAccess, PyDateTime, PyDict, PyList, PySet, PyTimeAccess, PyTzInfo};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{
+    PyDateAccess, PyDateTime, PyDict, PyList, PySet, PyTimeAccess, PyTuple, PyType, PyTzInfo,
+};
 use serde_json::{Map as JsonMap, Value};
 use yrs::Transact;
 
@@ -220,8 +223,38 @@ fn status_name(status: cocat_client::Status) -> &'static str {
     }
 }
 
+static NOT_FOUND: PyOnceLock<Py<PyType>> = PyOnceLock::new();
+
+/// The class every lookup of a missing object raises. Python's own mappings raise
+/// `LookupError`, and this package raised `RuntimeError` before it named the case,
+/// so the class subclasses both.
+fn not_found(py: Python<'_>) -> Result<&Bound<'_, PyType>> {
+    NOT_FOUND
+        .get_or_try_init(py, || {
+            let bases = PyTuple::new(
+                py,
+                [
+                    py.get_type::<PyLookupError>(),
+                    py.get_type::<PyRuntimeError>(),
+                ],
+            )?;
+            let namespace = PyDict::new(py);
+            namespace.set_item("__doc__", "No catalogue or event carries that uuid.")?;
+            let class = py
+                .import("builtins")?
+                .getattr("type")?
+                .call1(("NotFound", bases, namespace))?;
+            Ok(class.cast_into::<PyType>()?.unbind())
+        })
+        .map(|class| class.bind(py))
+}
+
 fn unknown(what: &str) -> PyErr {
-    PyRuntimeError::new_err(format!("no {what} with that uuid"))
+    let message = format!("no {what} with that uuid");
+    Python::attach(|py| match not_found(py) {
+        Ok(class) => PyErr::from_type(class.clone(), (message,)),
+        Err(_) => PyRuntimeError::new_err(message),
+    })
 }
 
 /// Whether two reads of one event hold the same values, whatever room each was read from.
@@ -1055,5 +1088,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(login, module)?)?;
     module.add_function(wrap_pyfunction!(rooms, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
+    module.add("NotFound", not_found(module.py())?)?;
     Ok(())
 }

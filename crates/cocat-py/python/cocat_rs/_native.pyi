@@ -1,5 +1,7 @@
 from typing import Any
 
+class NotFound(LookupError, RuntimeError): ...
+
 class Catalogue:
     uuid: str
     name: str

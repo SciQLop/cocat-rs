@@ -92,6 +92,17 @@ def test_an_unknown_object_raises_runtime_error(room):
         room.event("bbbbbbbb-2222-4222-8222-222222222222")
 
 
+def test_an_unknown_object_is_not_found(room):
+    assert issubclass(cc.NotFound, LookupError)
+    assert issubclass(cc.NotFound, RuntimeError)
+    with pytest.raises(cc.NotFound) as missing:
+        room.catalogue("nope")
+    assert isinstance(missing.value, LookupError)
+    assert isinstance(missing.value, RuntimeError)
+    with pytest.raises(cc.NotFound):
+        room.event("bbbbbbbb-2222-4222-8222-222222222222")
+
+
 def test_invalid_input_raises_value_error(room):
     with pytest.raises(ValueError):
         room.create_event(start="not a time", stop=STOP, author="a@x.org")

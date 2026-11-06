@@ -5,11 +5,12 @@ import logging
 import threading
 
 from . import _native
-from ._native import Catalogue, Event, RoomInfo, login, rooms
+from ._native import Catalogue, Event, NotFound, RoomInfo, login, rooms
 
 __all__ = [
     "Catalogue",
     "Event",
+    "NotFound",
     "Room",
     "RoomInfo",
     "login",
