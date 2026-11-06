@@ -78,6 +78,17 @@ so systemd restarts it after a crash.
 - `podman logs cocat-rs-dev` shows no error; `ls /DATA/cocat_rs_dev/mail` holds the mails a
   sign-up or a reset would have sent.
 
+## Bot protection
+
+nginx sends the sign-up and account-recovery routes, pages and API alike
+(`/cocat-dev/ui/{signup,login,forgot-password,reset-password,request-verify}` and
+`/cocat-dev/auth/{register,forgot-password,reset-password,request-verify-token}`), through the
+Anubis instance that already guards `/cdaweb-data/` (`anubis@cdaweb`, a proof-of-work page for
+browsers). Unlike the mirror, these routes have no exemption for scripts. `/auth/jwt/login`,
+the rooms, the API and the websocket stay open: SciQLop and scripts sign in and sync there. The
+block sits in `/etc/nginx/conf.d/sciqlop.conf` before the `/cocat-dev` location; a backup of
+the file before the change is in `/root/sciqlop.conf.before-cocat-dev-anubis-*`.
+
 ## Sending real mail
 
 Without configuration the dev server writes each mail as a file in `/DATA/cocat_rs_dev/mail`.
