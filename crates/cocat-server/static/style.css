@@ -516,3 +516,9 @@ details.menu > .menu-items button { width: 100%; justify-content: flex-start; }
 @media (max-width: 40rem) {
   details.menu > .menu-items { left: 0; right: auto; }
 }
+
+/* The admin tables carry more columns than the other pages: give them room. */
+main:has(.tabs.admin), .site-header:has(~ main .tabs.admin) .bar { max-width: 80rem; }
+td.nowrap { white-space: nowrap; }
+td.owner, td.email { overflow-wrap: anywhere; }
+.meter { flex: none; }

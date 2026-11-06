@@ -27,8 +27,8 @@
         {% if !user.is_verified %}<span class="tag">unverified</span>{% endif %}
         {% if !user.is_active %}<span class="tag danger">deactivated</span>{% endif %}
       </td>
-      <td class="muted">{{ user.joined }}</td>
-      <td>{{ user.rooms_owned }} owned</td>
+      <td class="muted nowrap">{{ user.joined }}</td>
+      <td class="nowrap">{{ user.rooms_owned }} owned</td>
       <td>{% include "admin_usage_user.html" %}</td>
       <td class="actions">
         <details class="edit">

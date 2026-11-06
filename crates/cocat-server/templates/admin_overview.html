@@ -52,9 +52,9 @@
 {% for room in largest %}
     <tr>
       <td class="name" title="Room id: {{ room.id }}">{{ room.name }}</td>
-      <td>{% if room.owner.is_empty() %}<span class="muted">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
+      <td class="owner">{% if room.owner.is_empty() %}<span class="muted">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
       <td>{% include "admin_usage_room.html" %}</td>
-      <td>{% if room.open %}{{ room.clients }} connected{% else %}<span class="muted">closed</span>{% endif %}</td>
+      <td class="nowrap">{% if room.open %}{{ room.clients }} connected{% else %}<span class="muted">closed</span>{% endif %}</td>
     </tr>
 {% endfor %}
   </tbody>
@@ -73,7 +73,7 @@
 {% for user in near_quota %}
     <tr>
       <td class="email">{{ user.email }}</td>
-      <td>{{ user.rooms_owned }} owned</td>
+      <td class="nowrap">{{ user.rooms_owned }} owned</td>
       <td>{% include "admin_usage_user.html" %}</td>
     </tr>
 {% endfor %}
