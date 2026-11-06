@@ -200,3 +200,40 @@ def test_event_arrays_can_carry_the_attributes_from_the_same_read(room):
     assert arrays["uuid"] == [earlier.uuid, later.uuid]
     assert arrays["attributes"] == [{"q": 0.5}, {"q": 1.5, "flag": True}]
     assert "attributes" not in catalogue.event_arrays()
+
+
+def test_room_event_arrays_follow_the_uuid_order_and_skip_unknown(room):
+    """One read for a set of events named by uuid, in the caller's order."""
+    catalogue = a_catalogue(room)
+    later = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
+    earlier = room.create_event(
+        start=START, stop=STOP, author="a@x.org", attributes={"q": 0.5}
+    )
+    catalogue.add_events([later, earlier])
+    missing = "bbbbbbbb-2222-4222-8222-222222222222"
+
+    arrays = room.event_arrays(
+        [later.uuid, missing, earlier.uuid], attributes=True
+    )
+
+    assert arrays["uuid"] == [later.uuid, earlier.uuid]
+    assert arrays["start"].dtype == np.dtype("datetime64[us]")
+    assert arrays["start"].tolist() == [
+        np.datetime64("2025-01-31T11:00:00.123456", "us"),
+        np.datetime64("2025-01-31T10:00:00.000000", "us"),
+    ]
+    assert arrays["stop"].tolist() == [
+        np.datetime64("2025-01-31T11:01:00.654321", "us"),
+        np.datetime64("2025-01-31T10:01:00.000000", "us"),
+    ]
+    assert arrays["attributes"] == [{"q": 1.5, "flag": True}, {"q": 0.5}]
+    assert "attributes" not in room.event_arrays([earlier.uuid])
+
+
+def test_room_event_arrays_of_nothing_are_empty(room):
+    arrays = room.event_arrays(
+        ["bbbbbbbb-2222-4222-8222-222222222222"], attributes=True
+    )
+    assert arrays["uuid"] == []
+    assert arrays["start"].tolist() == []
+    assert arrays["attributes"] == []

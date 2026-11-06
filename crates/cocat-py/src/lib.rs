@@ -384,28 +384,7 @@ impl Catalogue {
     /// from one read of the document, so a remote change cannot fall between them.
     #[pyo3(signature = (attributes=false))]
     fn event_arrays(&self, py: Python<'_>, attributes: bool) -> Result<Py<PyAny>> {
-        let records = self.records()?;
-        let uuids: Vec<String> = records.iter().map(|record| record.uuid.clone()).collect();
-        let starts: Vec<i64> = records
-            .iter()
-            .map(|record| record.start.unix_micros() as i64)
-            .collect();
-        let stops: Vec<i64> = records
-            .iter()
-            .map(|record| record.stop.unix_micros() as i64)
-            .collect();
-        let arrays = PyDict::new(py);
-        arrays.set_item("uuid", uuids)?;
-        arrays.set_item("start", datetime_array(py, starts)?)?;
-        arrays.set_item("stop", datetime_array(py, stops)?)?;
-        if attributes {
-            let rows = PyList::empty(py);
-            for record in &records {
-                rows.append(to_python_map(py, &record.attributes)?)?;
-            }
-            arrays.set_item("attributes", rows)?;
-        }
-        Ok(arrays.into_any().unbind())
+        event_arrays_of(py, &self.records()?, attributes)
     }
 
     #[pyo3(signature = (keys=None))]
@@ -569,6 +548,35 @@ impl Event {
     }
 }
 
+/// The arrays Python scripts plot with, in the order the records come.
+fn event_arrays_of(
+    py: Python<'_>,
+    records: &[model::EventRecord],
+    attributes: bool,
+) -> Result<Py<PyAny>> {
+    let uuids: Vec<String> = records.iter().map(|record| record.uuid.clone()).collect();
+    let starts: Vec<i64> = records
+        .iter()
+        .map(|record| record.start.unix_micros() as i64)
+        .collect();
+    let stops: Vec<i64> = records
+        .iter()
+        .map(|record| record.stop.unix_micros() as i64)
+        .collect();
+    let arrays = PyDict::new(py);
+    arrays.set_item("uuid", uuids)?;
+    arrays.set_item("start", datetime_array(py, starts)?)?;
+    arrays.set_item("stop", datetime_array(py, stops)?)?;
+    if attributes {
+        let rows = PyList::empty(py);
+        for record in records {
+            rows.append(to_python_map(py, &record.attributes)?)?;
+        }
+        arrays.set_item("attributes", rows)?;
+    }
+    Ok(arrays.into_any().unbind())
+}
+
 fn datetime_array(py: Python<'_>, micros: Vec<i64>) -> Result<Py<PyAny>> {
     let array = PyArray1::from_vec(py, micros);
     Ok(array.call_method1("view", ("datetime64[us]",))?.unbind())
@@ -697,6 +705,27 @@ impl Room {
         let txn = self.room.doc().transact();
         model::event(&txn, uuid).ok_or_else(|| unknown("event"))?;
         Py::new(py, Event::of(&self.room, uuid))
+    }
+
+    /// The arrays of the events named (uuids or `Event`s), in the order given and from one
+    /// read of the document. A uuid the room does not hold is left out, and the returned
+    /// `uuid` list says which came back.
+    #[pyo3(signature = (events, attributes=false))]
+    fn event_arrays(
+        &self,
+        py: Python<'_>,
+        events: &Bound<'_, PyAny>,
+        attributes: bool,
+    ) -> Result<Py<PyAny>> {
+        let wanted = uuids(Some(events))?;
+        let records = {
+            let txn = self.room.doc().transact();
+            wanted
+                .iter()
+                .filter_map(|uuid| model::event(&txn, uuid))
+                .collect::<Vec<_>>()
+        };
+        event_arrays_of(py, &records, attributes)
     }
 
     #[pyo3(signature = (name, author, uuid=None, tags=None, attributes=None, events=None))]
