@@ -15,7 +15,7 @@ use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, StoreError, read_updates, room_file};
 use thiserror::Error;
 use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
-use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, oneshot};
 use uuid::Uuid;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -38,6 +38,14 @@ pub const OUTBOUND_FRAMES: usize = 1024;
 /// room measured ~566 MB resident under the allocator the server uses.
 pub const MEMORY_PER_FILE_BYTE: u64 = 16;
 
+/// One cold read per core. Each one parses a whole room file into a fresh document, so a
+/// burst would multiply that document's memory by the burst's width.
+fn cold_read_slots() -> usize {
+    thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+}
+
 /// Why the room closed a socket. `1008` is a policy violation, `1013` means try again
 /// later, `1011` is the server failing on its side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +53,7 @@ pub enum CloseReason {
     Revoked,
     TooSlow,
     OverBudget,
+    TooLarge,
     Failed,
 }
 
@@ -52,6 +61,7 @@ impl CloseReason {
     pub fn code(self) -> u16 {
         match self {
             Self::Revoked => 1008,
+            Self::TooLarge => 1009,
             Self::TooSlow | Self::OverBudget => 1013,
             Self::Failed => 1011,
         }
@@ -62,6 +72,7 @@ impl CloseReason {
             Self::Revoked => "access revoked",
             Self::TooSlow => "client too slow",
             Self::OverBudget => "server memory budget reached",
+            Self::TooLarge => "message too large",
             Self::Failed => "the room could not be loaded",
         }
     }
@@ -125,15 +136,22 @@ pub struct RoomManager {
     /// What the cold reads in flight are charged, so a burst of them cannot slip past the
     /// budget between two opens.
     cold_bytes: Arc<AtomicU64>,
+    /// How many cold reads may parse at once: each one loads a whole room file.
+    cold_reads: Arc<Semaphore>,
 }
 
 impl RoomManager {
     pub fn new(update_dir: PathBuf, budget: Option<u64>) -> Self {
+        Self::with_cold_reads(update_dir, budget, cold_read_slots())
+    }
+
+    fn with_cold_reads(update_dir: PathBuf, budget: Option<u64>, cold_reads: usize) -> Self {
         Self {
             update_dir,
             rooms: Arc::default(),
             budget,
             cold_bytes: Arc::default(),
+            cold_reads: Arc::new(Semaphore::new(cold_reads.max(1))),
         }
     }
 
@@ -287,10 +305,17 @@ impl RoomManager {
         T: Send + 'static,
         F: FnOnce(&Doc) -> T + Send + 'static,
     {
+        // The slot moves into the blocking run, so a request dropped mid-parse keeps the room
+        // it is loading charged until the parse ends.
+        let slot = Arc::clone(&self.cold_reads)
+            .acquire_owned()
+            .await
+            .map_err(|_| RoomError::Unanswered)?;
         let charged = self.admit_cold_read(room_id)?;
         let update_dir = self.update_dir.clone();
         let id = room_id.to_owned();
         let loaded = tokio::task::spawn_blocking(move || {
+            let _slot = slot;
             let _charged = charged;
             let doc = Doc::new();
             for update in read_updates(&update_dir, &id)? {
@@ -1262,6 +1287,50 @@ mod tests {
         assert!(
             handle_frame(&doc, &mut store, &mut None, &mut clients, 2, frame).is_some(),
             "the room still accepts updates"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cold_reads_are_bounded() {
+        use std::sync::atomic::AtomicUsize;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "cold").unwrap();
+        store
+            .append(Bytes::from(update_with("key", "value")))
+            .unwrap();
+        store.write().unwrap();
+
+        let manager = RoomManager::with_cold_reads(dir.path().to_path_buf(), None, 1);
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let reading = |enter: Arc<AtomicUsize>, top: Arc<AtomicUsize>| {
+            let manager = manager.clone();
+            async move {
+                manager
+                    .read("cold", move |doc| {
+                        let now = enter.fetch_add(1, Ordering::SeqCst) + 1;
+                        top.fetch_max(now, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(100));
+                        enter.fetch_sub(1, Ordering::SeqCst);
+                        has_key(doc, "key")
+                    })
+                    .await
+            }
+        };
+
+        let (first, second) = tokio::join!(
+            reading(Arc::clone(&in_flight), Arc::clone(&peak)),
+            reading(Arc::clone(&in_flight), Arc::clone(&peak)),
+        );
+
+        assert!(first.unwrap(), "the first cold read saw the room");
+        assert!(second.unwrap(), "the second cold read saw the room");
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            1,
+            "two cold reads parsed the same room at once"
         );
     }
 

@@ -21,7 +21,10 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async, connect_async_with_config,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 use yrs::sync::{Message, SyncMessage};
@@ -147,6 +150,28 @@ impl Fixture {
         self.handshake(room_id, token)
             .await
             .unwrap_or_else(|status| panic!("the handshake was refused with {status}"))
+    }
+
+    /// A client that may send frames above the server's limit, to prove the server refuses
+    /// them rather than the client refusing to write them.
+    async fn connect_wide(&self, room_id: &str, token: Option<&str>) -> Socket {
+        let mut request = format!("ws://{}/room/{room_id}", self.addr)
+            .into_client_request()
+            .unwrap();
+        if let Some(token) = token {
+            request.headers_mut().insert(
+                "cookie",
+                format!("fastapiusersauth={token}").parse().unwrap(),
+            );
+        }
+        let wide = WebSocketConfig::default()
+            .max_message_size(Some(64 << 20))
+            .max_frame_size(Some(64 << 20));
+        let (socket, response) = connect_async_with_config(request, Some(wide), true)
+            .await
+            .unwrap_or_else(|error| panic!("the handshake failed: {error}"));
+        assert_eq!(response.status(), 101);
+        socket
     }
 }
 
@@ -741,4 +766,81 @@ async fn deactivating_a_user_closes_their_sockets() {
         "the deactivated account cannot reconnect"
     );
     wait_for_unload(&fixture).await;
+}
+
+#[tokio::test]
+async fn sixteen_mib_update_is_accepted() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-16mib", "Sixteen")
+        .await
+        .unwrap();
+    let mut socket = fixture
+        .connect("room-16mib", Some(&fixture.token(owner).await))
+        .await;
+    next_message(&mut socket).await;
+
+    let payload = update_with("key", &"a".repeat(ws::MAX_MESSAGE_BYTES - 1024));
+    assert!(
+        payload.len() <= ws::MAX_MESSAGE_BYTES,
+        "the update itself fits in one message"
+    );
+    socket
+        .send(sync_frame(Message::Sync(SyncMessage::Update(
+            payload.clone(),
+        ))))
+        .await
+        .unwrap();
+
+    match next_message(&mut socket).await {
+        Message::Sync(SyncMessage::Update(update)) => assert_eq!(update, payload),
+        other => panic!("expected the broadcast update, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn oversized_message_closes_the_socket() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-too-big", "TooBig")
+        .await
+        .unwrap();
+    let mut socket = fixture
+        .connect_wide("room-too-big", Some(&fixture.token(owner).await))
+        .await;
+    next_message(&mut socket).await;
+
+    // A frame above the limit is refused at its header, so a client still writing it is
+    // reset before the close frame can reach it; a client that finished writing reads the
+    // 1009 the bridge sends, which is also how a message that grows past the limit through
+    // fragments ends. Either way the message never lands.
+    if socket
+        .send(WsMessage::Binary(Bytes::from(vec![
+            0u8;
+            ws::MAX_MESSAGE_BYTES
+                + 1
+        ])))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    loop {
+        match timeout(WAIT, socket.next())
+            .await
+            .expect("the socket went quiet")
+        {
+            Some(Ok(WsMessage::Close(frame))) => {
+                assert_eq!(
+                    frame.map(|frame| u16::from(frame.code)),
+                    Some(1009),
+                    "an oversized message must close the socket with 1009"
+                );
+                break;
+            }
+            Some(Ok(_)) => {}
+            Some(Err(error)) => panic!("the socket dropped without a close frame: {error}"),
+            None => panic!("the socket dropped without a close frame"),
+        }
+    }
 }

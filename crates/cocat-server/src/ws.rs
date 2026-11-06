@@ -15,6 +15,7 @@ use cocat_core::role::Role;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -28,6 +29,10 @@ pub const INTERNAL_ERROR: u16 = 1011;
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const ATTACH_TRIES: usize = 3;
+
+/// The largest frame or message a socket accepts: uvicorn's default `ws_max_size`, so a
+/// client cannot make the server buffer more than this. A bigger one is closed with 1009.
+pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
 
@@ -76,7 +81,10 @@ async fn room_socket(
         Some(admitted) => admitted,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
-    upgrade.on_upgrade(move |socket| bridge(socket, state, room_id, user, role))
+    upgrade
+        .max_message_size(MAX_MESSAGE_BYTES)
+        .max_frame_size(MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| bridge(socket, state, room_id, user, role))
 }
 
 async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(Uuid, Role)> {
@@ -132,8 +140,10 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
     };
 
     let (mut sink, mut stream) = socket.split();
+    let (too_large, too_large_request) = oneshot::channel();
     let mut writer = tokio::spawn(async move {
-        if let Err(error) = write_until_closed(&mut sink, inbox, close_now).await {
+        if let Err(error) = write_until_closed(&mut sink, inbox, close_now, too_large_request).await
+        {
             tracing::debug!(%error, "the socket stopped accepting frames");
         }
     });
@@ -152,6 +162,9 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
                 Some(Ok(Message::Binary(bytes))) => room.frame(client, bytes),
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Err(error)) => {
+                    if is_too_large(&error) {
+                        let _ = too_large.send(CloseReason::TooLarge);
+                    }
                     tracing::debug!(%error, "the socket failed");
                     break;
                 }
@@ -162,13 +175,27 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
 
     // The writer is the only one that knows when the socket stopped working, and it must
     // not outlive this bridge: a client that neither reads nor closes would otherwise keep
-    // the room loaded forever.
+    // the room loaded forever. It gets one write timeout to send the close frame it owes the
+    // client for an oversized message before the bridge gives up on it.
     drop(stream);
     room.detach(client).await;
-    if !writer_finished {
+    if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
         let _ = writer.await;
     }
+}
+
+/// Whether the socket refused a message for its size, which tungstenite reports before the
+/// bridge sees a frame. Everything else that breaks a socket is just dropped.
+fn is_too_large(error: &axum::Error) -> bool {
+    use std::error::Error as _;
+
+    use tungstenite::Error;
+
+    error
+        .source()
+        .and_then(|source| source.downcast_ref::<Error>())
+        .is_some_and(|error| matches!(error, Error::Capacity(_)))
 }
 
 #[derive(Debug, Error)]
@@ -187,10 +214,11 @@ async fn write_until_closed(
     sink: &mut SplitSink<WebSocket, Message>,
     mut inbox: Inbox,
     close_now: Option<CloseReason>,
+    too_large: oneshot::Receiver<CloseReason>,
 ) -> Result<(), WriterError> {
     let reason = match close_now {
         Some(reason) => Some(reason),
-        None => drain_until_close(sink, &mut inbox).await?,
+        None => drain_until_close(sink, &mut inbox, too_large).await?,
     };
     let frame = reason.map(|reason| CloseFrame {
         code: reason.code(),
@@ -203,11 +231,13 @@ async fn write_until_closed(
 async fn drain_until_close(
     sink: &mut SplitSink<WebSocket, Message>,
     inbox: &mut Inbox,
+    mut too_large: oneshot::Receiver<CloseReason>,
 ) -> Result<Option<CloseReason>, WriterError> {
     loop {
         let frame = tokio::select! {
             biased;
             reason = &mut inbox.close => return Ok(reason.ok()),
+            reason = &mut too_large => return Ok(reason.ok()),
             frame = inbox.frames.recv() => match frame {
                 Some(frame) => frame,
                 None => return Ok(None),
@@ -251,4 +281,28 @@ async fn attach(
 
 fn next_client() -> ClientId {
     NEXT_CLIENT.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_message_closes_with_1009() {
+        let too_big = axum::Error::new(tungstenite::Error::Capacity(
+            tungstenite::error::CapacityError::MessageTooLong {
+                size: MAX_MESSAGE_BYTES + 1,
+                max_size: MAX_MESSAGE_BYTES,
+            },
+        ));
+
+        assert!(
+            is_too_large(&too_big),
+            "a capacity error is an oversized message"
+        );
+        assert_eq!(CloseReason::TooLarge.code(), 1009);
+        assert!(!is_too_large(&axum::Error::new(
+            tungstenite::Error::ConnectionClosed
+        )));
+    }
 }

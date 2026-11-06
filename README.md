@@ -67,6 +67,7 @@ restart.
 | Code | Meaning |
 |---|---|
 | 1008 | access revoked: the member was removed, their role changed, the room was deleted, or the role the handshake granted was no longer confirmed right after the socket attached |
+| 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
 | 1013 | try again later: the client fell more than 1024 frames behind, or the room would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
 | 1011 | internal error while attaching the socket |
 
