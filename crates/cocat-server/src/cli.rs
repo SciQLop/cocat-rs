@@ -329,18 +329,36 @@ fn room_budget() -> Result<Option<u64>, CliError> {
     }
 }
 
-/// The room and owner storage limits. Both are megabytes; unset or empty means the default.
+/// The room and owner storage limits. Both are megabytes; unset or empty means the default,
+/// which is already in bytes.
 fn storage_limits() -> Result<StorageLimits, CliError> {
+    storage_limits_from(|name| std::env::var(name))
+}
+
+fn storage_limits_from(
+    lookup: impl Fn(&str) -> Result<String, VarError>,
+) -> Result<StorageLimits, CliError> {
     let defaults = StorageLimits::default();
-    let default_mb = |bytes: u64| bytes / (1024 * 1024);
     Ok(StorageLimits {
-        room: megabytes("COCAT_ROOM_MAX_MB", default_mb(defaults.room))?,
-        owner: megabytes("COCAT_OWNER_MAX_MB", default_mb(defaults.owner))?,
+        room: megabytes(
+            "COCAT_ROOM_MAX_MB",
+            lookup("COCAT_ROOM_MAX_MB"),
+            defaults.room,
+        )?,
+        owner: megabytes(
+            "COCAT_OWNER_MAX_MB",
+            lookup("COCAT_OWNER_MAX_MB"),
+            defaults.owner,
+        )?,
     })
 }
 
-fn megabytes(variable: &'static str, default: u64) -> Result<u64, CliError> {
-    match std::env::var(variable) {
+fn megabytes(
+    variable: &'static str,
+    value: Result<String, VarError>,
+    default: u64,
+) -> Result<u64, CliError> {
+    match value {
         Err(VarError::NotPresent) => Ok(default),
         Err(VarError::NotUnicode(_)) => Err(CliError::InvalidSize {
             variable,
@@ -415,6 +433,28 @@ fn parse_role(value: &str) -> Result<Role, UnknownRole> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_limits_default_without_env() {
+        assert_eq!(
+            storage_limits_from(|_| Err(VarError::NotPresent)).unwrap(),
+            StorageLimits::default(),
+            "an unset variable keeps the default in bytes"
+        );
+        assert_eq!(
+            storage_limits_from(|name| {
+                if name == "COCAT_ROOM_MAX_MB" {
+                    Ok("1024".to_owned())
+                } else {
+                    Err(VarError::NotPresent)
+                }
+            })
+            .unwrap()
+            .room,
+            1024 * 1024 * 1024,
+            "a set value is read as megabytes"
+        );
+    }
 
     #[test]
     fn limits_from_env() {
