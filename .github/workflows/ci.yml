@@ -10,7 +10,7 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -18,3 +18,25 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor the abi3 wheel claims, and the version SciQLop runs.
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install maturin pytest pytest-asyncio numpy keyring
+      # The suite starts the server binary, so it has to exist before pytest runs.
+      - run: cargo build --workspace
+      - run: .venv/bin/maturin develop -m crates/cocat-py/Cargo.toml
+      - run: .venv/bin/python -m pytest crates/cocat-py/tests
