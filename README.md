@@ -1,5 +1,7 @@
 # cocat-rs
 
+<img src="docs/logo.png" alt="CoCat" height="160">
+
 The Rust server for cocat: rooms over the Yjs sync protocol, the room lifecycle, and the
 seeding CLI. The Python `cocat` keeps running until this server is feature-complete; the
 wire format and the `.y` room files are shared with it.

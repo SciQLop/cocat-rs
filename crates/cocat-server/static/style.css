@@ -1,6 +1,6 @@
 /* cocat's one stylesheet. The look borrows from what cocat stores: intervals on a time
-   axis. The brand mark is three event spans and a tick ruler runs under the header; the
-   rest stays quiet. */
+   axis. A tick ruler runs under the header, the logo's event spans echo it; the rest
+   stays quiet. */
 
 :root {
   --page: #f5f6f8;
@@ -98,7 +98,7 @@ p { margin: 0 0 1rem; }
   text-decoration: none;
 }
 
-.brand svg { display: block; }
+.brand img { display: block; }
 
 .site-nav { display: flex; gap: 1.25rem; flex: 1; }
 .site-nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
@@ -335,26 +335,12 @@ details.edit > form input { width: 14rem; }
 /* Landing: a strip of event spans on a time axis, the name, and the two ways in. */
 
 .landing { max-width: 34rem; margin: 3rem auto 0; }
+.landing .logo { display: block; width: auto; height: 12rem; margin-bottom: 1.5rem; }
 .landing h1 { font-size: 2.5rem; letter-spacing: -0.02em; margin-bottom: 0.5rem; }
 .landing .lead { font-size: 1.125rem; color: var(--muted); max-width: 30rem; }
 .landing .ways { display: flex; gap: 0.6rem; margin: 1.5rem 0 1.25rem; }
 .landing .more { font-size: 0.875rem; color: var(--muted); }
 
-.axis {
-  position: relative;
-  height: 3.25rem;
-  margin-bottom: 2rem;
-  border-bottom: 1px solid var(--muted);
-  background: repeating-linear-gradient(90deg, var(--muted) 0 1px, transparent 1px 2rem)
-    0 100% / 100% 6px no-repeat;
-}
-.axis span {
-  position: absolute;
-  height: 0.6rem;
-  border-radius: 2px;
-  background: var(--span);
-}
-.axis span:nth-child(2n) { background: var(--accent); }
 
 @media (max-width: 40rem) {
   .site-header .bar { flex-wrap: wrap; gap: 0.75rem 1rem; }

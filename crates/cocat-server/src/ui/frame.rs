@@ -17,17 +17,42 @@ use crate::db::User;
 use crate::links::Links;
 use crate::{AppState, auth, db};
 
-const STYLE: &str = include_str!("../../static/style.css");
-const FRAGMENT: &str = include_str!("../../static/fragment.js");
-const CONFIRM: &str = include_str!("../../static/confirm.js");
-const COPY: &str = include_str!("../../static/copy.js");
-const SORT: &str = include_str!("../../static/sort.js");
-const ASSETS: [(&str, &str, &str); 5] = [
-    ("style.css", STYLE, "text/css; charset=utf-8"),
-    ("fragment.js", FRAGMENT, "text/javascript; charset=utf-8"),
-    ("confirm.js", CONFIRM, "text/javascript; charset=utf-8"),
-    ("copy.js", COPY, "text/javascript; charset=utf-8"),
-    ("sort.js", SORT, "text/javascript; charset=utf-8"),
+const ASSETS: [(&str, &[u8], &str); 7] = [
+    (
+        "style.css",
+        include_bytes!("../../static/style.css"),
+        "text/css; charset=utf-8",
+    ),
+    (
+        "fragment.js",
+        include_bytes!("../../static/fragment.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "confirm.js",
+        include_bytes!("../../static/confirm.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "copy.js",
+        include_bytes!("../../static/copy.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "sort.js",
+        include_bytes!("../../static/sort.js"),
+        "text/javascript; charset=utf-8",
+    ),
+    (
+        "mark.png",
+        include_bytes!("../../static/mark.png"),
+        "image/png",
+    ),
+    (
+        "logo.webp",
+        include_bytes!("../../static/logo.webp"),
+        "image/webp",
+    ),
 ];
 
 /// Python's `ui/auth.py::MESSAGES`, which pages look up by query flag. `password_changed` is
@@ -92,6 +117,8 @@ pub(crate) struct Header {
 pub(crate) struct Frame {
     pub title: &'static str,
     pub style_href: String,
+    pub mark_href: String,
+    pub logo_href: String,
     pub home_href: String,
     pub scripts: Vec<String>,
     pub header: Option<Header>,
@@ -103,6 +130,8 @@ impl Frame {
         Self {
             title,
             style_href: asset_href(links, "style.css"),
+            mark_href: asset_href(links, "mark.png"),
+            logo_href: asset_href(links, "logo.webp"),
             home_href: links.app("/"),
             scripts: ["fragment.js", "confirm.js", "copy.js", "sort.js"]
                 .into_iter()
@@ -383,12 +412,12 @@ fn asset_href(links: &Links, name: &str) -> String {
     let source = ASSETS
         .iter()
         .find(|(asset, _, _)| *asset == name)
-        .map_or("", |(_, source, _)| *source);
+        .map_or(&[][..], |(_, source, _)| *source);
     links.path(&format!("/static/{name}?v={}", version(source)))
 }
 
-/// A short fingerprint of an asset's text; only equality matters, not the algorithm.
-fn version(source: &str) -> String {
+/// A short fingerprint of an asset's content; only equality matters, not the algorithm.
+fn version(source: &[u8]) -> String {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
@@ -416,8 +445,8 @@ mod tests {
 
     #[test]
     fn a_changed_asset_gets_a_new_version() {
-        assert_eq!(version("a { color: red }"), version("a { color: red }"));
-        assert_ne!(version("a { color: red }"), version("a { color: blue }"));
+        assert_eq!(version(b"a { color: red }"), version(b"a { color: red }"));
+        assert_ne!(version(b"a { color: red }"), version(b"a { color: blue }"));
     }
     use axum::http::{HeaderMap, header};
     use std::collections::HashMap;

@@ -189,6 +189,36 @@ async fn static_assets_served_with_cache_headers() {
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
+/// The logo: the header mark doubles as the tab icon, the landing page shows the badge.
+#[tokio::test]
+async fn the_logo_is_served_and_shown() {
+    let fixture = Fixture::start().await;
+
+    for (path, content_type, magic) in [
+        ("/ui/static/mark.png", "image/png", &b"\x89PNG"[..]),
+        ("/ui/static/logo.webp", "image/webp", &b"RIFF"[..]),
+    ] {
+        let response = fixture.get(path, None).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let supplied = response.headers()[header::CONTENT_TYPE].to_str().unwrap();
+        assert_eq!(supplied, content_type, "{path}");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.starts_with(magic), "{path} does not look like itself");
+    }
+
+    let landing = body_text(fixture.get("/", None).await).await;
+    assert!(
+        landing.contains(r#"<link rel="icon" type="image/png" href="/ui/static/mark.png?v="#),
+        "{landing}"
+    );
+    assert!(
+        landing.contains(r#"src="/ui/static/logo.webp?v="#),
+        "{landing}"
+    );
+}
+
 #[tokio::test]
 async fn prefix_applies_to_links_and_redirects() {
     let fixture = Fixture::with_env(&[("COCAT_PROXY_PREFIX", "/cocat")]).await;

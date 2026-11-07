@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ frame.title }}</title>
+  <link rel="icon" type="image/png" href="{{ frame.mark_href }}">
   <link rel="stylesheet" href="{{ frame.style_href }}">
   {% for script in frame.scripts %}<script src="{{ script }}" defer></script>
   {% endfor %}
