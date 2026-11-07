@@ -1079,8 +1079,20 @@ fn rooms(py: Python<'_>, url: String, cookie: String) -> Result<Vec<RoomInfo>> {
 }
 
 /// The compiled part of `cocat_rs`; `cocat_rs/__init__.py` re-exports it.
+/// The sync thread's warnings (a server out of reach, a refused handshake) go to Python's
+/// `logging` under `cocat_client.*`. Levels are read from Python on each record so that
+/// `setLevel` applies at once; below `Info` nothing crosses, so the GIL is rarely taken.
+fn forward_logs_to_python(py: Python<'_>) -> PyResult<()> {
+    // An embedding application may have installed its own logger first; it then keeps it.
+    let _ = pyo3_log::Logger::new(py, pyo3_log::Caching::Loggers)?
+        .filter(log::LevelFilter::Info)
+        .install();
+    Ok(())
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    forward_logs_to_python(module.py())?;
     module.add_class::<Room>()?;
     module.add_class::<Catalogue>()?;
     module.add_class::<Event>()?;

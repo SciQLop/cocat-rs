@@ -17,12 +17,16 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 cocat-client = { path = "../cocat-client" }
 cocat-core = { path = "../cocat-core" }
+log = "0.4"
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["abi3-py310"] }
+pyo3-log = "0.13"
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1", features = ["rt"] }
 time.workspace = true
+# The client logs through tracing; its `log` records are what pyo3-log hands to Python.
+tracing = { workspace = true, features = ["log"] }
 uuid = { version = "1", features = ["v4"] }
 yrs.workspace = true
 

@@ -355,3 +355,27 @@ async fn a_remote_transaction_is_one_merged_batch() {
     );
     assert!(matches!(changes.try_recv(), Err(TryRecvError::Empty)));
 }
+
+/// Deployed servers sit behind https: the room must open a TLS websocket, not give up on `wss`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_https_url_opens_a_tls_connection() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let dir = cache();
+    let room = Room::open(dir.path(), ROOM).unwrap();
+
+    room.connect(&format!("https://127.0.0.1:{port}"), "fastapiusersauth=x")
+        .unwrap();
+
+    let (mut stream, _) = timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .expect("the room connects")
+        .unwrap();
+    let mut first = [0u8; 1];
+    tokio::io::AsyncReadExt::read_exact(&mut stream, &mut first)
+        .await
+        .unwrap();
+    const TLS_HANDSHAKE_RECORD: u8 = 0x16;
+    assert_eq!(first[0], TLS_HANDSHAKE_RECORD);
+    room.close();
+}
