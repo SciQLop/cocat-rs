@@ -1,6 +1,7 @@
 //! A room: one yrs document, its local cache and the background task that keeps it in step
 //! with the server.
 
+use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -48,6 +49,8 @@ pub enum RoomError {
     Store(#[from] StoreError),
     #[error("the cache holds a record that is not a document update")]
     Cache,
+    #[error("the cache of the first layout could not be removed: {0}")]
+    Discard(#[source] std::io::Error),
     #[error(transparent)]
     Url(#[from] url::ParseError),
     #[error("a room url must be http, https, ws or wss")]
@@ -238,15 +241,7 @@ impl Room {
     /// Opens the cache of one room. Everything the cache holds is in the document by the time
     /// this returns, and the room works offline until [`Room::connect`].
     pub fn open(cache_dir: &Path, room_id: &str) -> Result<Room, RoomError> {
-        let (store, records) = FileRoomStore::open(cache_dir, room_id)?;
-        let doc = Doc::new();
-        for record in records {
-            let update = Update::decode_v1(&record).map_err(|_| RoomError::Cache)?;
-            doc.transact_mut_with(REPLAY_ORIGIN)
-                .apply_update(update)
-                .map_err(|_| RoomError::Cache)?;
-        }
-
+        let (store, doc) = load_cache(cache_dir, room_id)?;
         let (changes, _) = broadcast::channel(CHANGES);
         let inner = Arc::new(Inner {
             doc,
@@ -403,6 +398,33 @@ impl Room {
         // closed from inside another runtime; the cache is already on disk at this point.
         session.runtime.shutdown_background();
     }
+}
+
+/// The cache file and the document it holds. A cache of the first layout is discarded: it is
+/// only a copy of the server's room, which a v2 server serves migrated.
+fn load_cache(cache_dir: &Path, room_id: &str) -> Result<(FileRoomStore, Doc), RoomError> {
+    let (store, records) = FileRoomStore::open(cache_dir, room_id)?;
+    let doc = replay(records)?;
+    if !model::is_v1(&doc.transact()) {
+        return Ok((store, doc));
+    }
+    tracing::info!(room = room_id, "discarding a cache of the first layout");
+    let path = store.path().to_owned();
+    drop(store);
+    fs::remove_file(&path).map_err(RoomError::Discard)?;
+    let (store, _) = FileRoomStore::open(cache_dir, room_id)?;
+    Ok((store, Doc::new()))
+}
+
+fn replay(records: Vec<Bytes>) -> Result<Doc, RoomError> {
+    let doc = Doc::new();
+    for record in records {
+        let update = Update::decode_v1(&record).map_err(|_| RoomError::Cache)?;
+        doc.transact_mut_with(REPLAY_ORIGIN)
+            .apply_update(update)
+            .map_err(|_| RoomError::Cache)?;
+    }
+    Ok(doc)
 }
 
 /// One update holding what every update holds, so the others see one transaction.

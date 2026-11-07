@@ -59,3 +59,32 @@ fn opening_an_empty_directory_creates_the_cache() {
     assert_eq!(room.status(), cocat_client::Status::Offline);
     assert!(names(&room).is_empty());
 }
+
+/// A room Python cocat wrote, in layout v1.
+const V1_ROOM: &[u8] = include_bytes!("../../cocat-core/tests/fixtures/catalogues.y");
+
+#[test]
+fn a_cache_of_the_first_layout_is_discarded_on_open() {
+    let dir = cache();
+    std::fs::write(store::room_file(dir.path(), ROOM), V1_ROOM).unwrap();
+
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    assert!(names(&room).is_empty());
+    room.close();
+
+    assert!(store::read_updates(dir.path(), ROOM).unwrap().is_empty());
+}
+
+#[test]
+fn a_discarded_cache_keeps_what_is_written_after() {
+    let dir = cache();
+    std::fs::write(store::room_file(dir.path(), ROOM), V1_ROOM).unwrap();
+    {
+        let room = Room::open(dir.path(), ROOM).unwrap();
+        create_catalogue(&room, CATALOGUE, "alpha");
+        room.close();
+    }
+
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    assert_eq!(names(&room), ["alpha"]);
+}
