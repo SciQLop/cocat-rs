@@ -13,22 +13,25 @@ fn token(fixture: &Fixture, id: uuid::Uuid, email: &str) -> String {
 }
 
 #[tokio::test]
-async fn the_page_explains_without_a_token() {
+async fn the_landing_page_says_it_is_verifying_and_offers_nothing_to_click() {
     let fixture = Fixture::start().await;
 
     let page = body_text(fixture.get("/ui/verify", None).await).await;
 
-    assert!(
-        page.contains("Open the link from your inbox to verify your address."),
-        "{page}"
-    );
+    assert!(page.contains("Verifying your address"), "{page}");
     assert!(
         page.contains(r#"<form method="post" action="/ui/verify""#),
         "{page}"
     );
     assert!(page.contains(r#"type="hidden" name="token""#), "{page}");
-    assert!(page.contains(">Verify<"), "{page}");
-    assert!(page.contains(r#"href="/ui/rooms""#), "{page}");
+    assert!(!page.contains("<button"), "{page}");
+    assert!(!page.contains(r#"href="/ui/rooms""#), "{page}");
+}
+
+/// After the answer the only thing to do is to go on: no form, no button posting again.
+fn assert_answered(page: &str) {
+    assert!(!page.contains("<button"), "{page}");
+    assert!(!page.contains("<form"), "{page}");
 }
 
 #[tokio::test]
@@ -57,7 +60,12 @@ async fn a_valid_token_verifies_the_account() {
     assert_eq!(response.status(), StatusCode::OK);
     let page = body_text(response).await;
     assert!(page.contains("Your address is verified."), "{page}");
-    assert!(page.contains(r#"href="/ui/rooms""#), "{page}");
+    assert!(
+        page.contains(r#"<a href="/ui/rooms" class="button">Continue to my rooms</a>"#),
+        "{page}"
+    );
+    assert!(!page.contains(r#"class="error""#), "{page}");
+    assert_answered(&page);
     assert!(
         !page.contains("data-submit-fragment"),
         "the answered page posted again: {page}"
@@ -86,6 +94,11 @@ async fn an_already_verified_address_is_reported() {
 
     let page = body_text(response).await;
     assert!(page.contains("Your address is already verified."), "{page}");
+    assert!(
+        page.contains(r#"href="/ui/rooms" class="button""#),
+        "{page}"
+    );
+    assert_answered(&page);
 }
 
 #[tokio::test]
@@ -101,6 +114,11 @@ async fn a_bad_token_is_reported() {
         page.contains("This verification link is not valid anymore."),
         "{page}"
     );
+    assert!(
+        page.contains(r#"<a href="/ui/login" class="button">Sign in to get a new link</a>"#),
+        "{page}"
+    );
+    assert_answered(&page);
 }
 
 #[tokio::test]
@@ -116,6 +134,7 @@ async fn without_a_token_the_page_explains_what_to_do() {
         page.contains("Open the link from your inbox to verify your address."),
         "{page}"
     );
+    assert_answered(&page);
 }
 
 #[tokio::test]

@@ -19,43 +19,62 @@ pub(crate) struct VerifyForm {
     token: String,
 }
 
+/// What the verification came to, and the one way forward from there.
+struct Answer {
+    text: &'static str,
+    done: bool,
+    href: String,
+    label: &'static str,
+}
+
 #[derive(Template)]
 #[template(path = "verify.html")]
 struct VerifyPage {
     frame: Frame,
     action: String,
-    rooms_href: String,
-    message: &'static str,
-    submit_on_load: bool,
+    answer: Option<Answer>,
 }
 
+impl VerifyPage {
+    fn new(state: &AppState, answer: Option<Answer>) -> Self {
+        Self {
+            frame: Frame::new(&state.links, None, "Verify your address"),
+            action: state.links.path("/verify"),
+            answer,
+        }
+    }
+}
+
+/// The landing page: it only posts the token the link carries in its fragment.
 pub(crate) async fn page(State(state): State<AppState>) -> Response {
-    let page = VerifyPage {
-        frame: Frame::new(&state.links, None, "Verify your address"),
-        action: state.links.path("/verify"),
-        rooms_href: state.links.path("/rooms"),
-        message: MISSING,
-        submit_on_load: true,
-    };
-    frame::page(page)
+    frame::page(VerifyPage::new(&state, None))
 }
 
 pub(crate) async fn submit(
     State(state): State<AppState>,
     Form(form): Form<VerifyForm>,
 ) -> Response {
-    let message = match form.token.trim() {
+    let text = match form.token.trim() {
         "" => MISSING,
         token => said(&state, token).await,
     };
-    let page = VerifyPage {
-        frame: Frame::new(&state.links, None, "Verify your address"),
-        action: state.links.path("/verify"),
-        rooms_href: state.links.path("/rooms"),
-        message,
-        submit_on_load: false,
+    let answer = answer(&state, text);
+    frame::page(VerifyPage::new(&state, Some(answer)))
+}
+
+fn answer(state: &AppState, text: &'static str) -> Answer {
+    let done = text == VERIFIED || text == ALREADY;
+    let (target, label) = if done {
+        ("/rooms", "Continue to my rooms")
+    } else {
+        ("/login", "Sign in to get a new link")
     };
-    frame::page(page)
+    Answer {
+        text,
+        done,
+        href: state.links.path(target),
+        label,
+    }
 }
 
 async fn said(state: &AppState, token: &str) -> &'static str {

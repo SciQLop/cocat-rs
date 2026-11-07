@@ -2,11 +2,16 @@
 {% block content %}
 <article class="card">
 <h1>Verify your address</h1>
-<form method="post" action="{{ action }}"{% if submit_on_load %} data-submit-fragment{% endif %}>
+{% match answer %}
+{% when None %}
+<form method="post" action="{{ action }}" data-submit-fragment>
   <input type="hidden" name="token" value="">
-  {% include "message.html" %}
-  <button type="submit">Verify</button>
 </form>
-<p class="links"><a href="{{ rooms_href }}">My rooms</a></p>
+<p>Verifying your address…</p>
+<p class="muted"><small>Nothing happens? Open the link from your inbox again.</small></p>
+{% when Some with (answer) %}
+<p class="{% if answer.done %}notice{% else %}error{% endif %}" role="status">{{ answer.text }}</p>
+<p class="next"><a href="{{ answer.href }}" class="button">{{ answer.label }}</a></p>
+{% endmatch %}
 </article>
 {% endblock %}

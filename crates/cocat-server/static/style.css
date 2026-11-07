@@ -314,6 +314,7 @@ details.edit > form input { width: 14rem; }
 .error { color: var(--danger); font-weight: 550; margin: 0; }
 .error:empty { display: none; }
 .muted { color: var(--muted); }
+.next { margin-top: 1rem; }
 
 /* Sign-in, sign-up and the other one-form pages. */
 
