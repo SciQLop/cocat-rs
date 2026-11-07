@@ -123,5 +123,10 @@ Not done yet. When it is:
 4. Keep the Python volumes untouched until the Rust server has run for a while; verify logins,
    rooms and the daily use first.
 
-Rollback is restarting the Python container. Room files are compatible in both directions, but
-accounts created on the Rust server between the switch and the rollback are lost.
+The import moves every room to layout v2 (README, "Room layout v2"). From then on Python
+cocat clients and old SciQLop plugin versions are refused with HTTP 426: announce the plugin
+update with the switch.
+
+Rollback is restarting the Python container on the untouched Python volumes. The migrated
+room files are not readable by Python clients, so edits made on the Rust server since the
+switch are lost, and so are accounts created there.

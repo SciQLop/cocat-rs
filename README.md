@@ -108,8 +108,10 @@ restart.
 | 1011 | internal error while attaching the socket |
 | 4507 | room storage limit reached: an update would take the room file past `COCAT_ROOM_MAX_MB` or its owner's quota |
 
-A handshake without a valid cookie, or from a user who is not a member of the room, is
-refused before the upgrade with HTTP 403.
+A handshake that does not offer the websocket subprotocol `cocat.v2` is refused before the
+upgrade with HTTP 426: it comes from a client of the first layout (see
+[Room layout v2](#room-layout-v2)). A handshake without a valid cookie, or from a user who is
+not a member of the room, is refused before the upgrade with HTTP 403.
 
 ## Catalogue API
 
@@ -305,15 +307,27 @@ Rooms keep their name and timestamps, memberships their role, invitations their 
 (so a live link keeps working on this server) and uses, and linked accounts their provider
 and subject; the provider tokens are dropped.
 
-The Python database is opened read-only and its room files are never modified: running the
-command twice changes nothing the second time, and the Python server starts again
-afterwards on the same files. The import refuses to run when `--db` and `--users` name the
+The Python database is opened read-only. Room files are rewritten in the v2 layout (next
+section); running the command twice changes nothing the second time. The import refuses to run when `--db` and `--users` name the
 same file, and stops before writing anything when an address already belongs to an account
 here.
 
-Keep the Python database, and the room files in `--update-dir`, until the Rust server has
-run for a while: the import is a copy, not a move, and nothing in the Python deployment is
-deleted or rewritten.
+Run the import on a copy of the room files, and keep the Python database and the original
+room files until the Rust server has run for a while: they are the way back.
+
+### Room layout v2
+
+Python cocat stores rooms in the first layout. This server and `cocat_rs` only use layout
+v2, and the two do not mix:
+
+- `import` migrates every room file in `--update-dir` to v2 by appending one record.
+- The server refuses to serve a room file still in the first layout (an error log names the
+  room): run the import on it.
+- Python cocat and SciQLop plugin versions built on it do not offer the `cocat.v2`
+  subprotocol, so their handshake is refused with 426 before they can write the first
+  layout into a v2 room. Users update the plugin.
+- A `cocat_rs` cache holding the first layout is discarded when the room opens, and the
+  room is fetched again from the server.
 
 Session cookies do not survive the move. The Python server signs them and this one keeps
 its own session table, so every user signs in once again after the switch.
