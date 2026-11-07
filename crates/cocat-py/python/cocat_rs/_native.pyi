@@ -1,12 +1,19 @@
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
+
+Status = Literal["preliminary", "confirmed", "reviewed", "final", "rejected", "deleted"]
+Vertex = tuple[datetime, float]
 
 class NotFound(LookupError, RuntimeError): ...
 
 class Catalogue:
     uuid: str
     name: str
-    author: str
+    author: str | None
+    created: datetime | None
+    deleted: bool
     tags: set[str]
+    columns: list[str]
     attributes: dict[str, Any]
     events: set[Event]
     def set_attributes(self, **attributes: Any) -> None: ...
@@ -14,6 +21,8 @@ class Catalogue:
     def add_events(self, events: list[Event | str]) -> None: ...
     def remove_events(self, events: list[Event | str]) -> None: ...
     def delete(self) -> None: ...
+    def restore(self) -> None: ...
+    def purge(self) -> None: ...
     def event_arrays(self, attributes: bool = False) -> dict[str, Any]: ...
     def event_attributes(
         self, keys: list[str] | None = None
@@ -21,11 +30,19 @@ class Catalogue:
 
 class Event:
     uuid: str
-    start: Any
-    stop: Any
-    range: tuple[Any, Any]
-    author: str
-    rating: int | None
+    start: datetime
+    stop: datetime
+    range: tuple[datetime, datetime]
+    author: str | None
+    created: datetime | None
+    origin: str | None
+    status: Status
+    confidence: float | None
+    start_err: float | None
+    stop_err: float | None
+    shape: list[Vertex] | None
+    source_id: str | None
+    comment: str | None
     tags: set[str]
     products: set[str]
     attributes: dict[str, Any]
@@ -33,6 +50,8 @@ class Event:
     def set_attributes(self, **attributes: Any) -> None: ...
     def remove_attributes(self, keys: str | list[str]) -> None: ...
     def delete(self) -> None: ...
+    def restore(self) -> None: ...
+    def purge(self) -> None: ...
 
 class RoomInfo:
     def __init__(self, id: str, name: str, role: str) -> None: ...
@@ -58,28 +77,56 @@ class Room:
     def catalogues(self) -> list[Catalogue]: ...
     def catalogue(self, uuid_or_name: str) -> Catalogue: ...
     def event(self, uuid: str) -> Event: ...
+    def trash(self) -> list[Event]: ...
+    def existing_tags(self) -> list[str]: ...
+    def attribute_types(self) -> dict[str, dict[str, str | None]]: ...
+    def set_attribute_info(
+        self, key: str, unit: str | None = None, description: str | None = None
+    ) -> None: ...
+    def create_origin(
+        self,
+        kind: Literal["rule", "detector", "model", "import"],
+        name: str,
+        version: str | None = None,
+        author: str | None = None,
+        created: datetime | str | None = None,
+        used: list[dict[str, str]] | None = None,
+        parameters: Any = None,
+        derived_from: str | None = None,
+        id: str | None = None,
+    ) -> str: ...
+    def origin(self, id: str) -> dict[str, Any]: ...
     def event_arrays(
         self, events: list[Event | str], attributes: bool = False
     ) -> dict[str, Any]: ...
     def create_catalogue(
         self,
         name: str,
-        author: str,
+        author: str | None = None,
         uuid: str | None = None,
         tags: list[str] | None = None,
         attributes: dict[str, Any] | None = None,
         events: list[Event | str] | None = None,
+        columns: list[str] | None = None,
     ) -> Catalogue: ...
     def create_event(
         self,
-        start: Any,
-        stop: Any,
-        author: str,
+        start: datetime | str,
+        stop: datetime | str,
+        author: str | None = None,
         uuid: str | None = None,
         tags: list[str] | None = None,
         products: list[str] | None = None,
-        rating: int | None = None,
         attributes: dict[str, Any] | None = None,
+        status: Status | None = None,
+        confidence: float | None = None,
+        start_err: float | None = None,
+        stop_err: float | None = None,
+        origin: str | None = None,
+        source_id: str | None = None,
+        created: datetime | str | None = None,
+        comment: str | None = None,
+        shape: list[Vertex] | None = None,
     ) -> Event: ...
     def save(self, timeout: float | None = None) -> None: ...
     def import_votable(self, path: str, table_name: str | None = None) -> int: ...

@@ -42,6 +42,9 @@ class Recorder:
     def event_attributes(self, uuid, set, removed):
         self._record("event_attributes", uuid, set, removed)
 
+    def event_fields(self, uuid, set, removed):
+        self._record("event_fields", uuid, set, removed)
+
     def event_removed(self, uuid):
         self._record("event_removed", uuid)
 
@@ -210,3 +213,37 @@ async def test_closing_the_handle_stops_the_calls(room, other):
     other.create_catalogue(name="beta", author="a@x.org")
     await asyncio.sleep(0.5)
     assert recorder.batches == 1
+
+
+async def test_a_fixed_field_change_is_an_event_fields_call(room, other):
+    event = other.create_event(
+        start="2025-01-31 10:00:00", stop="2025-01-31 10:01:00", author="a@x.org"
+    )
+    await until(lambda: _has_event(room, event.uuid))
+
+    recorder = Recorder()
+    handle = room.listen(recorder)
+    try:
+        with other.transaction():
+            event.status = "reviewed"
+            event.confidence = 0.5
+        await until(lambda: recorder.batches == 1)
+
+        event.delete()
+        await until(lambda: recorder.batches == 2)
+    finally:
+        handle.close()
+
+    fields = [call for call in recorder.calls if call[0] == "event_fields"]
+    assert fields == [
+        ("event_fields", event.uuid, {"status": "reviewed", "confidence": 0.5}, []),
+        ("event_fields", event.uuid, {"status": "deleted"}, []),
+    ]
+
+
+def _has_event(room, uuid):
+    try:
+        room.event(uuid)
+    except LookupError:
+        return False
+    return True

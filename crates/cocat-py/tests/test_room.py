@@ -1,4 +1,5 @@
 import datetime
+import warnings
 
 import numpy as np
 import pytest
@@ -21,14 +22,14 @@ def a_catalogue(room, name="alpha"):
     )
 
 
-def an_event(room, start=START, stop=STOP, rating=3):
+def an_event(room, start=START, stop=STOP, confidence=0.3):
     return room.create_event(
         start=start,
         stop=stop,
         author="a@x.org",
         tags=["t1"],
         products=["p1"],
-        rating=rating,
+        confidence=confidence,
         attributes={"q": 1.5, "flag": True},
     )
 
@@ -55,7 +56,8 @@ def test_a_catalogue_and_an_event_read_back(room):
     assert read_event.start == START
     assert read_event.stop == STOP
     assert read_event.author == "a@x.org"
-    assert read_event.rating == 3
+    assert read_event.confidence == 0.3
+    assert read_event.status == "confirmed"
     assert read_event.tags == {"t1"}
     assert read_event.products == {"p1"}
     assert read_event.attributes == {"q": 1.5, "flag": True}
@@ -159,14 +161,29 @@ def test_an_event_range_changes(room):
     assert room.event(event.uuid).attributes == {"flag": True, "level": 4}
 
 
-def test_deleting_an_event_removes_it_from_its_catalogue(room):
+def test_a_deleted_event_goes_to_the_trash_and_comes_back(room):
     catalogue = a_catalogue(room)
     event = an_event(room)
     catalogue.add_events([event])
 
     event.delete()
     assert catalogue.events == set()
-    with pytest.raises(RuntimeError):
+    assert room.event(event.uuid).status == "deleted"
+    assert room.trash() == [event]
+
+    event.restore()
+    assert {e.uuid for e in catalogue.events} == {event.uuid}
+    assert room.trash() == []
+
+
+def test_purging_an_event_removes_it_for_good(room):
+    catalogue = a_catalogue(room)
+    event = an_event(room)
+    catalogue.add_events([event])
+
+    event.purge()
+    assert catalogue.events == set()
+    with pytest.raises(cc.NotFound):
         room.event(event.uuid)
 
 
@@ -177,7 +194,14 @@ def test_deleting_a_catalogue_keeps_its_events(room):
 
     catalogue.delete()
     assert room.catalogues() == []
+    assert room.catalogue(catalogue.uuid).deleted
     assert room.event(event.uuid).uuid == event.uuid
+
+    catalogue.restore()
+    assert room.catalogues() == [catalogue]
+    catalogue.purge()
+    with pytest.raises(cc.NotFound):
+        room.catalogue(catalogue.uuid)
 
 
 def test_event_arrays_are_numpy_timestamps_in_time_order(room):
@@ -276,3 +300,107 @@ def test_an_event_names_the_catalogues_that_list_it(room):
 def test_an_event_no_catalogue_lists_has_no_catalogues(room):
     event = an_event(room)
     assert event.catalogues == []
+
+
+def test_the_v2_fields_read_back_and_change(room):
+    shape = [(START, 1e3), (STOP, 2e3)]
+    event = room.create_event(
+        start=START,
+        stop=STOP,
+        author="a@x.org",
+        status="preliminary",
+        confidence=0.5,
+        start_err=1.0,
+        stop_err=2.0,
+        source_id="list-1",
+        comment="a long story",
+        shape=shape,
+    )
+    assert event.status == "preliminary"
+    assert (event.confidence, event.start_err, event.stop_err) == (0.5, 1.0, 2.0)
+    assert event.source_id == "list-1"
+    assert event.comment == "a long story"
+    assert event.shape == shape
+    assert event.origin is None
+
+    event.status = "rejected"
+    event.confidence = None
+    event.comment = None
+    event.shape = None
+    assert event.status == "rejected"
+    assert event.confidence is None
+    assert event.comment is None
+    assert event.shape is None
+
+    with pytest.raises(ValueError):
+        event.status = "maybe"
+    with pytest.raises(ValueError):
+        event.confidence = 3.0
+
+
+def test_a_hand_made_event_records_when_it_was_created(room):
+    before = datetime.datetime.now(UTC)
+    event = an_event(room)
+    assert before <= event.created <= datetime.datetime.now(UTC)
+    assert event.created.tzinfo is UTC
+
+
+def test_a_model_event_names_its_origin(room):
+    origin = room.create_origin(
+        kind="model",
+        name="shock finder",
+        version="1.2",
+        used=[{"product": "amda/mms1_fgm", "retrieved": "2025-01-01"}],
+        parameters={"threshold": 3},
+    )
+    event = room.create_event(start=START, stop=STOP, origin=origin, confidence=0.9)
+
+    assert event.origin == origin
+    assert event.author is None
+    assert event.created is None
+    read = room.origin(origin)
+    assert read["kind"] == "model"
+    assert read["name"] == "shock finder"
+    assert read["used"] == [{"product": "amda/mms1_fgm", "retrieved": "2025-01-01"}]
+    assert read["parameters"] == {"threshold": 3}
+    with pytest.raises(cc.NotFound):
+        room.origin("nope")
+
+
+def test_attributes_register_their_type_and_warn_on_a_mismatch(room):
+    event = an_event(room)
+    assert room.attribute_types()["q"] == {
+        "type": "number",
+        "unit": None,
+        "description": None,
+    }
+
+    with pytest.warns(UserWarning, match="registered as number"):
+        event.set_attributes(q="high")
+    assert event.attributes["q"] == "high"
+
+    room.set_attribute_info("q", unit="nT", description="quality")
+    assert room.attribute_types()["q"]["unit"] == "nT"
+    with pytest.raises(LookupError):
+        room.set_attribute_info("nope", unit="s")
+
+
+def test_a_datetime_attribute_is_a_date(room):
+    event = an_event(room)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        event.set_attributes(seen=START)
+
+    assert room.attribute_types()["seen"]["type"] == "date"
+    assert event.attributes["seen"] == START
+
+
+def test_columns_and_existing_tags(room):
+    catalogue = a_catalogue(room)
+    catalogue.columns = ["q", "flag"]
+    assert room.catalogue(catalogue.uuid).columns == ["q", "flag"]
+
+    an_event(room)
+    hidden = room.create_event(start=START, stop=STOP, tags=["hidden"])
+    hidden.delete()
+    assert room.existing_tags() == ["t1", "t2"]

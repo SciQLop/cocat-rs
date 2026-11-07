@@ -151,7 +151,7 @@ def log_out() -> None:
 def create_catalogue(
     *,
     name: str,
-    author: str,
+    author: str | None = None,
     uuid: str | None = None,
     tags: object = None,
     attributes: dict | None = None,
@@ -171,13 +171,14 @@ def create_event(
     *,
     start,
     stop,
-    author: str,
+    author: str | None = None,
     uuid: str | None = None,
     tags: object = None,
     products: object = None,
-    rating: int | None = None,
     attributes: dict | None = None,
+    **fields,
 ):
+    """Creates an event; `fields` are the other keyword arguments of `Room.create_event`."""
     return check_connected().create_event(
         start=start,
         stop=stop,
@@ -185,8 +186,8 @@ def create_event(
         uuid=uuid,
         tags=tags,
         products=products,
-        rating=rating,
         attributes=attributes,
+        **fields,
     )
 
 
@@ -218,7 +219,7 @@ def import_votable(file_path: str | Path, table_name: str | None = None) -> set:
 
 
 def export_votable(catalogues, file_path: str | Path) -> None:
-    """Writes the catalogues to a VOTable file Python cocat reads back."""
+    """Writes the catalogues to a VOTable file."""
     Path(file_path).write_text(_export_votable(catalogues), encoding="utf-8")
 
 

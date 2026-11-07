@@ -11,7 +11,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use cocat_client::{Change, Credentials, Room as ClientRoom, RoomInfo as ClientRoomInfo};
-use cocat_core::model::{self, NewCatalogue, NewEvent};
+use cocat_core::model::{
+    self, AttributeType, EventField, EventRecord, NewCatalogue, Origin, OriginKind, Status, Used,
+    Vertex,
+};
 use cocat_core::time::Timestamp;
 use cocat_core::votable;
 use numpy::PyArray1;
@@ -94,6 +97,9 @@ fn to_json(value: &Bound<'_, PyAny>) -> Result<Value> {
     if value.is_none() {
         return Ok(Value::Null);
     }
+    if value.cast::<PyDateTime>().is_ok() {
+        return Ok(Value::from(to_timestamp(value)?.to_string()));
+    }
     if let Ok(flag) = value.extract::<bool>() {
         return Ok(Value::Bool(flag));
     }
@@ -125,12 +131,55 @@ fn to_json(value: &Bound<'_, PyAny>) -> Result<Value> {
     ))
 }
 
+/// Attributes to write, and the keys whose value is a `datetime`: the registry types
+/// those `date`, since JSON has no date of its own.
+struct Attributes {
+    values: JsonMap<String, Value>,
+    dates: Vec<String>,
+}
+
+impl Attributes {
+    fn of(dict: Option<&Bound<'_, PyDict>>) -> Result<Attributes> {
+        let mut attributes = Attributes {
+            values: JsonMap::new(),
+            dates: Vec::new(),
+        };
+        for (key, value) in dict.into_iter().flat_map(|dict| dict.iter()) {
+            let key = key.extract::<String>()?;
+            if value.cast::<PyDateTime>().is_ok() {
+                attributes.dates.push(key.clone());
+            }
+            attributes.values.insert(key, to_json(&value)?);
+        }
+        Ok(attributes)
+    }
+
+    fn register_dates(&self, txn: &mut yrs::TransactionMut<'_>) {
+        for key in &self.dates {
+            model::register_attribute(txn, key, AttributeType::Date);
+        }
+    }
+}
+
 fn to_json_map(dict: &Bound<'_, PyDict>) -> Result<JsonMap<String, Value>> {
     let mut map = JsonMap::new();
     for (key, value) in dict.iter() {
         map.insert(key.extract::<String>()?, to_json(&value)?);
     }
     Ok(map)
+}
+
+/// Says each registry mismatch as a Python warning; the values were written anyway.
+fn warn(py: Python<'_>, warnings: &[model::TypeWarning]) -> Result<()> {
+    let module = py.import("warnings")?;
+    for warning in warnings {
+        module.call_method1("warn", (warning.to_string(),))?;
+    }
+    Ok(())
+}
+
+fn value_error(error: impl std::fmt::Display) -> PyErr {
+    PyValueError::new_err(error.to_string())
 }
 
 fn to_python(py: Python<'_>, value: &Value) -> Result<Py<PyAny>> {
@@ -171,6 +220,103 @@ fn to_python_map(py: Python<'_>, map: &JsonMap<String, Value>) -> Result<Py<PyAn
     to_python(py, &Value::Object(map.clone()))
 }
 
+/// Attributes as Python reads them: a value of a key the registry types `date` comes back
+/// as a `datetime`.
+fn attributes_to_python(
+    py: Python<'_>,
+    dates: &[String],
+    map: &JsonMap<String, Value>,
+) -> Result<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    for (key, value) in map {
+        let date = match value {
+            Value::String(text) if dates.contains(key) => Timestamp::parse(text),
+            _ => None,
+        };
+        match date {
+            Some(date) => dict.set_item(key, to_python_datetime(py, date)?)?,
+            None => dict.set_item(key, to_python(py, value)?)?,
+        }
+    }
+    Ok(dict.into_any().unbind())
+}
+
+fn date_keys<T: yrs::ReadTxn>(txn: &T) -> Vec<String> {
+    model::attribute_types(txn)
+        .into_iter()
+        .filter(|(_, info)| info.kind == AttributeType::Date)
+        .map(|(key, _)| key)
+        .collect()
+}
+
+fn optional_datetime(py: Python<'_>, time: Option<Timestamp>) -> Result<Py<PyAny>> {
+    match time {
+        Some(time) => to_python_datetime(py, time),
+        None => Ok(py.None()),
+    }
+}
+
+fn shape_to_python(py: Python<'_>, shape: &[Vertex]) -> Result<Py<PyAny>> {
+    let vertices = PyList::empty(py);
+    for vertex in shape {
+        vertices.append((to_python_datetime(py, vertex.time)?, vertex.frequency))?;
+    }
+    Ok(vertices.into_any().unbind())
+}
+
+fn to_shape(value: &Bound<'_, PyAny>) -> Result<Option<Vec<Vertex>>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    let mut shape = Vec::new();
+    for vertex in value.try_iter()? {
+        let (time, frequency): (Bound<'_, PyAny>, f64) = vertex?.extract()?;
+        shape.push(Vertex {
+            time: to_timestamp(&time)?,
+            frequency,
+        });
+    }
+    Ok(Some(shape))
+}
+
+fn to_status(name: &str) -> Result<Status> {
+    Status::from_name(name).ok_or_else(|| {
+        let names: Vec<&str> = Status::ALL.iter().map(|status| status.name()).collect();
+        PyValueError::new_err(format!("status is one of {}", names.join(", ")))
+    })
+}
+
+fn optional_timestamp(value: Option<&Bound<'_, PyAny>>) -> Result<Option<Timestamp>> {
+    match value {
+        Some(value) if !value.is_none() => Ok(Some(to_timestamp(value)?)),
+        _ => Ok(None),
+    }
+}
+
+/// An event field as the listener's `event_fields` hands it over: times as datetimes.
+fn field_to_python(py: Python<'_>, key: &str, value: &Value) -> Result<Py<PyAny>> {
+    let nanos = |value: &Value| value.as_i64().and_then(Timestamp::from_unix_nanos);
+    match (key, value) {
+        ("created", value) => optional_datetime(py, nanos(value)),
+        ("shape", Value::Array(vertices)) => {
+            let list = PyList::empty(py);
+            for vertex in vertices {
+                match (
+                    vertex.get(0).and_then(nanos),
+                    vertex.get(1).and_then(Value::as_f64),
+                ) {
+                    (Some(time), Some(frequency)) => {
+                        list.append((to_python_datetime(py, time)?, frequency))?
+                    }
+                    _ => list.append(to_python(py, vertex)?)?,
+                }
+            }
+            Ok(list.into_any().unbind())
+        }
+        _ => to_python(py, value),
+    }
+}
+
 fn uuids(items: Option<&Bound<'_, PyAny>>) -> Result<Vec<String>> {
     let Some(items) = items else {
         return Ok(Vec::new());
@@ -206,6 +352,16 @@ fn uuid_argument(uuid: Option<String>) -> Result<String> {
         Some(uuid) => Ok(uuid),
         None => Ok(uuid::Uuid::new_v4().to_string()),
     }
+}
+
+fn now() -> Result<Timestamp> {
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(value_error)?;
+    i64::try_from(since_epoch.as_nanos())
+        .ok()
+        .and_then(Timestamp::from_unix_nanos)
+        .ok_or_else(|| value_error("the clock is past 2262"))
 }
 
 fn hash_of(text: &str) -> u64 {
@@ -257,32 +413,14 @@ fn unknown(what: &str) -> PyErr {
     })
 }
 
-/// Whether two reads of one event hold the same values, whatever room each was read from.
-fn same_event(a: &model::EventRecord, b: &model::EventRecord) -> bool {
-    a.uuid == b.uuid
-        && a.start == b.start
-        && a.stop == b.stop
-        && a.author == b.author
-        && a.rating == b.rating
-        && a.attributes == b.attributes
-        && sorted(&a.tags) == sorted(&b.tags)
-        && sorted(&a.products) == sorted(&b.products)
-}
-
 /// Whether two reads of one catalogue hold the same values. Its member events are not
 /// compared: two clients agree on a catalogue's fields before they agree on its contents.
 fn same_catalogue(a: &model::CatalogueSummary, b: &model::CatalogueSummary) -> bool {
-    a.uuid == b.uuid
-        && a.name == b.name
-        && a.author == b.author
-        && a.attributes == b.attributes
-        && sorted(&a.tags) == sorted(&b.tags)
-}
-
-fn sorted(values: &[String]) -> Vec<&str> {
-    let mut sorted: Vec<&str> = values.iter().map(String::as_str).collect();
-    sorted.sort_unstable();
-    sorted
+    let fields = |summary: &model::CatalogueSummary| model::CatalogueSummary {
+        event_count: 0,
+        ..summary.clone()
+    };
+    fields(a) == fields(b)
 }
 
 #[pyclass(module = "cocat_rs", frozen)]
@@ -331,11 +469,35 @@ impl Catalogue {
     }
 
     #[getter]
-    fn author(&self) -> Result<String> {
-        let txn = self.room.doc().transact();
-        model::catalogue(&txn, &self.uuid)
-            .map(|catalogue| catalogue.author)
-            .ok_or_else(|| unknown("catalogue"))
+    fn author(&self) -> Result<Option<String>> {
+        Ok(self.summary()?.author)
+    }
+
+    #[getter]
+    fn created(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        optional_datetime(py, self.summary()?.created)
+    }
+
+    #[getter]
+    fn deleted(&self) -> Result<bool> {
+        Ok(self.summary()?.deleted)
+    }
+
+    /// The attribute keys shown as columns, in order.
+    #[getter]
+    fn columns(&self) -> Result<Vec<String>> {
+        Ok(self.summary()?.columns)
+    }
+
+    #[setter]
+    fn set_columns(&self, columns: Vec<String>) -> Result<()> {
+        if !self
+            .room
+            .write(|txn| model::set_catalogue_columns(txn, &self.uuid, &columns))
+        {
+            return Err(unknown("catalogue"));
+        }
+        Ok(())
     }
 
     #[getter]
@@ -408,16 +570,29 @@ impl Catalogue {
         Ok(())
     }
 
+    /// Moves the catalogue to the trash; its events stay where they are.
     fn delete(&self) {
         self.room
             .write(|txn| model::delete_catalogue(txn, &self.uuid));
+    }
+
+    fn restore(&self) {
+        self.room
+            .write(|txn| model::restore_catalogue(txn, &self.uuid));
+    }
+
+    /// Removes the catalogue for good.
+    fn purge(&self) {
+        self.room
+            .write(|txn| model::purge_catalogue(txn, &self.uuid));
     }
 
     /// Uuids, start and stop times, and with `attributes=True` each event's attributes, all
     /// from one read of the document, so a remote change cannot fall between them.
     #[pyo3(signature = (attributes=false))]
     fn event_arrays(&self, py: Python<'_>, attributes: bool) -> Result<Py<PyAny>> {
-        event_arrays_of(py, &self.records()?, attributes)
+        let (records, dates) = self.records_and_dates()?;
+        event_arrays_of(py, &records, &dates, attributes)
     }
 
     #[pyo3(signature = (keys=None))]
@@ -431,7 +606,8 @@ impl Catalogue {
             None => None,
         };
         let rows = PyList::empty(py);
-        for record in self.records()? {
+        let (records, dates) = self.records_and_dates()?;
+        for record in records {
             let map: JsonMap<String, Value> = match &wanted {
                 Some(keys) => record
                     .attributes
@@ -441,7 +617,7 @@ impl Catalogue {
                     .collect(),
                 None => record.attributes.clone(),
             };
-            rows.append(to_python_map(py, &map)?)?;
+            rows.append(attributes_to_python(py, &dates, &map)?)?;
         }
         Ok(rows.into_any().unbind())
     }
@@ -453,9 +629,16 @@ impl Catalogue {
         model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))
     }
 
-    fn records(&self) -> Result<Vec<model::EventRecord>> {
+    fn records(&self) -> Result<Vec<EventRecord>> {
+        Ok(self.records_and_dates()?.0)
+    }
+
+    /// The events and the date-typed attribute keys, from one read.
+    fn records_and_dates(&self) -> Result<(Vec<EventRecord>, Vec<String>)> {
         let txn = self.room.doc().transact();
-        model::catalogue_events(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))
+        let records =
+            model::catalogue_events(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
+        Ok((records, date_keys(&txn)))
     }
 }
 
@@ -474,9 +657,20 @@ impl Event {
         }
     }
 
-    fn record(&self) -> Result<model::EventRecord> {
+    fn record(&self) -> Result<EventRecord> {
         let txn = self.room.doc().transact();
         model::event(&txn, &self.uuid).ok_or_else(|| unknown("event"))
+    }
+
+    fn set_field(&self, field: EventField) -> Result<()> {
+        let found = self
+            .room
+            .write(|txn| model::set_event_field(txn, &self.uuid, &field))
+            .map_err(value_error)?;
+        if !found {
+            return Err(unknown("event"));
+        }
+        Ok(())
     }
 }
 
@@ -492,7 +686,7 @@ impl Event {
     }
 
     fn __eq__(&self, other: &Event) -> Result<bool> {
-        Ok(same_event(&self.record()?, &other.record()?))
+        Ok(self.record()? == other.record()?)
     }
 
     #[getter]
@@ -520,21 +714,121 @@ impl Event {
         let (start, stop): (Bound<'_, PyAny>, Bound<'_, PyAny>) = range.extract()?;
         let start = to_timestamp(&start)?;
         let stop = to_timestamp(&stop)?;
-        self.room
+        let found = self
+            .room
             .write(|txn| model::set_event_range(txn, &self.uuid, start, stop))
-            .ok()
-            .ok_or_else(|| unknown("event"))?;
+            .map_err(value_error)?;
+        if !found {
+            return Err(unknown("event"));
+        }
         Ok(())
     }
 
     #[getter]
-    fn author(&self) -> Result<String> {
+    fn author(&self) -> Result<Option<String>> {
         Ok(self.record()?.author)
     }
 
     #[getter]
-    fn rating(&self) -> Result<Option<i64>> {
-        Ok(self.record()?.rating)
+    fn status(&self) -> Result<&'static str> {
+        Ok(self.record()?.status.name())
+    }
+
+    #[setter]
+    fn set_status(&self, status: &str) -> Result<()> {
+        self.set_field(EventField::Status(to_status(status)?))
+    }
+
+    #[getter]
+    fn confidence(&self) -> Result<Option<f64>> {
+        Ok(self.record()?.confidence)
+    }
+
+    #[setter]
+    fn set_confidence(&self, confidence: Option<f64>) -> Result<()> {
+        self.set_field(EventField::Confidence(confidence))
+    }
+
+    #[getter]
+    fn start_err(&self) -> Result<Option<f64>> {
+        Ok(self.record()?.start_err)
+    }
+
+    #[setter]
+    fn set_start_err(&self, seconds: Option<f64>) -> Result<()> {
+        self.set_field(EventField::StartErr(seconds))
+    }
+
+    #[getter]
+    fn stop_err(&self) -> Result<Option<f64>> {
+        Ok(self.record()?.stop_err)
+    }
+
+    #[setter]
+    fn set_stop_err(&self, seconds: Option<f64>) -> Result<()> {
+        self.set_field(EventField::StopErr(seconds))
+    }
+
+    #[getter]
+    fn origin(&self) -> Result<Option<String>> {
+        Ok(self.record()?.origin)
+    }
+
+    #[setter]
+    fn set_origin(&self, origin: Option<String>) -> Result<()> {
+        self.set_field(EventField::Origin(origin))
+    }
+
+    #[getter]
+    fn source_id(&self) -> Result<Option<String>> {
+        Ok(self.record()?.source_id)
+    }
+
+    #[setter]
+    fn set_source_id(&self, source_id: Option<String>) -> Result<()> {
+        self.set_field(EventField::SourceId(source_id))
+    }
+
+    #[getter]
+    fn created(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        optional_datetime(py, self.record()?.created)
+    }
+
+    #[setter]
+    fn set_created(&self, created: &Bound<'_, PyAny>) -> Result<()> {
+        self.set_field(EventField::Created(optional_timestamp(Some(created))?))
+    }
+
+    /// The time–frequency polygon as `(datetime, frequency)` pairs, or `None`.
+    #[getter]
+    fn shape(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        match self.record()?.shape {
+            Some(shape) => shape_to_python(py, &shape),
+            None => Ok(py.None()),
+        }
+    }
+
+    #[setter]
+    fn set_shape(&self, shape: &Bound<'_, PyAny>) -> Result<()> {
+        self.set_field(EventField::Shape(to_shape(shape)?))
+    }
+
+    #[getter]
+    fn comment(&self) -> Result<Option<String>> {
+        let txn = self.room.doc().transact();
+        model::event(&txn, &self.uuid).ok_or_else(|| unknown("event"))?;
+        Ok(model::comment(&txn, &self.uuid))
+    }
+
+    #[setter]
+    fn set_comment(&self, comment: Option<String>) -> Result<()> {
+        if !self
+            .room
+            .write(|txn| model::set_comment(txn, &self.uuid, comment.as_deref()))
+        {
+            return Err(unknown("event"));
+        }
+        Ok(())
     }
 
     #[getter]
@@ -549,7 +843,9 @@ impl Event {
 
     #[getter]
     fn attributes(&self, py: Python<'_>) -> Result<Py<PyAny>> {
-        to_python_map(py, &self.record()?.attributes)
+        let txn = self.room.doc().transact();
+        let record = model::event(&txn, &self.uuid).ok_or_else(|| unknown("event"))?;
+        attributes_to_python(py, &date_keys(&txn), &record.attributes)
     }
 
     /// The uuids of the catalogues that list this event, sorted.
@@ -561,16 +857,17 @@ impl Event {
     }
 
     #[pyo3(signature = (**attributes))]
-    fn set_attributes(&self, attributes: Option<&Bound<'_, PyDict>>) -> Result<()> {
-        let Some(attributes) = attributes else {
-            return Ok(());
-        };
-        let attributes = to_json_map(attributes)?;
-        self.room
-            .write(|txn| model::set_event_attributes(txn, &self.uuid, &attributes))
-            .ok()
+    fn set_attributes(&self, py: Python<'_>, attributes: Option<&Bound<'_, PyDict>>) -> Result<()> {
+        let attributes = Attributes::of(attributes)?;
+        let warnings = self
+            .room
+            .write(|txn| {
+                attributes.register_dates(txn);
+                model::set_event_attributes(txn, &self.uuid, &attributes.values)
+            })
+            .map_err(value_error)?
             .ok_or_else(|| unknown("event"))?;
-        Ok(())
+        warn(py, &warnings)
     }
 
     fn remove_attributes(&self, keys: &Bound<'_, PyAny>) -> Result<()> {
@@ -584,15 +881,26 @@ impl Event {
         Ok(())
     }
 
+    /// Moves the event to the trash: catalogues stop showing it until it is restored.
     fn delete(&self) {
         self.room.write(|txn| model::delete_event(txn, &self.uuid));
+    }
+
+    fn restore(&self) {
+        self.room.write(|txn| model::restore_event(txn, &self.uuid));
+    }
+
+    /// Removes the event for good, from the room and from every catalogue.
+    fn purge(&self) {
+        self.room.write(|txn| model::purge_event(txn, &self.uuid));
     }
 }
 
 /// The arrays Python scripts plot with, in the order the records come.
 fn event_arrays_of(
     py: Python<'_>,
-    records: &[model::EventRecord],
+    records: &[EventRecord],
+    dates: &[String],
     attributes: bool,
 ) -> Result<Py<PyAny>> {
     let uuids: Vec<String> = records.iter().map(|record| record.uuid.clone()).collect();
@@ -611,7 +919,7 @@ fn event_arrays_of(
     if attributes {
         let rows = PyList::empty(py);
         for record in records {
-            rows.append(to_python_map(py, &record.attributes)?)?;
+            rows.append(attributes_to_python(py, dates, &record.attributes)?)?;
         }
         arrays.set_item("attributes", rows)?;
     }
@@ -778,42 +1086,157 @@ impl Room {
         let wanted = uuids(Some(events))?;
         let records = {
             let txn = self.room.doc().transact();
-            wanted
+            let records = wanted
                 .iter()
                 .filter_map(|uuid| model::event(&txn, uuid))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (records, date_keys(&txn))
         };
-        event_arrays_of(py, &records, attributes)
+        event_arrays_of(py, &records.0, &records.1, attributes)
     }
 
-    #[pyo3(signature = (name, author, uuid=None, tags=None, attributes=None, events=None))]
+    /// The events in the trash, in time order.
+    fn trash(&self, py: Python<'_>) -> Result<Vec<Py<Event>>> {
+        let txn = self.room.doc().transact();
+        model::trash(&txn)
+            .iter()
+            .map(|record| Py::new(py, Event::of(&self.room, &record.uuid)))
+            .collect()
+    }
+
+    /// Every tag a live event or catalogue carries, sorted.
+    fn existing_tags(&self) -> Vec<String> {
+        model::existing_tags(&self.room.doc().transact())
+    }
+
+    /// The attribute registry: key to `{"type", "unit", "description"}`.
+    fn attribute_types(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        let types = PyDict::new(py);
+        for (key, info) in model::attribute_types(&self.room.doc().transact()) {
+            let entry = PyDict::new(py);
+            entry.set_item("type", info.kind.name())?;
+            entry.set_item("unit", info.unit)?;
+            entry.set_item("description", info.description)?;
+            types.set_item(key, entry)?;
+        }
+        Ok(types.into_any().unbind())
+    }
+
+    /// Sets the unit and description of a registered key; `None` keeps a field, `""`
+    /// removes it.
+    #[pyo3(signature = (key, unit=None, description=None))]
+    fn set_attribute_info(
+        &self,
+        key: &str,
+        unit: Option<String>,
+        description: Option<String>,
+    ) -> Result<()> {
+        if !self.room.write(|txn| {
+            model::set_attribute_info(txn, key, unit.as_deref(), description.as_deref())
+        }) {
+            return Err(PyLookupError::new_err(format!(
+                "no attribute {key} is registered"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Records what made a set of events and returns its id, for their `origin`.
+    #[pyo3(signature = (kind, name, version=None, author=None, created=None, used=None, parameters=None, derived_from=None, id=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn create_origin(
+        &self,
+        kind: &str,
+        name: String,
+        version: Option<String>,
+        author: Option<String>,
+        created: Option<&Bound<'_, PyAny>>,
+        used: Option<&Bound<'_, PyAny>>,
+        parameters: Option<&Bound<'_, PyAny>>,
+        derived_from: Option<String>,
+        id: Option<String>,
+    ) -> Result<String> {
+        let kind: OriginKind = serde_json::from_value(Value::from(kind))
+            .map_err(|_| value_error("kind is one of rule, detector, model, import"))?;
+        let used: Vec<Used> = match used {
+            Some(used) => serde_json::from_value(to_json(used)?).map_err(value_error)?,
+            None => Vec::new(),
+        };
+        let origin = Origin {
+            id: uuid_argument(id)?,
+            kind,
+            name,
+            version,
+            author,
+            created: optional_timestamp(created)?,
+            used,
+            parameters: parameters.map(to_json).transpose()?,
+            derived_from,
+        };
+        self.room
+            .write(|txn| model::create_origin(txn, &origin))
+            .map_err(value_error)?;
+        Ok(origin.id)
+    }
+
+    /// One origin as a dict, or `NotFound`.
+    fn origin(&self, py: Python<'_>, id: &str) -> Result<Py<PyAny>> {
+        let origin =
+            model::origin(&self.room.doc().transact(), id).ok_or_else(|| unknown("origin"))?;
+        let dict = PyDict::new(py);
+        dict.set_item("id", origin.id)?;
+        dict.set_item(
+            "kind",
+            to_python(py, &serde_json::to_value(origin.kind).map_err(value_error)?)?,
+        )?;
+        dict.set_item("name", origin.name)?;
+        dict.set_item("version", origin.version)?;
+        dict.set_item("author", origin.author)?;
+        dict.set_item("created", optional_datetime(py, origin.created)?)?;
+        dict.set_item(
+            "used",
+            to_python(
+                py,
+                &serde_json::to_value(&origin.used).map_err(value_error)?,
+            )?,
+        )?;
+        dict.set_item(
+            "parameters",
+            to_python(py, &origin.parameters.unwrap_or(Value::Null))?,
+        )?;
+        dict.set_item("derived_from", origin.derived_from)?;
+        Ok(dict.into_any().unbind())
+    }
+
+    #[pyo3(signature = (name, author=None, uuid=None, tags=None, attributes=None, events=None, columns=None))]
     #[allow(clippy::too_many_arguments)]
     fn create_catalogue(
         &self,
         py: Python<'_>,
         name: String,
-        author: String,
+        author: Option<String>,
         uuid: Option<String>,
         tags: Option<&Bound<'_, PyAny>>,
         attributes: Option<&Bound<'_, PyDict>>,
         events: Option<&Bound<'_, PyAny>>,
+        columns: Option<Vec<String>>,
     ) -> Result<Py<Catalogue>> {
         let uuid = uuid_argument(uuid)?;
-        let tags = uuids(tags)?;
-        let attributes = match attributes {
-            Some(attributes) => to_json_map(attributes)?,
-            None => JsonMap::new(),
-        };
         let catalogue = NewCatalogue {
-            uuid: &uuid,
-            name: &name,
-            author: &author,
-            tags: &tags,
-            attributes: &attributes,
+            uuid: uuid.clone(),
+            name,
+            author,
+            created: Some(now()?),
+            tags: uuids(tags)?,
+            columns: columns.unwrap_or_default(),
+            attributes: match attributes {
+                Some(attributes) => to_json_map(attributes)?,
+                None => JsonMap::new(),
+            },
         };
         self.room
             .write(|txn| model::create_catalogue(txn, &catalogue))
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(value_error)?;
         if let Some(events) = events {
             let mut uuids = Vec::new();
             for event in events.try_iter()? {
@@ -825,43 +1248,66 @@ impl Room {
         Py::new(py, Catalogue::of(&self.room, &uuid))
     }
 
-    #[pyo3(signature = (start, stop, author, uuid=None, tags=None, products=None, rating=None, attributes=None))]
+    /// A hand-made event (no `origin`) records when it was created unless told otherwise.
+    #[pyo3(signature = (
+        start, stop, author=None, uuid=None, tags=None, products=None, attributes=None,
+        status=None, confidence=None, start_err=None, stop_err=None, origin=None,
+        source_id=None, created=None, comment=None, shape=None,
+    ))]
     #[allow(clippy::too_many_arguments)]
     fn create_event(
         &self,
         py: Python<'_>,
         start: &Bound<'_, PyAny>,
         stop: &Bound<'_, PyAny>,
-        author: String,
+        author: Option<String>,
         uuid: Option<String>,
         tags: Option<&Bound<'_, PyAny>>,
         products: Option<&Bound<'_, PyAny>>,
-        rating: Option<i64>,
         attributes: Option<&Bound<'_, PyDict>>,
+        status: Option<&str>,
+        confidence: Option<f64>,
+        start_err: Option<f64>,
+        stop_err: Option<f64>,
+        origin: Option<String>,
+        source_id: Option<String>,
+        created: Option<&Bound<'_, PyAny>>,
+        comment: Option<String>,
+        shape: Option<&Bound<'_, PyAny>>,
     ) -> Result<Py<Event>> {
-        let uuid = uuid_argument(uuid)?;
-        let start = to_timestamp(start)?;
-        let stop = to_timestamp(stop)?;
-        let tags = uuids(tags)?;
-        let products = uuids(products)?;
-        let attributes = match attributes {
-            Some(attributes) => to_json_map(attributes)?,
-            None => JsonMap::new(),
+        let mut event = EventRecord::new(
+            uuid_argument(uuid)?,
+            to_timestamp(start)?,
+            to_timestamp(stop)?,
+        );
+        event.created = match (optional_timestamp(created)?, &origin) {
+            (Some(created), _) => Some(created),
+            (None, None) => Some(now()?),
+            (None, Some(_)) => None,
         };
-        let event = NewEvent {
-            uuid: &uuid,
-            start,
-            stop,
-            author: &author,
-            tags: &tags,
-            products: &products,
-            rating,
-            attributes: &attributes,
-        };
-        self.room
-            .write(|txn| model::create_event(txn, &event))
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Py::new(py, Event::of(&self.room, &uuid))
+        event.author = author;
+        event.tags = uuids(tags)?;
+        event.products = uuids(products)?;
+        event.status = status.map(to_status).transpose()?.unwrap_or_default();
+        event.confidence = confidence;
+        event.start_err = start_err;
+        event.stop_err = stop_err;
+        event.origin = origin;
+        event.source_id = source_id;
+        event.shape = shape.map(to_shape).transpose()?.flatten();
+        let attributes = Attributes::of(attributes)?;
+        event.attributes = attributes.values.clone();
+        let warnings = self
+            .room
+            .write(|txn| {
+                attributes.register_dates(txn);
+                let warnings = model::create_event(txn, &event)?;
+                model::set_comment(txn, &event.uuid, comment.as_deref());
+                Ok::<_, model::WriteError>(warnings)
+            })
+            .map_err(value_error)?;
+        warn(py, &warnings)?;
+        Py::new(py, Event::of(&self.room, &event.uuid))
     }
 
     /// Blocks until the server has processed every change made so far, or `timeout` passes.
@@ -874,7 +1320,12 @@ impl Room {
 
     /// Imports the VOTable's tables into this room and returns how many catalogues it added.
     #[pyo3(signature = (path, table_name=None))]
-    fn import_votable(&self, path: String, table_name: Option<String>) -> Result<usize> {
+    fn import_votable(
+        &self,
+        py: Python<'_>,
+        path: String,
+        table_name: Option<String>,
+    ) -> Result<usize> {
         let xml = std::fs::read_to_string(&path)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         let imported =
@@ -886,17 +1337,22 @@ impl Room {
             .author
             .unwrap_or_else(|| "VOTable Import".to_owned());
         let single = imported.tables.len() == 1;
-        self.room.write(|txn| -> Result<()> {
-            for (index, table) in imported.tables.iter().enumerate() {
-                let name = if single {
-                    base.clone()
-                } else {
-                    format!("{base}_{index}")
-                };
-                import_table(txn, &name, &author, &table.events)?;
-            }
-            Ok(())
-        })?;
+        let warnings = self
+            .room
+            .write(|txn| -> std::result::Result<_, model::WriteError> {
+                let mut warnings = Vec::new();
+                for (index, table) in imported.tables.iter().enumerate() {
+                    let name = if single {
+                        base.clone()
+                    } else {
+                        format!("{base}_{index}")
+                    };
+                    warnings.extend(import_table(txn, name, &author, &table.events)?);
+                }
+                Ok(warnings)
+            })
+            .map_err(value_error)?;
+        warn(py, &warnings)?;
         Ok(imported.tables.len())
     }
 }
@@ -904,37 +1360,24 @@ impl Room {
 /// Writes one imported table as a catalogue holding its events.
 fn import_table(
     txn: &mut yrs::TransactionMut<'_>,
-    name: &str,
+    name: String,
     author: &str,
-    events: &[votable::ImportedEvent],
-) -> Result<()> {
-    let catalogue = uuid::Uuid::new_v4().to_string();
-    let mut uuids = Vec::with_capacity(events.len());
+    events: &[EventRecord],
+) -> std::result::Result<Vec<model::TypeWarning>, model::WriteError> {
+    let mut warnings = Vec::new();
     for event in events {
-        let record = NewEvent {
-            uuid: &event.uuid,
-            start: event.start,
-            stop: event.stop,
-            author: &event.author,
-            tags: &event.tags,
-            products: &event.products,
-            rating: event.rating,
-            attributes: &event.attributes,
-        };
-        model::create_event(txn, &record)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        uuids.push(event.uuid.clone());
+        warnings.extend(model::create_event(txn, event)?);
     }
-    let new = NewCatalogue {
-        uuid: &catalogue,
+    let catalogue = NewCatalogue {
+        uuid: uuid::Uuid::new_v4().to_string(),
         name,
-        author,
-        tags: &[],
-        attributes: &JsonMap::new(),
+        author: Some(author.to_owned()),
+        ..NewCatalogue::default()
     };
-    model::create_catalogue(txn, &new).map_err(|error| PyValueError::new_err(error.to_string()))?;
-    model::add_catalogue_events(txn, &catalogue, &uuids);
-    Ok(())
+    model::create_catalogue(txn, &catalogue)?;
+    let uuids: Vec<String> = events.iter().map(|event| event.uuid.clone()).collect();
+    model::add_catalogue_events(txn, &catalogue.uuid, &uuids);
+    Ok(warnings)
 }
 
 /// The VOTable a set of catalogues exports to, the file Python cocat's exporter writes.
@@ -951,7 +1394,7 @@ fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
         let events = model::catalogue_events(&txn, uuid).unwrap_or_default();
         exported.push((catalogue, events));
     }
-    let pairs: Vec<(&model::CatalogueSummary, &[model::EventRecord])> = exported
+    let pairs: Vec<(&model::CatalogueSummary, &[EventRecord])> = exported
         .iter()
         .map(|(catalogue, events)| (catalogue, events.as_slice()))
         .collect();
@@ -1021,6 +1464,20 @@ fn change_to_python(py: Python<'_>, change: &Change) -> Result<Py<PyAny>> {
         }
         Change::EventRemoved { uuid } => {
             dict.set_item("kind", "event_removed")?;
+            dict.set_item("uuid", uuid)?;
+        }
+        Change::EventFields { uuid, set, removed } => {
+            dict.set_item("kind", "event_fields")?;
+            dict.set_item("uuid", uuid)?;
+            let fields = PyDict::new(py);
+            for (key, value) in set {
+                fields.set_item(key, field_to_python(py, key, value)?)?;
+            }
+            dict.set_item("set", fields)?;
+            dict.set_item("removed", removed)?;
+        }
+        Change::CatalogueRule { uuid } => {
+            dict.set_item("kind", "catalogue_rule")?;
             dict.set_item("uuid", uuid)?;
         }
     }
