@@ -899,3 +899,28 @@ async fn an_accepted_handshake_names_the_v2_subprotocol() {
         Some(&header::HeaderValue::from_static(cocat_core::SUBPROTOCOL))
     );
 }
+
+/// A room Python cocat wrote, in layout v1.
+const V1_ROOM: &[u8] = include_bytes!("../../cocat-core/tests/fixtures/catalogues.y");
+
+#[tokio::test]
+async fn a_room_file_of_the_first_layout_is_never_served() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-old", "Not imported")
+        .await
+        .unwrap();
+    let file = fixture.rooms_dir.join("room-old.y");
+    fs::write(&file, V1_ROOM).unwrap();
+
+    let mut socket = fixture
+        .connect("room-old", Some(&fixture.token(owner).await))
+        .await;
+
+    match next_ws(&mut socket).await {
+        WsMessage::Close(frame) => assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(1011)),
+        other => panic!("a v1 room must not be served, got {other:?}"),
+    }
+    assert_eq!(fs::read(&file).unwrap(), V1_ROOM);
+    assert_eq!(fixture.rooms.open_rooms(), 0);
+}

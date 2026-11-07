@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use cocat_core::model;
 use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, StoreError, read_updates, room_file};
 use sqlx::SqlitePool;
@@ -684,18 +685,23 @@ fn load_room(
     registry: Rooms,
 ) {
     let started = Instant::now();
-    match FileRoomStore::open(&update_dir, &room_id) {
-        Ok((store, updates)) => {
-            crate::telemetry::room_opened(started.elapsed().as_secs_f64());
-            room_loop(
-                room_id, update_dir, allowance, store, updates, commands, registry,
-            )
-        }
+    let (store, updates) = match FileRoomStore::open(&update_dir, &room_id) {
+        Ok(opened) => opened,
         Err(error) => {
             tracing::error!(room = %room_id, %error, "the room file cannot be loaded");
-            abandon_room(&room_id, &registry, commands);
+            return abandon_room(&room_id, &registry, commands);
         }
+    };
+    crate::telemetry::room_opened(started.elapsed().as_secs_f64());
+    let doc = replay(&updates);
+    // A v2 client would merge its edits into the first layout; the import command migrates.
+    if model::is_v1(&doc.transact()) {
+        tracing::error!(room = %room_id, "the room file holds the first layout; run the import");
+        return abandon_room(&room_id, &registry, commands);
     }
+    room_loop(
+        room_id, update_dir, allowance, store, doc, commands, registry,
+    )
 }
 
 /// Removes a room whose file never loaded. The registry entry goes first, so a retry opens
@@ -730,18 +736,14 @@ fn room_loop(
     update_dir: PathBuf,
     limit: u64,
     mut store: FileRoomStore,
-    updates: Vec<Bytes>,
+    doc: Doc,
     commands: Receiver<RoomCommand>,
     registry: Rooms,
 ) {
-    let doc = Doc::new();
     let mut clients = HashMap::new();
     let mut backlog = VecDeque::new();
     let mut full_state = None;
     let mut commands = Some(commands);
-    for update in updates {
-        let _ = apply(&doc, &update);
-    }
     let mut seen = doc.transact().state_vector();
 
     'serving: loop {
@@ -1370,6 +1372,14 @@ fn take_record(doc: &Doc, seen: &mut StateVector, payload: &[u8]) -> bool {
 
 /// Replays one stored record into a document that is being loaded; whether it changed
 /// anything does not matter there.
+fn replay(updates: &[Bytes]) -> Doc {
+    let doc = Doc::new();
+    for update in updates {
+        let _ = apply(&doc, update);
+    }
+    doc
+}
+
 fn apply(doc: &Doc, payload: &[u8]) -> bool {
     took_update(doc, &mut StateVector::default(), payload)
 }
