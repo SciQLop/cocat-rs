@@ -256,3 +256,18 @@ def test_our_json_export_imports_into_tscat(database, room, tmp_path):
     for uuid in (event.uuid, plain.uuid):
         assert_event_matches(room, exported[uuid])
     assert json.loads(path.read_text())["catalogues"][1]["predicate"] is None
+
+
+def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, room):
+    """tscat 0.5.1 resolves InCatalogue through a lookup that returns its first catalogue;
+    the import reads the stored predicate, so the rule names the catalogue it was made for."""
+    tscat.create_catalogue("first", author="a")
+    target = tscat.create_catalogue("target", author="a")
+    tscat.create_catalogue("smart", author="a", predicate=f.InCatalogue(target))
+    tscat.save()
+    target_uuid = target.uuid
+
+    cc_tscat.import_database(room)
+
+    smart = next(c for c in room.catalogues() if c.name == "smart")
+    assert json.dumps(smart.rule).count(target_uuid) == 1

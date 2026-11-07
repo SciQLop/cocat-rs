@@ -31,12 +31,26 @@ def import_database(room):
         for removed in (False, True)
         for event in tscat.get_events(removed_items=removed)
     ]
+    predicates = _stored_predicates(tscat)
     catalogues = [
-        _catalogue_of_tscat(tscat, catalogue)
+        _catalogue_of_tscat(tscat, catalogue, predicates.get(catalogue.uuid))
         for removed in (False, True)
         for catalogue in tscat.get_catalogues(removed_items=removed)
     ]
     return _write(room, events, catalogues)
+
+
+def _stored_predicates(tscat):
+    """Each catalogue's predicate as tscat stored it. tscat 0.5.1 rebuilds InCatalogue
+    through a lookup that returns its first catalogue, whatever the uuid; the stored form
+    still names the right one."""
+    from sqlalchemy import select
+    from tscat.orm_sqlalchemy import orm
+
+    rows = tscat.base.backend().session.execute(
+        select(orm.Catalogue.uuid, orm.Catalogue.predicate)
+    )
+    return {uuid: predicate for uuid, predicate in rows if predicate}
 
 
 def import_json(room, path):
@@ -79,18 +93,17 @@ def _event_of_tscat(event):
     return {**fields, "attributes": event.variable_attributes(), "removed": event.is_removed()}
 
 
-def _catalogue_of_tscat(tscat, catalogue):
+def _catalogue_of_tscat(tscat, catalogue, predicate):
     listed = [
         event.uuid
         for gone in (False, True)
         for event in tscat.get_events(catalogue, removed_items=gone, assigned_only=True)[0]
     ]
     members = [event.uuid for event in tscat.get_events(catalogue)[0]]
-    predicate = catalogue.predicate
     return {
         **{key: getattr(catalogue, key) for key in ("name", "author", "uuid", "tags")},
         "attributes": catalogue.variable_attributes(),
-        "predicate": None if predicate is None else predicate.to_dict(),
+        "predicate": predicate,
         "events": listed,
         "members": members,
         "removed": catalogue.is_removed(),
