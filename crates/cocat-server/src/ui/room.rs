@@ -77,6 +77,7 @@ struct InvitationLine {
 struct InvitationPanel {
     action: String,
     share_link: Option<String>,
+    suggestions: Vec<String>,
     invitations: Vec<InvitationLine>,
 }
 
@@ -158,7 +159,11 @@ async fn build_page(
     let members = members_of(state, &room.id, role).await?;
     let groups = groups_of(state, user.id, &room.id, role).await?;
     let panel = match role {
-        Role::Owner => Some(panel(state, user.id, &room.id, share_link).await?),
+        Role::Owner => {
+            let emails: Vec<&str> = members.iter().map(|member| member.email.as_str()).collect();
+            let suggestions = super::invite_suggestions(state, user.id, &emails).await?;
+            Some(panel(state, user.id, &room.id, share_link, suggestions).await?)
+        }
         _ => None,
     };
     let leave = (role != Role::Owner).then(|| LeaveForm {
@@ -267,11 +272,13 @@ async fn panel(
     actor: Uuid,
     room_id: &str,
     share_link: Option<String>,
+    suggestions: Vec<String>,
 ) -> Result<InvitationPanel, lifecycle::LifecycleError> {
     let rows = invitations::list(state, room_id, actor).await?;
     Ok(InvitationPanel {
         action: state.links.path(&format!("/rooms/{room_id}/invitations")),
         share_link,
+        suggestions,
         invitations: rows
             .into_iter()
             .map(|invitation| InvitationLine {

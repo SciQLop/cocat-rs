@@ -128,8 +128,13 @@
     <p>We send the link to this address.</p>
     <form method="post" action="{{ panel.action }}" class="inline">
       <input type="hidden" name="kind" value="email">
-      <input id="email" name="email" type="email" autocomplete="off"
+      <input id="email" name="email" type="email" autocomplete="off" list="known-people"
              placeholder="name@example.org" aria-label="Email">
+      <datalist id="known-people">
+{%- for email in panel.suggestions %}
+        <option value="{{ email }}">
+{%- endfor %}
+      </datalist>
       <select id="email-role" name="role" aria-label="Role">
         <option value="editor">editor</option>
         <option value="viewer">viewer</option>

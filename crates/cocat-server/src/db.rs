@@ -151,6 +151,26 @@ pub async fn list_members(pool: &SqlitePool, room_id: &str) -> Result<Vec<(User,
         .collect()
 }
 
+/// The emails of the active people `user_id` shares a room or a group with, themselves
+/// excluded: what an invitation form may suggest without revealing every account.
+pub async fn known_people(pool: &SqlitePool, user_id: Uuid) -> Result<Vec<String>, DbError> {
+    let emails = sqlx::query_scalar(
+        r#"SELECT email FROM "user"
+           WHERE is_active AND id != ?1 AND (
+               id IN (SELECT other.user_id FROM membership mine
+                      JOIN membership other ON other.room_id = mine.room_id
+                      WHERE mine.user_id = ?1)
+               OR id IN (SELECT other.user_id FROM group_member mine
+                         JOIN group_member other ON other.group_id = mine.group_id
+                         WHERE mine.user_id = ?1))
+           ORDER BY email"#,
+    )
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    Ok(emails)
+}
+
 /// The email of a user reached through their own membership of a room. A user who is not a
 /// member has no email here, whether or not an account carries that id.
 pub async fn member_email(

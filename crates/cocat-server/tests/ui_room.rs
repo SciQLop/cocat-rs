@@ -764,3 +764,55 @@ async fn a_foreign_group_is_refused() {
             .is_empty()
     );
 }
+
+/// The email field suggests the people the owner already works with: members of their other
+/// rooms and of their groups, never strangers, the owner, or members of this room.
+#[tokio::test]
+async fn the_email_field_suggests_people_the_owner_works_with() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(MEMBER).await;
+    let room = room_owned_by(&fixture, owner, "lab").await;
+    let other_room = room_owned_by(&fixture, owner, "elsewhere").await;
+    member_of(&fixture, &room, OTHER, Role::Editor).await;
+    member_of(&fixture, &other_room, OTHER, Role::Viewer).await;
+    member_of(&fixture, &other_room, "colleague@example.org", Role::Viewer).await;
+    let group = group_owned_by(&fixture, owner, "friends").await;
+    let friend = fixture.verified("friend@example.org").await;
+    sqlx::query("INSERT INTO group_member (group_id, user_id, role) VALUES (?, ?, 'member')")
+        .bind(&group)
+        .bind(friend.to_string())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    fixture.verified("stranger@example.org").await;
+    let token = fixture.token(owner).await;
+
+    let page = body_text(
+        fixture
+            .get(&format!("/ui/rooms/{room}"), Some(&token))
+            .await,
+    )
+    .await;
+
+    assert!(page.contains(r#"list="known-people""#), "{page}");
+    assert!(
+        page.contains(r#"<option value="colleague@example.org">"#),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<option value="friend@example.org">"#),
+        "{page}"
+    );
+    assert!(
+        !page.contains(r#"<option value="stranger@example.org">"#),
+        "{page}"
+    );
+    assert!(
+        !page.contains(&format!(r#"<option value="{OTHER}">"#)),
+        "{page}"
+    );
+    assert!(
+        !page.contains(&format!(r#"<option value="{MEMBER}">"#)),
+        "{page}"
+    );
+}

@@ -166,6 +166,17 @@ pub(crate) fn redirect_to(state: &AppState, target: &str) -> Response {
     Redirect::to(&state.links.path(target)).into_response()
 }
 
+/// The addresses an invitation form suggests: the people `user` works with, minus `members`.
+pub(crate) async fn invite_suggestions(
+    state: &AppState,
+    user: uuid::Uuid,
+    members: &[&str],
+) -> Result<Vec<String>, LifecycleError> {
+    let mut people = crate::db::known_people(&state.pool, user).await?;
+    people.retain(|email| !members.contains(&email.as_str()));
+    Ok(people)
+}
+
 #[cfg(test)]
 mod tests {
     use super::query_value;

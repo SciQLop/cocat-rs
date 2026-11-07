@@ -105,6 +105,7 @@ struct InvitationLine {
 struct InvitationPanel {
     action: String,
     share_link: Option<String>,
+    suggestions: Vec<String>,
     invitations: Vec<InvitationLine>,
 }
 
@@ -250,7 +251,11 @@ async fn detail_page(
         })
         .collect();
     let panel = match role {
-        GroupRole::Owner => Some(panel_rows(state, &group.id, user.id, share_link).await?),
+        GroupRole::Owner => {
+            let emails: Vec<&str> = members.iter().map(|member| member.email.as_str()).collect();
+            let suggestions = super::invite_suggestions(state, user.id, &emails).await?;
+            Some(panel_rows(state, &group.id, user.id, share_link, suggestions).await?)
+        }
         GroupRole::Member => None,
     };
     let leave = (role != GroupRole::Owner).then(|| LeaveForm {
@@ -302,11 +307,13 @@ async fn panel_rows(
     group_id: &str,
     actor: Uuid,
     share_link: Option<String>,
+    suggestions: Vec<String>,
 ) -> Result<InvitationPanel, lifecycle::LifecycleError> {
     let rows = groups::list_invitations(state, group_id, actor).await?;
     Ok(InvitationPanel {
         action: state.links.path(&format!("/groups/{group_id}/invitations")),
         share_link,
+        suggestions,
         invitations: rows
             .into_iter()
             .map(|invitation| InvitationLine {
