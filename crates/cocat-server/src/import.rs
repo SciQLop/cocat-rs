@@ -10,7 +10,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 
-use cocat_core::room_id;
 use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime};
@@ -372,22 +371,16 @@ async fn import_room_files(
                 source,
             })?
             .path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("y") {
-            continue;
-        }
-        let Some(room_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        let Some(room_id) = cocat_core::store::room_id_from_file(&path) else {
             continue;
         };
-        if room_id::validate_room_id(room_id).is_err() {
-            continue;
-        }
-        if let Err(error) = cocat_core::store::FileRoomStore::open(update_dir, room_id) {
+        if let Err(error) = cocat_core::store::FileRoomStore::open(update_dir, &room_id) {
             summary
                 .skipped
                 .push(format!("the room file {room_id}.y: {error}"));
             continue;
         }
-        ids.insert(room_id.to_owned());
+        ids.insert(room_id);
     }
     let mut tx = db::begin_immediate(pool).await?;
     for room_id in ids {

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 use cocat_core::role::Role;
-use cocat_core::store::FileRoomStore;
+use cocat_core::store::{FileRoomStore, HEADER};
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, db, import, invitations, links::Links, ratelimit::LoginLimit};
 use sqlx::SqlitePool;
@@ -413,6 +413,38 @@ async fn a_named_room_file_imports() {
         db::role_in(&fixture.pool, "lab", owner).await.unwrap(),
         Some(Role::Owner)
     );
+}
+
+#[tokio::test]
+async fn python_room_names_import_and_open() {
+    let fixture = Fixture::start().await;
+    let owner = db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let ids = ["Bepi MSA", "alexis.jeandet"];
+    for id in ids {
+        std::fs::write(fixture.updates.join(format!("{id}.y")), HEADER).unwrap();
+    }
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.rooms, ids.len(), "{:?}", summary.skipped);
+    let state = fixture.state();
+    for id in ids {
+        assert_eq!(
+            db::role_in(&fixture.pool, id, owner).await.unwrap(),
+            Some(Role::Owner)
+        );
+        state.rooms.get_or_open(id).unwrap();
+    }
 }
 
 #[tokio::test]

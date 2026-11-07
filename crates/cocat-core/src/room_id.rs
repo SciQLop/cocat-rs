@@ -1,9 +1,9 @@
-//! Room ids double as `.y` file names, so they are restricted to a safe alphabet.
+//! The rule for the ids of rooms created on this server. Ids imported from Python cocat may
+//! break it (spaces, dots); `store::room_file` turns any id into a safe file name.
 
 use thiserror::Error;
 
-/// Room ids are `[A-Za-z0-9_-]{1,64}`; keeping the alphabet safe means a room id can
-/// never name a path outside the update directory.
+/// New room ids are `[A-Za-z0-9_-]{1,64}`: plain in URLs and file names.
 pub const MAX_ROOM_ID_LEN: usize = 64;
 
 #[derive(Debug, Error, PartialEq, Eq)]

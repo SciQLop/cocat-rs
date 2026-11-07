@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::room_id::{InvalidRoomId, validate_room_id};
+use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
+
+use crate::room_id::InvalidRoomId;
 
 pub const HEADER: &[u8] = b"0.0.1\0";
 
@@ -51,7 +53,7 @@ pub struct FileRoomStore {
 
 impl FileRoomStore {
     pub fn open(update_dir: &Path, room_id: &str) -> Result<(Self, Vec<Bytes>), StoreError> {
-        validate_room_id(room_id)?;
+        check_room_id(room_id)?;
         let path = room_file(update_dir, room_id);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -158,15 +160,60 @@ impl FileRoomStore {
     }
 }
 
-/// The file a room's records live in.
+/// What a file name cannot hold on Linux, macOS or Windows, plus `%` so that decoding is exact.
+/// Python cocat named files after the raw room id (`Bepi MSA.y`, `alexis.jeandet.y`), so other
+/// ASCII characters stay as they are and those files keep their names. Non-ASCII is escaped
+/// (the crate's rule), which also avoids macOS normalising the name.
+const NOT_IN_A_FILE_NAME: &AsciiSet = &CONTROLS
+    .add(b'/')
+    .add(b'\\')
+    .add(b':')
+    .add(b'*')
+    .add(b'?')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'|')
+    .add(b'%');
+
+/// Most file systems cap a name at 255 bytes.
+const MAX_FILE_NAME: usize = 255;
+
+/// The file a room's records live in. Any room id maps to one file directly in `update_dir`:
+/// a leading dot is escaped too, so `.` and `..` never name a directory.
+// simplify: ids differing only by case share a file on case-insensitive file systems; the
+// server's own ids are unique case-insensitively in practice, add a hash suffix if that changes.
 pub fn room_file(update_dir: &Path, room_id: &str) -> PathBuf {
-    update_dir.join(format!("{room_id}.y"))
+    update_dir.join(file_name(room_id))
+}
+
+/// The room id a file written by `room_file` belongs to, `None` for any other file.
+pub fn room_id_from_file(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let stem = name.strip_suffix(".y")?;
+    let room_id = percent_decode_str(stem).decode_utf8().ok()?.into_owned();
+    (file_name(&room_id) == name).then_some(room_id)
+}
+
+fn file_name(room_id: &str) -> String {
+    let escaped = utf8_percent_encode(room_id, NOT_IN_A_FILE_NAME).to_string();
+    match escaped.strip_prefix('.') {
+        Some(rest) => format!("%2E{rest}.y"),
+        None => format!("{escaped}.y"),
+    }
+}
+
+fn check_room_id(room_id: &str) -> Result<(), InvalidRoomId> {
+    if room_id.is_empty() || file_name(room_id).len() > MAX_FILE_NAME {
+        return Err(InvalidRoomId::new(room_id));
+    }
+    Ok(())
 }
 
 /// Every complete record in a room's file, read without writing: a torn tail is left for the
 /// next writer to truncate, and a room that was never written reads as empty.
 pub fn read_updates(update_dir: &Path, room_id: &str) -> Result<Vec<Bytes>, StoreError> {
-    validate_room_id(room_id)?;
+    check_room_id(room_id)?;
     let path = room_file(update_dir, room_id);
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,

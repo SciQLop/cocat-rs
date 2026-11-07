@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use cocat_core::store::{FileRoomStore, StoreError};
+use cocat_core::store::{FileRoomStore, StoreError, room_file, room_id_from_file};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -88,11 +88,47 @@ fn a_missing_file_opens_as_an_empty_room() {
 }
 
 #[test]
-fn rejects_an_invalid_room_id() {
+fn rejects_an_id_without_a_usable_file_name() {
     let dir = TempDir::new().unwrap();
 
-    for id in ["", ".", "..", "a/b", "a\\b", "x".repeat(65).as_str()] {
+    for id in ["", "x".repeat(300).as_str()] {
         let error = FileRoomStore::open(dir.path(), id).unwrap_err();
         assert!(matches!(error, StoreError::InvalidRoomId(_)), "id {id:?}");
     }
+}
+
+#[test]
+fn python_room_ids_keep_their_file_names() {
+    let dir = Path::new("rooms");
+
+    for id in ["room0", "alexis.jeandet", "Bepi MSA", "CDPP Tests"] {
+        assert_eq!(room_file(dir, id), dir.join(format!("{id}.y")));
+    }
+}
+
+#[test]
+fn any_room_id_gets_its_own_file_inside_the_directory() {
+    let dir = TempDir::new().unwrap();
+    let ids = [
+        "Bepi MSA",
+        ".",
+        "..",
+        "../escape",
+        "a/b",
+        "a\\b",
+        "C:x",
+        "50%",
+        "a%2Fb",
+        "Équipe",
+        ".hidden",
+    ];
+
+    for id in ids {
+        let (mut store, _) = FileRoomStore::open(dir.path(), id).unwrap();
+        store.append(Bytes::from_static(b"\x00\x00")).unwrap();
+        store.flush().unwrap();
+        assert_eq!(store.path().parent(), Some(dir.path()), "id {id:?}");
+        assert_eq!(room_id_from_file(store.path()).as_deref(), Some(id));
+    }
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), ids.len());
 }

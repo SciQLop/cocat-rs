@@ -103,11 +103,17 @@ def test_an_unknown_object_is_not_found(room):
         room.event("bbbbbbbb-2222-4222-8222-222222222222")
 
 
-def test_invalid_input_raises_value_error(room):
+def test_invalid_input_raises_value_error(room, tmp_path):
     with pytest.raises(ValueError):
         room.create_event(start="not a time", stop=STOP, author="a@x.org")
     with pytest.raises(ValueError):
-        cc.Room.open("/tmp", "../escape")
+        cc.Room.open(tmp_path, "")
+
+
+def test_a_listed_room_id_opens_whatever_its_characters(tmp_path):
+    for room_id in ["Bepi MSA", "../escape", "a/b", ".."]:
+        cc.Room.open(tmp_path, room_id).close()
+    assert len(list(tmp_path.iterdir())) == 4
 
 
 def test_the_name_and_the_attributes_change(room):

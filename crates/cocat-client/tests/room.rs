@@ -44,9 +44,12 @@ fn a_local_write_produces_no_changes() {
 }
 
 #[test]
-fn an_invalid_room_id_is_refused() {
+fn any_listed_room_id_opens_inside_the_cache() {
     let dir = cache();
-    assert!(Room::open(dir.path(), "../escape").is_err());
+    for id in ["Bepi MSA", "../escape", "a/b", ".."] {
+        Room::open(dir.path(), id).unwrap().close();
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 4);
 }
 
 #[test]
