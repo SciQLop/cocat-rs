@@ -26,7 +26,7 @@ use crate::time::Timestamp;
 
 pub use materialize::materialize;
 pub use members::{Member, catalogue_events, catalogue_members};
-pub use migrate::migrate_v1;
+pub use migrate::{Migration, migrate_v1};
 pub use provenance::{comment, create_origin, origin, set_comment};
 pub use read::{catalogue, catalogues, event, event_catalogues, existing_tags, is_v1, trash};
 pub use registry::{attribute_types, register_attribute, set_attribute_info};

@@ -15,7 +15,6 @@ use yrs::{Doc, ReadTxn as _, Transact, Update};
 const FIXTURE: &[u8] = include_bytes!("fixtures/catalogues.y");
 const EXPECTED: &str = include_str!("fixtures/catalogues.expected.json");
 const ALPHA: &str = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60";
-const BETA: &str = "0e4d2c31-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
 const MALFORMED: &str = "11111111-2222-4333-8444-555555555555";
 const DANGLING: &str = "99999999-8888-4777-8666-555555555555";
 
@@ -80,7 +79,8 @@ fn migrated() -> Doc {
     assert!(model::is_v1(&doc.transact()));
     let update = model::migrate_v1(&doc)
         .unwrap()
-        .expect("a v1 room migrates");
+        .expect("a v1 room migrates")
+        .update;
 
     let replica = v1_document();
     replica
@@ -149,28 +149,34 @@ fn the_migrated_room_is_v2_and_registers_its_attributes() {
     assert_eq!(model::existing_tags(&txn), ["t1", "t2"]);
 }
 
+/// An event without readable times cannot be shown or edited in any layout; the migration
+/// drops it and says so, and drops catalogue entries that list no event.
 #[test]
-fn a_malformed_event_and_a_dangling_member_survive_unread() {
-    let doc = migrated();
-    let txn = doc.transact();
+fn a_malformed_event_and_a_dangling_member_are_dropped_and_reported() {
+    let doc = v1_document();
+    let migration = model::migrate_v1(&doc)
+        .unwrap()
+        .expect("a v1 room migrates");
+    assert_eq!(migration.dropped, [MALFORMED]);
 
-    assert_eq!(model::event(&txn, MALFORMED), None);
-    assert_eq!(model::catalogue(&txn, BETA).unwrap().event_count, 0);
+    let txn = doc.transact();
     let events = txn.get_map(model::EVENTS).unwrap();
-    assert!(yrs::Map::contains_key(&events, &txn, MALFORMED));
+    assert!(!yrs::Map::contains_key(&events, &txn, MALFORMED));
     let catalogues = txn.get_map(model::CATALOGUES).unwrap();
-    let Some(yrs::Out::YMap(beta)) = yrs::Map::get(&catalogues, &txn, BETA) else {
-        panic!("beta is missing");
-    };
-    let Some(yrs::Out::YMap(listed)) = yrs::Map::get(&beta, &txn, "events") else {
-        panic!("beta lists nothing");
-    };
-    assert!(yrs::Map::contains_key(&listed, &txn, DANGLING));
+    for (_, catalogue) in yrs::Map::iter(&catalogues, &txn) {
+        let yrs::Out::YMap(catalogue) = catalogue else {
+            continue;
+        };
+        if let Some(yrs::Out::YMap(listed)) = yrs::Map::get(&catalogue, &txn, "events") {
+            assert!(!yrs::Map::contains_key(&listed, &txn, DANGLING));
+            assert!(!yrs::Map::contains_key(&listed, &txn, MALFORMED));
+        }
+    }
 }
 
 #[test]
 fn a_v2_room_is_not_migrated_again() {
     let doc = migrated();
-    assert_eq!(model::migrate_v1(&doc).unwrap(), None);
-    assert_eq!(model::migrate_v1(&Doc::new()).unwrap(), None);
+    assert!(model::migrate_v1(&doc).unwrap().is_none());
+    assert!(model::migrate_v1(&Doc::new()).unwrap().is_none());
 }

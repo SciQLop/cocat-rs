@@ -144,8 +144,13 @@ fn migrate_room_files(
 ) -> Result<(), ImportError> {
     for room_id in room_ids(update_dir)? {
         match migrate_room_file(update_dir, &room_id, dry_run) {
-            Ok(true) => summary.migrated += 1,
-            Ok(false) => {}
+            Ok(Some(dropped)) => {
+                summary.migrated += 1;
+                summary.skipped.extend(dropped.into_iter().map(|event| {
+                    format!("the event {event} of room {room_id}: its start and stop are not times")
+                }));
+            }
+            Ok(None) => {}
             Err(error) => summary.skipped.push(format!(
                 "the room file {room_id}.y stays in layout v1: {error}"
             )),
@@ -154,12 +159,13 @@ fn migrate_room_files(
     Ok(())
 }
 
-/// Appends the update that moves a v1 room file to v2; false when it is not v1.
+/// Appends the update that moves a v1 room file to v2 and returns the events it dropped;
+/// `None` when the file is not v1.
 fn migrate_room_file(
     update_dir: &Path,
     room_id: &str,
     dry_run: bool,
-) -> Result<bool, MigrateError> {
+) -> Result<Option<Vec<String>>, MigrateError> {
     let (mut store, updates) = FileRoomStore::open(update_dir, room_id)?;
     let doc = Doc::new();
     {
@@ -168,14 +174,14 @@ fn migrate_room_file(
             txn.apply_update(Update::decode_v1(update)?)?;
         }
     }
-    let Some(update) = model::migrate_v1(&doc)? else {
-        return Ok(false);
+    let Some(migration) = model::migrate_v1(&doc)? else {
+        return Ok(None);
     };
     if !dry_run {
-        store.append(Bytes::from(update))?;
+        store.append(Bytes::from(migration.update))?;
         store.flush()?;
     }
-    Ok(true)
+    Ok(Some(migration.dropped))
 }
 
 /// The ids of the room files in `update_dir`, sorted.

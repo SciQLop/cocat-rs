@@ -557,6 +557,35 @@ async fn a_dry_run_leaves_a_v1_room_file_alone() {
 }
 
 #[tokio::test]
+async fn an_event_without_times_is_dropped_and_named_in_the_summary() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    std::fs::write(fixture.updates.join("lab.y"), V1_ROOM).unwrap();
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    let malformed = "11111111-2222-4333-8444-555555555555";
+    assert!(
+        summary
+            .lines(false)
+            .iter()
+            .any(|line| line.contains(malformed) && line.contains("lab")),
+        "{:?}",
+        summary.lines(false)
+    );
+}
+
+#[tokio::test]
 async fn the_room_files_of_imported_users_are_migrated_too() {
     let fixture = Fixture::start().await;
     std::fs::write(fixture.updates.join("lab.y"), V1_ROOM).unwrap();
