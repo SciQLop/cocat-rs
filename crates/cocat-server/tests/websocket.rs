@@ -124,7 +124,7 @@ impl Fixture {
         auth::start_session(&self.pool, user).await.unwrap()
     }
 
-    async fn handshake(&self, room_id: &str, token: Option<&str>) -> Result<Socket, u16> {
+    fn request(&self, room_id: &str, token: Option<&str>) -> Request<()> {
         let mut request = format!("ws://{}/room/{room_id}", self.addr)
             .into_client_request()
             .unwrap();
@@ -134,16 +134,22 @@ impl Fixture {
                 format!("fastapiusersauth={token}").parse().unwrap(),
             );
         }
-        match connect_async(request).await {
-            Ok((socket, response)) => {
-                assert_eq!(response.status(), 101);
-                Ok(socket)
-            }
-            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
-                Err(response.status().as_u16())
-            }
-            Err(error) => panic!("the handshake failed: {error}"),
-        }
+        request.headers_mut().insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            cocat_core::SUBPROTOCOL.parse().unwrap(),
+        );
+        request
+    }
+
+    async fn handshake(&self, room_id: &str, token: Option<&str>) -> Result<Socket, u16> {
+        shake(self.request(room_id, token)).await
+    }
+
+    /// A handshake as Python cocat and the old SciQLop plugin make it: no subprotocol.
+    async fn handshake_v1(&self, room_id: &str, token: &str) -> Result<Socket, u16> {
+        let mut request = self.request(room_id, Some(token));
+        request.headers_mut().remove(header::SEC_WEBSOCKET_PROTOCOL);
+        shake(request).await
     }
 
     async fn connect(&self, room_id: &str, token: Option<&str>) -> Socket {
@@ -155,15 +161,7 @@ impl Fixture {
     /// A client that may send frames above the server's limit, to prove the server refuses
     /// them rather than the client refusing to write them.
     async fn connect_wide(&self, room_id: &str, token: Option<&str>) -> Socket {
-        let mut request = format!("ws://{}/room/{room_id}", self.addr)
-            .into_client_request()
-            .unwrap();
-        if let Some(token) = token {
-            request.headers_mut().insert(
-                "cookie",
-                format!("fastapiusersauth={token}").parse().unwrap(),
-            );
-        }
+        let request = self.request(room_id, token);
         let wide = WebSocketConfig::default()
             .max_message_size(Some(64 << 20))
             .max_frame_size(Some(64 << 20));
@@ -172,6 +170,19 @@ impl Fixture {
             .unwrap_or_else(|error| panic!("the handshake failed: {error}"));
         assert_eq!(response.status(), 101);
         socket
+    }
+}
+
+async fn shake(request: Request<()>) -> Result<Socket, u16> {
+    match connect_async(request).await {
+        Ok((socket, response)) => {
+            assert_eq!(response.status(), 101);
+            Ok(socket)
+        }
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            Err(response.status().as_u16())
+        }
+        Err(error) => panic!("the handshake failed: {error}"),
     }
 }
 
@@ -843,4 +854,48 @@ async fn oversized_message_closes_the_socket() {
             None => panic!("the socket dropped without a close frame"),
         }
     }
+}
+
+#[tokio::test]
+async fn a_handshake_without_the_v2_subprotocol_is_refused_with_426() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-v1", "Old client")
+        .await
+        .unwrap();
+    let file = fixture.rooms_dir.join("room-v1.y");
+    let (mut store, _) =
+        cocat_core::store::FileRoomStore::open(&fixture.rooms_dir, "room-v1").unwrap();
+    store
+        .append(Bytes::from(update_with("kept", "as is")))
+        .unwrap();
+    store.flush().unwrap();
+    drop(store);
+    let before = fs::read(&file).unwrap();
+
+    let status = fixture
+        .handshake_v1("room-v1", &fixture.token(owner).await)
+        .await
+        .err();
+
+    assert_eq!(status, Some(426));
+    assert_eq!(fs::read(&file).unwrap(), before);
+    assert_eq!(fixture.rooms.open_rooms(), 0);
+}
+
+#[tokio::test]
+async fn an_accepted_handshake_names_the_v2_subprotocol() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-v2", "New client")
+        .await
+        .unwrap();
+    let request = fixture.request("room-v2", Some(&fixture.token(owner).await));
+
+    let (_socket, response) = connect_async(request).await.unwrap();
+
+    assert_eq!(
+        response.headers().get(header::SEC_WEBSOCKET_PROTOCOL),
+        Some(&header::HeaderValue::from_static(cocat_core::SUBPROTOCOL))
+    );
 }

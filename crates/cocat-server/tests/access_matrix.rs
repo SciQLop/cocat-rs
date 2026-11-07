@@ -896,6 +896,10 @@ impl World {
         let mut request = format!("ws://{address}/room/{}", self.room)
             .into_client_request()
             .unwrap();
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            cocat_core::SUBPROTOCOL.parse().unwrap(),
+        );
         if let Some(token) = token {
             request.headers_mut().insert(
                 header::COOKIE,

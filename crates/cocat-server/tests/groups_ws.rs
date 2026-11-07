@@ -91,6 +91,10 @@ impl Fixture {
             .into_client_request()
             .unwrap();
         request.headers_mut().insert(
+            "sec-websocket-protocol",
+            cocat_core::SUBPROTOCOL.parse().unwrap(),
+        );
+        request.headers_mut().insert(
             "cookie",
             format!("fastapiusersauth={token}").parse().unwrap(),
         );
@@ -332,6 +336,10 @@ async fn a_former_member_cannot_reconnect() {
     let mut request = format!("ws://{}/room/{ROOM}", fixture.addr)
         .into_client_request()
         .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        cocat_core::SUBPROTOCOL.parse().unwrap(),
+    );
     request.headers_mut().insert(
         "cookie",
         format!("fastapiusersauth={}", fixture.token(member).await)

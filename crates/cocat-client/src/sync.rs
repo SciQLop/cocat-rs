@@ -204,12 +204,17 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     }
 }
 
-/// The handshake request: the websocket address, and the session cookie the server reads.
+/// The handshake request: the websocket address, the v2 subprotocol and the session cookie
+/// the server reads.
 fn request(
     url: &Url,
     cookie: &str,
 ) -> Option<tokio_tungstenite::tungstenite::handshake::client::Request> {
     let mut request = url.as_str().into_client_request().ok()?;
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        HeaderValue::from_static(cocat_core::SUBPROTOCOL),
+    );
     let value = crate::login::cookie_header(cookie);
     match HeaderValue::from_str(&value) {
         Ok(value) => {

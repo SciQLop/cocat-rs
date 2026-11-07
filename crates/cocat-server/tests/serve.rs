@@ -115,6 +115,10 @@ async fn connect(server: &Server, token: &str) -> Socket {
         .into_client_request()
         .unwrap();
     request.headers_mut().insert(
+        "sec-websocket-protocol",
+        cocat_core::SUBPROTOCOL.parse().unwrap(),
+    );
+    request.headers_mut().insert(
         "cookie",
         format!("fastapiusersauth={token}").parse().unwrap(),
     );

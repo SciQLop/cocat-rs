@@ -289,6 +289,10 @@ pub async fn sync_step2_bytes(
     let url = format!("ws://{addr}/room/{room_id}");
     let mut request = url.as_str().into_client_request().unwrap();
     request.headers_mut().insert(
+        "sec-websocket-protocol",
+        cocat_core::SUBPROTOCOL.parse().unwrap(),
+    );
+    request.headers_mut().insert(
         axum::http::header::COOKIE,
         HeaderValue::from_str(&format!("fastapiusersauth={token}")).unwrap(),
     );

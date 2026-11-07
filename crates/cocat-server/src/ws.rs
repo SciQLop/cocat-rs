@@ -7,10 +7,11 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use cocat_core::SUBPROTOCOL;
 use cocat_core::role::Role;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -73,6 +74,10 @@ async fn room_socket(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
+    let upgrade = upgrade.protocols([SUBPROTOCOL]);
+    if upgrade.selected_protocol().is_none() {
+        return old_client();
+    }
     let (user, role) = match lobby_role(&state, &room_id, &headers).await {
         Some(admitted) => admitted,
         None => return StatusCode::FORBIDDEN.into_response(),
@@ -81,6 +86,17 @@ async fn room_socket(
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
         .on_upgrade(move |socket| bridge(socket, state, room_id, user, role))
+}
+
+/// Python cocat and the old SciQLop plugin offer no subprotocol and would write the first
+/// layout into a v2 room. 426 rather than 403, which clients read as "log in again".
+fn old_client() -> Response {
+    (
+        StatusCode::UPGRADE_REQUIRED,
+        [(header::UPGRADE, "websocket")],
+        format!("this server needs a client that speaks {SUBPROTOCOL}; update cocat"),
+    )
+        .into_response()
 }
 
 async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(Uuid, Role)> {
