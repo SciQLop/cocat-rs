@@ -1480,7 +1480,14 @@ mod tests {
             .expect("the room closes its clients")
             .expect("a reason");
         assert_eq!(closed.reason(), CloseReason::Failed.reason());
-        assert_eq!(manager.open_rooms(), 0);
+        // The thread closes its clients before it gives up its registry slot.
+        timeout(WAIT, async {
+            while manager.open_rooms() != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the room unloads");
 
         let reopened = manager.get_or_open("lab").unwrap();
         let doc = full_state(&reopened, 3).await;
