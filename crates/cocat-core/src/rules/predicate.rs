@@ -8,6 +8,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::{Op, Predicate, RuleError};
+use crate::time::Timestamp;
 
 /// What a predicate needs besides the item: its regexes, compiled once, and the events of
 /// each catalogue it names (for `None`: the events some catalogue lists).
@@ -34,7 +35,11 @@ impl Lookups {
     ) -> Result<(), RuleError> {
         match predicate {
             Predicate::Match(_, pattern) if !self.regexes.contains_key(pattern) => {
-                self.regexes.insert(pattern.clone(), super::regex(pattern)?);
+                let regex = super::regex(pattern).map_err(|problem| RuleError::Invalid {
+                    at: "rule".to_owned(),
+                    problem,
+                })?;
+                self.regexes.insert(pattern.clone(), regex);
             }
             Predicate::InCatalogue(catalogue) if !self.catalogues.contains_key(catalogue) => {
                 let events = events_of(catalogue.as_deref())?;
@@ -53,25 +58,32 @@ impl Lookups {
 }
 
 /// Whether an item satisfies `predicate`: `event` is its uuid when it is an event, `field`
-/// reads one of its fields (`None` when unset). A comparison with an unset field is false,
-/// whatever the operator (as in tscat).
+/// reads one of its fields (`None` when unset; a null value counts as unset). As in tscat,
+/// `== null` asks whether a field is unset and `!= null` whether it is set; any other
+/// comparison with an unset field is false, whatever the operator.
 pub fn test(
     predicate: &Predicate,
     event: Option<&str>,
     field: &impl Fn(&str) -> Option<Value>,
     lookups: &Lookups,
 ) -> bool {
+    let value = |name: &str| field(name).filter(|value| !value.is_null());
     match predicate {
-        Predicate::Cmp(name, op, value) => {
-            field(name).is_some_and(|left| compare(&left, *op, value))
+        Predicate::Cmp(name, op, Value::Null) => match op {
+            Op::Eq => value(name).is_none(),
+            Op::Ne => value(name).is_some(),
+            _ => false,
+        },
+        Predicate::Cmp(name, op, right) => {
+            value(name).is_some_and(|left| compare(&left, *op, right))
         }
-        Predicate::Match(name, pattern) => match (field(name), lookups.regexes.get(pattern)) {
+        Predicate::Match(name, pattern) => match (value(name), lookups.regexes.get(pattern)) {
             (Some(Value::String(text)), Some(regex)) => regex.is_match(&text),
             _ => false,
         },
-        Predicate::Has(name) => field(name).is_some(),
-        Predicate::Contains(name, value) => match field(name) {
-            Some(Value::Array(items)) => items.iter().any(|item| equal(item, value)),
+        Predicate::Has(name) => value(name).is_some(),
+        Predicate::Contains(name, wanted) => match value(name) {
+            Some(Value::Array(items)) => items.iter().any(|item| equal(item, wanted)),
             _ => false,
         },
         Predicate::Not(inner) => !test(inner, event, field, lookups),
@@ -109,9 +121,13 @@ fn equal(left: &Value, right: &Value) -> bool {
 }
 
 /// Numbers compare as numbers (as integers when both are, so nanosecond times stay exact),
-/// text and booleans among themselves; anything else has no order.
+/// text and booleans among themselves; anything else has no order. Text that reads as a time
+/// compares with an integer as nanoseconds: date attributes are stored as text, and a rule
+/// names times in nanoseconds.
 fn order(left: &Value, right: &Value) -> Option<Ordering> {
     match (left, right) {
+        (Value::String(text), Value::Number(nanos)) => Some(time(text)?.cmp(&nanos.as_i64()?)),
+        (Value::Number(nanos), Value::String(text)) => Some(nanos.as_i64()?.cmp(&time(text)?)),
         (Value::Number(a), Value::Number(b)) => match (a.as_i64(), b.as_i64()) {
             (Some(a), Some(b)) => Some(a.cmp(&b)),
             _ => a.as_f64()?.partial_cmp(&b.as_f64()?),
@@ -120,4 +136,8 @@ fn order(left: &Value, right: &Value) -> Option<Ordering> {
         (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
         _ => None,
     }
+}
+
+fn time(text: &str) -> Option<i64> {
+    Timestamp::parse(text)?.unix_nanos()
 }

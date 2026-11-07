@@ -3,6 +3,7 @@
 //! the room layout.
 
 pub mod intervals;
+mod parse;
 mod predicate;
 mod tscat;
 
@@ -11,6 +12,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 pub use intervals::{Item, Source};
+pub use parse::parse;
 pub use predicate::{Lookups, test};
 pub use tscat::{TscatError, rule_from_tscat};
 
@@ -31,10 +33,9 @@ pub const FIELDS: [&str; 13] = [
     "products",
 ];
 
-/// A set of intervals. Each form is told apart by its own key, so the enum is untagged;
-/// unknown keys are refused, so a misspelt option is never silently ignored.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
+/// A set of intervals. Each form is told apart by its own key (see `parse`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
 pub enum Set {
     All {
         all: bool,
@@ -49,7 +50,6 @@ pub enum Set {
     },
     Merge {
         merge: Box<Set>,
-        #[serde(default)]
         gap: f64,
     },
     Intersect {
@@ -78,8 +78,8 @@ pub enum Set {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Predicate {
     Cmp(String, Op, Value),
     Match(String, String),
@@ -110,8 +110,20 @@ pub enum Op {
 
 #[derive(Debug, Error)]
 pub enum RuleError {
-    #[error("not a rule: {0}")]
-    Format(#[source] serde_json::Error),
+    /// `at` is where in the rule, as a path: `rule.union[1].where.cmp`.
+    #[error("{at}: {problem}")]
+    Invalid { at: String, problem: Problem },
+    #[error("the rule reaches catalogue {0} again through itself")]
+    Cycle(String),
+    #[error("tiling makes more than {} intervals", intervals::MAX_TILES)]
+    TooManyTiles,
+}
+
+/// What is wrong with a part of a rule.
+#[derive(Debug, Error)]
+pub enum Problem {
+    #[error("{0}")]
+    Format(String),
     #[error("\"all\" must be true")]
     All,
     #[error("{0} is neither an event field nor an attribute (#key)")]
@@ -122,93 +134,13 @@ pub enum RuleError {
         #[source]
         source: regex::Error,
     },
-    #[error("{key} {value} is not a length in seconds this rule takes")]
-    Length { key: &'static str, value: f64 },
-    #[error("the rule reaches catalogue {0} again through itself")]
-    Cycle(String),
-    #[error("tiling makes more than {} intervals", intervals::MAX_TILES)]
-    TooManyTiles,
+    #[error("{0} is not a length in seconds this rule takes")]
+    Length(f64),
 }
 
-/// Reads and validates a rule.
-pub fn parse(rule: &Value) -> Result<Set, RuleError> {
-    let set = Set::deserialize(rule).map_err(RuleError::Format)?;
-    validate(&set)?;
-    Ok(set)
-}
-
-fn validate(set: &Set) -> Result<(), RuleError> {
-    match set {
-        Set::All { all } => all.then_some(()).ok_or(RuleError::All),
-        Set::Catalogue { .. } => Ok(()),
-        Set::Filter { filter, predicate } => {
-            validate(filter)?;
-            validate_predicate(predicate)
-        }
-        Set::Merge { merge, gap } => {
-            length("gap", *gap, true)?;
-            validate(merge)
-        }
-        Set::Shift { shift, by } => {
-            length("by", by.abs(), true)?;
-            validate(shift)
-        }
-        Set::Tile { tile, width } => {
-            length("width", *width, false)?;
-            validate(tile)
-        }
-        Set::Window {
-            window: (a, b),
-            within,
-        } => {
-            length("within", *within, true)?;
-            validate(a)?;
-            validate(b)
-        }
-        Set::Intersect { intersect: (a, b) }
-        | Set::Subtract { subtract: (a, b) }
-        | Set::Closest { closest: (a, b) } => {
-            validate(a)?;
-            validate(b)
-        }
-        Set::Union { union } => union.iter().try_for_each(validate),
-    }
-}
-
-fn validate_predicate(predicate: &Predicate) -> Result<(), RuleError> {
-    match predicate {
-        Predicate::Cmp(name, _, _) | Predicate::Has(name) | Predicate::Contains(name, _) => {
-            field(name)
-        }
-        Predicate::Match(name, pattern) => {
-            field(name)?;
-            regex(pattern).map(|_| ())
-        }
-        Predicate::Not(inner) => validate_predicate(inner),
-        Predicate::And(all) | Predicate::Or(all) => all.iter().try_for_each(validate_predicate),
-        Predicate::InCatalogue(_) => Ok(()),
-    }
-}
-
-pub(crate) fn regex(pattern: &str) -> Result<regex::Regex, RuleError> {
-    regex::Regex::new(pattern).map_err(|source| RuleError::Regex {
+pub(crate) fn regex(pattern: &str) -> Result<regex::Regex, Problem> {
+    regex::Regex::new(pattern).map_err(|source| Problem::Regex {
         pattern: pattern.to_owned(),
         source,
     })
-}
-
-fn field(name: &str) -> Result<(), RuleError> {
-    let attribute = name.strip_prefix('#').is_some_and(|key| !key.is_empty());
-    if attribute || FIELDS.contains(&name) {
-        Ok(())
-    } else {
-        Err(RuleError::Field(name.to_owned()))
-    }
-}
-
-/// A length in seconds must be finite and at least zero, or above zero when `empty` is
-/// refused (a tile of width zero never ends).
-fn length(key: &'static str, value: f64, empty: bool) -> Result<(), RuleError> {
-    let valid = value.is_finite() && (value > 0.0 || (empty && value == 0.0));
-    valid.then_some(()).ok_or(RuleError::Length { key, value })
 }

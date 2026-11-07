@@ -1,6 +1,6 @@
 //! tscat predicates (`tscat/filtering.py`, `to_dict`) become rules (design section 3).
 
-use cocat_core::rules::{self, RuleError, TscatError, rule_from_tscat};
+use cocat_core::rules::{self, Problem, RuleError, TscatError, rule_from_tscat};
 use serde_json::{Value, json};
 
 const CATALOGUE: &str = "957d65ae-f278-48f5-aab1-8cf50efeadef";
@@ -139,7 +139,7 @@ fn an_unknown_node_is_refused() {
 fn a_catalogue_field_is_not_an_event_field() {
     let error = rule_from_tscat(&comparison("==", field("name"), json!("x"))).unwrap_err();
     assert!(
-        matches!(&error, TscatError::Rule(RuleError::Field(name)) if name == "name"),
+        matches!(&error, TscatError::Rule(RuleError::Invalid { problem: Problem::Field(name), .. }) if name == "name"),
         "{error:?}"
     );
 }
@@ -149,7 +149,13 @@ fn a_bad_regex_is_refused() {
     let predicate = json!({"type": "Match", "lhs": field("author"), "rhs": "("});
     let error = rule_from_tscat(&predicate).unwrap_err();
     assert!(
-        matches!(error, TscatError::Rule(RuleError::Regex { .. })),
+        matches!(
+            error,
+            TscatError::Rule(RuleError::Invalid {
+                problem: Problem::Regex { .. },
+                ..
+            })
+        ),
         "{error:?}"
     );
 }

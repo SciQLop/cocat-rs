@@ -2,7 +2,7 @@
 //! (design section 3).
 
 use cocat_core::model::{self, EventRecord, Member, NewCatalogue, OriginKind, Status, WriteError};
-use cocat_core::rules::RuleError;
+use cocat_core::rules::{Problem, RuleError};
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value, json};
 use yrs::{Any, Doc, Map as _, Out, ReadTxn as _, Transact};
@@ -133,6 +133,44 @@ fn a_missing_field_matches_no_comparison() {
         matching(json!({"cmp": ["confidence", "<", 1]})),
         Vec::<String>::new()
     );
+}
+
+#[test]
+fn a_comparison_with_null_asks_whether_the_field_is_unset() {
+    assert_eq!(
+        matching(json!({"cmp": ["confidence", "==", null]})),
+        uuids(&[1, 2, 3])
+    );
+    assert_eq!(
+        matching(json!({"cmp": ["confidence", "!=", null]})),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        matching(json!({"cmp": ["#q", "!=", null]})),
+        uuids(&[1, 2, 3])
+    );
+    assert_eq!(
+        matching(json!({"cmp": ["#q", ">", null]})),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_date_attribute_stored_as_text_compares_as_a_time() {
+    let doc = room();
+    for (n, seen) in [
+        (1, "2025-01-31T10:00:05Z"),
+        (2, "2025-01-31T11:00:00+01:00"),
+    ] {
+        let seen = object(json!({"seen": seen}));
+        model::set_event_attributes(&mut doc.transact_mut(), &uuid(n), &seen).unwrap();
+    }
+    let rule = filter(json!({"cmp": ["#seen", ">", BASE + 3 * SECOND]}));
+    catalogue(&doc, SMART, &[], Some(rule));
+    assert_eq!(event_uuids(&doc, SMART), uuids(&[1]));
+    let rule = filter(json!({"cmp": ["#seen", "==", BASE]}));
+    catalogue(&doc, OTHER, &[], Some(rule));
+    assert_eq!(event_uuids(&doc, OTHER), uuids(&[2]));
 }
 
 #[test]
@@ -315,7 +353,13 @@ fn an_invalid_rule_is_refused_on_write() {
     let bad = json!({"filter": {"all": true}, "where": {"match": ["author", "("]}});
     let error = model::set_catalogue_rule(&mut doc.transact_mut(), SMART, Some(&bad)).unwrap_err();
     assert!(
-        matches!(error, WriteError::Rule(RuleError::Regex { .. })),
+        matches!(
+            error,
+            WriteError::Rule(RuleError::Invalid {
+                problem: Problem::Regex { .. },
+                ..
+            })
+        ),
         "{error:?}"
     );
     assert_eq!(model::catalogue(&doc.transact(), SMART).unwrap().rule, None);
@@ -333,7 +377,11 @@ fn an_invalid_rule_in_the_room_is_an_evaluation_error() {
         };
         map.insert(&mut txn, "rule", Any::from("not a rule"));
     }
-    assert!(matches!(members(&doc, SMART), Err(RuleError::Format(_))));
+    let error = members(&doc, SMART).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "rule: a set is a JSON object, not \"not a rule\""
+    );
     assert!(
         model::catalogue_events(&doc.transact(), SMART)
             .unwrap()

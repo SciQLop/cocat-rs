@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 
-use super::{Op, Predicate, RuleError, Set, validate};
+use super::{Op, Predicate, RuleError, Set, parse};
 use crate::time::Timestamp;
 
 #[derive(Debug, Error)]
@@ -72,8 +72,9 @@ pub fn rule_from_tscat(predicate: &Value) -> Result<Value, TscatError> {
         filter: Box::new(Set::All { all: true }),
         predicate: convert(tscat)?,
     };
-    validate(&rule)?;
-    serde_json::to_value(&rule).map_err(TscatError::Format)
+    let rule = serde_json::to_value(&rule).map_err(TscatError::Format)?;
+    parse(&rule)?;
+    Ok(rule)
 }
 
 fn convert(tscat: Tscat) -> Result<Predicate, TscatError> {
