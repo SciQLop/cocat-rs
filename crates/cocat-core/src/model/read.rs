@@ -4,7 +4,6 @@
 use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
-use tracing::warn;
 use yrs::{Map as _, MapRef, Out, ReadTxn};
 
 use super::values::{get, json, number, shape, strings, text, time};
@@ -53,25 +52,6 @@ pub fn event_catalogues<T: ReadTxn>(txn: &T, uuid: &str) -> Vec<String> {
         .collect();
     catalogues.sort_unstable();
     catalogues
-}
-
-/// The events a catalogue lists that exist and are not in the trash, in time order.
-pub fn catalogue_events<T: ReadTxn>(txn: &T, uuid: &str) -> Option<Vec<EventRecord>> {
-    let catalogue = object(txn, CATALOGUES, uuid)?;
-    let mut records: Vec<EventRecord> = members(txn, &catalogue)
-        .iter()
-        .filter_map(|event| {
-            let map = object(txn, EVENTS, event)?;
-            let record = record(txn, event, &map);
-            if record.is_none() {
-                warn!(event = %event, "skipping a malformed event");
-            }
-            record
-        })
-        .filter(|record| record.status != Status::Deleted)
-        .collect();
-    in_time_order(&mut records);
-    Some(records)
 }
 
 /// Every tag an event or a catalogue not in the trash carries, sorted.
@@ -171,13 +151,13 @@ fn attribute(attributes: &mut Map<String, Value>, key: &str, any: &yrs::Any) {
     }
 }
 
-fn is_deleted<T: ReadTxn>(txn: &T, map: &MapRef) -> bool {
+pub(super) fn is_deleted<T: ReadTxn>(txn: &T, map: &MapRef) -> bool {
     matches!(map.get(txn, "status"), Some(Out::Any(any)) if status(&any) == Status::Deleted)
 }
 
 /// An unknown status reads as the default, so a newer client's status does not hide an
 /// event from an older one.
-fn status(any: &yrs::Any) -> Status {
+pub(super) fn status(any: &yrs::Any) -> Status {
     text(any)
         .and_then(|name| Status::from_name(&name))
         .unwrap_or_default()

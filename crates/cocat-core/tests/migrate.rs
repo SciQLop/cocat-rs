@@ -121,7 +121,7 @@ fn every_event_field_is_carried_over_and_the_rating_becomes_a_confidence() {
     let txn = doc.transact();
     let expected: Expected = serde_json::from_str(EXPECTED).unwrap();
 
-    let events = model::catalogue_events(&txn, ALPHA).unwrap();
+    let events = model::catalogue_events(&txn, ALPHA).unwrap().unwrap();
     assert_eq!(events.len(), expected.events.len());
     for (event, want) in events.iter().zip(&expected.events) {
         assert_eq!(event.uuid, want.uuid);

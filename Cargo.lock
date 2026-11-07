@@ -556,6 +556,7 @@ dependencies = [
  "bytes",
  "percent-encoding",
  "quick-xml",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

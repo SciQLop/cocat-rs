@@ -13,6 +13,7 @@ use super::{
     ATTRIBUTE_PREFIX, CATALOGUES, COMMENTS, EVENTS, EventField, EventRecord, LAYOUT, META,
     NewCatalogue, Status, TypeWarning, Vertex, WriteError,
 };
+use crate::rules;
 use crate::time::Timestamp;
 
 pub fn create_event(
@@ -83,6 +84,9 @@ pub fn set_catalogue_rule(
     uuid: &str,
     rule: Option<&Value>,
 ) -> Result<bool, WriteError> {
+    if let Some(rule) = rule {
+        rules::parse(rule)?;
+    }
     let rule = rule.map(|rule| json_any("rule", rule)).transpose()?;
     Ok(set(txn, CATALOGUES, uuid, &[("rule", rule)]))
 }

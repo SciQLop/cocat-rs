@@ -133,7 +133,7 @@ async fn one(
         (status = 200, description = "One page of events", body = EventsPage),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, catalogue or membership", body = Detail),
-        (status = 422, description = "A query value does not parse", body = Detail),
+        (status = 422, description = "A query value does not parse, or the catalogue's rule does not evaluate", body = Detail),
     )
 )]
 async fn events(
@@ -149,10 +149,12 @@ async fn events(
         .rooms
         .read(&room_id, move |doc| {
             let txn = doc.transact();
-            model::catalogue_events(&txn, &id).map(|events| range.page(events))
+            model::catalogue_events(&txn, &id)
         })
-        .await?;
-    found.map(Json).ok_or_else(|| unknown(&catalogue))
+        .await?
+        .ok_or_else(|| unknown(&catalogue))?
+        .map_err(|error| ApiError::Unprocessable(error.to_string()))?;
+    Ok(Json(range.page(found)))
 }
 
 async fn votable(state: &AppState, room_id: &str, uuid: &str) -> Result<Response, ApiError> {
@@ -161,13 +163,13 @@ async fn votable(state: &AppState, room_id: &str, uuid: &str) -> Result<Response
         .rooms
         .read(room_id, move |doc| {
             let txn = doc.transact();
-            model::catalogue(&txn, &id).map(|summary| {
-                let events = model::catalogue_events(&txn, &id).unwrap_or_default();
-                votable::export(&summary, &events)
-            })
+            let summary = model::catalogue(&txn, &id)?;
+            let events = model::catalogue_events(&txn, &id)?;
+            Some(events.map(|events| votable::export(&summary, &events)))
         })
         .await?
         .ok_or_else(|| unknown(uuid))?
+        .map_err(|error| ApiError::Unprocessable(error.to_string()))?
         .map_err(|error| ApiError::Unprocessable(error.to_string()))?;
 
     let mut response = exported.into_response();

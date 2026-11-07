@@ -8,6 +8,7 @@ publish.workspace = true
 bytes.workspace = true
 percent-encoding = "2"
 quick-xml = "0.42"
+regex = "1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

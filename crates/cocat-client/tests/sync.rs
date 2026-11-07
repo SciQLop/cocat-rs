@@ -255,7 +255,9 @@ fn write_catalogue_with_events(room: &Room, catalogue: &str, events: &[String]) 
 
 fn listed(room: &Room, catalogue: &str) -> usize {
     let txn = room.doc().transact();
-    model::catalogue_events(&txn, catalogue).map_or(0, |events| events.len())
+    model::catalogue_events(&txn, catalogue)
+        .and_then(Result::ok)
+        .map_or(0, |events| events.len())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

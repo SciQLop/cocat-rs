@@ -3,6 +3,7 @@
 pub mod model;
 pub mod role;
 pub mod room_id;
+pub mod rules;
 pub mod store;
 pub mod time;
 pub mod votable;

@@ -270,6 +270,7 @@ pub fn has_event(room: &Room, uuid: &str) -> bool {
     let txn = room.doc().transact();
     model::catalogues(&txn).iter().any(|catalogue| {
         model::catalogue_events(&txn, &catalogue.uuid)
+            .and_then(Result::ok)
             .is_some_and(|events| events.iter().any(|event| event.uuid == uuid))
     })
 }

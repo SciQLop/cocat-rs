@@ -26,7 +26,7 @@ pub(super) fn number(any: &Any) -> Option<f64> {
 }
 
 /// An integer, which yrs may have encoded as a float when the float holds it exactly.
-fn integer(any: &Any) -> Option<i64> {
+pub(super) fn integer(any: &Any) -> Option<i64> {
     match any {
         Any::Number(Number::Int(value)) => Some(*value),
         Any::Number(Number::Float(value)) if value.fract() == 0.0 => Some(*value as i64),

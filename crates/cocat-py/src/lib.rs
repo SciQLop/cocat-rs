@@ -636,8 +636,9 @@ impl Catalogue {
     /// The events and the date-typed attribute keys, from one read.
     fn records_and_dates(&self) -> Result<(Vec<EventRecord>, Vec<String>)> {
         let txn = self.room.doc().transact();
-        let records =
-            model::catalogue_events(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
+        let records = model::catalogue_events(&txn, &self.uuid)
+            .ok_or_else(|| unknown("catalogue"))?
+            .map_err(value_error)?;
         Ok((records, date_keys(&txn)))
     }
 }
@@ -1391,7 +1392,9 @@ fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
     let mut exported = Vec::new();
     for uuid in &uuids {
         let catalogue = model::catalogue(&txn, uuid).ok_or_else(|| unknown("catalogue"))?;
-        let events = model::catalogue_events(&txn, uuid).unwrap_or_default();
+        let events = model::catalogue_events(&txn, uuid)
+            .unwrap_or_else(|| Ok(Vec::new()))
+            .map_err(value_error)?;
         exported.push((catalogue, events));
     }
     let pairs: Vec<(&model::CatalogueSummary, &[EventRecord])> = exported

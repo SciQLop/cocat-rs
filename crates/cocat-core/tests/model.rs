@@ -119,7 +119,7 @@ fn a_catalogue_reads_back_as_written() {
     assert_eq!(catalogue.event_count, 1);
     assert_eq!(model::catalogues(&txn), vec![catalogue]);
     assert_eq!(
-        model::catalogue_events(&txn, ALPHA).unwrap(),
+        model::catalogue_events(&txn, ALPHA).unwrap().unwrap(),
         vec![hand_made(EVENT)]
     );
 }
@@ -400,7 +400,10 @@ fn a_deleted_event_goes_to_the_trash_and_comes_back() {
         assert!(model::delete_event(&mut txn, EVENT));
     }
     let txn = doc.transact();
-    assert_eq!(model::catalogue_events(&txn, ALPHA), Some(Vec::new()));
+    assert_eq!(
+        model::catalogue_events(&txn, ALPHA).unwrap().unwrap(),
+        Vec::new()
+    );
     assert_eq!(model::catalogue(&txn, ALPHA).unwrap().event_count, 0);
     assert_eq!(model::event(&txn, EVENT).unwrap().status, Status::Deleted);
     let trash: Vec<String> = model::trash(&txn)
@@ -412,7 +415,10 @@ fn a_deleted_event_goes_to_the_trash_and_comes_back() {
 
     assert!(model::restore_event(&mut doc.transact_mut(), EVENT));
     let txn = doc.transact();
-    assert_eq!(model::catalogue_events(&txn, ALPHA).unwrap().len(), 1);
+    assert_eq!(
+        model::catalogue_events(&txn, ALPHA).unwrap().unwrap().len(),
+        1
+    );
     assert_eq!(model::event_catalogues(&txn, EVENT), [BETA, ALPHA]);
     assert!(model::trash(&txn).is_empty());
 }
