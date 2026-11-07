@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use cocat_client::{Change, Credentials, Room as ClientRoom, RoomInfo as ClientRoomInfo};
 use cocat_core::model::{
-    self, AttributeType, EventField, EventRecord, NewCatalogue, Origin, OriginKind, Status, Used,
-    Vertex,
+    self, AttributeType, EventField, EventRecord, Member, NewCatalogue, Origin, OriginKind, Status,
+    Used, Vertex,
 };
 use cocat_core::time::Timestamp;
 use cocat_core::votable;
@@ -507,11 +507,69 @@ impl Catalogue {
         Ok(PySet::new(py, catalogue.tags)?.into_any().unbind())
     }
 
+    #[setter]
+    fn set_tags(&self, tags: &Bound<'_, PyAny>) -> Result<()> {
+        let tags = uuids(Some(tags))?;
+        if !self
+            .room
+            .write(|txn| model::set_catalogue_tags(txn, &self.uuid, &tags))
+        {
+            return Err(unknown("catalogue"));
+        }
+        Ok(())
+    }
+
     #[getter]
     fn attributes(&self, py: Python<'_>) -> Result<Py<PyAny>> {
         let txn = self.room.doc().transact();
         let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
         to_python_map(py, &catalogue.attributes)
+    }
+
+    /// The rule that makes this a smart catalogue, or `None`.
+    #[getter]
+    fn rule(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        match self.summary()?.rule {
+            Some(rule) => to_python(py, &rule),
+            None => Ok(py.None()),
+        }
+    }
+
+    /// Sets the rule after checking it; a malformed rule raises `ValueError` naming where it
+    /// is wrong.
+    #[setter]
+    fn set_rule(&self, rule: &Bound<'_, PyAny>) -> Result<()> {
+        let rule = match rule.is_none() {
+            true => None,
+            false => Some(to_json(rule)?),
+        };
+        let found = self
+            .room
+            .write(|txn| model::set_catalogue_rule(txn, &self.uuid, rule.as_ref()))
+            .map_err(value_error)?;
+        if !found {
+            return Err(unknown("catalogue"));
+        }
+        Ok(())
+    }
+
+    /// A new static catalogue named `name` holding this catalogue's current members; each
+    /// derived interval becomes an event whose origin records the rule.
+    fn materialize(&self, py: Python<'_>, name: String) -> Result<Py<Catalogue>> {
+        let into = NewCatalogue {
+            uuid: uuid_argument(None)?,
+            name,
+            created: Some(now()?),
+            ..NewCatalogue::default()
+        };
+        let found = self
+            .room
+            .write(|txn| model::materialize(txn, &self.uuid, &into))
+            .map_err(value_error)?;
+        if !found {
+            return Err(unknown("catalogue"));
+        }
+        Py::new(py, Catalogue::of(&self.room, &into.uuid))
     }
 
     #[getter]
@@ -591,8 +649,8 @@ impl Catalogue {
     /// from one read of the document, so a remote change cannot fall between them.
     #[pyo3(signature = (attributes=false))]
     fn event_arrays(&self, py: Python<'_>, attributes: bool) -> Result<Py<PyAny>> {
-        let (records, dates) = self.records_and_dates()?;
-        event_arrays_of(py, &records, &dates, attributes)
+        let (members, dates) = self.members_and_dates()?;
+        event_arrays_of(py, &members, &dates, attributes)
     }
 
     #[pyo3(signature = (keys=None))]
@@ -606,17 +664,14 @@ impl Catalogue {
             None => None,
         };
         let rows = PyList::empty(py);
-        let (records, dates) = self.records_and_dates()?;
-        for record in records {
-            let map: JsonMap<String, Value> = match &wanted {
-                Some(keys) => record
-                    .attributes
-                    .iter()
-                    .filter(|(key, _)| keys.contains(key))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-                None => record.attributes.clone(),
-            };
+        let (members, dates) = self.members_and_dates()?;
+        for member in &members {
+            let map: JsonMap<String, Value> = attributes_of(member)
+                .into_iter()
+                .flatten()
+                .filter(|(key, _)| wanted.as_ref().is_none_or(|keys| keys.contains(key)))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
             rows.append(attributes_to_python(py, &dates, &map)?)?;
         }
         Ok(rows.into_any().unbind())
@@ -630,16 +685,19 @@ impl Catalogue {
     }
 
     fn records(&self) -> Result<Vec<EventRecord>> {
-        Ok(self.records_and_dates()?.0)
+        let txn = self.room.doc().transact();
+        model::catalogue_events(&txn, &self.uuid)
+            .ok_or_else(|| unknown("catalogue"))?
+            .map_err(value_error)
     }
 
-    /// The events and the date-typed attribute keys, from one read.
-    fn records_and_dates(&self) -> Result<(Vec<EventRecord>, Vec<String>)> {
+    /// The members and the date-typed attribute keys, from one read.
+    fn members_and_dates(&self) -> Result<(Vec<Member>, Vec<String>)> {
         let txn = self.room.doc().transact();
-        let records = model::catalogue_events(&txn, &self.uuid)
+        let members = model::catalogue_members(&txn, &self.uuid)
             .ok_or_else(|| unknown("catalogue"))?
             .map_err(value_error)?;
-        Ok((records, date_keys(&txn)))
+        Ok((members, date_keys(&txn)))
     }
 }
 
@@ -728,6 +786,11 @@ impl Event {
     #[getter]
     fn author(&self) -> Result<Option<String>> {
         Ok(self.record()?.author)
+    }
+
+    #[setter]
+    fn set_author(&self, author: Option<String>) -> Result<()> {
+        self.set_field(EventField::Author(author))
     }
 
     #[getter]
@@ -837,9 +900,19 @@ impl Event {
         Ok(PySet::new(py, self.record()?.tags)?.into_any().unbind())
     }
 
+    #[setter]
+    fn set_tags(&self, tags: &Bound<'_, PyAny>) -> Result<()> {
+        self.set_field(EventField::Tags(uuids(Some(tags))?))
+    }
+
     #[getter]
     fn products(&self, py: Python<'_>) -> Result<Py<PyAny>> {
         Ok(PySet::new(py, self.record()?.products)?.into_any().unbind())
+    }
+
+    #[setter]
+    fn set_products(&self, products: &Bound<'_, PyAny>) -> Result<()> {
+        self.set_field(EventField::Products(uuids(Some(products))?))
     }
 
     #[getter]
@@ -897,34 +970,60 @@ impl Event {
     }
 }
 
-/// The arrays Python scripts plot with, in the order the records come.
+/// The arrays Python scripts plot with, in the order the members come. A derived interval
+/// has no uuid and names the events it came from in `sources`; an event's `sources` is `None`.
 fn event_arrays_of(
     py: Python<'_>,
-    records: &[EventRecord],
+    members: &[Member],
     dates: &[String],
     attributes: bool,
 ) -> Result<Py<PyAny>> {
-    let uuids: Vec<String> = records.iter().map(|record| record.uuid.clone()).collect();
-    let starts: Vec<i64> = records
+    let (uuids, sources): (Vec<_>, Vec<_>) = members
         .iter()
-        .map(|record| record.start.unix_micros() as i64)
-        .collect();
-    let stops: Vec<i64> = records
+        .map(|member| match member {
+            Member::Event { record, .. } => (Some(record.uuid.as_str()), None),
+            Member::Derived { sources, .. } => (None, Some(sources)),
+        })
+        .unzip();
+    let micros = |time: Timestamp| time.unix_micros() as i64;
+    let (starts, stops) = members
         .iter()
-        .map(|record| record.stop.unix_micros() as i64)
-        .collect();
+        .map(span)
+        .map(|(start, stop)| (micros(start), micros(stop)))
+        .unzip();
     let arrays = PyDict::new(py);
     arrays.set_item("uuid", uuids)?;
     arrays.set_item("start", datetime_array(py, starts)?)?;
     arrays.set_item("stop", datetime_array(py, stops)?)?;
+    arrays.set_item("sources", sources)?;
     if attributes {
         let rows = PyList::empty(py);
-        for record in records {
-            rows.append(attributes_to_python(py, dates, &record.attributes)?)?;
+        for member in members {
+            let empty = JsonMap::new();
+            rows.append(attributes_to_python(
+                py,
+                dates,
+                attributes_of(member).unwrap_or(&empty),
+            )?)?;
         }
         arrays.set_item("attributes", rows)?;
     }
     Ok(arrays.into_any().unbind())
+}
+
+fn span(member: &Member) -> (Timestamp, Timestamp) {
+    match member {
+        Member::Event { record, .. } => (record.start, record.stop),
+        Member::Derived { start, stop, .. } => (*start, *stop),
+    }
+}
+
+/// An event's attributes; a derived interval has none.
+fn attributes_of(member: &Member) -> Option<&JsonMap<String, Value>> {
+    match member {
+        Member::Event { record, .. } => Some(&record.attributes),
+        Member::Derived { .. } => None,
+    }
 }
 
 fn datetime_array(py: Python<'_>, micros: Vec<i64>) -> Result<Py<PyAny>> {
@@ -1090,6 +1189,7 @@ impl Room {
             let records = wanted
                 .iter()
                 .filter_map(|uuid| model::event(&txn, uuid))
+                .map(|record| Member::Event { record, gap: None })
                 .collect::<Vec<_>>();
             (records, date_keys(&txn))
         };
@@ -1550,6 +1650,13 @@ fn forward_logs_to_python(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
+/// The rule a tscat predicate (its `to_dict()` form) becomes.
+#[pyfunction]
+fn rule_from_tscat(py: Python<'_>, predicate: &Bound<'_, PyAny>) -> Result<Py<PyAny>> {
+    let rule = cocat_core::rules::rule_from_tscat(&to_json(predicate)?).map_err(value_error)?;
+    to_python(py, &rule)
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     forward_logs_to_python(module.py())?;
@@ -1560,6 +1667,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(login, module)?)?;
     module.add_function(wrap_pyfunction!(rooms, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
+    module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;
     Ok(())
 }

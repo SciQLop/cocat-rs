@@ -79,6 +79,10 @@ pub fn set_catalogue_columns(txn: &mut TransactionMut<'_>, uuid: &str, columns: 
     set(txn, CATALOGUES, uuid, &[("columns", list_any(columns))])
 }
 
+pub fn set_catalogue_tags(txn: &mut TransactionMut<'_>, uuid: &str, tags: &[String]) -> bool {
+    set(txn, CATALOGUES, uuid, &[("tags", strings_any(tags))])
+}
+
 pub fn set_catalogue_rule(
     txn: &mut TransactionMut<'_>,
     uuid: &str,

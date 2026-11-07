@@ -536,6 +536,32 @@ fn columns_and_rule_change() {
 }
 
 #[test]
+fn catalogue_tags_change_sorted_and_unique() {
+    let doc = written();
+    let tags = ["b", "a", "b"].map(str::to_owned);
+    assert!(model::set_catalogue_tags(
+        &mut doc.transact_mut(),
+        ALPHA,
+        &tags
+    ));
+    assert_eq!(
+        model::catalogue(&doc.transact(), ALPHA).unwrap().tags,
+        ["a", "b"]
+    );
+    assert!(model::set_catalogue_tags(
+        &mut doc.transact_mut(),
+        ALPHA,
+        &[]
+    ));
+    assert!(
+        model::catalogue(&doc.transact(), ALPHA)
+            .unwrap()
+            .tags
+            .is_empty()
+    );
+}
+
+#[test]
 fn existing_tags_cover_live_events_and_catalogues() {
     let doc = written();
     {
@@ -593,6 +619,7 @@ fn writing_to_an_unknown_object_changes_nothing() {
         assert!(!model::add_catalogue_events(&mut txn, UNKNOWN, &[]));
         assert!(!model::remove_catalogue_events(&mut txn, UNKNOWN, &[]));
         assert!(!model::set_catalogue_columns(&mut txn, UNKNOWN, &[]));
+        assert!(!model::set_catalogue_tags(&mut txn, UNKNOWN, &[]));
         assert!(!model::set_event_range(&mut txn, UNKNOWN, now, now).unwrap());
         let status = EventField::Status(Status::Final);
         assert!(!model::set_event_field(&mut txn, UNKNOWN, &status).unwrap());

@@ -34,8 +34,8 @@ pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,
     purge_catalogue, purge_event, remove_catalogue_attributes, remove_catalogue_events,
     remove_event_attributes, rename_catalogue, restore_catalogue, restore_event,
-    set_catalogue_attributes, set_catalogue_columns, set_catalogue_rule, set_event_attributes,
-    set_event_field, set_event_range,
+    set_catalogue_attributes, set_catalogue_columns, set_catalogue_rule, set_catalogue_tags,
+    set_event_attributes, set_event_field, set_event_range,
 };
 
 pub const CATALOGUES: &str = "catalogues";

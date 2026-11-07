@@ -5,7 +5,7 @@ import logging
 import threading
 
 from . import _native
-from ._native import Catalogue, Event, NotFound, RoomInfo, login, rooms
+from ._native import Catalogue, Event, NotFound, RoomInfo, login, rooms, rule_from_tscat
 
 __all__ = [
     "Catalogue",
@@ -15,6 +15,7 @@ __all__ = [
     "RoomInfo",
     "login",
     "rooms",
+    "rule_from_tscat",
 ]
 
 log = logging.getLogger("cocat_rs")
