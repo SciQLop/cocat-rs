@@ -4,6 +4,7 @@
 
 pub mod intervals;
 mod predicate;
+mod tscat;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,6 +12,7 @@ use thiserror::Error;
 
 pub use intervals::{Item, Source};
 pub use predicate::{Lookups, test};
+pub use tscat::{TscatError, rule_from_tscat};
 
 /// The fixed event fields a predicate can name; any other field is an attribute, `#key`.
 pub const FIELDS: [&str; 13] = [
