@@ -64,6 +64,18 @@ impl Timestamp {
             .map(|instant| Self(instant.to_offset(UtcOffset::UTC)))
     }
 
+    /// Nanoseconds since the Unix epoch, the form a room stores, or `None` outside the
+    /// 1677–2262 range an `i64` holds.
+    pub fn unix_nanos(self) -> Option<i64> {
+        i64::try_from(self.0.unix_timestamp_nanos()).ok()
+    }
+
+    pub fn from_unix_nanos(nanos: i64) -> Option<Self> {
+        OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
+            .ok()
+            .map(|instant| Self(instant.to_offset(UtcOffset::UTC)))
+    }
+
     /// The calendar fields Python's `datetime` takes, so a binding can build one.
     pub fn parts(self) -> Parts {
         Parts {
@@ -175,6 +187,20 @@ mod tests {
 
         let offset = Timestamp::parse("2025-01-31 13:00:00+02:00").unwrap();
         assert_eq!(offset.as_text().unwrap(), "2025-01-31 11:00:00+00:00");
+    }
+
+    #[test]
+    fn nanoseconds_round_trip() {
+        let precise = Timestamp::parse("2025-01-31T11:00:00.123456Z").unwrap();
+        let nanos = precise.unix_nanos().unwrap();
+        assert_eq!(nanos, 1_738_321_200_123_456_000);
+        assert_eq!(Timestamp::from_unix_nanos(nanos), Some(precise));
+    }
+
+    #[test]
+    fn an_instant_past_2262_has_no_nanoseconds() {
+        let far = Timestamp::parse("2300-01-01 00:00:00").unwrap();
+        assert_eq!(far.unix_nanos(), None);
     }
 
     #[test]

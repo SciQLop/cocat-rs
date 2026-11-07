@@ -1,273 +1,65 @@
-//! Reading and writing the catalogue and event maps a room document holds.
+//! Reading and writing the v2 room layout.
 
-use std::fs;
+use std::collections::BTreeSet;
 
-use cocat_core::model::{self, NewCatalogue, NewEvent};
-use cocat_core::store::FileRoomStore;
+use cocat_core::model::{
+    self, AttributeType, EventField, EventRecord, NewCatalogue, Origin, OriginKind, Status, Used,
+    Vertex, WriteError,
+};
 use cocat_core::time::Timestamp;
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use tempfile::TempDir;
-use yrs::updates::decoder::Decode;
-use yrs::{Any, Doc, Map as _, Number, Out, ReadTxn as _, Transact, Update};
+use yrs::{Any, Doc, Map as _, Out, ReadTxn as _, Transact};
 
-const FIXTURE: &[u8] = include_bytes!("fixtures/catalogues.y");
-const EXPECTED: &str = include_str!("fixtures/catalogues.expected.json");
 const ALPHA: &str = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60";
 const BETA: &str = "0e4d2c31-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
-const MALFORMED: &str = "11111111-2222-4333-8444-555555555555";
 const EVENT: &str = "aaaaaaaa-1111-4111-8111-111111111111";
-const START: &str = "2025-01-31 10:00:00";
-const STOP: &str = "2025-01-31 10:01:00";
+const OTHER: &str = "bbbbbbbb-2222-4222-8222-222222222222";
+const UNKNOWN: &str = "99999999-8888-4777-8666-555555555555";
 
-#[derive(Deserialize)]
-struct Expected {
-    catalogues: Vec<ExpectedCatalogue>,
-    events: Vec<ExpectedEvent>,
+fn at(text: &str) -> Timestamp {
+    Timestamp::parse(text).unwrap()
 }
 
-#[derive(Deserialize)]
-struct ExpectedCatalogue {
-    uuid: String,
-    name: String,
-    author: String,
-    tags: Vec<String>,
-    attributes: Map<String, Value>,
-}
-
-#[derive(Deserialize)]
-struct ExpectedEvent {
-    uuid: String,
-    start: String,
-    stop: String,
-    author: String,
-    tags: Vec<String>,
-    products: Vec<String>,
-    rating: Option<f64>,
-    attributes: Map<String, Value>,
-}
-
-fn expected() -> Expected {
-    serde_json::from_str(EXPECTED).unwrap()
-}
-
-/// pycrdt hands Python every number as a float, so an integer in the document
-/// reads as `2.0` in the JSON Python prints for the same value. Compare numbers
-/// by value and everything else exactly.
-fn same(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Number(left), Value::Number(right)) => left.as_f64() == right.as_f64(),
-        (Value::Array(left), Value::Array(right)) => {
-            left.len() == right.len() && left.iter().zip(right).all(|(one, other)| same(one, other))
-        }
-        (Value::Object(left), Value::Object(right)) => {
-            left.len() == right.len()
-                && left
-                    .iter()
-                    .all(|(key, one)| right.get(key).is_some_and(|other| same(one, other)))
-        }
-        _ => left == right,
-    }
-}
-
-fn document() -> Doc {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("room.y"), FIXTURE).unwrap();
-    let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
-
-    let doc = Doc::new();
-    for update in &updates {
-        let update = Update::decode_v1(update).unwrap();
-        doc.transact_mut().apply_update(update).unwrap();
-    }
-    doc
-}
-
-#[test]
-fn lists_catalogues_sorted_by_name() {
-    let doc = document();
-    let txn = doc.transact();
-    let catalogues = model::catalogues(&txn);
-    let expected = expected();
-
-    let names: Vec<&str> = catalogues.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(names, ["alpha", "beta"]);
-    assert_eq!(catalogues.len(), expected.catalogues.len());
-    for (summary, want) in catalogues.iter().zip(&expected.catalogues) {
-        assert_eq!(summary.uuid, want.uuid);
-        assert_eq!(summary.name, want.name);
-        assert_eq!(summary.author, want.author);
-        assert_eq!(summary.tags, want.tags);
-        assert!(
-            same(
-                &Value::Object(summary.attributes.clone()),
-                &json!(want.attributes)
-            ),
-            "{} attributes read as {:?}",
-            summary.name,
-            summary.attributes
-        );
-    }
-    assert_eq!(catalogues[0].event_count, 3);
-    assert_eq!(model::catalogue(&txn, ALPHA), Some(catalogues[0].clone()));
-    assert_eq!(
-        model::catalogue(&txn, BETA).map(|beta| beta.tags),
-        Some(vec![])
-    );
-}
-
-#[test]
-fn dangling_event_is_not_counted() {
-    let doc = document();
-    let txn = doc.transact();
-
-    let beta = model::catalogue(&txn, BETA).unwrap();
-    assert_eq!(beta.event_count, 0);
-    assert_eq!(model::catalogue_events(&txn, BETA), Some(Vec::new()));
-}
-
-#[test]
-fn events_match_python() {
-    let doc = document();
-    let txn = doc.transact();
-    let events = model::catalogue_events(&txn, ALPHA).unwrap();
-    let expected = expected();
-
-    assert_eq!(events.len(), expected.events.len());
-    for (event, want) in events.iter().zip(&expected.events) {
-        assert_eq!(event.uuid, want.uuid);
-        assert_eq!(event.author, want.author);
-        assert_eq!(event.tags, want.tags);
-        assert_eq!(event.products, want.products);
-        assert_eq!(event.rating, want.rating.map(|rating| rating as i64));
-        assert_eq!(
-            Value::Object(event.attributes.clone()),
-            json!(want.attributes)
-        );
-        assert_eq!(event.start, Timestamp::parse(&want.start).unwrap());
-        assert_eq!(event.stop, Timestamp::parse(&want.stop).unwrap());
-    }
-}
-
-#[test]
-fn malformed_event_is_skipped() {
-    let doc = document();
-    let txn = doc.transact();
-
-    let mut seen: Vec<String> = model::catalogues(&txn)
-        .iter()
-        .flat_map(|catalogue| model::catalogue_events(&txn, &catalogue.uuid).unwrap())
-        .map(|event| event.uuid)
-        .collect();
-    seen.sort();
-    assert!(!seen.contains(&MALFORMED.to_owned()), "read {seen:?}");
-    assert_eq!(seen.len(), 3);
-}
-
-#[test]
-fn unknown_catalogue_is_none() {
-    let doc = document();
-    let txn = doc.transact();
-
-    assert_eq!(model::catalogue(&txn, "no-such-room"), None);
-    assert_eq!(model::catalogue_events(&txn, "no-such-room"), None);
-}
-
-#[test]
-fn an_empty_document_has_no_catalogues() {
-    let doc = Doc::new();
-    let txn = doc.transact();
-
-    assert_eq!(model::catalogues(&txn), Vec::new());
-    assert_eq!(model::catalogue(&txn, ALPHA), None);
-}
-
-#[test]
-fn times_parse_as_python_writes_them() {
-    let utc = Timestamp::parse("2025-01-31 00:00:00").unwrap();
-    assert_eq!(utc.to_string(), "2025-01-31T00:00:00.000000Z");
-    assert_eq!(Timestamp::parse("2025-01-31 00:00:00+00:00"), Some(utc));
-
-    let precise = Timestamp::parse("2025-01-31T01:02:03.004500Z").unwrap();
-    assert_eq!(precise.to_string(), "2025-01-31T01:02:03.004500Z");
-
-    let offset = Timestamp::parse("2025-01-31 02:00:00+02:00").unwrap();
-    assert_eq!(offset, utc);
-    assert_eq!(offset.to_string(), "2025-01-31T00:00:00.000000Z");
-    assert_eq!(utc.unix_micros(), 1_738_281_600_000_000);
-}
-
-#[test]
-fn times_that_are_not_times_do_not_parse() {
-    assert_eq!(Timestamp::parse("2025-13-01 00:00:00"), None);
-    assert_eq!(Timestamp::parse(""), None);
-    assert_eq!(Timestamp::parse("not a time"), None);
-}
-
-#[test]
-fn timestamps_order_by_instant() {
-    let early = Timestamp::parse("2025-01-31 09:00:00").unwrap();
-    let late = Timestamp::parse("2025-01-31 12:00:00+02:00").unwrap();
-
-    assert!(early < late);
-}
-
-fn attributes(value: Value) -> Map<String, Value> {
+fn object(value: Value) -> Map<String, Value> {
     match value {
         Value::Object(map) => map,
         other => panic!("not an object: {other}"),
     }
 }
 
-fn event_map(doc: &Doc, uuid: &str) -> yrs::MapRef {
-    let txn = doc.transact();
-    let events = txn.get_map(model::EVENTS).unwrap();
-    match events.get(&txn, uuid) {
-        Some(Out::YMap(map)) => map,
-        other => panic!("event {uuid} is {other:?}"),
+fn names(names: &[&str]) -> BTreeSet<String> {
+    names.iter().map(|name| (*name).to_owned()).collect()
+}
+
+fn hand_made(uuid: &str) -> EventRecord {
+    let mut event = EventRecord::new(uuid, at("2025-01-31 10:00:00"), at("2025-01-31 10:01:00"));
+    event.author = Some("a@x.org".to_owned());
+    event.created = Some(at("2025-02-01 08:00:00.123456"));
+    event.tags = vec!["t1".to_owned(), "t2".to_owned()];
+    event.products = vec!["p1".to_owned()];
+    event.attributes = object(json!({"q": 1.5, "flag": true}));
+    event
+}
+
+fn alpha() -> NewCatalogue {
+    NewCatalogue {
+        uuid: ALPHA.to_owned(),
+        name: "alpha".to_owned(),
+        author: Some("a@x.org".to_owned()),
+        tags: vec!["c1".to_owned()],
+        columns: vec!["q".to_owned(), "flag".to_owned()],
+        attributes: object(json!({"mission": "MMS", "level": 2})),
+        ..NewCatalogue::default()
     }
 }
 
-fn field(doc: &Doc, uuid: &str, key: &str) -> Out {
-    let txn = doc.transact();
-    event_map(doc, uuid).get(&txn, key).unwrap()
-}
-
-/// A room holding one catalogue that lists one event, written the way the client writes it.
+/// A room holding catalogue alpha, which lists one hand-made event.
 fn written() -> Doc {
     let doc = Doc::new();
-    let tags = vec!["t1".to_owned(), "t2".to_owned()];
-    let event_tags = vec!["t1".to_owned()];
-    let products = vec!["p1".to_owned()];
-    let catalogue_attributes = attributes(json!({"mission": "MMS", "level": 2}));
-    let event_attributes = attributes(json!({"q": 1.5, "flag": true}));
     {
         let mut txn = doc.transact_mut();
-        model::create_catalogue(
-            &mut txn,
-            &NewCatalogue {
-                uuid: ALPHA,
-                name: "alpha",
-                author: "a@x.org",
-                tags: &tags,
-                attributes: &catalogue_attributes,
-            },
-        )
-        .unwrap();
-        model::create_event(
-            &mut txn,
-            &NewEvent {
-                uuid: EVENT,
-                start: Timestamp::parse(START).unwrap(),
-                stop: Timestamp::parse(STOP).unwrap(),
-                author: "a@x.org",
-                tags: &event_tags,
-                products: &products,
-                rating: Some(3),
-                attributes: &event_attributes,
-            },
-        )
-        .unwrap();
+        model::create_catalogue(&mut txn, &alpha()).unwrap();
+        model::create_event(&mut txn, &hand_made(EVENT)).unwrap();
         assert!(model::add_catalogue_events(
             &mut txn,
             ALPHA,
@@ -277,143 +69,487 @@ fn written() -> Doc {
     doc
 }
 
+fn stored_keys(doc: &Doc, root: &str, uuid: &str) -> BTreeSet<String> {
+    let txn = doc.transact();
+    let Some(Out::YMap(map)) = txn.get_map(root).unwrap().get(&txn, uuid) else {
+        panic!("{uuid} is missing from {root}");
+    };
+    map.keys(&txn).map(str::to_owned).collect()
+}
+
+fn stored(doc: &Doc, uuid: &str, key: &str) -> Option<Out> {
+    let txn = doc.transact();
+    let Some(Out::YMap(map)) = txn.get_map(model::EVENTS).unwrap().get(&txn, uuid) else {
+        panic!("{uuid} is missing");
+    };
+    map.get(&txn, key)
+}
+
 #[test]
-fn writes_what_the_reader_reads() {
+fn an_event_reads_back_as_written() {
+    let doc = Doc::new();
+    let mut event = hand_made(EVENT);
+    event.origin = Some("run-1".to_owned());
+    event.status = Status::Reviewed;
+    event.confidence = Some(0.7);
+    event.start_err = Some(0.5);
+    event.stop_err = Some(1.5);
+    event.source_id = Some("list-42".to_owned());
+    model::create_event(&mut doc.transact_mut(), &event).unwrap();
+
+    assert_eq!(model::event(&doc.transact(), EVENT), Some(event));
+}
+
+#[test]
+fn a_catalogue_reads_back_as_written() {
     let doc = written();
     let txn = doc.transact();
 
     let catalogue = model::catalogue(&txn, ALPHA).unwrap();
     assert_eq!(catalogue.name, "alpha");
-    assert_eq!(catalogue.author, "a@x.org");
-    let tags: Vec<&str> = catalogue.tags.iter().map(String::as_str).collect();
-    assert_eq!(tags, ["t1", "t2"]);
+    assert_eq!(catalogue.author.as_deref(), Some("a@x.org"));
+    assert_eq!(catalogue.tags, ["c1"]);
+    assert_eq!(catalogue.columns, ["q", "flag"]);
     assert_eq!(
         catalogue.attributes,
-        attributes(json!({"mission": "MMS", "level": 2}))
+        object(json!({"mission": "MMS", "level": 2}))
     );
+    assert_eq!(catalogue.rule, None);
+    assert!(!catalogue.deleted);
     assert_eq!(catalogue.event_count, 1);
-
-    let events = model::catalogue_events(&txn, ALPHA).unwrap();
-    assert_eq!(events.len(), 1);
-    let event = &events[0];
-    assert_eq!(event.uuid, EVENT);
-    assert_eq!(event.start, Timestamp::parse(START).unwrap());
-    assert_eq!(event.stop, Timestamp::parse(STOP).unwrap());
-    assert_eq!(event.author, "a@x.org");
-    assert_eq!(event.rating, Some(3));
-    let event_tags: Vec<&str> = event.tags.iter().map(String::as_str).collect();
-    assert_eq!(event_tags, ["t1"]);
-    assert_eq!(event.products, ["p1"]);
+    assert_eq!(model::catalogues(&txn), vec![catalogue]);
     assert_eq!(
-        event.attributes,
-        attributes(json!({"q": 1.5, "flag": true}))
+        model::catalogue_events(&txn, ALPHA).unwrap(),
+        vec![hand_made(EVENT)]
     );
 }
 
 #[test]
-fn writes_tags_and_ratings_in_the_shape_python_uses() {
-    let doc = written();
-    {
-        let txn = doc.transact();
-        let event = event_map(&doc, EVENT);
-        assert!(
-            matches!(event.get(&txn, "tags"), Some(Out::YMap(_))),
-            "tags are a map used as a set"
-        );
-        assert_eq!(
-            event.get(&txn, "rating"),
-            Some(Out::Any(Any::Number(Number::Int(3))))
-        );
-    }
-
-    let mut txn = doc.transact_mut();
-    model::create_event(
-        &mut txn,
-        &NewEvent {
-            uuid: BETA,
-            start: Timestamp::parse("2025-01-31 11:00:00.123456").unwrap(),
-            stop: Timestamp::parse("2025-01-31 11:01:00.654321").unwrap(),
-            author: "a@x.org",
-            tags: &[],
-            products: &[],
-            rating: None,
-            attributes: &Map::new(),
-        },
-    )
-    .unwrap();
-    drop(txn);
+fn an_event_stores_only_what_differs_from_the_defaults() {
+    let doc = Doc::new();
+    let bare = EventRecord::new(EVENT, at("2025-01-31 10:00:00"), at("2025-01-31 10:01:00"));
+    model::create_event(&mut doc.transact_mut(), &bare).unwrap();
+    model::create_event(&mut doc.transact_mut(), &hand_made(OTHER)).unwrap();
 
     assert_eq!(
-        field(&doc, BETA, "rating"),
-        Out::Any(Any::Null),
-        "no rating is written as an explicit null"
+        stored_keys(&doc, model::EVENTS, EVENT),
+        names(&["start", "stop"])
     );
     assert_eq!(
-        field(&doc, EVENT, "start"),
-        Out::Any(Any::String("2025-01-31 10:00:00+00:00".into()))
-    );
-    assert_eq!(
-        field(&doc, BETA, "start"),
-        Out::Any(Any::String("2025-01-31 11:00:00.123456+00:00".into()))
-    );
-    assert_eq!(
-        field(&doc, BETA, "stop"),
-        Out::Any(Any::String("2025-01-31 11:01:00.654321+00:00".into()))
+        stored_keys(&doc, model::EVENTS, OTHER),
+        names(&[
+            "#flag", "#q", "author", "created", "products", "start", "stop", "tags"
+        ])
     );
 }
 
 #[test]
-fn renames_a_catalogue() {
-    let doc = written();
-    assert!(model::rename_catalogue(
-        &mut doc.transact_mut(),
-        ALPHA,
-        "renamed"
-    ));
+fn times_are_nanoseconds_and_tags_a_sorted_array() {
+    let doc = Doc::new();
+    let mut event = hand_made(EVENT);
+    event.tags = vec!["b".to_owned(), "a".to_owned(), "b".to_owned()];
+    model::create_event(&mut doc.transact_mut(), &event).unwrap();
 
+    let start = at("2025-01-31 10:00:00").unix_nanos().unwrap();
+    assert_eq!(start, 1_738_317_600_000_000_000);
+    let Some(Out::Any(Any::Number(number))) = stored(&doc, EVENT, "start") else {
+        panic!("the start is not a number");
+    };
+    assert_eq!(number.as_i64(), Some(start));
+    assert_eq!(
+        stored(&doc, EVENT, "tags"),
+        Some(Out::Any(Any::Array(
+            vec![Any::from("a"), Any::from("b")].into()
+        )))
+    );
+    assert_eq!(
+        model::event(&doc.transact(), EVENT).unwrap().tags,
+        ["a", "b"]
+    );
+}
+
+#[test]
+fn the_first_write_marks_the_layout() {
+    let doc = written();
     let txn = doc.transact();
-    assert_eq!(model::catalogue(&txn, ALPHA).unwrap().name, "renamed");
+    let meta = txn.get_map(model::META).unwrap();
+    assert_eq!(
+        meta.get(&txn, "layout"),
+        Some(Out::Any(Any::from(model::LAYOUT)))
+    );
+    assert!(!model::is_v1(&txn));
+    assert!(!model::is_v1(&Doc::new().transact()));
 }
 
 #[test]
-fn merges_and_removes_attributes() {
+fn fields_change_and_go_back_to_their_default() {
     let doc = written();
     {
         let mut txn = doc.transact_mut();
-        let merged = attributes(json!({"mission": "Cluster", "level": 3}));
-        assert!(model::set_catalogue_attributes(&mut txn, ALPHA, &merged).unwrap());
-        assert!(model::remove_catalogue_attributes(
-            &mut txn,
-            ALPHA,
-            &["level".to_owned()]
-        ));
+        for field in [
+            EventField::Status(Status::Final),
+            EventField::Confidence(Some(0.25)),
+            EventField::SourceId(Some("x".to_owned())),
+            EventField::Tags(vec!["new".to_owned()]),
+        ] {
+            assert!(model::set_event_field(&mut txn, EVENT, &field).unwrap());
+        }
+    }
+    let event = model::event(&doc.transact(), EVENT).unwrap();
+    assert_eq!(event.status, Status::Final);
+    assert_eq!(event.confidence, Some(0.25));
+    assert_eq!(event.source_id.as_deref(), Some("x"));
+    assert_eq!(event.tags, ["new"]);
 
-        let event = attributes(json!({"note": "ok"}));
-        assert!(model::set_event_attributes(&mut txn, EVENT, &event).unwrap());
+    {
+        let mut txn = doc.transact_mut();
+        for field in [
+            EventField::Status(Status::Confirmed),
+            EventField::Confidence(None),
+            EventField::SourceId(None),
+            EventField::Tags(Vec::new()),
+        ] {
+            assert!(model::set_event_field(&mut txn, EVENT, &field).unwrap());
+        }
+    }
+    let keys = stored_keys(&doc, model::EVENTS, EVENT);
+    for gone in ["status", "confidence", "source_id", "tags"] {
+        assert!(!keys.contains(gone), "{gone} is still stored: {keys:?}");
+    }
+}
+
+#[test]
+fn a_confidence_outside_zero_to_one_is_refused() {
+    let doc = written();
+    let error = model::set_event_field(
+        &mut doc.transact_mut(),
+        EVENT,
+        &EventField::Confidence(Some(1.5)),
+    )
+    .unwrap_err();
+    assert!(matches!(error, WriteError::Confidence(value) if value == 1.5));
+
+    let mut event = hand_made(OTHER);
+    event.confidence = Some(-0.1);
+    assert!(model::create_event(&mut doc.transact_mut(), &event).is_err());
+}
+
+#[test]
+fn a_shape_sets_the_range_to_its_time_span() {
+    let doc = written();
+    let vertex = |time: &str, frequency: f64| Vertex {
+        time: at(time),
+        frequency,
+    };
+    let shape = vec![
+        vertex("2025-03-01 00:00:10", 1e3),
+        vertex("2025-03-01 00:00:00", 2e3),
+        vertex("2025-03-01 00:00:30", 1e3),
+    ];
+    model::set_event_field(
+        &mut doc.transact_mut(),
+        EVENT,
+        &EventField::Shape(Some(shape.clone())),
+    )
+    .unwrap();
+
+    let event = model::event(&doc.transact(), EVENT).unwrap();
+    assert_eq!(event.shape, Some(shape.clone()));
+    assert_eq!(event.start, at("2025-03-01 00:00:00"));
+    assert_eq!(event.stop, at("2025-03-01 00:00:30"));
+
+    let mut created = hand_made(OTHER);
+    created.shape = Some(shape);
+    model::create_event(&mut doc.transact_mut(), &created).unwrap();
+    let read = model::event(&doc.transact(), OTHER).unwrap();
+    assert_eq!((read.start, read.stop), (event.start, event.stop));
+
+    let error = model::set_event_field(
+        &mut doc.transact_mut(),
+        EVENT,
+        &EventField::Shape(Some(Vec::new())),
+    )
+    .unwrap_err();
+    assert!(matches!(error, WriteError::EmptyShape));
+}
+
+#[test]
+fn attributes_are_flat_keys_that_merge_and_go() {
+    let doc = written();
+    {
+        let mut txn = doc.transact_mut();
+        let warnings = model::set_event_attributes(&mut txn, EVENT, &object(json!({"note": "ok"})))
+            .unwrap()
+            .unwrap();
+        assert!(warnings.is_empty());
         assert!(model::remove_event_attributes(
             &mut txn,
             EVENT,
             &["q".to_owned()]
         ));
+        let level = object(json!({"level": 3}));
+        assert!(model::set_catalogue_attributes(&mut txn, ALPHA, &level).unwrap());
+        assert!(model::remove_catalogue_attributes(
+            &mut txn,
+            ALPHA,
+            &["mission".to_owned()]
+        ));
     }
-
     let txn = doc.transact();
     assert_eq!(
-        model::catalogue(&txn, ALPHA).unwrap().attributes,
-        attributes(json!({"mission": "Cluster"}))
+        model::event(&txn, EVENT).unwrap().attributes,
+        object(json!({"flag": true, "note": "ok"}))
     );
-    let event = &model::catalogue_events(&txn, ALPHA).unwrap()[0];
     assert_eq!(
-        event.attributes,
-        attributes(json!({"flag": true, "note": "ok"}))
+        model::catalogue(&txn, ALPHA).unwrap().attributes,
+        object(json!({"level": 3}))
+    );
+    drop(txn);
+    assert!(stored_keys(&doc, model::EVENTS, EVENT).contains("#note"));
+}
+
+#[test]
+fn a_new_attribute_registers_its_type() {
+    let doc = written();
+    let txn = doc.transact();
+    let types = model::attribute_types(&txn);
+    assert_eq!(types["q"].kind, AttributeType::Number);
+    assert_eq!(types["flag"].kind, AttributeType::Bool);
+    assert_eq!(types.len(), 2, "catalogue attributes stay out: {types:?}");
+}
+
+#[test]
+fn a_value_of_another_type_is_written_with_a_warning() {
+    let doc = written();
+    let warnings = model::set_event_attributes(
+        &mut doc.transact_mut(),
+        EVENT,
+        &object(json!({"q": "high"})),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].key, "q");
+    assert_eq!(warnings[0].registered, AttributeType::Number);
+    let txn = doc.transact();
+    assert_eq!(
+        model::event(&txn, EVENT).unwrap().attributes["q"],
+        json!("high")
+    );
+    assert_eq!(
+        model::attribute_types(&txn)["q"].kind,
+        AttributeType::Number
     );
 }
 
 #[test]
-fn adds_and_removes_events() {
+fn a_date_attribute_takes_iso_text() {
+    let doc = written();
+    let mut txn = doc.transact_mut();
+    model::register_attribute(&mut txn, "seen", AttributeType::Date);
+    let iso = object(json!({"seen": "2025-01-31T10:00:00Z"}));
+    let fine = model::set_event_attributes(&mut txn, EVENT, &iso)
+        .unwrap()
+        .unwrap();
+    let soon = object(json!({"seen": "soon"}));
+    let wrong = model::set_event_attributes(&mut txn, EVENT, &soon)
+        .unwrap()
+        .unwrap();
+
+    assert!(fine.is_empty());
+    assert_eq!(wrong.len(), 1);
+}
+
+#[test]
+fn a_registered_key_gets_a_unit_and_a_description() {
     let doc = written();
     {
         let mut txn = doc.transact_mut();
+        assert!(model::set_attribute_info(
+            &mut txn,
+            "q",
+            Some("nT"),
+            Some("quality")
+        ));
+        assert!(model::set_attribute_info(&mut txn, "q", None, Some("")));
+        assert!(!model::set_attribute_info(
+            &mut txn,
+            "nope",
+            Some("s"),
+            None
+        ));
+    }
+    let info = &model::attribute_types(&doc.transact())["q"];
+    assert_eq!(info.unit.as_deref(), Some("nT"));
+    assert_eq!(info.description, None);
+}
+
+#[test]
+fn a_deleted_event_goes_to_the_trash_and_comes_back() {
+    let doc = written();
+    let beta = NewCatalogue {
+        uuid: BETA.to_owned(),
+        name: "beta".to_owned(),
+        ..NewCatalogue::default()
+    };
+    {
+        let mut txn = doc.transact_mut();
+        model::create_catalogue(&mut txn, &beta).unwrap();
+        model::add_catalogue_events(&mut txn, BETA, &[EVENT.to_owned()]);
+        assert!(model::delete_event(&mut txn, EVENT));
+    }
+    let txn = doc.transact();
+    assert_eq!(model::catalogue_events(&txn, ALPHA), Some(Vec::new()));
+    assert_eq!(model::catalogue(&txn, ALPHA).unwrap().event_count, 0);
+    assert_eq!(model::event(&txn, EVENT).unwrap().status, Status::Deleted);
+    let trash: Vec<String> = model::trash(&txn)
+        .into_iter()
+        .map(|event| event.uuid)
+        .collect();
+    assert_eq!(trash, [EVENT]);
+    drop(txn);
+
+    assert!(model::restore_event(&mut doc.transact_mut(), EVENT));
+    let txn = doc.transact();
+    assert_eq!(model::catalogue_events(&txn, ALPHA).unwrap().len(), 1);
+    assert_eq!(model::event_catalogues(&txn, EVENT), [BETA, ALPHA]);
+    assert!(model::trash(&txn).is_empty());
+}
+
+#[test]
+fn purging_an_event_removes_it_everywhere() {
+    let doc = written();
+    {
+        let mut txn = doc.transact_mut();
+        assert!(model::set_comment(&mut txn, EVENT, Some("a long story")));
+        assert!(model::purge_event(&mut txn, EVENT));
+        assert!(!model::purge_event(&mut txn, EVENT));
+    }
+    let txn = doc.transact();
+    assert_eq!(model::event(&txn, EVENT), None);
+    assert_eq!(model::comment(&txn, EVENT), None);
+    let catalogues = txn.get_map(model::CATALOGUES).unwrap();
+    let Some(Out::YMap(alpha)) = catalogues.get(&txn, ALPHA) else {
+        panic!("alpha is missing");
+    };
+    let Some(Out::YMap(listed)) = alpha.get(&txn, "events") else {
+        panic!("alpha lists nothing");
+    };
+    assert_eq!(listed.len(&txn), 0);
+}
+
+#[test]
+fn a_deleted_catalogue_is_hidden_until_restored_and_purging_keeps_its_events() {
+    let doc = written();
+    assert!(model::delete_catalogue(&mut doc.transact_mut(), ALPHA));
+    {
+        let txn = doc.transact();
+        assert_eq!(model::catalogues(&txn), Vec::new());
+        assert!(model::catalogue(&txn, ALPHA).unwrap().deleted);
+        assert!(model::event_catalogues(&txn, EVENT).is_empty());
+    }
+    assert!(model::restore_catalogue(&mut doc.transact_mut(), ALPHA));
+    assert_eq!(model::catalogues(&doc.transact()).len(), 1);
+
+    assert!(model::purge_catalogue(&mut doc.transact_mut(), ALPHA));
+    let txn = doc.transact();
+    assert_eq!(model::catalogue(&txn, ALPHA), None);
+    assert!(model::event(&txn, EVENT).is_some());
+}
+
+#[test]
+fn comments_live_outside_the_event() {
+    let doc = written();
+    {
+        let mut txn = doc.transact_mut();
+        assert!(model::set_comment(&mut txn, EVENT, Some("first")));
+        assert!(!model::set_comment(&mut txn, UNKNOWN, Some("nobody")));
+    }
+    assert_eq!(
+        model::comment(&doc.transact(), EVENT).as_deref(),
+        Some("first")
+    );
+    assert!(!stored_keys(&doc, model::EVENTS, EVENT).contains("comment"));
+
+    model::set_comment(&mut doc.transact_mut(), EVENT, None);
+    assert_eq!(model::comment(&doc.transact(), EVENT), None);
+}
+
+#[test]
+fn an_origin_reads_back_and_a_model_event_names_it() {
+    let doc = Doc::new();
+    let origin = Origin {
+        id: "run-1".to_owned(),
+        kind: OriginKind::Model,
+        name: "shock finder".to_owned(),
+        version: Some("1.2".to_owned()),
+        author: Some("a@x.org".to_owned()),
+        created: Some(at("2025-01-01 00:00:00")),
+        used: vec![Used {
+            product: "amda/mms1_fgm".to_owned(),
+            version: None,
+            retrieved: Some("2025-01-01".to_owned()),
+        }],
+        parameters: Some(json!({"threshold": 3})),
+        derived_from: None,
+    };
+    let mut event = EventRecord::new(EVENT, at("2025-01-31 10:00:00"), at("2025-01-31 10:01:00"));
+    event.origin = Some("run-1".to_owned());
+    event.confidence = Some(0.9);
+    {
+        let mut txn = doc.transact_mut();
+        model::create_origin(&mut txn, &origin).unwrap();
+        model::create_event(&mut txn, &event).unwrap();
+    }
+    let txn = doc.transact();
+    assert_eq!(model::origin(&txn, "run-1"), Some(origin));
+    assert_eq!(model::origin(&txn, "nope"), None);
+    assert_eq!(model::event(&txn, EVENT).unwrap().author, None);
+}
+
+#[test]
+fn columns_and_rule_change() {
+    let doc = written();
+    let rule = json!({"filter": {"all": true}, "where": {"has": "#q"}});
+    {
+        let mut txn = doc.transact_mut();
+        assert!(model::set_catalogue_columns(
+            &mut txn,
+            ALPHA,
+            &["flag".to_owned()]
+        ));
+        assert!(model::set_catalogue_rule(&mut txn, ALPHA, Some(&rule)).unwrap());
+    }
+    let catalogue = model::catalogue(&doc.transact(), ALPHA).unwrap();
+    assert_eq!(catalogue.columns, ["flag"]);
+    assert_eq!(catalogue.rule, Some(rule));
+
+    model::set_catalogue_rule(&mut doc.transact_mut(), ALPHA, None).unwrap();
+    assert_eq!(model::catalogue(&doc.transact(), ALPHA).unwrap().rule, None);
+}
+
+#[test]
+fn existing_tags_cover_live_events_and_catalogues() {
+    let doc = written();
+    {
+        let mut txn = doc.transact_mut();
+        let mut gone = hand_made(OTHER);
+        gone.tags = vec!["hidden".to_owned()];
+        model::create_event(&mut txn, &gone).unwrap();
+        model::delete_event(&mut txn, OTHER);
+    }
+    assert_eq!(model::existing_tags(&doc.transact()), ["c1", "t1", "t2"]);
+}
+
+#[test]
+fn ranges_names_and_members_change() {
+    let doc = written();
+    let (start, stop) = (at("2025-02-01 00:00:00.000001"), at("2025-02-01 00:01:00"));
+    {
+        let mut txn = doc.transact_mut();
+        assert!(model::rename_catalogue(&mut txn, ALPHA, "renamed"));
+        assert!(model::set_event_range(&mut txn, EVENT, start, stop).unwrap());
         assert!(model::remove_catalogue_events(
             &mut txn,
             ALPHA,
@@ -421,156 +557,41 @@ fn adds_and_removes_events() {
         ));
     }
     let txn = doc.transact();
-    assert_eq!(model::catalogue(&txn, ALPHA).unwrap().event_count, 0);
-    assert_eq!(
-        txn.get_map(model::EVENTS).unwrap().len(&txn),
-        1,
-        "leaving the catalogue leaves the event in the room"
-    );
-    drop(txn);
-
-    {
-        let mut txn = doc.transact_mut();
-        assert!(model::add_catalogue_events(
-            &mut txn,
-            ALPHA,
-            &[EVENT.to_owned()]
-        ));
-    }
-    let txn = doc.transact();
-    assert_eq!(model::catalogue_events(&txn, ALPHA).unwrap().len(), 1);
-}
-
-fn listed_events(doc: &Doc, uuid: &str) -> u32 {
-    let txn = doc.transact();
-    let catalogues = txn.get_map(model::CATALOGUES).unwrap();
-    let Some(Out::YMap(catalogue)) = catalogues.get(&txn, uuid) else {
-        panic!("catalogue {uuid} is missing");
-    };
-    match catalogue.get(&txn, "events") {
-        Some(Out::YMap(listed)) => listed.len(&txn),
-        other => panic!("events are {other:?}"),
-    }
-}
-
-#[test]
-fn deleting_an_event_removes_it_from_every_catalogue() {
-    let doc = written();
-    let empty = Map::new();
-    {
-        let mut txn = doc.transact_mut();
-        model::create_catalogue(
-            &mut txn,
-            &NewCatalogue {
-                uuid: BETA,
-                name: "beta",
-                author: "b@x.org",
-                tags: &[],
-                attributes: &empty,
-            },
-        )
-        .unwrap();
-        assert!(model::add_catalogue_events(
-            &mut txn,
-            BETA,
-            &[EVENT.to_owned()]
-        ));
-        assert!(model::delete_event(&mut txn, EVENT));
-        assert!(!model::delete_event(&mut txn, EVENT));
-    }
-
-    let txn = doc.transact();
-    assert_eq!(txn.get_map(model::EVENTS).unwrap().len(&txn), 0);
-    drop(txn);
-    assert_eq!(listed_events(&doc, ALPHA), 0);
-    assert_eq!(listed_events(&doc, BETA), 0);
-    let txn = doc.transact();
-    assert_eq!(model::catalogue_events(&txn, ALPHA), Some(Vec::new()));
-}
-
-#[test]
-fn deleting_a_catalogue_keeps_its_events() {
-    let doc = written();
-    assert!(model::delete_catalogue(&mut doc.transact_mut(), ALPHA));
-
-    let txn = doc.transact();
-    assert_eq!(model::catalogue(&txn, ALPHA), None);
-    assert_eq!(txn.get_map(model::EVENTS).unwrap().len(&txn), 1);
-}
-
-#[test]
-fn sets_an_event_range() {
-    let doc = written();
-    let start = Timestamp::parse("2025-02-01 00:00:00.000001").unwrap();
-    let stop = Timestamp::parse("2025-02-01 00:01:00").unwrap();
-    assert!(model::set_event_range(&mut doc.transact_mut(), EVENT, start, stop).unwrap());
-
-    let txn = doc.transact();
-    let event = &model::catalogue_events(&txn, ALPHA).unwrap()[0];
+    let catalogue = model::catalogue(&txn, ALPHA).unwrap();
+    assert_eq!(catalogue.name, "renamed");
+    assert_eq!(catalogue.event_count, 0);
+    let event = model::event(&txn, EVENT).unwrap();
     assert_eq!((event.start, event.stop), (start, stop));
 }
 
 #[test]
 fn writing_to_an_unknown_object_changes_nothing() {
     let doc = written();
-    let unknown = "99999999-8888-4777-8666-555555555555";
     let empty = Map::new();
+    let now = at("2025-01-31 10:00:00");
     {
         let mut txn = doc.transact_mut();
-        assert!(!model::rename_catalogue(&mut txn, unknown, "nothing"));
-        assert!(!model::delete_catalogue(&mut txn, unknown));
-        assert!(!model::delete_event(&mut txn, unknown));
-        assert!(!model::set_catalogue_attributes(&mut txn, unknown, &empty).unwrap());
-        assert!(!model::remove_catalogue_attributes(&mut txn, unknown, &[]));
-        assert!(!model::set_event_attributes(&mut txn, unknown, &empty).unwrap());
-        assert!(!model::remove_event_attributes(&mut txn, unknown, &[]));
-        assert!(!model::add_catalogue_events(&mut txn, unknown, &[]));
-        assert!(!model::remove_catalogue_events(&mut txn, unknown, &[]));
-        let now = Timestamp::parse(START).unwrap();
-        assert!(!model::set_event_range(&mut txn, unknown, now, now).unwrap());
+        assert!(!model::rename_catalogue(&mut txn, UNKNOWN, "nothing"));
+        assert!(!model::delete_catalogue(&mut txn, UNKNOWN));
+        assert!(!model::purge_catalogue(&mut txn, UNKNOWN));
+        assert!(!model::delete_event(&mut txn, UNKNOWN));
+        assert!(!model::restore_event(&mut txn, UNKNOWN));
+        assert!(!model::purge_event(&mut txn, UNKNOWN));
+        assert!(!model::set_catalogue_attributes(&mut txn, UNKNOWN, &empty).unwrap());
+        assert!(!model::remove_catalogue_attributes(&mut txn, UNKNOWN, &[]));
+        assert_eq!(
+            model::set_event_attributes(&mut txn, UNKNOWN, &empty).unwrap(),
+            None
+        );
+        assert!(!model::remove_event_attributes(&mut txn, UNKNOWN, &[]));
+        assert!(!model::add_catalogue_events(&mut txn, UNKNOWN, &[]));
+        assert!(!model::remove_catalogue_events(&mut txn, UNKNOWN, &[]));
+        assert!(!model::set_catalogue_columns(&mut txn, UNKNOWN, &[]));
+        assert!(!model::set_event_range(&mut txn, UNKNOWN, now, now).unwrap());
+        let status = EventField::Status(Status::Final);
+        assert!(!model::set_event_field(&mut txn, UNKNOWN, &status).unwrap());
     }
-
     let txn = doc.transact();
     assert_eq!(model::catalogues(&txn).len(), 1);
     assert_eq!(txn.get_map(model::EVENTS).unwrap().len(&txn), 1);
-}
-
-#[test]
-fn a_rust_update_leaves_the_python_fixture_alone() {
-    let empty = Map::new();
-    let update = {
-        let doc = Doc::new();
-        let mut txn = doc.transact_mut();
-        model::create_catalogue(
-            &mut txn,
-            &NewCatalogue {
-                uuid: "22222222-3333-4444-8555-666666666666",
-                name: "written-by-rust",
-                author: "rust@x.org",
-                tags: &["rust".to_owned()],
-                attributes: &empty,
-            },
-        )
-        .unwrap();
-        txn.encode_update_v1()
-    };
-
-    let doc = document();
-    doc.transact_mut()
-        .apply_update(Update::decode_v1(&update).unwrap())
-        .unwrap();
-    let txn = doc.transact();
-
-    let catalogues = model::catalogues(&txn);
-    let names: Vec<&str> = catalogues
-        .iter()
-        .map(|catalogue| catalogue.name.as_str())
-        .collect();
-    assert_eq!(names, ["alpha", "beta", "written-by-rust"]);
-    assert_eq!(model::catalogue_events(&txn, ALPHA).unwrap().len(), 3);
-    assert_eq!(
-        model::catalogue(&txn, "22222222-3333-4444-8555-666666666666")
-            .map(|catalogue| catalogue.tags),
-        Some(vec!["rust".to_owned()])
-    );
 }
