@@ -9,6 +9,10 @@ description = "Collaborative event catalogues, in Rust with a Python face"
 requires-python = ">=3.10"
 dependencies = ["numpy", "keyring"]
 
+[project.optional-dependencies]
+# Only cocat_rs.tscat.import_database reads a tscat database; its JSON needs no tscat.
+tscat = ["tscat>=0.5,<0.6"]
+
 [tool.maturin]
 python-source = "python"
 module-name = "cocat_rs._native"
