@@ -3,10 +3,9 @@ mod support;
 use std::time::Duration;
 
 use cocat_client::{Change, Room, Status};
-use cocat_core::model::{self, NewCatalogue, NewEvent};
+use cocat_core::model;
 use cocat_core::role::Role;
 use cocat_core::time::Timestamp;
-use serde_json::Map;
 use support::*;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio::time::timeout;
@@ -244,35 +243,11 @@ async fn a_reconnect_downloads_only_the_diff() {
 }
 
 fn write_catalogue_with_events(room: &Room, catalogue: &str, events: &[String]) {
-    let tags = Vec::new();
-    let attributes = Map::new();
     room.write(|txn| {
-        model::create_catalogue(
-            txn,
-            &NewCatalogue {
-                uuid: catalogue,
-                name: "alpha",
-                author: "a@x.org",
-                tags: &tags,
-                attributes: &attributes,
-            },
-        )
-        .unwrap();
+        model::create_catalogue(txn, &new_catalogue(catalogue, "alpha")).unwrap();
         for uuid in events {
-            model::create_event(
-                txn,
-                &NewEvent {
-                    uuid,
-                    start: Timestamp::parse("2025-01-31 10:00:00").unwrap(),
-                    stop: Timestamp::parse("2025-01-31 10:01:00").unwrap(),
-                    author: "a@x.org",
-                    tags: &tags,
-                    products: &tags,
-                    rating: None,
-                    attributes: &attributes,
-                },
-            )
-            .unwrap();
+            let event = new_event(uuid, "2025-01-31 10:00:00", "2025-01-31 10:01:00");
+            model::create_event(txn, &event).unwrap();
         }
         model::add_catalogue_events(txn, catalogue, events);
     });
@@ -297,35 +272,11 @@ async fn a_remote_transaction_is_one_merged_batch() {
     a.wait_synced(WAIT).unwrap();
     b.wait_synced(WAIT).unwrap();
 
-    let tags = Vec::new();
-    let attributes = Map::new();
     a.write(|txn| {
-        model::create_catalogue(
-            txn,
-            &NewCatalogue {
-                uuid: CATALOGUE,
-                name: "alpha",
-                author: "a@x.org",
-                tags: &tags,
-                attributes: &attributes,
-            },
-        )
-        .unwrap();
+        model::create_catalogue(txn, &new_catalogue(CATALOGUE, "alpha")).unwrap();
         for uuid in [E1, E2, E3] {
-            model::create_event(
-                txn,
-                &NewEvent {
-                    uuid,
-                    start: Timestamp::parse("2025-01-31 10:00:00").unwrap(),
-                    stop: Timestamp::parse("2025-01-31 10:01:00").unwrap(),
-                    author: "a@x.org",
-                    tags: &tags,
-                    products: &tags,
-                    rating: None,
-                    attributes: &attributes,
-                },
-            )
-            .unwrap();
+            let event = new_event(uuid, "2025-01-31 10:00:00", "2025-01-31 10:01:00");
+            model::create_event(txn, &event).unwrap();
         }
         model::add_catalogue_events(
             txn,

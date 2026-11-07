@@ -14,13 +14,12 @@ use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::get;
 use cocat_client::{Change, Room};
-use cocat_core::model::{self, NewCatalogue, NewEvent};
+use cocat_core::model::{self, EventRecord, NewCatalogue};
 use cocat_core::role::Role;
 use cocat_core::time::Timestamp;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Map;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -227,44 +226,31 @@ pub async fn seeded(server: &Server, room_id: &str, email: &str) -> String {
     token(server, owner).await
 }
 
+pub fn new_catalogue(uuid: &str, name: &str) -> NewCatalogue {
+    NewCatalogue {
+        uuid: uuid.to_owned(),
+        name: name.to_owned(),
+        author: Some("a@x.org".to_owned()),
+        ..NewCatalogue::default()
+    }
+}
+
+pub fn new_event(uuid: &str, start: &str, stop: &str) -> EventRecord {
+    let mut event = EventRecord::new(
+        uuid,
+        Timestamp::parse(start).unwrap(),
+        Timestamp::parse(stop).unwrap(),
+    );
+    event.author = Some("a@x.org".to_owned());
+    event
+}
+
 pub fn create_catalogue(room: &Room, uuid: &str, name: &str) {
-    let tags = Vec::new();
-    let attributes = Map::new();
-    room.write(|txn| {
-        model::create_catalogue(
-            txn,
-            &NewCatalogue {
-                uuid,
-                name,
-                author: "a@x.org",
-                tags: &tags,
-                attributes: &attributes,
-            },
-        )
-        .unwrap()
-    });
+    room.write(|txn| model::create_catalogue(txn, &new_catalogue(uuid, name)).unwrap());
 }
 
 pub fn create_event(room: &Room, uuid: &str, start: &str, stop: &str) {
-    let tags = Vec::new();
-    let products = Vec::new();
-    let attributes = Map::new();
-    room.write(|txn| {
-        model::create_event(
-            txn,
-            &NewEvent {
-                uuid,
-                start: Timestamp::parse(start).unwrap(),
-                stop: Timestamp::parse(stop).unwrap(),
-                author: "a@x.org",
-                tags: &tags,
-                products: &products,
-                rating: None,
-                attributes: &attributes,
-            },
-        )
-        .unwrap()
-    });
+    room.write(|txn| model::create_event(txn, &new_event(uuid, start, stop)).unwrap());
 }
 
 pub fn names(room: &Room) -> Vec<String> {

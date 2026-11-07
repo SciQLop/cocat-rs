@@ -1,11 +1,16 @@
-//! Import a running Python cocat deployment into this server's database.
+//! Import a running Python cocat deployment into this server's database, and move its
+//! room files to layout v2.
 //!
-//! The Python database is only read, and room files are only read: a second run changes
-//! nothing, and the Python server keeps working after the move.
+//! The Python database is only read. A room file still in layout v1 gets one more record,
+//! the update that rewrites it in v2, so a second run changes nothing; Python cocat cannot
+//! read a migrated room.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use bytes::Bytes;
+use cocat_core::model;
+use cocat_core::store::{FileRoomStore, StoreError};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use thiserror::Error;
@@ -13,6 +18,8 @@ use thiserror::Error;
 use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
 use time::{OffsetDateTime, PrimitiveDateTime};
+use yrs::updates::decoder::Decode;
+use yrs::{Doc, Transact, Update};
 
 use crate::db;
 
@@ -48,6 +55,19 @@ pub enum ImportError {
     Timestamp { text: String, reason: String },
 }
 
+/// Why one room file was not migrated; the import goes on without it.
+#[derive(Debug, Error)]
+enum MigrateError {
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    #[error("a record is not an update: {0}")]
+    Decode(#[from] yrs::encoding::read::Error),
+    #[error("a record does not apply: {0}")]
+    Apply(#[from] yrs::error::UpdateError),
+    #[error(transparent)]
+    Write(#[from] model::WriteError),
+}
+
 /// What an import did, or would do under `--dry-run`.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Summary {
@@ -56,6 +76,8 @@ pub struct Summary {
     pub memberships: usize,
     pub invitations: usize,
     pub links: usize,
+    /// Room files moved from layout v1 to v2.
+    pub migrated: usize,
     pub skipped: Vec<String>,
 }
 
@@ -66,6 +88,11 @@ impl Summary {
             "{verb} {} users, {} rooms, {} memberships, {} invitations, {} linked accounts",
             self.users, self.rooms, self.memberships, self.invitations, self.links
         )];
+        let migrated = if dry_run { "would migrate" } else { "migrated" };
+        lines.push(format!(
+            "{migrated} {} room files to layout v2",
+            self.migrated
+        ));
         for skipped in &self.skipped {
             lines.push(format!("skipped {skipped}"));
         }
@@ -106,7 +133,64 @@ pub async fn run(
     if let Some(owner) = owner {
         import_room_files(&pool, update_dir, owner, dry_run, &mut summary).await?;
     }
+    migrate_room_files(update_dir, dry_run, &mut summary)?;
     Ok(summary)
+}
+
+fn migrate_room_files(
+    update_dir: &Path,
+    dry_run: bool,
+    summary: &mut Summary,
+) -> Result<(), ImportError> {
+    for room_id in room_ids(update_dir)? {
+        match migrate_room_file(update_dir, &room_id, dry_run) {
+            Ok(true) => summary.migrated += 1,
+            Ok(false) => {}
+            Err(error) => summary.skipped.push(format!(
+                "the room file {room_id}.y stays in layout v1: {error}"
+            )),
+        }
+    }
+    Ok(())
+}
+
+/// Appends the update that moves a v1 room file to v2; false when it is not v1.
+fn migrate_room_file(
+    update_dir: &Path,
+    room_id: &str,
+    dry_run: bool,
+) -> Result<bool, MigrateError> {
+    let (mut store, updates) = FileRoomStore::open(update_dir, room_id)?;
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        for update in &updates {
+            txn.apply_update(Update::decode_v1(update)?)?;
+        }
+    }
+    let Some(update) = model::migrate_v1(&doc)? else {
+        return Ok(false);
+    };
+    if !dry_run {
+        store.append(Bytes::from(update))?;
+        store.flush()?;
+    }
+    Ok(true)
+}
+
+/// The ids of the room files in `update_dir`, sorted.
+fn room_ids(update_dir: &Path) -> Result<BTreeSet<String>, ImportError> {
+    let io = |source| ImportError::Io {
+        path: update_dir.to_path_buf(),
+        source,
+    };
+    let mut ids = BTreeSet::new();
+    for entry in std::fs::read_dir(update_dir).map_err(io)? {
+        if let Some(room_id) = cocat_core::store::room_id_from_file(&entry.map_err(io)?.path()) {
+            ids.insert(room_id);
+        }
+    }
+    Ok(ids)
 }
 
 async fn import_users(
@@ -359,22 +443,9 @@ async fn import_room_files(
         Some(user) => user.id,
         None => return Err(ImportError::UnknownOwner(owner.to_owned())),
     };
-    let entries = std::fs::read_dir(update_dir).map_err(|source| ImportError::Io {
-        path: update_dir.to_path_buf(),
-        source,
-    })?;
     let mut ids: BTreeSet<String> = BTreeSet::new();
-    for entry in entries {
-        let path = entry
-            .map_err(|source| ImportError::Io {
-                path: update_dir.to_path_buf(),
-                source,
-            })?
-            .path();
-        let Some(room_id) = cocat_core::store::room_id_from_file(&path) else {
-            continue;
-        };
-        if let Err(error) = cocat_core::store::FileRoomStore::open(update_dir, &room_id) {
+    for room_id in room_ids(update_dir)? {
+        if let Err(error) = FileRoomStore::open(update_dir, &room_id) {
             summary
                 .skipped
                 .push(format!("the room file {room_id}.y: {error}"));

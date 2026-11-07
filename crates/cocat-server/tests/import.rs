@@ -489,3 +489,89 @@ async fn an_invitation_expiring_soon_is_accepted() {
 
     assert_eq!(room.id, "lab2");
 }
+
+/// A room Python cocat wrote, in layout v1.
+const V1_ROOM: &[u8] = include_bytes!("../../cocat-core/tests/fixtures/catalogues.y");
+
+fn room_document(updates: &Path, room_id: &str) -> yrs::Doc {
+    let doc = yrs::Doc::new();
+    for update in cocat_core::store::read_updates(updates, room_id).unwrap() {
+        let update = <yrs::Update as yrs::updates::decoder::Decode>::decode_v1(&update).unwrap();
+        yrs::Transact::transact_mut(&doc)
+            .apply_update(update)
+            .unwrap();
+    }
+    doc
+}
+
+#[tokio::test]
+async fn an_imported_v1_room_file_is_migrated_to_v2() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    std::fs::write(fixture.updates.join("lab.y"), V1_ROOM).unwrap();
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.migrated, 1, "{:?}", summary.lines(false));
+    let doc = room_document(&fixture.updates, "lab");
+    let txn = yrs::Transact::transact(&doc);
+    assert!(!cocat_core::model::is_v1(&txn));
+    let names: Vec<String> = cocat_core::model::catalogues(&txn)
+        .into_iter()
+        .map(|catalogue| catalogue.name)
+        .collect();
+    assert_eq!(names, ["alpha", "beta"]);
+}
+
+#[tokio::test]
+async fn a_dry_run_leaves_a_v1_room_file_alone() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let path = fixture.updates.join("lab.y");
+    std::fs::write(&path, V1_ROOM).unwrap();
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.migrated, 1);
+    assert_eq!(std::fs::read(&path).unwrap(), V1_ROOM);
+}
+
+#[tokio::test]
+async fn the_room_files_of_imported_users_are_migrated_too() {
+    let fixture = Fixture::start().await;
+    std::fs::write(fixture.updates.join("lab.y"), V1_ROOM).unwrap();
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        Some(&Fixture::released()),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.migrated, 1);
+    let doc = room_document(&fixture.updates, "lab");
+    assert!(!cocat_core::model::is_v1(&yrs::Transact::transact(&doc)));
+}

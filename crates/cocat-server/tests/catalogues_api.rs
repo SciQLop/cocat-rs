@@ -3,8 +3,10 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::response::Response;
 use bytes::Bytes;
+use cocat_core::model::{self, EventRecord, NewCatalogue};
 use cocat_core::role::Role;
 use cocat_core::store::FileRoomStore;
+use cocat_core::time::Timestamp;
 use cocat_server::room::RoomManager;
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
@@ -13,7 +15,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
-use yrs::{Any, Doc, In, Map, MapPrelim, ReadTxn, StateVector, Transact, WriteTxn};
+use yrs::{Doc, ReadTxn, StateVector, Transact, TransactionMut};
 
 const ROOM: &str = "room-read";
 const ALPHA: &str = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -120,118 +122,77 @@ impl Fixture {
     }
 }
 
-fn set(values: &[&str]) -> MapPrelim {
-    values
-        .iter()
-        .map(|value| ((*value).to_owned(), true))
-        .collect()
+fn object(value: Value) -> serde_json::Map<String, Value> {
+    value.as_object().cloned().unwrap()
 }
 
 fn event(
     uuid: &str,
     start: &str,
-    rating: Option<i64>,
+    confidence: Option<f64>,
     tags: &[&str],
-    attributes: &[(&str, Any)],
-) -> MapPrelim {
-    MapPrelim::from([
-        ("uuid", In::from(uuid)),
-        ("start", In::from(start)),
-        ("stop", In::from(start)),
-        ("author", In::from("a@x.org")),
-        ("tags", In::from(set(tags))),
-        ("products", In::from(set(&["p1"]))),
-        (
-            "rating",
-            match rating {
-                Some(rating) => In::from(rating),
-                None => In::from(Any::Null),
-            },
-        ),
-        (
-            "attributes",
-            In::from(MapPrelim::from_iter(attributes.iter().map(
-                |(name, value)| ((*name).to_owned(), In::from(value.clone())),
-            ))),
-        ),
-    ])
+    attributes: Value,
+) -> EventRecord {
+    let start = Timestamp::parse(start).unwrap();
+    let mut event = EventRecord::new(uuid, start, start);
+    event.author = Some("a@x.org".to_owned());
+    event.tags = tags.iter().map(|tag| (*tag).to_owned()).collect();
+    event.products = vec!["p1".to_owned()];
+    event.confidence = confidence;
+    event.attributes = object(attributes);
+    event
 }
 
-fn catalogue(uuid: &str, name: &str, events: &[&str], attributes: &[(&str, Any)]) -> MapPrelim {
-    MapPrelim::from([
-        ("uuid", In::from(uuid)),
-        ("name", In::from(name)),
-        ("author", In::from("a@x.org")),
-        ("tags", In::from(set(&["t1"]))),
-        ("events", In::from(set(events))),
-        (
-            "attributes",
-            In::from(MapPrelim::from_iter(attributes.iter().map(
-                |(name, value)| ((*name).to_owned(), In::from(value.clone())),
-            ))),
-        ),
-    ])
+fn catalogue(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    name: &str,
+    events: &[&str],
+    attributes: Value,
+) {
+    let catalogue = NewCatalogue {
+        uuid: uuid.to_owned(),
+        name: name.to_owned(),
+        author: Some("a@x.org".to_owned()),
+        tags: vec!["t1".to_owned()],
+        attributes: object(attributes),
+        ..NewCatalogue::default()
+    };
+    model::create_catalogue(txn, &catalogue).unwrap();
+    let events: Vec<String> = events.iter().map(|event| (*event).to_owned()).collect();
+    model::add_catalogue_events(txn, uuid, &events);
 }
 
 fn library() -> Doc {
     let doc = Doc::new();
     {
         let mut txn = doc.transact_mut();
-        let catalogues = txn.get_or_insert_map("catalogues");
-        let events = txn.get_or_insert_map("events");
-        let shared = [("mission", Any::from("MMS")), ("level", Any::from(2_i64))];
-
-        catalogues.insert(
-            &mut txn,
-            ALPHA,
-            catalogue(ALPHA, "alpha", &[E1, E2, E3], &shared),
-        );
-        catalogues.insert(&mut txn, BETA, catalogue(BETA, "beta", &[], &[]));
-        catalogues.insert(&mut txn, MIXED, catalogue(MIXED, "mixed", &[M1, M2], &[]));
-
-        events.insert(
-            &mut txn,
-            E1,
+        let shared = json!({"mission": "MMS", "level": 2});
+        catalogue(&mut txn, ALPHA, "alpha", &[E1, E2, E3], shared.clone());
+        catalogue(&mut txn, BETA, "beta", &[], json!({}));
+        catalogue(&mut txn, MIXED, "mixed", &[M1, M2], json!({}));
+        let events = [
             event(
                 E1,
                 "2025-01-31 10:00:00",
-                Some(3),
+                Some(0.3),
                 &["t1", "a<b", "x&y"],
-                &shared,
+                shared.clone(),
             ),
-        );
-        events.insert(
-            &mut txn,
-            E2,
-            event(E2, "2025-01-31 11:00:00.123456", None, &["t1"], &shared),
-        );
-        events.insert(
-            &mut txn,
-            E3,
-            event(E3, "2025-01-31 12:00:00+00:00", Some(1), &["t1"], &shared),
-        );
-        events.insert(
-            &mut txn,
-            M1,
             event(
-                M1,
-                "2025-03-01 00:00:00",
+                E2,
+                "2025-01-31 11:00:00.123456",
                 None,
-                &[],
-                &[("x", Any::from(1_i64))],
+                &["t1"],
+                shared.clone(),
             ),
-        );
-        events.insert(
-            &mut txn,
-            M2,
-            event(
-                M2,
-                "2025-03-01 00:01:00",
-                None,
-                &[],
-                &[("x", Any::from("s"))],
-            ),
-        );
+            event(E3, "2025-01-31 12:00:00+00:00", Some(0.1), &["t1"], shared),
+            event(M1, "2025-03-01 00:00:00", None, &[], json!({"x": 1})),
+            event(M2, "2025-03-01 00:01:00", None, &[], json!({"x": "s"})),
+        ];
+        for event in &events {
+            model::create_event(&mut txn, event).unwrap();
+        }
     }
     doc
 }
@@ -241,19 +202,17 @@ fn paged() -> Doc {
     let doc = Doc::new();
     {
         let mut txn = doc.transact_mut();
-        let catalogues = txn.get_or_insert_map("catalogues");
-        let events = txn.get_or_insert_map("events");
         let ids: Vec<String> = (0..25)
             .map(|index| format!("55555555-0000-4000-8000-{index:012}"))
             .collect();
         let borrowed: Vec<&str> = ids.iter().map(String::as_str).collect();
-        catalogues.insert(&mut txn, PAGED, catalogue(PAGED, "paged", &borrowed, &[]));
+        catalogue(&mut txn, PAGED, "paged", &borrowed, json!({}));
         for (index, uuid) in ids.iter().enumerate() {
             let start = match index {
                 15..=24 => "2025-02-01 00:10:00".to_owned(),
                 index => format!("2025-02-01 00:{:02}:00", index),
             };
-            events.insert(&mut txn, uuid.as_str(), event(uuid, &start, None, &[], &[]));
+            model::create_event(&mut txn, &event(uuid, &start, None, &[], json!({}))).unwrap();
         }
     }
     doc
@@ -398,8 +357,8 @@ async fn events_are_sorted_and_iso_utc() {
             "2025-01-31T12:00:00.000000Z",
         ]
     );
-    assert_eq!(events[0]["rating"], 3);
-    assert_eq!(events[1]["rating"], Value::Null);
+    assert_eq!(events[0]["confidence"], 0.3);
+    assert_eq!(events[1]["confidence"], Value::Null);
     assert_eq!(events[0]["tags"], json!(["a<b", "t1", "x&y"]));
     assert_eq!(body["next"], Value::Null);
 }
@@ -563,7 +522,7 @@ async fn votable_suffix_returns_xml() {
     assert!(body.starts_with("<?xml version=\"1.0\" encoding=\"utf-8\"?>"));
     assert!(body.contains("<VOTABLE"));
     assert!(body.contains("<TD>&quot;a&lt;b&quot;</TD>") || body.contains("a&lt;b"));
-    assert!(body.contains("<TD>3</TD>"));
+    assert!(body.contains("<TD>0.3</TD>"));
 }
 
 #[tokio::test]

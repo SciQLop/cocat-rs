@@ -3,16 +3,17 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cocat_core::model;
+use cocat_core::model::{self, ATTRIBUTE_PREFIX, Status};
 use cocat_core::time::Timestamp;
 use serde_json::{Map as JsonMap, Value};
 use yrs::types::{EntryChange, Event, Events, Path, PathSegment};
-use yrs::{Any, Map as _, MapRef, Out, ReadTxn, TransactionMut};
+use yrs::{Any, Map as _, Out, ReadTxn, TransactionMut};
 
-/// The fields of the document the change table names; anything else (tags, products, rating)
-/// has no listener method and is ignored.
+/// The fields of the document the change table names. A catalogue's tags, columns, author
+/// and creation time have no listener method and are ignored.
 const NAME: &str = "name";
-const ATTRIBUTES: &str = "attributes";
+const RULE: &str = "rule";
+const STATUS: &str = "status";
 const MEMBERS: &str = "events";
 const START: &str = "start";
 const STOP: &str = "stop";
@@ -53,6 +54,16 @@ pub enum Change {
         set: JsonMap<String, Value>,
         removed: Vec<String>,
     },
+    /// The fixed fields other than the range, with their values as the document stores
+    /// them (times in nanoseconds); a field back at its default is `removed`.
+    EventFields {
+        uuid: String,
+        set: JsonMap<String, Value>,
+        removed: Vec<String>,
+    },
+    CatalogueRule {
+        uuid: String,
+    },
     EventRemoved {
         uuid: String,
     },
@@ -70,6 +81,8 @@ impl Change {
             Change::EventsRemoved { catalogue, .. } => ("events_removed", catalogue),
             Change::EventRange { uuid, .. } => ("event_range", uuid),
             Change::EventAttributes { uuid, .. } => ("event_attributes", uuid),
+            Change::EventFields { uuid, .. } => ("event_fields", uuid),
+            Change::CatalogueRule { uuid } => ("catalogue_rule", uuid),
             Change::EventRemoved { uuid } => ("event_removed", uuid),
         }
     }
@@ -92,6 +105,14 @@ impl Change {
             | (
                 Change::EventAttributes { set, removed, .. },
                 Change::EventAttributes {
+                    set: more,
+                    removed: gone,
+                    ..
+                },
+            )
+            | (
+                Change::EventFields { set, removed, .. },
+                Change::EventFields {
                     set: more,
                     removed: gone,
                     ..
@@ -212,14 +233,20 @@ fn translate(observation: &Observation, txn: &TransactionMut<'_>, into: &mut Vec
     }
     let uuid = observation.path[0].as_str();
     let field = observation.path.get(1).map(String::as_str);
+    let keys = &observation.keys;
     match (observation.root, observation.path.len(), field) {
-        (Root::Catalogues, 1, _) => renames(uuid, &observation.keys, into),
-        (Root::Catalogues, 2, Some(MEMBERS)) => memberships(uuid, &observation.keys, into),
-        (Root::Catalogues, 2, Some(ATTRIBUTES)) => {
-            attributes(true, uuid, &observation.keys, into);
+        (Root::Catalogues, 1, _) => {
+            renames(uuid, keys, into);
+            trash(uuid, keys, into);
+            rule(uuid, keys, into);
+            attributes(true, uuid, keys, into);
         }
-        (Root::Events, 1, _) => range(txn, uuid, &observation.keys, into),
-        (Root::Events, 2, Some(ATTRIBUTES)) => attributes(false, uuid, &observation.keys, into),
+        (Root::Catalogues, 2, Some(MEMBERS)) => memberships(uuid, keys, into),
+        (Root::Events, 1, _) => {
+            range(txn, uuid, keys, into);
+            attributes(false, uuid, keys, into);
+            fields(uuid, keys, into);
+        }
         _ => {}
     }
 }
@@ -286,6 +313,35 @@ fn renames(uuid: &str, keys: &[(String, EntryChange)], into: &mut Vec<Change>) {
     }
 }
 
+/// A catalogue moved to the trash is gone for a listener, and one restored is new again.
+fn trash(uuid: &str, keys: &[(String, EntryChange)], into: &mut Vec<Change>) {
+    for (key, change) in keys {
+        if key != STATUS {
+            continue;
+        }
+        let uuid = uuid.to_owned();
+        into.push(match change {
+            EntryChange::Removed(_) => Change::CatalogueAdded { uuid },
+            EntryChange::Inserted(out) | EntryChange::Updated(_, out) if is_deleted(out) => {
+                Change::CatalogueRemoved { uuid }
+            }
+            _ => continue,
+        });
+    }
+}
+
+fn is_deleted(out: &Out) -> bool {
+    matches!(out, Out::Any(Any::String(name)) if Status::from_name(name) == Some(Status::Deleted))
+}
+
+fn rule(uuid: &str, keys: &[(String, EntryChange)], into: &mut Vec<Change>) {
+    if keys.iter().any(|(key, _)| key == RULE) {
+        into.push(Change::CatalogueRule {
+            uuid: uuid.to_owned(),
+        });
+    }
+}
+
 fn memberships(catalogue: &str, keys: &[(String, EntryChange)], into: &mut Vec<Change>) {
     for (uuid, change) in keys {
         match change {
@@ -303,27 +359,52 @@ fn memberships(catalogue: &str, keys: &[(String, EntryChange)], into: &mut Vec<C
 }
 
 fn attributes(catalogue: bool, uuid: &str, keys: &[(String, EntryChange)], into: &mut Vec<Change>) {
-    let mut set = JsonMap::new();
-    let mut removed = Vec::new();
-    for (key, change) in keys {
-        match change {
-            EntryChange::Inserted(out) | EntryChange::Updated(_, out) => {
-                if let Some(value) = json(out) {
-                    set.insert(key.clone(), value);
-                }
-            }
-            EntryChange::Removed(_) => removed.push(key.clone()),
-        }
-    }
-    if set.is_empty() && removed.is_empty() {
+    let attributes = keys.iter().filter_map(|(key, change)| {
+        key.strip_prefix(ATTRIBUTE_PREFIX)
+            .map(|name| (name.to_owned(), change))
+    });
+    let Some((set, removed)) = split(attributes) else {
         return;
-    }
+    };
     let uuid = uuid.to_owned();
     into.push(if catalogue {
         Change::CatalogueAttributes { uuid, set, removed }
     } else {
         Change::EventAttributes { uuid, set, removed }
     });
+}
+
+fn fields(uuid: &str, keys: &[(String, EntryChange)], into: &mut Vec<Change>) {
+    let fields = keys
+        .iter()
+        .filter(|(key, _)| key != START && key != STOP && !key.starts_with(ATTRIBUTE_PREFIX))
+        .map(|(key, change)| (key.clone(), change));
+    if let Some((set, removed)) = split(fields) {
+        into.push(Change::EventFields {
+            uuid: uuid.to_owned(),
+            set,
+            removed,
+        });
+    }
+}
+
+/// The keys written, with their values, and the keys removed; `None` when there are none.
+fn split<'a>(
+    keys: impl Iterator<Item = (String, &'a EntryChange)>,
+) -> Option<(JsonMap<String, Value>, Vec<String>)> {
+    let mut set = JsonMap::new();
+    let mut removed = Vec::new();
+    for (key, change) in keys {
+        match change {
+            EntryChange::Inserted(out) | EntryChange::Updated(_, out) => {
+                if let Some(value) = json(out) {
+                    set.insert(key, value);
+                }
+            }
+            EntryChange::Removed(_) => removed.push(key),
+        }
+    }
+    (!set.is_empty() || !removed.is_empty()).then_some((set, removed))
 }
 
 fn range(
@@ -337,31 +418,14 @@ fn range(
     }
     // Both ends of the range are sent together, so the listener redraws once with a
     // consistent pair; the document always holds the current pair.
-    let Some((start, stop)) = times(txn, uuid) else {
+    let Some(event) = model::event(txn, uuid) else {
         return;
     };
     into.push(Change::EventRange {
         uuid: uuid.to_owned(),
-        start,
-        stop,
+        start: event.start,
+        stop: event.stop,
     });
-}
-
-fn times(txn: &TransactionMut<'_>, uuid: &str) -> Option<(Timestamp, Timestamp)> {
-    let events = txn.get_map(model::EVENTS)?;
-    let Out::YMap(event) = events.get(txn, uuid)? else {
-        return None;
-    };
-    let start = time(txn, &event, START)?;
-    let stop = time(txn, &event, STOP)?;
-    Some((start, stop))
-}
-
-fn time(txn: &TransactionMut<'_>, event: &MapRef, key: &str) -> Option<Timestamp> {
-    match event.get(txn, key) {
-        Some(Out::Any(Any::String(text))) => Timestamp::parse(&text),
-        _ => None,
-    }
 }
 
 fn json(out: &Out) -> Option<Value> {
@@ -391,7 +455,8 @@ fn merge(changes: Vec<Change>) -> Vec<Change> {
                 sorted(uuids)
             }
             Change::CatalogueAttributes { removed, .. }
-            | Change::EventAttributes { removed, .. } => sorted(removed),
+            | Change::EventAttributes { removed, .. }
+            | Change::EventFields { removed, .. } => sorted(removed),
             _ => {}
         }
     }
@@ -403,4 +468,169 @@ fn merge(changes: Vec<Change>) -> Vec<Change> {
 fn sorted(items: &mut Vec<String>) {
     items.sort_unstable();
     items.dedup();
+}
+
+#[cfg(test)]
+mod tests {
+    use cocat_core::model::{self, EventField, EventRecord, NewCatalogue};
+    use cocat_core::time::Timestamp;
+    use serde_json::{Map, json};
+    use tempfile::TempDir;
+    use yrs::updates::decoder::Decode;
+    use yrs::{Doc, ReadTxn, Transact, TransactionMut, Update};
+
+    use super::Change;
+    use crate::room::{REMOTE_ORIGIN, Room};
+
+    const CATALOGUE: &str = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60";
+    const EVENT: &str = "aaaaaaaa-1111-4111-8111-111111111111";
+
+    /// A room and a second replica whose edits reach the room as the server would send them.
+    struct Pair {
+        _dir: TempDir,
+        room: Room,
+        source: Doc,
+    }
+
+    impl Pair {
+        fn new() -> Pair {
+            let dir = TempDir::new().unwrap();
+            let room = Room::open(dir.path(), "room").unwrap();
+            let pair = Pair {
+                _dir: dir,
+                room,
+                source: Doc::new(),
+            };
+            pair.relay(|txn| {
+                let catalogue = NewCatalogue {
+                    uuid: CATALOGUE.to_owned(),
+                    name: "alpha".to_owned(),
+                    ..NewCatalogue::default()
+                };
+                model::create_catalogue(txn, &catalogue).unwrap();
+                let at = Timestamp::parse("2025-01-31 10:00:00").unwrap();
+                model::create_event(txn, &EventRecord::new(EVENT, at, at)).unwrap();
+            });
+            pair
+        }
+
+        /// The batch the room reports for one remote transaction made of `edit`.
+        fn relay(&self, edit: impl FnOnce(&mut TransactionMut<'_>)) -> Vec<Change> {
+            let mut changes = self.room.changes();
+            let before = self.source.transact().state_vector();
+            edit(&mut self.source.transact_mut());
+            let update = self.source.transact().encode_state_as_update_v1(&before);
+            self.room
+                .doc()
+                .transact_mut_with(REMOTE_ORIGIN)
+                .apply_update(Update::decode_v1(&update).unwrap())
+                .unwrap();
+            changes.try_recv().unwrap_or_default()
+        }
+    }
+
+    fn map(value: serde_json::Value) -> Map<String, serde_json::Value> {
+        value.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn a_fixed_field_is_an_event_fields_change() {
+        let pair = Pair::new();
+        let batch = pair.relay(|txn| {
+            model::set_event_field(txn, EVENT, &EventField::Confidence(Some(0.5))).unwrap();
+            model::delete_event(txn, EVENT);
+        });
+        assert_eq!(
+            batch,
+            [Change::EventFields {
+                uuid: EVENT.to_owned(),
+                set: map(json!({"confidence": 0.5, "status": "deleted"})),
+                removed: vec![],
+            }]
+        );
+
+        let batch = pair.relay(|txn| {
+            model::restore_event(txn, EVENT);
+        });
+        assert_eq!(
+            batch,
+            [Change::EventFields {
+                uuid: EVENT.to_owned(),
+                set: Map::new(),
+                removed: vec!["status".to_owned()],
+            }]
+        );
+    }
+
+    #[test]
+    fn a_flat_attribute_is_an_attributes_change_without_its_prefix() {
+        let pair = Pair::new();
+        let batch = pair.relay(|txn| {
+            model::set_event_attributes(txn, EVENT, &map(json!({"q": 2}))).unwrap();
+            model::set_catalogue_attributes(txn, CATALOGUE, &map(json!({"m": "MMS"}))).unwrap();
+        });
+        assert_eq!(batch.len(), 2, "{batch:?}");
+        assert!(batch.contains(&Change::EventAttributes {
+            uuid: EVENT.to_owned(),
+            set: map(json!({"q": 2})),
+            removed: vec![],
+        }));
+        assert!(batch.contains(&Change::CatalogueAttributes {
+            uuid: CATALOGUE.to_owned(),
+            set: map(json!({"m": "MMS"})),
+            removed: vec![],
+        }));
+    }
+
+    #[test]
+    fn a_range_change_carries_both_times() {
+        let pair = Pair::new();
+        let start = Timestamp::parse("2025-02-01 00:00:00.5").unwrap();
+        let stop = Timestamp::parse("2025-02-01 00:01:00").unwrap();
+        let batch = pair.relay(|txn| {
+            model::set_event_range(txn, EVENT, start, stop).unwrap();
+        });
+        assert_eq!(
+            batch,
+            [Change::EventRange {
+                uuid: EVENT.to_owned(),
+                start,
+                stop,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_rule_change_names_its_catalogue() {
+        let pair = Pair::new();
+        let rule = json!({"all": true});
+        let batch = pair.relay(|txn| {
+            model::set_catalogue_rule(txn, CATALOGUE, Some(&rule)).unwrap();
+        });
+        assert_eq!(
+            batch,
+            [Change::CatalogueRule {
+                uuid: CATALOGUE.to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_catalogue_in_the_trash_is_removed_and_restored_is_added() {
+        let pair = Pair::new();
+        let uuid = CATALOGUE.to_owned();
+        let batch = pair.relay(|txn| {
+            model::delete_catalogue(txn, CATALOGUE);
+        });
+        assert_eq!(batch, [Change::CatalogueRemoved { uuid: uuid.clone() }]);
+
+        let batch = pair.relay(|txn| {
+            model::restore_catalogue(txn, CATALOGUE);
+        });
+        assert_eq!(batch, [Change::CatalogueAdded { uuid }]);
+        assert_eq!(
+            model::catalogue(&pair.room.doc().transact(), CATALOGUE).map(|c| c.deleted),
+            Some(false)
+        );
+    }
 }
