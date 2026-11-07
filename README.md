@@ -402,6 +402,54 @@ print(event.catalogues)                 # the uuids of the catalogues listing it
 print(room.event_arrays([event], attributes=True))
 ```
 
+Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
+`rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
+the event, from `room.create_origin(...)`), `source_id`, `created`, `comment` and a TFCat
+`shape`. All are settable and all are keyword arguments of `create_event`. Attributes register
+their type in the room (`room.attribute_types()`); writing another type warns but is kept.
+
+```python
+event = room.create_event(start, stop, author="you@example.org", confidence=0.8,
+                          tags=["shock"], attributes={"density": 12.5})
+event.status = "reviewed"
+event.delete()                          # to the trash: hidden from every list
+room.trash()                            # [event]
+event.restore()                         # or event.purge(), for good
+```
+
+A **smart catalogue** has a `rule`: its members are its listed events plus what the rule
+yields, computed on every read, so it follows the room as people edit it.
+
+```python
+smart = room.create_catalogue(name="strong shocks")
+smart.rule = {"filter": {"all": True},
+              "where": {"and": [{"contains": ["tags", "shock"]},
+                                {"cmp": ["confidence", ">=", 0.7]}]}}
+smart.events                            # the events it holds now
+smart.event_arrays()                    # every member; a merged interval has uuid None
+                                        # and the events it came from in "sources"
+snapshot = smart.materialize("strong shocks, today")   # a static copy
+```
+
+A malformed rule raises `ValueError` saying where: `rule.where.cmp: unknown operator '=~'`.
+The rule format (sets, interval operators, predicates) is in
+`docs/superpowers/specs/2026-11-07-catalogue-engine-v2-design.md`, section 3.
+
+**tscat** databases and JSON files import into a room, keeping uuids, so importing again
+updates rather than duplicates. A rating becomes a confidence (rating / 10), removed items go
+to the trash and dynamic catalogues become smart ones.
+
+```python
+from cocat_rs import tscat
+
+tscat.import_database(room)             # the local tscat database: pip install 'cocat-rs[tscat]'
+tscat.import_json(room, "export.json")  # tscat's JSON, no tscat needed
+tscat.export_json(room, [smart], "out.json")
+```
+
+tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `import_json`
+keeps such a catalogue's members without a rule, and warns.
+
 `credentials` is what lets the client recover a session the server ended (a password change,
 a deactivation, a restart with a new database): the sync task logs in again once, swaps the
 cookie and retries, and only a refusal right after a fresh login, or a login that fails, ends
