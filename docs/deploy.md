@@ -129,6 +129,34 @@ They run the server's CLI on `/db/cocat-rs.db`. An account created this way is a
 verified. The README's [Seeding](../README.md#seeding) lists the full commands;
 `add-user-to-room` and `remove-user-from-room` have wrappers too.
 
+## Public catalogues from AMDA
+
+`tools/amda_public.py` copies AMDA's shared catalogues and time tables (222 lists, about
+316,000 intervals) into the server as public catalogues, one per list. Run it from any
+machine with `speasy` and a `cocat-rs` that has `update_public_catalogue` (newer than 0.3.1,
+or built from this repository), as a curator, against a server that has `PATCH /api/public`:
+
+```sh
+pip install speasy cocat-rs
+read -rs COCAT_PASSWORD && export COCAT_PASSWORD   # typed, not echoed nor kept in history
+python tools/amda_public.py --url https://cocat.example.org --email curator@example.org
+```
+
+Each list becomes `public.amda.<AMDA id>` (`public.amda.sharedcatalog_22`), filed under
+`AMDA/` plus its AMDA folder, with AMDA's description. It holds one catalogue named like the
+list; a catalogue's columns become event attributes (numbers, text, dates, booleans). Run it
+again to follow AMDA: new intervals are added, changed columns rewritten, intervals AMDA
+dropped go to the trash, and nothing is duplicated. The script prints one line per list
+and exits non-zero when one failed; the others are still imported.
+
+- `--password-env VAR` reads the password from `VAR` instead of `COCAT_PASSWORD`. It is
+  never taken on the command line, where `ps` and the shell history would show it.
+- `--only sharedcatalog_22 sharedtimeTable_0` imports just those lists.
+- `--limit N` imports the first N.
+- `--dry-run` downloads and counts without writing.
+
+The largest list (34k intervals) takes about 10 s and a 14 MB project file.
+
 ## The catalogue web app
 
 The web app (`crates/cocat-web`) is a static bundle that trunk builds; the image builds it
