@@ -96,6 +96,11 @@ To build the bundle by hand: `rustup target add wasm32-unknown-unknown`,
 `cargo install trunk --version 0.22.1 --locked`, then `trunk build --release` in
 `crates/cocat-web` (the bundle lands in `crates/cocat-web/dist`).
 
+The browser holds the whole room. Measured 2026-11-08 on a local copy of the largest cocat-dev
+room (8.4 MB file, 11k events, 4 catalogues) with a debug server and headless Firefox: first
+rows 2.0 s after navigation, the tab's memory up by about 65 MB. A 10k-event generated room:
+first rows 1.0 s, scrolling at 60 frames per second, filtering in 30 ms.
+
 ## Bot protection
 
 nginx sends the sign-up and account-recovery routes, pages and API alike
