@@ -8,6 +8,7 @@ pub mod detail;
 pub mod edit;
 pub mod format;
 pub mod layout;
+pub mod presence;
 pub mod route;
 pub mod rows;
 pub mod rule_text;

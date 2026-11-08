@@ -11,6 +11,7 @@ use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, MessageEvent, WebSocket};
 use yrs::TransactionAcqError;
 
+use crate::presence::Presence;
 use crate::session::login_url;
 use crate::state::Room;
 use crate::sync::{Backoff, Status, hello, is_remote, receive, update_frame};
@@ -27,6 +28,7 @@ struct Link {
     /// Whether the current socket got as far as the server's state.
     synced: Cell<bool>,
     backoff: RefCell<Backoff>,
+    presence: RefCell<Presence>,
     render_queued: Rc<Cell<bool>>,
     handlers: Handlers,
 }
@@ -39,6 +41,7 @@ pub fn connect(room: Room) -> Result<(), TransactionAcqError> {
         socket: RefCell::new(None),
         synced: Cell::new(false),
         backoff: RefCell::new(Backoff::default()),
+        presence: RefCell::new(Presence::new(room.doc.clone())),
         render_queued: Rc::default(),
         handlers: handlers(link),
     });
@@ -49,6 +52,8 @@ pub fn connect(room: Room) -> Result<(), TransactionAcqError> {
         }
         observer.queue_render();
     })?;
+    let announcer = link.clone();
+    Effect::new(move |_| announcer.announce(room.editing.get()));
     link.open();
     Ok(())
 }
@@ -59,6 +64,7 @@ fn handlers(link: &Weak<Link>) -> Handlers {
         open: Closure::new(move || {
             if let Some(link) = open.upgrade() {
                 link.send(&hello(&link.room.doc));
+                link.announce(link.room.editing.get_untracked());
             }
         }),
         message: Closure::new(move |event: MessageEvent| {
@@ -97,11 +103,23 @@ impl Link {
         }
     }
 
+    /// Tells the room what this page is editing; the next handshake repeats it.
+    fn announce(&self, editing: Option<String>) {
+        if let Some(frame) = self.presence.borrow_mut().announce(editing) {
+            self.send(&frame);
+        }
+    }
+
     fn receive(&self, event: &MessageEvent) {
         let Ok(buffer) = event.data().dyn_into::<ArrayBuffer>() else {
             return;
         };
-        let reception = receive(&self.room.doc, &Uint8Array::new(&buffer).to_vec());
+        let bytes = Uint8Array::new(&buffer).to_vec();
+        if self.presence.borrow_mut().receive(&bytes) {
+            self.room.peers.set(self.presence.borrow().peers());
+            return;
+        }
+        let reception = receive(&self.room.doc, &bytes);
         for reply in &reception.replies {
             self.send(reply);
         }
@@ -115,6 +133,8 @@ impl Link {
     fn closed(self: &Rc<Self>) {
         self.socket.replace(None);
         self.room.status.set(Status::Reconnecting);
+        self.presence.borrow_mut().disconnected();
+        self.room.peers.set(Vec::new());
         if !self.synced.replace(false) {
             check_session(&self.room);
         }

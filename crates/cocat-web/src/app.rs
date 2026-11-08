@@ -49,6 +49,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     if let Err(error) = connection::connect(room.clone()) {
         return failure(format!("The room cannot sync: {error}")).into_any();
     }
+    let (editor, published) = (room.can_write(), room.editing);
     let route = RwSignal::new(current_route());
     // The page lives as long as the listener: nothing to remove it for.
     let _ = window_event_listener(leptos::ev::hashchange, move |_| route.set(current_route()));
@@ -58,6 +59,10 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let selected = RwSignal::new(None::<Row>);
     let panel = Memo::new(move |_| selected.with(Shown::of));
+    Effect::new(move |_| {
+        let editing = panel.with(|shown| shown.event().map(str::to_owned));
+        published.set(editing.filter(|_| editor));
+    });
     view! {
         <Header/>
         <div class="browser">

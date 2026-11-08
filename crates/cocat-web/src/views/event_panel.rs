@@ -27,6 +27,13 @@ impl Shown {
             },
         }
     }
+
+    pub fn event(&self) -> Option<&str> {
+        match self {
+            Shown::Event(uuid) => Some(uuid),
+            _ => None,
+        }
+    }
 }
 
 #[component]

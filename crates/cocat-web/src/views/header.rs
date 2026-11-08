@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use crate::presence::Peer;
 use crate::state::Room;
 use crate::sync::Status;
 
@@ -23,6 +24,7 @@ pub fn Header() -> impl IntoView {
                 </a>
             </nav>
             <div class="header-end">
+                <Avatars/>
                 <Show when=move || read_only>
                     <span class="chip">"Read-only"</span>
                 </Show>
@@ -36,5 +38,30 @@ pub fn Header() -> impl IntoView {
                 </span>
             </div>
         </header>
+    }
+}
+
+/// The others in the room, each in the colour the server gave the account.
+#[component]
+fn Avatars() -> impl IntoView {
+    let peers = expect_context::<Room>().peers;
+    let label = move || {
+        let count = peers.with(Vec::len);
+        let plural = if count == 1 { "person" } else { "people" };
+        format!("{count} other {plural} in this room")
+    };
+    let avatar = |peer: Peer| {
+        view! {
+            <span class="avatar" title=peer.email style=format!("background: {}", peer.color)>
+                {peer.initials}
+            </span>
+        }
+    };
+    view! {
+        <Show when=move || peers.with(|peers| !peers.is_empty())>
+            <div class="avatars" role="group" aria-label=label>
+                <For each=move || peers.get() key=|peer| peer.email.clone() children=avatar/>
+            </div>
+        </Show>
     }
 }

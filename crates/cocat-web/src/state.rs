@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use yrs::{Doc, Transact, Transaction, TransactionMut};
 
 use crate::edit::EditError;
+use crate::presence::Peer;
 use crate::session::RoomConfig;
 use crate::sync::Status;
 
@@ -14,6 +15,10 @@ pub struct Room {
     pub config: Arc<RoomConfig>,
     pub doc: Doc,
     pub status: RwSignal<Status>,
+    /// The others in the room now.
+    pub peers: RwSignal<Vec<Peer>>,
+    /// The event this page has open for editing, which the others see.
+    pub editing: RwSignal<Option<String>>,
     revision: RwSignal<u64>,
 }
 
@@ -23,6 +28,8 @@ impl Room {
             config: Arc::new(config),
             doc: Doc::new(),
             status: RwSignal::new(Status::Connecting),
+            peers: RwSignal::new(Vec::new()),
+            editing: RwSignal::new(None),
             revision: RwSignal::new(0),
         }
     }

@@ -545,3 +545,20 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .trashed + .trashed { margin-top: 4px; }
 
 .tools .field-error { flex-basis: 100%; }
+
+/* Presence */
+
+.avatars { display: flex; }
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  border: 2px solid var(--surface);
+}
+.avatar + .avatar { margin-left: -8px; }
+.events tr.row.peer { background: color-mix(in srgb, var(--peer) 9%, transparent); box-shadow: inset 3px 0 0 var(--peer); }

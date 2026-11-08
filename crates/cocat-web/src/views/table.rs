@@ -1,12 +1,16 @@
 //! The event table. Only the rows in view, and a few beyond, are in the page: the rest
 //! are two spacers, so a catalogue of any size scrolls at the same cost.
 
+use std::collections::HashMap;
+
 use leptos::html::Div;
 use leptos::prelude::*;
 
 use crate::format::{duration_text, time_text, value_text};
 use crate::layout::window;
+use crate::presence::{Peer, editing};
 use crate::rows::{Row, SortKey};
+use crate::state::Room;
 use crate::views::catalogue::Members;
 
 /// Every row's height in pixels; the stylesheet sets the same.
@@ -29,6 +33,8 @@ pub fn Table(
     columns: Memo<Vec<String>>,
     selected: RwSignal<Option<Row>>,
 ) -> impl IntoView {
+    let peers = expect_context::<Room>().peers;
+    let editors = Memo::new(move |_| peers.with(|peers| editing(peers)));
     let scroller = NodeRef::<Div>::new();
     let scroll_top = RwSignal::new(0.0);
     let viewport = RwSignal::new(ROW * 16.0);
@@ -52,7 +58,7 @@ pub fn Table(
             order.with(|order| {
                 order[range.clone()]
                     .iter()
-                    .map(|&index| row(&rows[index], &columns, selected))
+                    .map(|&index| row(&rows[index], &columns, selected, editors))
                     .collect::<Vec<_>>()
             })
         });
@@ -122,7 +128,20 @@ fn header_owned(label: String, key: SortKey, sorting: RwSignal<(SortKey, bool)>)
     }
 }
 
-fn row(row: &Row, columns: &[String], selected: RwSignal<Option<Row>>) -> impl IntoView + use<> {
+fn row(
+    row: &Row,
+    columns: &[String],
+    selected: RwSignal<Option<Row>>,
+    editors: Memo<HashMap<String, Peer>>,
+) -> impl IntoView + use<> {
+    let editor = {
+        let uuid = row.uuid.clone();
+        move || {
+            let uuid = uuid.as_deref()?;
+            editors.with(|editors| editors.get(uuid).cloned())
+        }
+    };
+    let editor = Memo::new(move |_| editor());
     let is_selected = {
         let key = (row.uuid.clone(), row.start, row.stop);
         move || {
@@ -143,6 +162,9 @@ fn row(row: &Row, columns: &[String], selected: RwSignal<Option<Row>>) -> impl I
         .collect_view();
     view! {
         <tr class="row" aria-selected=move || is_selected().to_string()
+            class:peer=move || editor.with(Option::is_some)
+            style=move || editor.with(|peer| peer.as_ref().map(|peer| format!("--peer: {}", peer.color)))
+            title=move || editor.with(|peer| peer.as_ref().map(|peer| format!("{} is editing this event", peer.email)))
             on:click=move |_| selected.set(Some(picked.clone()))>
             <td class="mono">{time_text(row.start)}</td>
             <td class="mono">{duration_text(row.stop - row.start)}</td>
