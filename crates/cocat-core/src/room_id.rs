@@ -17,7 +17,8 @@ impl InvalidRoomId {
     }
 }
 
-/// What a URL path segment cannot hold as is: the `url` crate's (and browsers') set.
+/// What a URL path segment cannot hold as is: the `url` crate's (and browsers') set, plus
+/// `\`, which browsers read as `/` in an http(s) path.
 const NOT_IN_A_SEGMENT: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
@@ -29,6 +30,7 @@ const NOT_IN_A_SEGMENT: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'}')
     .add(b'/')
+    .add(b'\\')
     .add(b'%');
 
 /// An id as one URL path segment, for the server's links and the app's alike: an imported
@@ -47,5 +49,15 @@ pub fn validate_room_id(id: &str) -> Result<(), InvalidRoomId> {
         Ok(())
     } else {
         Err(InvalidRoomId::new(id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_segment;
+
+    #[test]
+    fn a_backslash_is_escaped_because_browsers_read_it_as_a_slash() {
+        assert_eq!(path_segment(r"a\b"), "a%5Cb");
     }
 }
