@@ -830,7 +830,9 @@ pub async fn set_owner(pool: &SqlitePool, room_id: &str, user_id: Uuid) -> Resul
 
 /// Names the version whose records are `records`, replacing the name it had. The name is
 /// stored under its first record; a row under any other of its records (rows written when a
-/// version was keyed by its last record) goes.
+/// version was keyed by its last record) goes. The 0008 migration's comment still says a
+/// version is its last record: sqlx refuses an applied migration whose checksum changed, so
+/// that file stays as it shipped.
 pub async fn name_version(
     pool: &SqlitePool,
     room_id: &str,
