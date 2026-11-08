@@ -12,6 +12,7 @@ pub mod invite;
 pub mod notice;
 pub mod project_dialogs;
 pub mod projects;
+pub mod public;
 pub mod rule;
 pub mod rule_editor;
 pub mod share;

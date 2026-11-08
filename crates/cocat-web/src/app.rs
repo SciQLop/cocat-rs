@@ -14,6 +14,7 @@ use crate::views::header::Header;
 use crate::views::history::HistoryPage;
 use crate::views::notice::{Notice, NoticeBar};
 use crate::views::projects::Projects;
+use crate::views::public::PublicPage;
 use crate::views::sidebar::Sidebar;
 use cocat_core::model;
 
@@ -101,6 +102,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
     let in_groups = Memo::new(move |_| matches!(shown.get(), Route::Groups | Route::Group(_)));
+    let in_public = Memo::new(move |_| shown.get() == Route::Public);
     // Both keep their value once the page leaves the history: see `HistoryPage`.
     let scope = Memo::new(move |kept: Option<&Option<String>>| match shown.get() {
         Route::History { catalogue, .. } => catalogue,
@@ -111,7 +113,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         _ => kept.copied().flatten(),
     });
     Effect::new(move |_| {
-        if in_history.get() || in_groups.get() {
+        if in_history.get() || in_groups.get() || in_public.get() {
             selected.set(None);
         }
     });
@@ -122,6 +124,8 @@ fn App(config: RoomConfig) -> impl IntoView {
             view! { <HistoryPage scope picked/> }.into_any()
         } else if in_groups.get() {
             view! { <GroupsPage shown/> }.into_any()
+        } else if in_public.get() {
+            view! { <PublicPage/> }.into_any()
         } else {
             view! {
                 <div class="browser">

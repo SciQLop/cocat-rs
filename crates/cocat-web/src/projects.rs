@@ -28,7 +28,7 @@ fn allowed() -> bool {
     true
 }
 
-fn role<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Role, D::Error> {
+pub(crate) fn role<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Role, D::Error> {
     let name = String::deserialize(deserializer)?;
     Role::from_str(&name).map_err(de::Error::custom)
 }
@@ -49,6 +49,23 @@ impl Actions {
             rename: role.can_write(),
             leave: !owner,
             delete: owner,
+        }
+    }
+
+    /// A public catalogue has no owner and no members: curators rename and delete it.
+    pub fn of_public(role: Role) -> Self {
+        Self {
+            rename: role.can_write(),
+            leave: false,
+            delete: role.can_write(),
+        }
+    }
+
+    /// The actions on the project with id `id`.
+    pub fn on(id: &str, role: Role) -> Self {
+        match cocat_core::room_id::is_public_id(id) {
+            true => Self::of_public(role),
+            false => Self::of(role),
         }
     }
 }
@@ -202,6 +219,26 @@ mod tests {
             Actions {
                 rename: false,
                 leave: true,
+                delete: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_public_catalogue_is_renamed_and_deleted_by_curators_and_never_left() {
+        assert_eq!(
+            Actions::of_public(Role::Editor),
+            Actions {
+                rename: true,
+                leave: false,
+                delete: true
+            }
+        );
+        assert_eq!(
+            Actions::of_public(Role::Viewer),
+            Actions {
+                rename: false,
+                leave: false,
                 delete: false
             }
         );

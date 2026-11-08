@@ -14,11 +14,13 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let config = room.config.clone();
     let status = room.status;
     let read_only = !config.role.can_write();
+    let public = cocat_core::room_id::is_public_id(&config.room_id);
     let page = window().location().pathname().unwrap_or_default();
     let in_history = move || matches!(shown.get(), Route::History { .. });
     let here = move || match shown.get() {
         Route::History { .. } => Some("History"),
         Route::Groups | Route::Group(_) => Some("Groups"),
+        Route::Public => Some("Public catalogues"),
         _ => None,
     };
     let history = move || shown.get().history().href(&page);
@@ -37,7 +39,12 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
             </nav>
             <div class="header-end">
                 <Avatars/>
-                <ShareButton/>
+                <Show when=move || public>
+                    <span class="chip public-badge" title="A public catalogue: everyone signed in reads it, curators edit it">"Public"</span>
+                </Show>
+                <Show when=move || !public>
+                    <ShareButton/>
+                </Show>
                 <Show when=move || !in_history()>
                     <a class="button history-button" href=history.clone()>"History"</a>
                 </Show>

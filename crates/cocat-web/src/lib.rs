@@ -13,6 +13,7 @@ pub mod layout;
 pub mod period;
 pub mod presence;
 pub mod projects;
+pub mod public;
 pub mod route;
 pub mod rows;
 pub mod rule_text;

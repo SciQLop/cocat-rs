@@ -51,7 +51,11 @@ pub fn CataloguePage(
             .read(|txn| rows(txn, &uuid))
             .map_err(|error| error.to_string()),
         Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
-        Route::Default | Route::History { .. } | Route::Groups | Route::Group(_) => Ok(Vec::new()),
+        Route::Default
+        | Route::History { .. }
+        | Route::Groups
+        | Route::Group(_)
+        | Route::Public => Ok(Vec::new()),
     });
     let query = RwSignal::new(String::new());
     let period = RwSignal::new(None::<Period>);
@@ -159,9 +163,11 @@ fn showing(room: &Room, shown: &Route) -> Shown {
                 .is_some_and(|catalogue| catalogue.rule.is_some()),
         },
         Route::Trash => Shown::Trash,
-        Route::Default | Route::History { .. } | Route::Groups | Route::Group(_) => {
-            Shown::NoCatalogue
-        }
+        Route::Default
+        | Route::History { .. }
+        | Route::Groups
+        | Route::Group(_)
+        | Route::Public => Shown::NoCatalogue,
     }
 }
 

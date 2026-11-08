@@ -5,7 +5,7 @@ use cocat_server::groups;
 use ui_support::{Fixture, PUBLIC_URL, body_text};
 
 const MEMBER: &str = "member@example.org";
-const ANCHORS: [&str; 11] = [
+const ANCHORS: [&str; 12] = [
     "projects",
     "catalogues",
     "statistics",
@@ -13,6 +13,7 @@ const ANCHORS: [&str; 11] = [
     "history",
     "sharing",
     "groups",
+    "public",
     "roles",
     "presence",
     "sciqlop-python",

@@ -10,6 +10,8 @@ pub enum Route {
     /// The visitor's groups, and one of them.
     Groups,
     Group(String),
+    /// The index of the public catalogues.
+    Public,
     /// The versions of a catalogue, or of the room when `None`, and the one picked.
     History {
         catalogue: Option<String>,
@@ -29,6 +31,7 @@ impl Route {
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
             None if hash == "trash" => Route::Trash,
             None if hash == "groups" => Route::Groups,
+            None if hash == "public" => Route::Public,
             _ => Route::Default,
         }
     }
@@ -46,7 +49,7 @@ impl Route {
         let catalogue = match self {
             Route::Catalogue(uuid) => Some(uuid.clone()),
             Route::History { catalogue, .. } => catalogue.clone(),
-            Route::Default | Route::Trash | Route::Groups | Route::Group(_) => None,
+            Route::Default | Route::Trash | Route::Groups | Route::Group(_) | Route::Public => None,
         };
         Route::History {
             catalogue,
@@ -80,6 +83,7 @@ impl Route {
             Route::Catalogue(uuid) => format!("#c={uuid}"),
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
+            Route::Public => "#public".to_owned(),
             Route::Group(id) => format!("#group={id}"),
             Route::History { catalogue, version } => {
                 let version = version.map(|version| format!("={version}"));
@@ -134,6 +138,13 @@ mod tests {
         assert_eq!(Route::parse("#group=g1"), Route::Group("g1".into()));
         assert_eq!(Route::parse("#group="), Route::Default);
         assert_eq!(Route::Groups.history(), history(None, None));
+    }
+
+    #[test]
+    fn the_public_catalogues_have_a_route() {
+        assert_eq!(Route::parse("#public"), Route::Public);
+        assert_eq!(Route::Public.hash(), "#public");
+        assert_eq!(Route::Public.history(), history(None, None));
     }
 
     #[test]
@@ -208,6 +219,7 @@ mod tests {
             Route::Trash,
             Route::Groups,
             Route::Group("g1".into()),
+            Route::Public,
             history(None, None),
             history(Some("abc"), Some(12)),
             history(None, Some(12)),

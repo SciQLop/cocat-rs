@@ -135,7 +135,11 @@ pub fn ProjectMenu() -> impl IntoView {
     let dialog = RwSignal::new(None::<Dialog>);
     let open_id = move || projects.open.with(|config| config.room_id.clone());
     let name = move || projects.open.with(|config| config.room_name.clone());
-    let actions = move || projects.open.with(|config| Actions::of(config.role));
+    let actions = move || {
+        projects
+            .open
+            .with(|config| Actions::on(&config.room_id, config.role))
+    };
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
             menu.set_open(false);
@@ -171,6 +175,12 @@ pub fn ProjectMenu() -> impl IntoView {
                 <span class="caret" aria-hidden="true">"▾"</span>
             </summary>
             <div class="menu" role="menu" aria-label="Projects">
+                <button type="button" role="menuitem" class="project-entry public-entry"
+                    on:click=move |_| { close(); go_to(&Route::Public.hash()); }>
+                    <span class="label">"Public catalogues"</span>
+                    <small>"everyone"</small>
+                </button>
+                <hr/>
                 <p class="eyebrow">"Projects"</p>
                 <For each=move || projects.list.get() key=|project| (project.id.clone(), project.name.clone(), project.role) children=entry/>
                 <hr/>

@@ -1025,3 +1025,30 @@ a.button { text-decoration: none; }
   .share-dialog { width: 100vw; max-height: none; }
   .notice-bar, .groups-page { padding-left: 16px; padding-right: 16px; }
 }
+
+/* The public catalogues: the badge in the header, the menu entry and the index page. */
+.chip.public-badge { background: var(--accent-soft); color: var(--accent); }
+.project-entry.public-entry .label { font-weight: 600; }
+.public-page .public-search {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius);
+  font: inherit; background: var(--surface); color: var(--ink);
+}
+.public-page .public-search:focus-visible { outline: 0; box-shadow: var(--focus); }
+.public-shelf { display: flex; flex-direction: column; gap: 8px; }
+.public-shelf > summary {
+  display: flex; align-items: baseline; gap: 8px; cursor: pointer; padding: 4px 0;
+  font-weight: 600; color: var(--ink);
+}
+.public-shelf > summary small { color: var(--muted); font-weight: 400; }
+.public-shelf > ul { margin-top: 8px; }
+.public-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+  padding: 8px 10px; text-align: left; font: inherit; color: var(--ink); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+}
+.public-row:hover { border-color: var(--accent); }
+.public-row:focus-visible { outline: 0; box-shadow: var(--focus); }
+.public-row .name { font-weight: 600; overflow-wrap: anywhere; }
+.public-row .description { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.public-row .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
+.public-row .source { color: var(--accent); font-weight: 500; }
