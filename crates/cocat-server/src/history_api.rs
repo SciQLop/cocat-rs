@@ -18,7 +18,7 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
-use crate::history::diff::{Diff, diff, listed, replay_until};
+use crate::history::diff::{Diff, diff, members, replay_until};
 use crate::history::versions::{Version, span, versions};
 use crate::openapi::Detail;
 use crate::{AppState, db, lifecycle, presence};
@@ -113,6 +113,9 @@ async fn list(
     let mut versions = state.rooms.read_log(&room_id, versions).await?;
     if let Some(filter) = filter {
         versions.retain(|version| filter.keeps(version));
+        for version in &mut versions {
+            version.count_only(&filter.members);
+        }
     }
     if let Some(event) = query.event {
         versions.retain(|version| version.events.contains(&event));
@@ -334,7 +337,8 @@ fn row(record: impl TryInto<i64>) -> Option<i64> {
 }
 
 /// Which versions a catalogue's history shows: those that touched the catalogue or one of
-/// its members' events; for a smart catalogue, any event.
+/// its members' events; for a smart catalogue, any event. Their counts are of the members:
+/// the events it lists, and those its rule yields now.
 struct Filter {
     catalogue: String,
     smart: bool,
@@ -350,7 +354,7 @@ impl Filter {
             .rooms
             .read(room_id, move |doc: &Doc| {
                 let txn = doc.transact();
-                (has_rule(&txn, &uuid), listed(&txn, &uuid))
+                (has_rule(&txn, &uuid), members(&txn, &uuid))
             })
             .await?;
         Ok(Self {
@@ -363,7 +367,7 @@ impl Filter {
     fn keeps(&self, version: &Version) -> bool {
         version.catalogues.contains(&self.catalogue)
             || (self.smart && !version.events.is_empty())
-            || !version.events.is_disjoint(&self.members)
+            || version.events.meets(&self.members)
     }
 }
 

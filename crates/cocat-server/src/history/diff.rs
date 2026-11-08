@@ -194,7 +194,7 @@ fn changed_fields(
 }
 
 /// What the catalogue lists plus what its rule yields, trashed members included.
-fn members<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
+pub(crate) fn members<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
     let mut members = listed(txn, catalogue);
     if let Some(Ok(events)) = model::catalogue_events(txn, catalogue) {
         members.extend(events.into_iter().map(|event| event.uuid));
@@ -203,7 +203,7 @@ fn members<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
 }
 
 /// The events a catalogue lists, trashed ones included.
-pub(crate) fn listed<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
+fn listed<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
     let listed = txn
         .get_map(CATALOGUES)
         .and_then(|catalogues| catalogues.get(txn, catalogue));

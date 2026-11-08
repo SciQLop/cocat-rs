@@ -531,6 +531,49 @@ async fn a_static_catalogue_filter_keeps_its_members_event_edits() {
 }
 
 #[tokio::test]
+async fn a_catalogue_filter_counts_only_its_members_events() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, |txn| {
+        model::create_event(txn, &event("a")).unwrap();
+        model::create_event(txn, &event("b")).unwrap();
+        model::create_catalogue(txn, &catalogue("plain")).unwrap();
+        assert!(model::add_catalogue_events(txn, "plain", &["a".to_owned()]));
+    });
+    fixture.write(fixture.bob, MINUTE, |txn| {
+        for uuid in ["a", "b"] {
+            model::set_event_field(txn, uuid, &EventField::Confidence(Some(0.5))).unwrap();
+        }
+        model::create_event(txn, &event("c")).unwrap();
+    });
+    let counts = |versions: &[Value]| -> Vec<(u64, u64, u64)> {
+        versions
+            .iter()
+            .map(|version| {
+                let count = |key: &str| version[key].as_u64().unwrap();
+                (
+                    count("events_added"),
+                    count("events_changed"),
+                    count("events_removed"),
+                )
+            })
+            .collect()
+    };
+
+    let path = format!("/api/rooms/{ROOM}/history?catalogue=plain");
+    let (status, body) = fixture.get(&path, fixture.carol).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        counts(body["versions"].as_array().unwrap()),
+        [(0, 1, 0), (1, 0, 0)]
+    );
+    assert_eq!(
+        counts(&fixture.history(fixture.carol).await),
+        [(1, 2, 0), (2, 0, 0)]
+    );
+}
+
+#[tokio::test]
 async fn restore_is_broadcast_to_a_connected_client_and_stamped_with_the_restorer() {
     let fixture = two_versions().await;
     let room = fixture.state.rooms.get_or_open(ROOM).unwrap();

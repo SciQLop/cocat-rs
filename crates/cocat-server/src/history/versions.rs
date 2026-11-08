@@ -37,10 +37,55 @@ pub struct Version {
     pub restored_from: Option<u64>,
     /// When the restored version ended.
     pub restored_from_ms: Option<i64>,
-    /// Every event the version added, changed or removed: what a catalogue's filter
-    /// crosses with its members. Left out of the JSON, where an import makes it huge.
+    /// The events behind the counts: what a catalogue's filter crosses with its members.
+    /// Left out of the JSON, where an import makes them huge.
     #[serde(skip)]
-    pub events: BTreeSet<String>,
+    pub events: EventChanges,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EventChanges {
+    pub added: BTreeSet<String>,
+    pub changed: BTreeSet<String>,
+    pub removed: BTreeSet<String>,
+}
+
+impl EventChanges {
+    fn all(&self) -> impl Iterator<Item = &String> {
+        self.added.iter().chain(&self.changed).chain(&self.removed)
+    }
+
+    pub fn contains(&self, event: &str) -> bool {
+        self.all().any(|uuid| uuid == event)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.all().next().is_none()
+    }
+
+    pub fn meets(&self, events: &BTreeSet<String>) -> bool {
+        self.all().any(|uuid| events.contains(uuid))
+    }
+}
+
+impl Version {
+    /// Keeps only `members` behind the counts, as a catalogue's history shows its events.
+    pub fn count_only(&mut self, members: &BTreeSet<String>) {
+        for set in [
+            &mut self.events.added,
+            &mut self.events.changed,
+            &mut self.events.removed,
+        ] {
+            set.retain(|uuid| members.contains(uuid));
+        }
+        self.count();
+    }
+
+    fn count(&mut self) {
+        self.events_added = count(&self.events.added);
+        self.events_changed = count(&self.events.changed);
+        self.events_removed = count(&self.events.removed);
+    }
 }
 
 /// What one record changed.
@@ -308,7 +353,7 @@ fn version(first: usize, run: &[Option<Stamp>], touched: Touched) -> Version {
         .first()
         .or_else(|| touched.origins_added.first().map(|origin| &origin.name))
         .cloned();
-    Version {
+    let mut version = Version {
         id: index(first),
         last: index(first + run.len().saturating_sub(1)),
         author: first_stamp.and_then(|stamp| stamp.user),
@@ -316,22 +361,21 @@ fn version(first: usize, run: &[Option<Stamp>], touched: Touched) -> Version {
         ended_ms: last_stamp.map(|stamp| stamp.at_ms),
         via,
         auto_name: touched.origins_added.iter().find_map(auto_name),
-        events_added: count(&touched.events_added),
-        events_changed: count(&touched.events_changed),
-        events_removed: count(&touched.events_removed),
+        events_added: 0,
+        events_changed: 0,
+        events_removed: 0,
         catalogues: touched.catalogues.into_iter().collect(),
         rules_changed: touched.rules.into_iter().collect(),
         restored_from: first_stamp.and_then(|stamp| stamp.restored_from),
         restored_from_ms: None,
-        events: [
-            touched.events_added,
-            touched.events_changed,
-            touched.events_removed,
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
-    }
+        events: EventChanges {
+            added: touched.events_added,
+            changed: touched.events_changed,
+            removed: touched.events_removed,
+        },
+    };
+    version.count();
+    version
 }
 
 /// Imports and materializations name their version after their origin.
