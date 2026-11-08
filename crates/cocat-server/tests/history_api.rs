@@ -22,6 +22,13 @@ use yrs::{Doc, ReadTxn, Transact, TransactionMut, Update};
 const ROOM: &str = "history-room";
 const MINUTE: i64 = 60_000;
 
+fn now_ms() -> i64 {
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    i64::try_from(since.as_millis()).unwrap()
+}
+
 struct Fixture {
     state: AppState,
     update_dir: PathBuf,
@@ -562,6 +569,29 @@ async fn a_restore_is_itself_a_version_and_can_be_undone() {
 
     let (_, again) = fixture.restore(1, fixture.bob).await;
     assert_eq!(again, json!({ "restored": false }));
+}
+
+#[tokio::test]
+async fn a_restore_stays_apart_from_the_restorers_own_edits() {
+    let fixture = Fixture::start().await;
+    let now = now_ms();
+    fixture.write(fixture.alice, now, create("a"));
+    fixture.write(fixture.alice, now, create("b"));
+    fixture.write(fixture.bob, now, create("c"));
+    fixture.write(fixture.alice, now, create("d"));
+    let restored = ids(&fixture.history(fixture.alice).await)[1];
+
+    assert_eq!(
+        fixture.restore(restored, fixture.alice).await.0,
+        StatusCode::OK
+    );
+
+    let versions = fixture.history(fixture.alice).await;
+    assert_eq!(versions.len(), 4, "{versions:?}");
+    assert_eq!(versions[0]["restored_from"], json!(restored));
+    assert_eq!(versions[0]["restored_from_ms"], versions[2]["ended_ms"]);
+    assert_eq!(versions[0]["author_email"], "alice@x.org");
+    assert_eq!(versions[1]["restored_from"], Value::Null);
 }
 
 #[tokio::test]

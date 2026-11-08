@@ -479,14 +479,15 @@ impl RoomManager {
         Ok(())
     }
 
-    /// Writes one update as `user`, like a client frame: quota-checked, appended, stamped and
-    /// broadcast. A room nobody is in opens for the write and unloads after it. `Ok(false)`
-    /// when the update changed nothing.
-    pub async fn write_as(
+    /// Writes `user`'s restore of `version`, like a client frame: quota-checked, appended,
+    /// stamped as a restore and broadcast. A room nobody is in opens for the write and unloads
+    /// after it. `Ok(false)` when the update changed nothing.
+    pub async fn restore_as(
         &self,
         room_id: &str,
         allowance: u64,
         user: Uuid,
+        version: u64,
         update: Vec<u8>,
     ) -> Result<bool, RoomError> {
         for _ in 0..WRITE_TRIES {
@@ -496,7 +497,7 @@ impl RoomManager {
                 tokio::task::spawn_blocking(move || rooms.get_or_open_within(&id, allowance))
                     .await
                     .map_err(|_| RoomError::Unanswered)??;
-            match room.write_as(user, update.clone()).await {
+            match room.restore_as(user, version, update.clone()).await {
                 Err(RoomError::Gone) => continue,
                 written => return written,
             }
@@ -700,11 +701,22 @@ impl RoomHandle {
         }
     }
 
-    /// Has the room thread take `update` as if `user` had sent it in a frame.
-    pub async fn write_as(&self, user: Uuid, update: Vec<u8>) -> Result<bool, RoomError> {
+    /// Has the room thread take `update` as if `user` had sent it in a frame, stamped as a
+    /// restore of `version`.
+    pub async fn restore_as(
+        &self,
+        user: Uuid,
+        version: u64,
+        update: Vec<u8>,
+    ) -> Result<bool, RoomError> {
         let (done, written) = oneshot::channel();
-        self.send(RoomCommand::Write { user, update, done })
-            .map_err(|_| RoomError::Gone)?;
+        self.send(RoomCommand::Restore {
+            user,
+            version,
+            update,
+            done,
+        })
+        .map_err(|_| RoomError::Gone)?;
         match written.await {
             Ok(Ok(changed)) => Ok(changed),
             Ok(Err(_)) => Err(RoomError::Full),
@@ -761,9 +773,10 @@ enum RoomCommand {
     Read {
         read: Box<dyn FnOnce(&Doc) + Send>,
     },
-    /// An update the server writes on a user's behalf; answers whether it changed the room.
-    Write {
+    /// A restore the server writes on a user's behalf; answers whether it changed the room.
+    Restore {
         user: Uuid,
+        version: u64,
         update: Vec<u8>,
         done: oneshot::Sender<Result<bool, CloseReason>>,
     },
@@ -947,7 +960,12 @@ fn room_loop(
                         read(&doc);
                         Step::Serving
                     }
-                    RoomCommand::Write { user, update, done } => {
+                    RoomCommand::Restore {
+                        user,
+                        version,
+                        update,
+                        done,
+                    } => {
                         let written = handle_update(
                             &doc,
                             &mut store,
@@ -955,7 +973,7 @@ fn room_loop(
                             &mut seen,
                             limit,
                             update,
-                            Some(user),
+                            Author::Restore { user, version },
                         );
                         if let Ok(Some(frame)) = &written {
                             full_state = None;
@@ -1147,7 +1165,7 @@ fn close_room(
             if backlog.iter().any(|command| {
                 matches!(
                     command,
-                    RoomCommand::Attach { .. } | RoomCommand::Write { .. }
+                    RoomCommand::Attach { .. } | RoomCommand::Restore { .. }
                 )
             }) {
                 return true;
@@ -1229,7 +1247,7 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             RoomCommand::Attach { .. }
             | RoomCommand::Frame { .. }
             | RoomCommand::Read { .. }
-            | RoomCommand::Write { .. } => {}
+            | RoomCommand::Restore { .. } => {}
             #[cfg(test)]
             RoomCommand::Panic => {}
         }
@@ -1441,7 +1459,7 @@ fn handle_frame(
                 serving.seen,
                 serving.limit,
                 update,
-                Some(user),
+                Author::Client(user),
             )?;
             if broadcast.is_some() {
                 *serving.full_state = None;
@@ -1500,7 +1518,7 @@ fn handle_update(
     seen: &mut StateVector,
     limit: u64,
     payload: Vec<u8>,
-    user: Option<Uuid>,
+    author: Author,
 ) -> Result<Option<Bytes>, CloseReason> {
     // Python's wire_file drops this payload: an empty v1 update is two zero bytes, and
     // clients send one as their SyncStep2 on every connect.
@@ -1521,11 +1539,37 @@ fn handle_update(
         tracing::warn!(%error, "cannot append to the room file, the update is in memory only");
     } else if let Some(stamps) = stamps {
         let record = store.record_count().saturating_sub(1);
-        stamps.append(stamp_for(record, user, now_ms(), &payload));
+        stamps.append(author.stamp(record, now_ms(), &payload));
     }
     Ok(Some(Bytes::from(
         Message::Sync(SyncMessage::Update(payload)).encode_v1(),
     )))
+}
+
+/// Who an update comes from, as its stamp records it.
+#[derive(Debug, Clone, Copy)]
+enum Author {
+    #[cfg(test)]
+    Nobody,
+    Client(Uuid),
+    Restore {
+        user: Uuid,
+        version: u64,
+    },
+}
+
+impl Author {
+    fn stamp(self, record: u64, at_ms: i64, payload: &[u8]) -> Stamp {
+        match self {
+            #[cfg(test)]
+            Self::Nobody => stamp_for(record, None, at_ms, payload),
+            Self::Client(user) => stamp_for(record, Some(user), at_ms, payload),
+            Self::Restore { user, version } => Stamp {
+                restored_from: Some(version),
+                ..stamp_for(record, Some(user), at_ms, payload)
+            },
+        }
+    }
 }
 
 fn now_ms() -> i64 {
@@ -2105,7 +2149,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 update.clone(),
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2119,7 +2163,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 update,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_none(),
@@ -2160,7 +2204,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 second,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2174,7 +2218,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 first,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2212,7 +2256,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             insert.clone(),
-            None,
+            Author::Nobody,
         )
         .unwrap()
         .expect("the insert is broadcast");
@@ -2236,7 +2280,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 deletion,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2273,7 +2317,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             insert.clone(),
-            None,
+            Author::Nobody,
         )
         .unwrap()
         .expect("the insert is broadcast");
@@ -2297,7 +2341,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 deletion.clone(),
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2311,7 +2355,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 deletion,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_none(),
@@ -2341,7 +2385,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             first.clone(),
-            None,
+            Author::Nobody,
         )
         .unwrap()
         .expect("the first update is broadcast");
@@ -2366,7 +2410,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 combined,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2409,7 +2453,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 first,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),
@@ -2428,7 +2472,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 second,
-                None
+                Author::Nobody
             )
             .unwrap()
             .is_some(),

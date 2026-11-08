@@ -10,8 +10,9 @@ use cocat_core::store::room_file;
 use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_64;
 
-/// record u64, user 16 bytes (all zero = none), at_ms i64, len u32, 4 zero bytes, hash u64;
-/// all little-endian.
+/// record u64, user 16 bytes (all zero = none), at_ms i64, len u32, restore u32, hash u64;
+/// all little-endian. `restore` is 0 for an ordinary record, else the restored version + 1,
+/// so entries written before restores existed read as ordinary.
 const ENTRY: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,8 @@ pub struct Stamp {
     pub at_ms: i64,
     pub len: u32,
     pub hash: u64,
+    /// The version this record restored, when it is a restore.
+    pub restored_from: Option<u64>,
 }
 
 pub fn stamp_for(record: u64, user: Option<Uuid>, at_ms: i64, bytes: &[u8]) -> Stamp {
@@ -30,6 +33,7 @@ pub fn stamp_for(record: u64, user: Option<Uuid>, at_ms: i64, bytes: &[u8]) -> S
         at_ms,
         len: u32::try_from(bytes.len()).unwrap_or(u32::MAX),
         hash: xxh3_64(bytes),
+        restored_from: None,
     }
 }
 
@@ -40,6 +44,7 @@ impl Stamp {
         entry[8..24].copy_from_slice(self.user.unwrap_or(Uuid::nil()).as_bytes());
         entry[24..32].copy_from_slice(&self.at_ms.to_le_bytes());
         entry[32..36].copy_from_slice(&self.len.to_le_bytes());
+        entry[36..40].copy_from_slice(&encode_restore(self.restored_from).to_le_bytes());
         entry[40..48].copy_from_slice(&self.hash.to_le_bytes());
         entry
     }
@@ -49,13 +54,15 @@ impl Stamp {
         let (user, rest) = rest.split_first_chunk::<16>()?;
         let (at_ms, rest) = rest.split_first_chunk::<8>()?;
         let (len, rest) = rest.split_first_chunk::<4>()?;
-        let (hash, _) = rest.get(4..)?.split_first_chunk::<8>()?;
+        let (restore, rest) = rest.split_first_chunk::<4>()?;
+        let (hash, _) = rest.split_first_chunk::<8>()?;
         Some(Self {
             record: u64::from_le_bytes(*record),
             user: Some(Uuid::from_bytes(*user)).filter(|user| !user.is_nil()),
             at_ms: i64::from_le_bytes(*at_ms),
             len: u32::from_le_bytes(*len),
             hash: u64::from_le_bytes(*hash),
+            restored_from: u32::from_le_bytes(*restore).checked_sub(1).map(u64::from),
         })
     }
 
@@ -63,6 +70,16 @@ impl Stamp {
         usize::try_from(self.len).is_ok_and(|len| len == record.len())
             && self.hash == xxh3_64(record)
     }
+}
+
+/// simplify: a version id past `u32::MAX - 1` (four billion records in one room, far
+/// beyond any storage limit) loses the restore mark and groups as an ordinary edit; grow the
+/// entry to 56 bytes behind a format marker if rooms ever get there.
+fn encode_restore(restored_from: Option<u64>) -> u32 {
+    restored_from
+        .and_then(|version| u32::try_from(version).ok())
+        .and_then(|version| version.checked_add(1))
+        .unwrap_or(0)
 }
 
 pub fn stamps_file(update_dir: &Path, room_id: &str) -> PathBuf {
@@ -177,6 +194,29 @@ mod tests {
         stamps.sync().unwrap();
 
         assert_eq!(read_stamps(dir.path(), "lab").unwrap(), written);
+    }
+
+    #[test]
+    fn a_restore_stamp_names_the_version_it_restored() {
+        let dir = tempfile::tempdir().unwrap();
+        let restore = Stamp {
+            restored_from: Some(7),
+            ..stamp_for(3, Some(Uuid::new_v4()), 1, b"restore")
+        };
+        let mut stamps = StampFile::open(dir.path(), "lab").unwrap();
+        stamps.append(restore);
+        stamps.write().unwrap();
+
+        assert_eq!(read_stamps(dir.path(), "lab").unwrap(), [restore]);
+    }
+
+    #[test]
+    fn an_entry_with_zero_spare_bytes_is_not_a_restore() {
+        let stamp = stamp_for(0, None, 1, b"first");
+        let mut entry = stamp.encode();
+        entry[36..40].fill(0);
+
+        assert_eq!(Stamp::decode(&entry).unwrap().restored_from, None);
     }
 
     #[test]

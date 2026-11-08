@@ -33,6 +33,9 @@ pub struct Version {
     pub events_removed: u32,
     pub catalogues: Vec<String>,
     pub rules_changed: Vec<String>,
+    /// The version a restore brought back, and when that version ended.
+    pub restored_from: Option<u64>,
+    pub restored_from_ms: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,8 +162,17 @@ pub fn author(version: &Version) -> String {
 }
 
 /// A version in one line: "2 added, 1 changed, 1 removed", "Rule edited",
-/// "Imported from tscat".
-pub fn summary(version: &Version) -> String {
+/// "Imported from tscat", "Restored the version of 7 Nov 2026, 18:40".
+pub fn summary(version: &Version, offset: impl Fn(i64) -> i32) -> String {
+    if version.restored_from.is_some() {
+        return match version.restored_from_ms {
+            Some(ended) => format!(
+                "Restored the version of {}",
+                when_text(ended, offset(ended))
+            ),
+            None => "Restored the version from before history".to_owned(),
+        };
+    }
     if let Some((kind, origin)) = version
         .auto_name
         .as_deref()
@@ -455,6 +467,8 @@ mod tests {
             events_removed: 0,
             catalogues: Vec::new(),
             rules_changed: Vec::new(),
+            restored_from: None,
+            restored_from_ms: None,
         }
     }
 
@@ -531,9 +545,9 @@ mod tests {
             edits.events_changed,
             edits.events_removed,
         ) = (2, 1, 1);
-        assert_eq!(summary(&edits), "2 added, 1 changed, 1 removed");
+        assert_eq!(summary(&edits, |_| PARIS), "2 added, 1 changed, 1 removed");
         edits.events_removed = 0;
-        assert_eq!(summary(&edits), "2 added, 1 changed");
+        assert_eq!(summary(&edits, |_| PARIS), "2 added, 1 changed");
     }
 
     #[test]
@@ -541,9 +555,9 @@ mod tests {
         let mut rule = version(1, Some(NOW));
         rule.rules_changed = vec!["c".to_owned()];
         rule.catalogues = vec!["c".to_owned()];
-        assert_eq!(summary(&rule), "Rule edited");
+        assert_eq!(summary(&rule, |_| PARIS), "Rule edited");
         rule.events_changed = 3;
-        assert_eq!(summary(&rule), "Rule edited, 3 changed");
+        assert_eq!(summary(&rule, |_| PARIS), "Rule edited, 3 changed");
     }
 
     #[test]
@@ -551,19 +565,42 @@ mod tests {
         let mut import = version(1, Some(NOW));
         import.events_added = 120;
         import.auto_name = Some("import: tscat".to_owned());
-        assert_eq!(summary(&import), "Imported from tscat");
+        assert_eq!(summary(&import, |_| PARIS), "Imported from tscat");
         import.auto_name = Some("rule: Strong waves".to_owned());
-        assert_eq!(summary(&import), "Materialized from Strong waves");
+        assert_eq!(
+            summary(&import, |_| PARIS),
+            "Materialized from Strong waves"
+        );
+    }
+
+    #[test]
+    fn a_restore_names_the_version_it_brought_back_not_its_counts() {
+        let mut restore = version(5, Some(NOW));
+        restore.events_changed = 4;
+        restore.restored_from = Some(2);
+        restore.restored_from_ms = Some(NOW - HOUR);
+        assert_eq!(
+            summary(&restore, |_| PARIS),
+            "Restored the version of 8 Nov 2026, 12:00"
+        );
+        restore.restored_from_ms = None;
+        assert_eq!(
+            summary(&restore, |_| PARIS),
+            "Restored the version from before history"
+        );
     }
 
     #[test]
     fn a_version_that_only_touched_catalogues_says_so() {
         let mut members = version(1, Some(NOW));
         members.catalogues = vec!["c".to_owned()];
-        assert_eq!(summary(&members), "Catalogue changed");
+        assert_eq!(summary(&members, |_| PARIS), "Catalogue changed");
         members.catalogues.push("d".to_owned());
-        assert_eq!(summary(&members), "2 catalogues changed");
-        assert_eq!(summary(&version(2, Some(NOW))), "No change to show");
+        assert_eq!(summary(&members, |_| PARIS), "2 catalogues changed");
+        assert_eq!(
+            summary(&version(2, Some(NOW)), |_| PARIS),
+            "No change to show"
+        );
     }
 
     fn record(start: &str, confidence: f64, status: &str, tags: &[&str]) -> Map<String, Value> {

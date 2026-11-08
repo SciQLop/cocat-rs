@@ -454,7 +454,7 @@ fn version_item(
                     <Dot version=version.clone()/>
                     {author(&version)}
                 </span>
-                <span class="summary">{summary(&version)}</span>
+                <span class="summary">{summary(&version, offset)}</span>
             </a>
         </li>
     }
@@ -510,7 +510,7 @@ pub fn LastChanges(uuid: String, shown: Memo<Route>) -> impl IntoView {
                                     <Dot version=version.clone()/>
                                     <span class="when">{when}</span>
                                 </a>
-                                <span class="quiet">{format!("{} · {}", author(&version), summary(&version))}</span>
+                                <span class="quiet">{format!("{} · {}", author(&version), summary(&version, offset))}</span>
                             </li>
                         }
                     })

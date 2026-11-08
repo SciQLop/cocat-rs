@@ -296,7 +296,7 @@ async fn restore(
     let allowance = state.rooms.allowance(&state.pool, &room_id).await?;
     let restored = state
         .rooms
-        .write_as(&room_id, allowance, user.id, update)
+        .restore_as(&room_id, allowance, user.id, version, update)
         .await?;
     Ok(Json(Restored { restored }))
 }

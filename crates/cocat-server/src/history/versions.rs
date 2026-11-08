@@ -1,7 +1,7 @@
 //! Grouping a room's records into versions: runs of records by one author, each summed up
 //! by what its records touched.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -33,6 +33,10 @@ pub struct Version {
     pub events_removed: u32,
     pub catalogues: Vec<String>,
     pub rules_changed: Vec<String>,
+    /// The version this one restored: a restore is always a version of its own.
+    pub restored_from: Option<u64>,
+    /// When the restored version ended.
+    pub restored_from_ms: Option<i64>,
     /// Every event the version added, changed or removed: what a catalogue's filter
     /// crosses with its members. Left out of the JSON, where an import makes it huge.
     #[serde(skip)]
@@ -108,8 +112,21 @@ pub fn versions(records: &[Bytes], stamps: &[Option<Stamp>]) -> Vec<Version> {
             version(span.start, run, merge(touched.by_ref().take(run.len())))
         })
         .collect();
+    date_restores(&mut versions);
     versions.reverse();
     versions
+}
+
+fn date_restores(versions: &mut [Version]) {
+    let ended: HashMap<u64, Option<i64>> = versions
+        .iter()
+        .map(|version| (version.id, version.ended_ms))
+        .collect();
+    for version in versions {
+        version.restored_from_ms = version
+            .restored_from
+            .and_then(|id| ended.get(&id).copied().flatten());
+    }
 }
 
 /// The records of each version, oldest first: the grouping alone, without a replay.
@@ -262,7 +279,9 @@ fn continues(previous: &Option<Stamp>, next: &Option<Stamp>) -> bool {
     match (previous, next) {
         (None, None) => true,
         (Some(previous), Some(next)) => {
-            previous.user == next.user
+            previous.restored_from.is_none()
+                && next.restored_from.is_none()
+                && previous.user == next.user
                 && next.at_ms.saturating_sub(previous.at_ms) <= VERSION_GAP_MS
         }
         _ => false,
@@ -302,6 +321,8 @@ fn version(first: usize, run: &[Option<Stamp>], touched: Touched) -> Version {
         events_removed: count(&touched.events_removed),
         catalogues: touched.catalogues.into_iter().collect(),
         rules_changed: touched.rules.into_iter().collect(),
+        restored_from: first_stamp.and_then(|stamp| stamp.restored_from),
+        restored_from_ms: None,
         events: [
             touched.events_added,
             touched.events_changed,
@@ -362,6 +383,13 @@ mod tests {
             self.stamps
                 .push(stamp.map(|(user, at)| stamp_for(index, Some(user), at, &record)));
             self.records.push(record);
+        }
+
+        fn restore(&mut self, user: Uuid, at: i64, version: u64) {
+            self.write(Some((user, at)), set_confidence("a"));
+            if let Some(Some(stamp)) = self.stamps.last_mut() {
+                stamp.restored_from = Some(version);
+            }
         }
 
         fn versions(&self) -> Vec<Version> {
@@ -545,6 +573,21 @@ mod tests {
         assert_eq!(versions[1].via.as_deref(), Some("tscat"));
         assert_eq!(versions[0].auto_name, None);
         assert_eq!(versions[0].via.as_deref(), Some("tscat"));
+    }
+
+    #[test]
+    fn a_restore_is_a_version_of_its_own_between_its_authors_edits() {
+        let mut room = Room::default();
+        room.write(Some((user(1), 0)), create("a"));
+        room.restore(user(1), 1, 0);
+        room.write(Some((user(1), 2)), create("b"));
+
+        let versions = room.versions();
+
+        assert_eq!(ranges(&versions), [(2, 2), (1, 1), (0, 0)]);
+        let restored_from: Vec<_> = versions.iter().map(|v| v.restored_from).collect();
+        assert_eq!(restored_from, [None, Some(0), None]);
+        assert_eq!(versions[1].restored_from_ms, Some(0));
     }
 
     #[test]
