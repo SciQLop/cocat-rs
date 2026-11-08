@@ -93,6 +93,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         route.get().or_first(first.as_deref())
     });
     let selected = RwSignal::new(None::<Row>);
+    let screen = RwSignal::new(None);
     let panel = Memo::new(move |_| selected.with(Shown::of));
     Effect::new(move |_| {
         let editing = panel.with(|shown| shown.event().map(str::to_owned));
@@ -126,9 +127,9 @@ fn App(config: RoomConfig) -> impl IntoView {
                 <div class="browser">
                     <Sidebar shown/>
                     <main class="content">
-                        <CataloguePage shown selected/>
+                        <CataloguePage shown selected screen/>
                     </main>
-                    <EventPanel selected shown=panel route=shown/>
+                    <EventPanel selected shown=panel route=shown screen/>
                 </div>
             }
             .into_any()

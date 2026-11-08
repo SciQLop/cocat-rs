@@ -9,6 +9,7 @@ together, in the browser, in SciQLop and from Python.</p>
   <ul>
     <li><a href="#projects">Projects</a></li>
     <li><a href="#catalogues">Catalogues and events</a></li>
+    <li><a href="#statistics">Statistics</a></li>
     <li><a href="#smart-catalogues">Smart catalogues</a></li>
     <li><a href="#history">History</a></li>
     <li><a href="#sharing">Sharing</a></li>
@@ -53,6 +54,23 @@ shows its catalogues, and adds it to another one.</p>
 <p>Deleting an event or a catalogue moves it to the <strong>Trash</strong>, at the bottom of
 the catalogue list. From there, <strong>Restore</strong> puts it back.
 <strong>Delete for good</strong> removes it, and cannot be undone.</p>
+</section>
+
+<section>
+<h2 id="statistics">Statistics</h2>
+<p>While no event is open, the panel on the right sums up the events the table shows: after
+the filter and the period picked on the timeline.</p>
+<ul>
+  <li><strong>Coverage</strong> is the time at least one event covers. Where events overlap,
+  that time counts once. The percentage compares it with the span, from the first start to
+  the last stop.</li>
+  <li><strong>Gaps</strong> are the waits between events: from the stop of one to the start
+  of the next. Events that overlap have no gap between them.</li>
+  <li>Durations and gaps go from seconds to days, so their histograms grow by a factor of
+  ten every two bars.</li>
+</ul>
+<p><strong>More statistics</strong> opens the other sections. The page remembers which ones
+you keep open, in this browser.</p>
 </section>
 
 <section>

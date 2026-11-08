@@ -5,9 +5,10 @@ use cocat_server::groups;
 use ui_support::{Fixture, PUBLIC_URL, body_text};
 
 const MEMBER: &str = "member@example.org";
-const ANCHORS: [&str; 10] = [
+const ANCHORS: [&str; 11] = [
     "projects",
     "catalogues",
+    "statistics",
     "smart-catalogues",
     "history",
     "sharing",
@@ -167,4 +168,16 @@ async fn the_smart_catalogue_help_says_how_to_make_one_in_the_browser() {
 
     let smart = section_text(&help, "smart-catalogues");
     assert!(smart.contains("More → Add a rule…"), "{smart}");
+}
+
+#[tokio::test]
+async fn the_statistics_help_says_what_coverage_and_gaps_mean() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let statistics = section_text(&help, "statistics");
+    assert!(statistics.contains("Coverage"), "{statistics}");
+    assert!(statistics.contains("once"), "{statistics}");
+    assert!(statistics.contains("Gaps"), "{statistics}");
 }

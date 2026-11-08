@@ -18,6 +18,7 @@ pub mod rows;
 pub mod rule_text;
 pub mod session;
 pub mod sharing;
+pub mod stats;
 pub mod sync;
 
 #[cfg(test)]

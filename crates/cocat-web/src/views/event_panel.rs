@@ -7,8 +7,10 @@ use crate::format::duration_text;
 use crate::route::Route;
 use crate::rows::Row;
 use crate::state::Room;
+use crate::views::catalogue::OnScreen;
 use crate::views::event_editor::{Editor, TrashActions};
 use crate::views::history::LastChanges;
+use crate::views::stats::Statistics;
 
 /// What the panel shows. Built from the selection so that the editor of one event stays put
 /// while the room changes around it.
@@ -43,9 +45,10 @@ pub fn EventPanel(
     selected: RwSignal<Option<Row>>,
     shown: Memo<Shown>,
     route: Memo<Route>,
+    screen: RwSignal<Option<OnScreen>>,
 ) -> impl IntoView {
     let content = move || match shown.get() {
-        Shown::Nothing => view! { <p class="quiet">"Pick an event to see it here."</p> }.into_any(),
+        Shown::Nothing => view! { <Statistics screen/> }.into_any(),
         Shown::Derived(row) => derived(&row).into_any(),
         Shown::Event(uuid) => view! {
             <Event uuid=uuid.clone() selected/>
@@ -54,7 +57,10 @@ pub fn EventPanel(
         .into_any(),
     };
     view! {
-        <aside class="panel" aria-label="Selected event">
+        <aside class="panel" aria-label=move || match shown.get() {
+            Shown::Nothing => "Statistics",
+            _ => "Selected event",
+        }>
             <Show when=move || shown.with(|shown| *shown != Shown::Nothing)>
                 <button type="button" class="close" aria-label="Close"
                     on:click=move |_| selected.set(None)>"×"</button>

@@ -455,6 +455,58 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .plain { margin: 0; padding: 0; list-style: none; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
 .panel section { border-top: 1px solid var(--row-rule); padding-top: 12px; }
 
+/* The statistics of the events on screen, while no event is open. */
+.panel h2 { font-variant-numeric: tabular-nums; }
+.stat-facts dd { font-variant-numeric: tabular-nums; }
+.stat-note { display: block; margin: 0; color: var(--muted); font-size: 12px; }
+.stat-line { margin: 0 0 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.stat-bars {
+  display: grid;
+  grid-template-columns: minmax(0, 8em) 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  font-size: 13px;
+}
+.stat-bars .stat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-track { height: 6px; border-radius: 3px; background: var(--row-rule); overflow: hidden; }
+.stat-track span { display: block; height: 100%; background: var(--accent); }
+.stat-num { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.stat-bars + .stat-note { margin-top: 4px; }
+.histogram { margin-top: -4px; }
+.histogram-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  border-bottom: 1px solid var(--axis);
+}
+.histogram-bars span { flex: 1; min-height: 0; border-radius: 2px 2px 0 0; background: var(--accent); }
+.histogram-axis { position: relative; height: 16px; color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.histogram-axis span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; }
+.histogram-axis .start { transform: none; }
+.histogram-axis .end { transform: translateX(-100%); }
+.panel .stat-sections { display: flex; flex-direction: column; }
+.stat-more { border-top: 1px solid var(--row-rule); }
+.stat-sections .section-label { margin-bottom: 4px; }
+.stat-more summary { padding: 6px 0; font-size: 13px; cursor: pointer; }
+.stat-more[open] summary { font-weight: 600; }
+.stat-more[open] { padding-bottom: 10px; }
+.stat-more > :not(summary) + :not(summary) { margin-top: 8px; }
+.stat-more h4.section-label { margin: 10px 0 4px; }
+.attributes.stat-attributes { grid-template-columns: 1fr; gap: 0; }
+.attributes.stat-attributes dt { align-self: auto; color: var(--ink); }
+.attributes.stat-attributes dd { margin-bottom: 6px; color: var(--muted); }
+.stat-pairs .stat-num { margin-left: 4px; }
+.stat-stack { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: var(--row-rule); }
+.stat-tone { --tone: var(--muted); background: var(--tone); }
+.stat-tone.confirmed { --tone: var(--accent); }
+.stat-tone.reviewed { --tone: var(--smart); }
+.stat-tone.final { --tone: var(--live); }
+.stat-tone.rejected, .stat-tone.deleted { --tone: var(--danger); }
+.stat-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.stat-legend li { display: inline-flex; align-items: center; gap: 4px; }
+.stat-swatch { width: 8px; height: 8px; border-radius: 2px; }
+
 .content h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
 
 .loading {

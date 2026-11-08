@@ -18,8 +18,32 @@ use crate::views::trash::TrashedCatalogues;
 /// The rows of what is on screen, or the rule's error.
 pub type Members = Memo<Result<Vec<Row>, String>>;
 
+/// The events the table shows, before sorting, for the panel's statistics.
+#[derive(Clone, Copy)]
+pub struct OnScreen {
+    pub members: Members,
+    pub visible: Memo<Vec<usize>>,
+}
+
+impl OnScreen {
+    /// `of` the rows on screen, and how many the page holds in all.
+    pub fn with<T>(&self, of: impl FnOnce(&[&Row], usize) -> T) -> T {
+        self.members.with(|members| {
+            let all = members.as_deref().unwrap_or_default();
+            self.visible.with(|visible| {
+                let rows: Vec<&Row> = visible.iter().map(|&index| &all[index]).collect();
+                of(&rows, all.len())
+            })
+        })
+    }
+}
+
 #[component]
-pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> impl IntoView {
+pub fn CataloguePage(
+    shown: Memo<Route>,
+    selected: RwSignal<Option<Row>>,
+    screen: RwSignal<Option<OnScreen>>,
+) -> impl IntoView {
     let room = expect_context::<Room>();
     let reader = room.clone();
     let members: Members = Memo::new(move |_| match shown.get() {
@@ -38,15 +62,26 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
             Err(_) => Vec::new(),
         })
     });
+    let visible = Memo::new(move |_| {
+        members.with(|members| {
+            let Ok(rows) = members else {
+                return Vec::new();
+            };
+            let mut visible = matching.get();
+            if let Some(period) = period.get() {
+                visible.retain(|&index| period.overlaps(rows[index].start, rows[index].stop));
+            }
+            visible
+        })
+    });
+    screen.set(Some(OnScreen { members, visible }));
+    on_cleanup(move || screen.set(None));
     let order = Memo::new(move |_| {
         members.with(|members| {
             let Ok(rows) = members else {
                 return Vec::new();
             };
-            let mut order = matching.get();
-            if let Some(period) = period.get() {
-                order.retain(|&index| period.overlaps(rows[index].start, rows[index].stop));
-            }
+            let mut order = visible.get();
             sorting.with(|(key, descending)| sort(rows, &mut order, key, *descending));
             order
         })
