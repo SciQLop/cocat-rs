@@ -25,13 +25,21 @@ public bucket of catalogues.
 
 ## How (decisions)
 
-- The bucket is a project with a fixed id, `public`, created at startup if missing, with no
-  owner. Role resolution gives every signed-in account `viewer` on it and curators `editor`.
-  So everything built for projects works on it unchanged: sync, history, the read-only client,
-  statistics, the timeline, export. It can't be renamed, deleted, shared or left; it has no
-  Share dialog. It doesn't count against anyone's storage quota.
-- `projects()` / `GET /api/rooms` list it for everyone, with `public: true`. The app shows it
-  as its own entry, "Public catalogues", above the user's projects.
+- **One small public project per public catalogue**, not one project for the whole
+  collection. AMDA alone shares 222 lists with 316,194 intervals (the largest 34k); one
+  project holding them all would not load in a browser (11k events already cost 2 s and
+  65 MB) and SciQLop would download everything to show one catalogue. Public catalogues don't
+  need events shared between catalogues, which is what projects bundle for.
+- A public project has a `public` flag, no owner, a namespaced id (e.g.
+  `public.amda.sharedcatalog_22`, a prefix user projects can't use), and `source`, `folder`
+  and `description`. Curators create them. Role resolution gives curators `editor` and every
+  other signed-in account `viewer`, so everything built for projects works unchanged: sync,
+  history, the read-only client, statistics, the timeline, export. They have no members,
+  invitations, groups or Share dialog. They don't count against anyone's storage quota.
+- The collection is an index, `GET /api/public` (Python `public_catalogues()`), not part of
+  `projects()`. The app shows "Public catalogues" at the top of the project menu: an index
+  view with folders and a search box; opening one shows the normal catalogue view with a
+  "Public" badge.
 - Submissions live in SQLite: author, kind (new / update), the target public catalogue for an
   update, the public version it was based on, title, note, status (pending / accepted /
   declined), reviewer, review note, dates, and the proposed catalogue with its events as a
