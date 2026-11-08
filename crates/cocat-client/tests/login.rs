@@ -55,3 +55,25 @@ async fn the_cookie_from_a_login_opens_the_room() {
 
     room.wait_synced(WAIT).unwrap();
 }
+
+#[tokio::test]
+async fn rooms_flags_the_callers_own_project() {
+    let server = Server::start().await;
+    let owner = user(&server, "owner@x.org").await;
+    room(&server, ROOM, owner).await;
+    cocat_server::db::create_personal_room(&server.pool, owner)
+        .await
+        .unwrap();
+    let cookie = login(&server.url(), "owner@x.org", PASSWORD).await.unwrap();
+
+    let rooms = rooms(&server.url(), &cookie).await.unwrap();
+
+    let own: Vec<&str> = rooms
+        .iter()
+        .filter(|room| room.personal)
+        .map(|room| room.id.as_str())
+        .collect();
+    assert_eq!(rooms.len(), 2);
+    assert_ne!(own, [ROOM]);
+    assert_eq!(own.len(), 1);
+}

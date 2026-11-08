@@ -250,7 +250,10 @@ async fn the_app_opens_the_personal_project() {
     db::create_personal_room(&fixture.state.pool, user)
         .await
         .unwrap();
-    let personal = personal_room(&fixture, user, db::PERSONAL_ROOM_NAME).await;
+    let personal = db::personal_room(&fixture.state.pool, user)
+        .await
+        .unwrap()
+        .unwrap();
     let token = fixture.token(user).await;
 
     let response = fixture.get("/ui/app", Some(&token)).await;
@@ -259,45 +262,80 @@ async fn the_app_opens_the_personal_project() {
     assert_eq!(location(&response), format!("/ui/rooms/{personal}/browse"));
 }
 
+/// The own project is a mark on the account, not a name: renamed, it still opens, and a
+/// project merely called "Personal" does not.
 #[tokio::test]
-async fn the_app_opens_a_personal_project_imported_from_python() {
+async fn the_app_opens_the_own_project_after_a_rename() {
     let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(OWNER).await;
-    lifecycle::create_room(&fixture.state, user, "A first project")
+    lifecycle::create_room(&fixture.state, user, "Personal")
         .await
         .unwrap();
-    let personal = lifecycle::create_room(&fixture.state, user, "Personal")
+    db::create_personal_room(&fixture.state.pool, user)
+        .await
+        .unwrap();
+    let own = db::personal_room(&fixture.state.pool, user)
         .await
         .unwrap()
-        .id;
+        .unwrap();
+    lifecycle::rename_room(&fixture.state, &own, user, "Mine")
+        .await
+        .unwrap();
     let token = fixture.token(user).await;
 
     let response = fixture.get("/ui/app", Some(&token)).await;
 
-    assert_eq!(location(&response), format!("/ui/rooms/{personal}/browse"));
+    assert_eq!(location(&response), format!("/ui/rooms/{own}/browse"));
 }
 
 #[tokio::test]
-async fn someone_else_s_personal_project_is_not_the_one_opened() {
+async fn someone_else_s_own_project_is_not_the_one_opened() {
     let fixture = Fixture::start().await.with_app();
     let owner = fixture.verified(OWNER).await;
     let viewer = fixture.verified(VIEWER).await;
-    let theirs = lifecycle::create_room(&fixture.state, owner, db::PERSONAL_ROOM_NAME)
+    db::create_personal_room(&fixture.state.pool, owner)
+        .await
+        .unwrap();
+    let theirs = db::personal_room(&fixture.state.pool, owner)
         .await
         .unwrap()
-        .id;
+        .unwrap();
     db::add_member(&fixture.state.pool, &theirs, viewer, Role::Viewer)
         .await
         .unwrap();
-    let own = lifecycle::create_room(&fixture.state, viewer, "Personal")
+    db::create_personal_room(&fixture.state.pool, viewer)
+        .await
+        .unwrap();
+    let own = db::personal_room(&fixture.state.pool, viewer)
         .await
         .unwrap()
-        .id;
+        .unwrap();
     let token = fixture.token(viewer).await;
 
     let response = fixture.get("/ui/app", Some(&token)).await;
 
     assert_eq!(location(&response), format!("/ui/rooms/{own}/browse"));
+}
+
+#[tokio::test]
+async fn with_its_own_project_deleted_the_app_opens_the_first_one() {
+    let fixture = Fixture::start().await.with_app();
+    let (room, viewer) = room_with_viewer(&fixture).await;
+    db::create_personal_room(&fixture.state.pool, viewer)
+        .await
+        .unwrap();
+    let own = db::personal_room(&fixture.state.pool, viewer)
+        .await
+        .unwrap()
+        .unwrap();
+    lifecycle::delete_room(&fixture.state, &own, viewer)
+        .await
+        .unwrap();
+    let token = fixture.token(viewer).await;
+
+    let response = fixture.get("/ui/app", Some(&token)).await;
+
+    assert_eq!(location(&response), format!("/ui/rooms/{room}/browse"));
 }
 
 #[tokio::test]
@@ -320,17 +358,6 @@ async fn without_any_project_the_app_sends_to_the_projects_list() {
     let response = fixture.get("/ui/app", Some(&token)).await;
 
     assert_eq!(location(&response), "/ui/rooms");
-}
-
-async fn personal_room(fixture: &Fixture, user: Uuid, name: &str) -> String {
-    db::list_user_rooms(&fixture.state.pool, user)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|(room, _)| room.name == name)
-        .unwrap()
-        .0
-        .id
 }
 
 /// Ids imported from Python can hold anything; every link and redirect escapes them as one

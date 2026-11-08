@@ -22,8 +22,6 @@ from ._native import RoomInfo, export_votable as _export_votable
 from ._native import login as _login
 from ._native import rooms as _rooms
 
-# Accounts made by Python cocat call their own room "Personal".
-PERSONAL_ROOM_NAMES = ("My catalogues", "Personal")
 
 CONNECT_TIMEOUT = 30.0
 REFRESH_TIMEOUT = 30.0
@@ -243,11 +241,8 @@ def _list_rooms(base_url: str, cookie: str) -> list[RoomInfo]:
 
 
 def _default_room(base_url: str, cookie: str) -> str:
-    """The owned personal room, else the first room the user belongs to."""
+    """The user's own room, else the first room the user belongs to."""
     rooms = _list_rooms(base_url, cookie)
     if not rooms:
         raise RuntimeError("No room available; create one or accept an invitation")
-    for room in rooms:
-        if room.role == "owner" and room.name in PERSONAL_ROOM_NAMES:
-            return room.id
-    return rooms[0].id
+    return next((room.id for room in rooms if room.personal), rooms[0].id)

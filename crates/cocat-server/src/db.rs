@@ -704,16 +704,26 @@ pub async fn create_room(
     room_id: &str,
     name: &str,
 ) -> Result<(), DbError> {
-    validate_room_id(room_id)?;
     let mut tx = pool.begin().await?;
+    insert_room(&mut tx, owner_id, room_id, name).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn insert_room(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    owner_id: Uuid,
+    room_id: &str,
+    name: &str,
+) -> Result<(), DbError> {
+    validate_room_id(room_id)?;
     sqlx::query("INSERT INTO room (id, name, created_by) VALUES (?, ?, ?)")
         .bind(room_id)
         .bind(name)
         .bind(owner_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    insert_membership(&mut tx, room_id, owner_id, Role::Owner).await?;
-    tx.commit().await?;
+    insert_membership(tx, room_id, owner_id, Role::Owner).await?;
     Ok(())
 }
 
@@ -721,14 +731,51 @@ pub async fn create_room(
 /// it "Personal"; rooms imported from Python keep that name.
 pub const PERSONAL_ROOM_NAME: &str = "My catalogues";
 
-/// The names an account's own room may carry: today's, and the one Python cocat gave it.
-pub const PERSONAL_ROOM_NAMES: [&str; 2] = [PERSONAL_ROOM_NAME, "Personal"];
-
 /// Python's `create_personal_room`: a bare-uuid room named [`PERSONAL_ROOM_NAME`] whose
-/// owner is `user`. Registration and `create-user` both run it.
+/// owner is `user`, recorded as the account's own project. Registration and `create-user`
+/// both run it.
 pub async fn create_personal_room(pool: &SqlitePool, user: Uuid) -> Result<(), DbError> {
     let room_id = Uuid::new_v4().simple().to_string();
-    create_room(pool, user, &room_id, PERSONAL_ROOM_NAME).await
+    let mut tx = pool.begin().await?;
+    insert_room(&mut tx, user, &room_id, PERSONAL_ROOM_NAME).await?;
+    sqlx::query(r#"UPDATE "user" SET personal_room = ? WHERE id = ?"#)
+        .bind(&room_id)
+        .bind(user.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Migration 0010's backfill, for accounts imported after it ran: each unmarked account's
+/// oldest owned uuid-hex room named like an own project. Keep it the same as the migration.
+pub const MARK_PERSONAL_ROOMS: &str = r#"UPDATE "user" SET personal_room = (
+    SELECT room.id
+    FROM room JOIN membership ON membership.room_id = room.id
+    WHERE membership.user_id = "user".id
+      AND membership.role = 'owner'
+      AND room.name IN ('My catalogues', 'Personal')
+      AND length(room.id) = 32
+      AND room.id NOT GLOB '*[^0-9a-f]*'
+    ORDER BY room.created_at, room.id
+    LIMIT 1
+)
+WHERE personal_room IS NULL"#;
+
+/// The account's own project, while the account still owns it.
+pub async fn personal_room(
+    executor: impl Executor<'_, Database = Sqlite>,
+    user: Uuid,
+) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT "user".personal_room FROM "user"
+           JOIN membership ON membership.room_id = "user".personal_room
+             AND membership.user_id = "user".id AND membership.role = 'owner'
+           WHERE "user".id = ?"#,
+    )
+    .bind(user.to_string())
+    .fetch_optional(executor)
+    .await?)
 }
 
 pub async fn rename_room(pool: &SqlitePool, room_id: &str, name: &str) -> Result<bool, DbError> {

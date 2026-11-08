@@ -100,8 +100,9 @@ pub(crate) async fn entry(
     if !installed(state).await {
         return Ok(None);
     }
-    match db::list_user_rooms(&state.pool, user.id).await {
-        Ok(rooms) => Ok(opening(&rooms).map(|room| format!("/rooms/{}/browse", segment(&room.id)))),
+    match rooms_and_own(state, user).await {
+        Ok((rooms, own)) => Ok(opening(&rooms, own.as_deref())
+            .map(|room| format!("/rooms/{}/browse", segment(&room.id)))),
         Err(error) => {
             tracing::warn!(%error, "cannot read the rooms of a visitor");
             Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))
@@ -109,11 +110,18 @@ pub(crate) async fn entry(
     }
 }
 
-fn opening(rooms: &[(db::RoomRow, Role)]) -> Option<&db::RoomRow> {
-    let personal = rooms.iter().find(|(room, role)| {
-        *role == Role::Owner && db::PERSONAL_ROOM_NAMES.contains(&room.name.as_str())
-    });
-    personal.or(rooms.first()).map(|(room, _)| room)
+async fn rooms_and_own(
+    state: &AppState,
+    user: &db::User,
+) -> Result<(Vec<(db::RoomRow, Role)>, Option<String>), db::DbError> {
+    let rooms = db::list_user_rooms(&state.pool, user.id).await?;
+    let own = db::personal_room(&state.pool, user.id).await?;
+    Ok((rooms, own))
+}
+
+fn opening<'a>(rooms: &'a [(db::RoomRow, Role)], own: Option<&str>) -> Option<&'a db::RoomRow> {
+    let own = rooms.iter().find(|(room, _)| Some(room.id.as_str()) == own);
+    own.or(rooms.first()).map(|(room, _)| room)
 }
 
 /// Whether a bundle is installed, so the app can open.

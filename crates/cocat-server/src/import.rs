@@ -282,6 +282,9 @@ async fn import_users(
     } else {
         copy_rooms(&mut tx, &python, summary).await?;
     }
+    sqlx::query(db::MARK_PERSONAL_ROOMS)
+        .execute(&mut *tx)
+        .await?;
 
     if dry_run {
         tx.rollback().await.map_err(db::DbError::from)?;

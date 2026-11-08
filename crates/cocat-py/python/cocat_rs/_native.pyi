@@ -56,10 +56,11 @@ class Event:
     def purge(self) -> None: ...
 
 class RoomInfo:
-    def __init__(self, id: str, name: str, role: str) -> None: ...
+    def __init__(self, id: str, name: str, role: str, personal: bool = False) -> None: ...
     id: str
     name: str
     role: str
+    personal: bool
 
 class Room:
     @staticmethod

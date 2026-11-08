@@ -202,7 +202,9 @@ async fn create_list_rename_delete_room() {
 
     let (status, listed) = fixture.get("/api/rooms", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(listed, json!([room]));
+    let mut listed_room = room.clone();
+    listed_room["personal"] = json!(false);
+    assert_eq!(listed, json!([listed_room]));
 
     let (status, renamed) = fixture
         .patch(
@@ -752,4 +754,54 @@ async fn an_invitation_cannot_grant_owner_over_http() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["detail"].is_string());
     assert_eq!(out_of_range, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// The caller's own project is flagged in the list, whatever it is called.
+#[tokio::test]
+async fn the_rooms_list_flags_the_callers_own_project() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let other = fixture.user("other@example.org").await;
+    db::create_personal_room(&fixture.state.pool, owner)
+        .await
+        .unwrap();
+    db::create_personal_room(&fixture.state.pool, other)
+        .await
+        .unwrap();
+    let own = db::personal_room(&fixture.state.pool, owner)
+        .await
+        .unwrap()
+        .unwrap();
+    let theirs = db::personal_room(&fixture.state.pool, other)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.member(&theirs, owner, Role::Editor).await;
+    fixture.room(owner, "lab", "Personal").await;
+    let token = fixture.token(owner).await;
+    fixture
+        .patch(
+            &format!("/api/rooms/{own}"),
+            Some(&token),
+            json!({"name": "Renamed"}),
+        )
+        .await;
+
+    let (status, listed) = fixture.get("/api/rooms", Some(&token)).await;
+
+    assert_eq!(status, StatusCode::OK);
+    let flagged: Vec<(&str, bool)> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|room| {
+            (
+                room["id"].as_str().unwrap(),
+                room["personal"].as_bool().unwrap(),
+            )
+        })
+        .filter(|(_, personal)| *personal)
+        .collect();
+    assert_eq!(flagged, [(own.as_str(), true)], "{listed}");
+    assert_eq!(listed.as_array().unwrap().len(), 3, "{listed}");
 }

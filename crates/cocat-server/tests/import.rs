@@ -605,3 +605,51 @@ async fn the_room_files_of_imported_users_are_migrated_too() {
     let doc = room_document(&fixture.updates, "lab");
     assert!(!cocat_core::model::is_v1(&yrs::Transact::transact(&doc)));
 }
+
+/// Python cocat gave each account a uuid-hex room named "Personal"; the import marks it as
+/// the account's own project, as migration 10 does for an older import.
+#[tokio::test]
+async fn an_imported_account_keeps_its_own_project() {
+    let fixture = Fixture::start().await;
+    let python = fixture.dir.path().join("personal.db");
+    std::fs::copy(Fixture::rooms_model(), &python).unwrap();
+    let pool = SqlitePool::connect(&format!("sqlite://{}", python.display()))
+        .await
+        .unwrap();
+    let alice = "11111111-1111-1111-1111-111111111111";
+    let own = "0123456789abcdef0123456789abcdef";
+    sqlx::query("INSERT INTO room (id, name, created_at, created_by) VALUES (?, 'Personal', '2026-01-01 00:00:00', ?)")
+        .bind(own)
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO membership (room_id, user_id, role, joined_at) VALUES (?, ?, 'owner', '2026-01-01 00:00:00')")
+        .bind(own)
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        Some(&python),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let alice = fixture.user("alice@example.org").await.id;
+    let bob = fixture.user("bob@example.org").await.id;
+    assert_eq!(
+        db::personal_room(&fixture.pool, alice)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(own)
+    );
+    assert_eq!(db::personal_room(&fixture.pool, bob).await.unwrap(), None);
+}

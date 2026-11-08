@@ -1624,13 +1624,22 @@ pub struct RoomInfo {
     pub name: String,
     #[pyo3(get)]
     pub role: String,
+    /// The user's own project, made with the account: the one to open by default.
+    #[pyo3(get)]
+    pub personal: bool,
 }
 
 #[pymethods]
 impl RoomInfo {
     #[new]
-    fn new(id: String, name: String, role: String) -> RoomInfo {
-        RoomInfo { id, name, role }
+    #[pyo3(signature = (id, name, role, personal = false))]
+    fn new(id: String, name: String, role: String, personal: bool) -> RoomInfo {
+        RoomInfo {
+            id,
+            name,
+            role,
+            personal,
+        }
     }
 }
 
@@ -1640,6 +1649,7 @@ impl From<ClientRoomInfo> for RoomInfo {
             id: info.id,
             name: info.name,
             role: info.role.as_str().to_owned(),
+            personal: info.personal,
         }
     }
 }

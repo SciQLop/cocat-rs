@@ -255,3 +255,92 @@ async fn an_immediate_transaction_waits_for_the_writer() {
         "the held write rolled back and the immediate one committed"
     );
 }
+
+/// A database as the server left it before migration 10, holding what an import of Python
+/// cocat wrote: its own projects are uuid-hex rooms named "Personal".
+async fn before_personal_rooms(path: &std::path::Path) -> SqlitePool {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|migration| migration.version < 10)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePool::connect_with(options).await.unwrap();
+    migrator.run(&pool).await.unwrap();
+    pool
+}
+
+async fn python_room(pool: &SqlitePool, id: &str, name: &str, created: &str, owner: &str) {
+    sqlx::query("INSERT INTO room (id, name, created_at, created_by) VALUES (?, ?, ?, ?)")
+        .bind(id)
+        .bind(name)
+        .bind(created)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO membership (room_id, user_id, role) VALUES (?, ?, 'owner')")
+        .bind(id)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn migration_10_marks_the_own_project_of_imported_accounts() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("test.db");
+    let old = before_personal_rooms(&path).await;
+    let mut people = Vec::new();
+    for email in ["alice@example.org", "bob@example.org", "carol@example.org"] {
+        people.push(user(&old, email).await.to_string());
+    }
+    let (alice, bob, carol) = (&people[0], &people[1], &people[2]);
+    let newer = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let older = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab";
+    python_room(&old, newer, "Personal", "2026-01-02 00:00:00", alice).await;
+    python_room(&old, older, "Personal", "2026-01-01 00:00:00", alice).await;
+    python_room(&old, "lab", "Personal", "2025-01-01 00:00:00", alice).await;
+    python_room(&old, "bob-personal", "Personal", "2025-01-01 00:00:00", bob).await;
+    let carols = "cccccccccccccccccccccccccccccccc";
+    python_room(&old, carols, "My catalogues", "2026-01-01 00:00:00", carol).await;
+    old.close().await;
+
+    let pool = db::open(&path).await.unwrap();
+
+    let own = |id: &str| db::personal_room(&pool, id.parse().unwrap());
+    assert_eq!(own(alice).await.unwrap().as_deref(), Some(older));
+    assert_eq!(
+        own(bob).await.unwrap(),
+        None,
+        "not a uuid: not the own project"
+    );
+    assert_eq!(own(carol).await.unwrap().as_deref(), Some(carols));
+}
+
+#[tokio::test]
+async fn the_own_project_is_forgotten_when_deleted_or_given_away() {
+    let (_dir, pool) = seeded().await;
+    let alice = user(&pool, "alice@example.org").await;
+    let bob = user(&pool, "bob@example.org").await;
+    db::create_personal_room(&pool, alice).await.unwrap();
+    db::create_personal_room(&pool, bob).await.unwrap();
+    let alices = db::personal_room(&pool, alice).await.unwrap().unwrap();
+    let bobs = db::personal_room(&pool, bob).await.unwrap().unwrap();
+    db::add_member(&pool, &alices, bob, Role::Editor)
+        .await
+        .unwrap();
+
+    db::set_owner(&pool, &alices, bob).await.unwrap();
+    db::delete_room(&pool, &bobs).await.unwrap();
+
+    assert_eq!(db::personal_room(&pool, alice).await.unwrap(), None);
+    assert_eq!(db::personal_room(&pool, bob).await.unwrap(), None);
+}

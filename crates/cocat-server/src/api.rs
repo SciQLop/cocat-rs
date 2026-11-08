@@ -234,6 +234,16 @@ impl RoomOut {
     }
 }
 
+/// A room in the caller's list, which also says whether it is the caller's own project.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct ListedRoom {
+    id: String,
+    name: String,
+    role: &'static str,
+    /// The caller's own project, made with the account: clients open it by default.
+    personal: bool,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 struct MemberOut {
     user_id: Uuid,
@@ -315,18 +325,24 @@ async fn me(CurrentUser(user): CurrentUser) -> Json<UserRead> {
     path = "/api/rooms",
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The caller's rooms", body = [RoomOut]),
+        (status = 200, description = "The caller's rooms", body = [ListedRoom]),
         (status = 401, description = "No valid session", body = Detail),
     )
 )]
 async fn list_rooms(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-) -> Result<Json<Vec<RoomOut>>, ApiError> {
+) -> Result<Json<Vec<ListedRoom>>, ApiError> {
+    let own = db::personal_room(&state.pool, user.id).await?;
     let rooms = db::list_user_rooms(&state.pool, user.id)
         .await?
         .into_iter()
-        .map(|(room, role)| RoomOut::new(room, role))
+        .map(|(room, role)| ListedRoom {
+            personal: own.as_deref() == Some(room.id.as_str()),
+            id: room.id,
+            name: room.name,
+            role: role.as_str(),
+        })
         .collect();
     Ok(Json(rooms))
 }

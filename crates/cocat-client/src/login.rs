@@ -33,6 +33,8 @@ pub struct RoomInfo {
     pub id: String,
     pub name: String,
     pub role: Role,
+    /// The user's own project, made with the account: the one to open by default.
+    pub personal: bool,
 }
 
 #[derive(Debug, Error)]
@@ -84,19 +86,25 @@ pub async fn rooms(url: &str, cookie: &str) -> Result<Vec<RoomInfo>, LoginError>
         return Err(LoginError::Refused(response.status().as_u16()));
     }
     let rows: Vec<RoomRow> = response.json().await?;
-    let mut rooms = Vec::with_capacity(rows.len());
-    for row in rows {
-        let role = row
-            .role
-            .parse()
-            .map_err(|_| LoginError::Role(row.role.clone()))?;
-        rooms.push(RoomInfo {
-            id: row.id,
-            name: row.name,
-            role,
-        });
-    }
-    Ok(rooms)
+    rows.into_iter().map(room_info).collect()
+}
+
+/// The names Python cocat and this server gave an account's own project.
+const PERSONAL_ROOM_NAMES: [&str; 2] = ["My catalogues", "Personal"];
+
+fn room_info(row: RoomRow) -> Result<RoomInfo, LoginError> {
+    let role: Role = row.role.parse().map_err(|_| LoginError::Role(row.role))?;
+    // A Python cocat server does not send `personal`: its own project is the owned one with
+    // the name it gives it.
+    let personal = row
+        .personal
+        .unwrap_or_else(|| role == Role::Owner && PERSONAL_ROOM_NAMES.contains(&row.name.as_str()));
+    Ok(RoomInfo {
+        id: row.id,
+        name: row.name,
+        role,
+        personal,
+    })
 }
 
 pub(crate) fn cookie_header(cookie: &str) -> String {
@@ -108,6 +116,7 @@ struct RoomRow {
     id: String,
     name: String,
     role: String,
+    personal: Option<bool>,
 }
 
 /// The server url as a directory, so joining a path keeps any prefix the url carries.
@@ -118,4 +127,38 @@ pub(crate) fn base(url: &str) -> Result<Url, LoginError> {
         url.set_path(&path);
     }
     Ok(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RoomRow, room_info};
+
+    fn listed(json: &str) -> bool {
+        let row: RoomRow = serde_json::from_str(json).unwrap();
+        room_info(row).unwrap().personal
+    }
+
+    #[test]
+    fn the_servers_flag_wins_over_the_name() {
+        assert!(listed(
+            r#"{"id": "a", "name": "Mine", "role": "owner", "personal": true}"#
+        ));
+        assert!(!listed(
+            r#"{"id": "a", "name": "Personal", "role": "owner", "personal": false}"#
+        ));
+    }
+
+    #[test]
+    fn without_the_flag_an_owned_room_named_like_an_own_project_is_one() {
+        assert!(listed(
+            r#"{"id": "a", "name": "Personal", "role": "owner"}"#
+        ));
+        assert!(listed(
+            r#"{"id": "a", "name": "My catalogues", "role": "owner"}"#
+        ));
+        assert!(!listed(
+            r#"{"id": "a", "name": "Personal", "role": "editor"}"#
+        ));
+        assert!(!listed(r#"{"id": "a", "name": "Lab", "role": "owner"}"#));
+    }
 }

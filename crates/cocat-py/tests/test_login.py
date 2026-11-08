@@ -32,6 +32,14 @@ def test_rooms_lists_the_callers_rooms_with_their_roles(server):
     ]
 
 
+def test_rooms_flag_the_own_project(server):
+    rooms = cc.rooms(server.url, server.cookie)
+    own = [room for room in rooms if room.personal]
+    assert [room.role for room in own] == ["owner"]
+    assert own[0].id != server.room_id
+    assert not next(room for room in rooms if room.id == server.room_id).personal
+
+
 def test_a_refused_handshake_is_unauthorized_and_set_cookie_recovers(server, cache):
     room = cc.Room.open(str(cache), server.room_id)
     try:
