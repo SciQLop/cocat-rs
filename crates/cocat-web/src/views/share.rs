@@ -1,5 +1,5 @@
-//! The Share dialog: who is in the project and, for its owner, invitations, roles, groups
-//! and share links. Each change is one request, after which the lists are read again.
+//! The Share dialog: who is in the project and, for whoever may share it, invitations, roles,
+//! groups and share links. Each change is one request, after which the lists are read again.
 
 use cocat_core::role::Role;
 use leptos::html;
@@ -12,7 +12,8 @@ use crate::api::{self, ApiError};
 use crate::presence::initials;
 use crate::route::opens_share;
 use crate::sharing::{
-    Group, Groups, Invitation, Member, Target, addable, colour_of, heirs, manages, member_editable,
+    Group, Groups, Invitation, Member, Target, addable, colour_of, heirs, member_editable,
+    sharing_note,
 };
 use crate::state::Room;
 use crate::views::controls::{Error, Hint, confirm, error_line};
@@ -26,16 +27,23 @@ struct Shared {
     invitations: Vec<Invitation>,
     suggestions: Vec<String>,
     mine: Vec<Group>,
+    /// False until read, so an editor sees no control the server would refuse.
+    editors_can_share: bool,
 }
 
-async fn load(target: Target, manages: bool) -> Result<Shared, ApiError> {
+async fn load(target: Target, visitor: Role) -> Result<Shared, ApiError> {
     let api = target.api.as_str();
     let members = api::read(api, &target.path(&["members"])).await?;
     let groups: Groups = api::read(api, &target.path(&["groups"])).await?;
-    if !manages {
+    let editors_can_share = api::projects(api)
+        .await?
+        .iter()
+        .any(|project| project.id == target.id && project.editors_can_share);
+    if !visitor.may_share(editors_can_share) {
         return Ok(Shared {
             members,
             groups: groups.groups,
+            editors_can_share,
             ..Shared::default()
         });
     }
@@ -46,6 +54,7 @@ async fn load(target: Target, manages: bool) -> Result<Shared, ApiError> {
         invitations: api::read(api, &target.path(&["invitations"])).await?,
         suggestions: api::read(api, &target.path(&["suggestions"])).await?,
         mine: mine.groups,
+        editors_can_share,
     })
 }
 
@@ -55,14 +64,29 @@ struct Share {
     target: StoredValue<Target>,
     visitor: Role,
     shared: RwSignal<Shared>,
+    /// Whether the visitor may share, by the setting last read.
+    sharer: Memo<bool>,
     error: Error,
 }
 
 impl Share {
+    fn new(target: Target, visitor: Role) -> Self {
+        let shared = RwSignal::new(Shared::default());
+        Self {
+            target: StoredValue::new(target),
+            visitor,
+            shared,
+            sharer: Memo::new(move |_| {
+                shared.with(|shared| visitor.may_share(shared.editors_can_share))
+            }),
+            error: RwSignal::new(None),
+        }
+    }
+
     fn reload(self) {
         let target = self.target.get_value();
         spawn_local(async move {
-            match load(target, manages(self.visitor)).await {
+            match load(target, self.visitor).await {
                 Ok(shared) => {
                     self.shared.try_set(shared);
                 }
@@ -127,12 +151,7 @@ fn ShareDialog(open: RwSignal<bool>) -> impl IntoView {
             config.role,
         )
     });
-    let share = Share {
-        target: StoredValue::new(target.clone()),
-        visitor,
-        shared: RwSignal::new(Shared::default()),
-        error: RwSignal::new(None),
-    };
+    let share = Share::new(target.clone(), visitor);
     share.reload();
     provide_context(share);
     let node = NodeRef::<html::Dialog>::new();
@@ -143,28 +162,36 @@ fn ShareDialog(open: RwSignal<bool>) -> impl IntoView {
     });
     let name = move || projects.open.with(|config| config.room_name.clone());
     let transferring = RwSignal::new(false);
-    let owner = manages(visitor);
+    let owner = visitor == Role::Owner;
+    let note = move || {
+        share
+            .shared
+            .with(|shared| sharing_note(visitor, shared.editors_can_share))
+            .map(|note| view! { <p class="quiet">{note}</p> })
+    };
     let body = move || {
         let target = target.clone();
         let me = me.clone();
         if transferring.get() {
             return view! { <Transfer me back=transferring/> }.into_any();
         }
+        let sharer = share.sharer.get();
         view! {
-            {owner.then(|| view! {
+            {sharer.then(|| view! {
                 <InviteByEmail target=target.clone() suggestions=share.list(|shared| &shared.suggestions) changed=share.changed()/>
                 <Hint text="Suggestions come from people you already work with. What each role can do:" anchor="roles" topic="roles"/>
             })}
             <People me/>
             <Grants/>
-            {owner.then(|| view! {
+            {sharer.then(|| view! {
                 <section class="share-section">
                     <h3 class="eyebrow">"Pending invitations"</h3>
                     <Pending target=target.clone() invitations=share.list(|shared| &shared.invitations) changed=share.changed()/>
                 </section>
                 <ShareLinkMaker target=target.clone() changed=share.changed()/>
             })}
-            {(!owner).then(|| view! { <p class="quiet">"Only the owner can invite people or change roles."</p> })}
+            {note}
+            {owner.then(|| view! { <EditorsShare/> })}
             {error_line(share.error)}
             <div class="share-foot">
                 <Hint text="Everyone here sees every catalogue of this project." anchor="sharing" topic="sharing"/>
@@ -207,7 +234,7 @@ fn People(me: String) -> impl IntoView {
             move || colour().is_some()
         };
         let you = (member.email == me).then(|| view! { <span class="tag">"you"</span> });
-        let controls = match member_editable(share.visitor, member.role) {
+        let controls = match member_editable(share.sharer.get_untracked(), member.role) {
             true => view! { <MemberControls member=member.clone()/> }.into_any(),
             false => view! { <span class="role">{member.role.as_str()}</span> }.into_any(),
         };
@@ -259,13 +286,13 @@ fn MemberControls(member: Member) -> impl IntoView {
     }
 }
 
-/// The groups the project is shared with and, for the owner, adding one of theirs.
+/// The groups the project is shared with and, for whoever shares, adding one of theirs.
 #[component]
 fn Grants() -> impl IntoView {
     let share = expect_context::<Share>();
-    let owner = manages(share.visitor);
+    let sharer = share.sharer.get_untracked();
     let row = move |group: Group| {
-        let controls = match owner {
+        let controls = match sharer {
             true => view! { <GrantControls group=group.clone()/> }.into_any(),
             false => view! { <span class="role">{group.role.clone()}</span> }.into_any(),
         };
@@ -287,7 +314,7 @@ fn Grants() -> impl IntoView {
                     <For each=move || granted.get() key=|group| (group.id.clone(), group.role.clone()) children=row/>
                 </ul>
             </Show>
-            {owner.then(|| view! { <AddGroup/> })}
+            {sharer.then(|| view! { <AddGroup/> })}
         </section>
     }
 }
@@ -367,6 +394,31 @@ fn AddGroup() -> impl IntoView {
                 <button type="button" class="button" on:click=add>"Add group"</button>
             </div>
         </Show>
+    }
+}
+
+/// The owner's switch that lets editors share, or keeps sharing to the owner.
+#[component]
+fn EditorsShare() -> impl IntoView {
+    let share = expect_context::<Share>();
+    let checked = move || share.shared.with(|shared| shared.editors_can_share);
+    let change = move |event: leptos::ev::Event| {
+        let allowed = event_target_checked(&event);
+        let target = share.target.get_value();
+        share.run(async move {
+            api::put(
+                &target.api,
+                &target.path(&["editors-can-share"]),
+                json!({ "allowed": allowed }),
+            )
+            .await
+        });
+    };
+    view! {
+        <label class="switch share-switch">
+            <input type="checkbox" prop:checked=checked on:change=change/>
+            "Editors can change access and share"
+        </label>
     }
 }
 

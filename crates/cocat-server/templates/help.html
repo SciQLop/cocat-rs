@@ -128,8 +128,8 @@ when you opened the history from one catalogue, and it counts in your own storag
 
 <section>
 <h2 id="sharing">Sharing</h2>
-<p>The <strong>Share</strong> button at the top shows who is in the project. Its owner shares
-the project from there, in three ways:</p>
+<p>The <strong>Share</strong> button at the top shows who is in the project. The owner and
+the editors share the project from there, in three ways:</p>
 <ul>
   <li><strong>Share link</strong>: anyone with the link can join, with the role you pick. It
   works for 14 days, as many times as needed. The pending invitations say how many joined.</li>
@@ -137,18 +137,22 @@ the project from there, in three ways:</p>
   that address only, for 14 days.</li>
   <li><strong>Group</strong>: everyone in a group gets the project at once.</li>
 </ul>
-<p><strong>Revoke</strong> stops a link or an invitation at once.</p>
-<p>The owner also changes each member's role and removes members there. Editors and viewers
-see the same lists, without the controls.</p>
+<p><strong>Revoke</strong> stops a link or an invitation at once, whoever made it.</p>
+<p>The same people change each member's role and remove members there. Nobody can change the
+owner's role or remove the owner.</p>
+<p>The owner can keep this to themselves: untick <strong>Editors can change access and
+share</strong> in Share. Editors then see the lists without the controls, like viewers.
+Viewers never change who is in the project.</p>
 <p>Any member can <strong>Leave</strong> a project from the project menu. The owner cannot
 leave: they transfer ownership first. <strong>Transfer ownership…</strong>, at the bottom of
-Share, hands the project to another member, and the old owner stays as an editor.</p>
+Share, hands the project to another member, and the old owner stays as an editor. Only the
+owner can do that.</p>
 
 <h3 id="groups">Groups</h3>
 <p>A group is a set of people you share many projects with. Open
 <a href="{{ groups_href }}">Groups…</a> in the project menu, create one there, then invite
 people with a share link or by email.</p>
-<p>In Share, a project's owner adds a group they belong to, as editor or viewer.
+<p>In Share, whoever shares the project adds a group they belong to, as editor or viewer.
 Everyone in the group gets the project, including people who join the group later. Someone
 who reaches a project both directly and through a group gets the higher of the two
 roles.</p>
@@ -163,12 +167,14 @@ leave.</p>
   <dd>Sees the catalogues, the events, the members and the history, and can make a copy of
   any version for themselves. Changes nothing in the project.</dd>
   <dt>Editor</dt>
-  <dd>Also adds, changes and deletes events and catalogues, edits rules, and saves, names
-  and restores versions.</dd>
+  <dd>Also adds, changes and deletes events and catalogues, edits rules, saves, names and
+  restores versions, and renames the project. Unless the owner said no, an editor also shares
+  the project: invites people, changes roles, removes members and adds groups.</dd>
   <dt>Owner</dt>
-  <dd>Also renames or deletes the project, invites people, shares it with groups, changes
-  roles, removes members and transfers ownership. A project has one owner.</dd>
+  <dd>Can do all of that, always. Only the owner deletes the project, transfers ownership and
+  decides whether editors can share. A project has one owner.</dd>
 </dl>
+<p>Nobody can give themselves a higher role. Anyone but the owner can leave.</p>
 <p>Deleting a project deletes its catalogues and its history for everyone.</p>
 </section>
 

@@ -1658,18 +1658,28 @@ pub struct ProjectInfo {
     /// The user's own project, made with the account: the one to open by default.
     #[pyo3(get)]
     pub personal: bool,
+    /// Whether the project's editors may share it as its owner does.
+    #[pyo3(get)]
+    pub editors_can_share: bool,
 }
 
 #[pymethods]
 impl ProjectInfo {
     #[new]
-    #[pyo3(signature = (id, name, role, personal = false))]
-    fn new(id: String, name: String, role: String, personal: bool) -> ProjectInfo {
+    #[pyo3(signature = (id, name, role, personal = false, editors_can_share = true))]
+    fn new(
+        id: String,
+        name: String,
+        role: String,
+        personal: bool,
+        editors_can_share: bool,
+    ) -> ProjectInfo {
         ProjectInfo {
             id,
             name,
             role,
             personal,
+            editors_can_share,
         }
     }
 }
@@ -1681,6 +1691,7 @@ impl From<ClientRoomInfo> for ProjectInfo {
             name: info.name,
             role: info.role.as_str().to_owned(),
             personal: info.personal,
+            editors_can_share: info.editors_can_share,
         }
     }
 }

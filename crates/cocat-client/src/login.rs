@@ -37,6 +37,8 @@ pub struct RoomInfo {
     pub role: Role,
     /// The user's own project, made with the account: the one to open by default.
     pub personal: bool,
+    /// Whether the project's editors may share it as its owner does.
+    pub editors_can_share: bool,
 }
 
 #[derive(Debug, Error)]
@@ -98,6 +100,7 @@ fn room_info(row: RoomRow) -> Result<RoomInfo, LoginError> {
         name: row.name,
         role,
         personal,
+        editors_can_share: row.editors_can_share,
     })
 }
 
@@ -141,6 +144,9 @@ struct RoomRow {
     name: String,
     role: String,
     personal: Option<bool>,
+    /// Absent from a server that predates the setting, where only the owner shared.
+    #[serde(default)]
+    editors_can_share: bool,
 }
 
 /// The server url as a directory, so joining a path keeps any prefix the url carries.

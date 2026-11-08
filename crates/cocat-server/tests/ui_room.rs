@@ -128,24 +128,83 @@ async fn without_the_bundle_the_owner_manages_the_project_on_its_page() {
 }
 
 #[tokio::test]
-async fn without_the_bundle_an_editor_sees_the_page_without_controls() {
+async fn without_the_bundle_an_editor_of_a_closed_project_sees_no_controls() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
     let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, other, "theirs").await;
     member_of(&fixture, &id, MEMBER, Role::Editor).await;
+    db::set_editors_can_share(&fixture.state.pool, &id, false)
+        .await
+        .unwrap();
 
     let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
 
     assert!(page.contains("Your role: editor"), "{page}");
     assert!(page.contains(&format!("/ui/rooms/{id}/leave")), "{page}");
     assert!(
-        page.contains("Only the owner can manage invitations."),
+        page.contains("Only the owner can invite people or change access."),
         "{page}"
     );
     assert!(!page.contains("Create share link"), "{page}");
     assert!(!page.contains(r#"name="role""#), "{page}");
+}
+
+#[tokio::test]
+async fn without_the_bundle_an_editor_shares_but_cannot_hand_the_project_over() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let other = fixture.verified(OTHER).await;
+    let token = fixture.token(user).await;
+    let id = room_owned_by(&fixture, other, "theirs").await;
+    member_of(&fixture, &id, MEMBER, Role::Editor).await;
+    let guest = member_of(&fixture, &id, GUEST, Role::Viewer).await;
+
+    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
+
+    assert!(page.contains("Create share link"), "{page}");
+    assert!(page.contains(&format!(r#"data-role="{guest}""#)), "{page}");
+    assert!(!page.contains(&format!(r#"data-role="{other}""#)), "{page}");
+    assert!(!page.contains("the owner?"), "{page}");
+    assert!(
+        !page.contains("Editors can change access and share"),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn without_the_bundle_the_owner_keeps_sharing_to_themselves() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+    let id = room_owned_by(&fixture, user, "lab").await;
+    let before = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
+
+    let response = fixture
+        .post(
+            &format!("/ui/rooms/{id}/editors-can-share"),
+            Some(&token),
+            "",
+        )
+        .await;
+
+    assert!(
+        before.contains(r#"<input type="checkbox" name="allowed" checked>"#),
+        "{before}"
+    );
+    assert_eq!(location(&response), format!("/ui/rooms/{id}"));
+    let page = page_after(&fixture, &response, &token).await;
+    assert!(
+        page.contains("Only you can now change access and share"),
+        "{page}"
+    );
+    assert_eq!(
+        db::editors_can_share(&fixture.state.pool, &id)
+            .await
+            .unwrap(),
+        Some(false)
+    );
 }
 
 /// An imported id is escaped in every link the page holds.

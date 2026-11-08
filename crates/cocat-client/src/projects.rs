@@ -77,6 +77,7 @@ pub async fn create_project(url: &str, cookie: &str, name: &str) -> Result<RoomI
         name: created.name,
         role: created.role,
         personal: false,
+        editors_can_share: true,
     })
 }
 
@@ -169,6 +170,24 @@ pub async fn project_groups(
     let request = room_request(Method::GET, url, cookie, room_id, &["groups"])?;
     let groups: Groups = send(request).await?.json().await?;
     Ok(groups.groups)
+}
+
+/// Lets the project's editors share it as its owner does, or keeps sharing to the owner.
+/// Only the owner may.
+pub async fn set_editors_can_share(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    allowed: bool,
+) -> Result<(), LoginError> {
+    #[derive(Serialize)]
+    struct Body {
+        allowed: bool,
+    }
+    let request = room_request(Method::PUT, url, cookie, room_id, &["editors-can-share"])?
+        .json(&Body { allowed });
+    send(request).await?;
+    Ok(())
 }
 
 /// The project's page in the web app, opening its Share dialog with `share`. The id is one

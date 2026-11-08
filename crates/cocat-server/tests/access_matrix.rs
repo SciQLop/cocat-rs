@@ -61,6 +61,8 @@ enum Guard {
     SignedIn,
     RoomViewer,
     RoomEditor,
+    /// Changes who has access: the owner, and editors while the owner lets them share.
+    RoomSharer,
     RoomOwner,
     GroupMember,
     GroupOwner,
@@ -142,7 +144,7 @@ const ROWS: &[Row] = &[
     row("GET", "/api/me", Guard::SignedIn, Style::Api),
     row("GET", "/api/rooms", Guard::SignedIn, Style::Api),
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
-    row("PATCH", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
+    row("PATCH", "/api/rooms/{room}", Guard::RoomEditor, Style::Api).room_any(),
     row("DELETE", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
     row(
         "GET",
@@ -154,13 +156,20 @@ const ROWS: &[Row] = &[
     row(
         "PATCH",
         "/api/rooms/{room}/members/{member}",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_any(),
     row(
         "DELETE",
         "/api/rooms/{room}/members/{member}",
+        Guard::RoomSharer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "PUT",
+        "/api/rooms/{room}/editors-can-share",
         Guard::RoomOwner,
         Style::Api,
     )
@@ -346,14 +355,14 @@ const ROWS: &[Row] = &[
     row(
         "PUT",
         "/api/rooms/{room}/groups/{spare}",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_any(),
     row(
         "DELETE",
         "/api/rooms/{room}/groups/{group}",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_direct()
@@ -361,28 +370,28 @@ const ROWS: &[Row] = &[
     row(
         "GET",
         "/api/rooms/{room}/invitations",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_any(),
     row(
         "POST",
         "/api/rooms/{room}/invitations",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_any(),
     row(
         "GET",
         "/api/rooms/{room}/suggestions",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_any(),
     row(
         "DELETE",
         "/api/rooms/{room}/invitations/{invitation}",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::Api,
     )
     .room_any(),
@@ -440,7 +449,7 @@ const ROWS: &[Row] = &[
     row(
         "POST",
         "/ui/rooms/{room}/rename",
-        Guard::RoomOwner,
+        Guard::RoomEditor,
         Style::UiAction,
     )
     .room_any(),
@@ -461,13 +470,20 @@ const ROWS: &[Row] = &[
     row(
         "POST",
         "/ui/rooms/{room}/members/{member}/role",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::UiAction,
     )
     .room_any(),
     row(
         "POST",
         "/ui/rooms/{room}/members/{member}/remove",
+        Guard::RoomSharer,
+        Style::UiAction,
+    )
+    .room_any(),
+    row(
+        "POST",
+        "/ui/rooms/{room}/editors-can-share",
         Guard::RoomOwner,
         Style::UiAction,
     )
@@ -482,28 +498,28 @@ const ROWS: &[Row] = &[
     row(
         "POST",
         "/ui/rooms/{room}/invitations",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::UiAction,
     )
     .room_any(),
     row(
         "POST",
         "/ui/rooms/{room}/groups",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::UiAction,
     )
     .room_any(),
     row(
         "POST",
         "/ui/rooms/{room}/groups/{group}/remove",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::UiAction,
     )
     .room_any(),
     row(
         "POST",
         "/ui/rooms/{room}/invitations/{invitation}/revoke",
-        Guard::RoomOwner,
+        Guard::RoomSharer,
         Style::UiAction,
     )
     .room_any(),
@@ -676,6 +692,8 @@ impl Row {
 }
 
 struct Caps {
+    /// Whether the room lets its editors share.
+    open: bool,
     signed_in: bool,
     direct: Option<Role>,
     room: Option<Role>,
@@ -684,7 +702,7 @@ struct Caps {
 }
 
 impl Caps {
-    fn of(kind: Kind) -> Self {
+    fn of(kind: Kind, open: bool) -> Self {
         let room = match kind {
             Kind::Viewer | Kind::GroupViewer => Some(Role::Viewer),
             Kind::Editor | Kind::GroupEditor | Kind::GroupOwner => Some(Role::Editor),
@@ -703,6 +721,7 @@ impl Caps {
             _ => None,
         };
         Self {
+            open,
             signed_in: !matches!(kind, Kind::Anonymous | Kind::Deactivated),
             direct,
             room,
@@ -717,6 +736,7 @@ impl Caps {
             Guard::SignedIn => self.signed_in,
             Guard::RoomViewer => self.room.is_some(),
             Guard::RoomEditor => self.room.is_some_and(|role| role.can_write()),
+            Guard::RoomSharer => self.room.is_some_and(|role| role.may_share(self.open)),
             Guard::RoomOwner => self.room == Some(Role::Owner),
             Guard::GroupMember => self.group.is_some(),
             Guard::GroupOwner => self.group == Some(groups::GroupRole::Owner),
@@ -741,7 +761,7 @@ struct World {
 }
 
 impl World {
-    async fn start(providers: &[oidc::Provider], hashed: &str) -> Self {
+    async fn start(providers: &[oidc::Provider], hashed: &str, open: bool) -> Self {
         let dir = TempDir::new().unwrap();
         let rooms = dir.path().join("rooms");
         fs::create_dir_all(&rooms).unwrap();
@@ -790,12 +810,18 @@ impl World {
         leave_group(&state, &group.id, owner).await;
         promote(&state, &group.id, group_owner).await;
         let spare = groups::create(&state, owner, "spare").await.unwrap();
+        for sharer in [editor, group_editor, group_owner] {
+            member(&state, &spare.id, sharer).await;
+        }
         let watchers = groups::create(&state, owner, "watchers").await.unwrap();
         member(&state, &watchers.id, group_viewer).await;
         groups::grant(&state, &room.id, &watchers.id, owner, Role::Viewer)
             .await
             .unwrap();
 
+        db::set_editors_can_share(&state.pool, &room.id, open)
+            .await
+            .unwrap();
         let (invitation, invitation_token) =
             invitations::create(&state, &room.id, owner, Role::Viewer, None, 14, None)
                 .await
@@ -971,6 +997,10 @@ impl World {
             ) => (form, "token=nope".to_owned()),
             ("POST", "/ui/rooms") => (form, "name=another".to_owned()),
             ("POST", "/ui/rooms/{room}/rename") => (form, "name=renamed".to_owned()),
+            ("PUT", "/api/rooms/{room}/editors-can-share") => {
+                (json, r#"{"allowed":false}"#.to_owned())
+            }
+            ("POST", "/ui/rooms/{room}/editors-can-share") => (form, "allowed=on".to_owned()),
             ("POST", "/ui/rooms/{room}/members/{member}/role") => (form, "role=viewer".to_owned()),
             ("POST", "/ui/rooms/{room}/invitations") => (form, "kind=link&role=viewer".to_owned()),
             ("POST", "/ui/rooms/{room}/groups") => {
@@ -1105,11 +1135,12 @@ const CASES_AT_ONCE: usize = 8;
 async fn answer_as(
     providers: &[oidc::Provider],
     hashed: &str,
+    open: bool,
     row: &Row,
     kind: Kind,
 ) -> Option<String> {
-    let world = World::start(providers, hashed).await;
-    let caps = Caps::of(kind);
+    let world = World::start(providers, hashed, open).await;
+    let caps = Caps::of(kind, open);
     let token = world.token(kind);
     let (status, location) = world
         .call(
@@ -1125,7 +1156,7 @@ async fn answer_as(
         .err()
         .map(|(wanted, _)| {
             format!(
-                "{} {} as {:?}: expected {}, got {}",
+                "{} {} as {:?} (editors share: {open}): expected {}, got {}",
                 row.method, row.path, kind, wanted, status
             )
         })
@@ -1133,6 +1164,19 @@ async fn answer_as(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_route_answers_every_caller_as_the_table_says() {
+    assert_eq!(mismatches(true, |_| true).await, Vec::<String>::new());
+}
+
+/// With the project's sharing kept to its owner, every sharing route refuses its editors.
+#[tokio::test(flavor = "multi_thread")]
+async fn sharing_kept_to_the_owner_refuses_the_editors() {
+    let sharing = |row: &Row| row.guard == Guard::RoomSharer;
+    assert!(ROWS.iter().filter(|row| sharing(row)).count() >= 12);
+    assert_eq!(mismatches(false, sharing).await, Vec::<String>::new());
+}
+
+/// Calls each row `pick` keeps as every caller, each on a fresh server.
+async fn mismatches(open: bool, pick: fn(&Row) -> bool) -> Vec<String> {
     let fake = oidc_support::Fake::start().await;
     let links = Links::from_env(&|name| {
         (name == "COCAT_PUBLIC_URL").then(|| "http://localhost".to_owned())
@@ -1143,19 +1187,14 @@ async fn every_route_answers_every_caller_as_the_table_says() {
     let hashed = db::hash_password(PASSWORD).await.unwrap();
     let cases = ROWS
         .iter()
+        .filter(|row| pick(row))
         .flat_map(|row| CALLERS.into_iter().map(move |kind| (row, kind)));
-    let wrong: Vec<String> = futures_util::stream::iter(cases)
-        .map(|(row, kind)| answer_as(&providers, &hashed, row, kind))
+    futures_util::stream::iter(cases)
+        .map(|(row, kind)| answer_as(&providers, &hashed, open, row, kind))
         .buffer_unordered(CASES_AT_ONCE)
         .filter_map(|wrong| async move { wrong })
         .collect()
-        .await;
-    assert!(
-        wrong.is_empty(),
-        "{} mismatches:\n{}",
-        wrong.len(),
-        wrong.join("\n")
-    );
+        .await
 }
 
 fn refusal_for(row: &Row, caps: &Caps) -> Refusal {

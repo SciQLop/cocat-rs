@@ -331,10 +331,13 @@ async fn an_invitation_cannot_grant_owner() {
 }
 
 #[tokio::test]
-async fn only_the_owner_may_invite_or_revoke() {
+async fn with_sharing_closed_only_the_owner_may_invite_or_revoke() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     fixture.room("lab", owner).await;
+    db::set_editors_can_share(&fixture.state.pool, "lab", false)
+        .await
+        .unwrap();
     let editor = fixture
         .member("lab", "editor@example.org", Role::Editor)
         .await;

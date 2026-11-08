@@ -480,7 +480,7 @@ async fn owner_grants_and_members_get_access() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        json!([{ "id": "room-granted", "name": "room-granted", "role": "editor", "personal": false }])
+        json!([{ "id": "room-granted", "name": "room-granted", "role": "editor", "personal": false, "editors_can_share": true }])
     );
 
     let (status, body) = fixture.get("/room/room-granted/users", Some(bob)).await;
@@ -507,7 +507,7 @@ async fn grant_to_a_foreign_group_is_404() {
 }
 
 #[tokio::test]
-async fn editor_through_group_cannot_do_owner_things() {
+async fn editor_through_group_cannot_do_owner_things_once_sharing_is_closed() {
     let fixture = Fixture::start().await;
     let alice = fixture.user("alice@example.org").await;
     let bob = fixture.user("bob@example.org").await;
@@ -515,6 +515,9 @@ async fn editor_through_group_cannot_do_owner_things() {
     let id = create(&fixture, alice, "Team").await;
     join(&fixture.pool, &id, bob, "member").await;
     grant(&fixture.pool, "room-guarded", &id, "editor").await;
+    db::set_editors_can_share(&fixture.pool, "room-guarded", false)
+        .await
+        .unwrap();
 
     for (status, body) in [
         fixture.delete("/api/rooms/room-guarded", bob).await,
@@ -1079,7 +1082,7 @@ async fn the_owner_is_offered_the_people_they_work_with_who_are_not_in_yet() {
 }
 
 #[tokio::test]
-async fn only_the_owner_sees_the_suggestions_and_strangers_see_no_project() {
+async fn only_those_who_share_see_the_suggestions_and_strangers_see_no_project() {
     let fixture = Fixture::start().await;
     let alice = fixture.user("alice@example.org").await;
     let bob = fixture.user("bob@example.org").await;
@@ -1090,12 +1093,17 @@ async fn only_the_owner_sees_the_suggestions_and_strangers_see_no_project() {
         .unwrap();
 
     let (editor, _) = fixture.get("/api/rooms/lab/suggestions", Some(bob)).await;
+    db::set_editors_can_share(&fixture.pool, "lab", false)
+        .await
+        .unwrap();
+    let (closed, _) = fixture.get("/api/rooms/lab/suggestions", Some(bob)).await;
     let (outsider, body) = fixture
         .get("/api/rooms/lab/suggestions", Some(stranger))
         .await;
     let (anonymous, _) = fixture.get("/api/rooms/lab/suggestions", None).await;
 
-    assert_eq!(editor, StatusCode::FORBIDDEN);
+    assert_eq!(editor, StatusCode::OK);
+    assert_eq!(closed, StatusCode::FORBIDDEN);
     assert_eq!(outsider, StatusCode::NOT_FOUND);
     assert_eq!(body["detail"], "Project lab not found");
     assert_eq!(anonymous, StatusCode::UNAUTHORIZED);

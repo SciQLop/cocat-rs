@@ -26,6 +26,7 @@ from ._native import (
     remove_member,
     revoke_invitation,
     rule_from_tscat,
+    set_editors_can_share,
     set_role,
 )
 
@@ -63,6 +64,7 @@ __all__ = [
     "restore",
     "revoke_invitation",
     "rule_from_tscat",
+    "set_editors_can_share",
     "set_role",
 ]
 

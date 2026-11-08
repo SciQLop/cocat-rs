@@ -72,22 +72,37 @@ pub async fn create_room(
     Ok(RoomRow { id, name })
 }
 
-/// Renames a room; only its owner may.
+/// Renames a room; its owner and its editors may. Answers the room and the actor's role.
 pub async fn rename_room(
     state: &AppState,
     room_id: &str,
     actor: Uuid,
     name: &str,
-) -> Result<RoomRow, LifecycleError> {
-    require_role(state, room_id, actor, Role::Owner).await?;
+) -> Result<(RoomRow, Role), LifecycleError> {
+    let role = require_role(state, room_id, actor, Role::Editor).await?;
     let name = clean_name(name, Noun::Room)?;
     if !db::rename_room(&state.pool, room_id, &name).await? {
         return Err(room_not_found(room_id));
     }
-    Ok(RoomRow {
+    let room = RoomRow {
         id: room_id.to_owned(),
         name,
-    })
+    };
+    Ok((room, role))
+}
+
+/// Lets the room's editors share it, or keeps sharing to the owner; only the owner decides.
+pub async fn set_editors_can_share(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+    allowed: bool,
+) -> Result<(), LifecycleError> {
+    require_role(state, room_id, actor, Role::Owner).await?;
+    if !db::set_editors_can_share(&state.pool, room_id, allowed).await? {
+        return Err(room_not_found(room_id));
+    }
+    Ok(())
 }
 
 /// Python's `rooms.py::_room_name`, shared with groups: trim, then refuse an empty name, a
@@ -131,7 +146,7 @@ pub async fn set_member_role(
     member: Uuid,
     role: Role,
 ) -> Result<(), LifecycleError> {
-    require_role(state, room_id, actor, Role::Owner).await?;
+    require_sharer(state, room_id, actor).await?;
     let current = member_role(state, room_id, member).await?;
     if role == Role::Owner || current == Role::Owner {
         return Err(LifecycleError::Conflict(OWNER_KEEPS_OWNER_ROLE));
@@ -143,19 +158,15 @@ pub async fn set_member_role(
     Ok(())
 }
 
-/// Removes a member: the owner may remove anyone but themselves, and every member may leave.
+/// Removes a member: whoever may share removes anyone but the owner, and every member may
+/// leave.
 pub async fn remove_member(
     state: &AppState,
     room_id: &str,
     actor: Uuid,
     member: Uuid,
 ) -> Result<(), LifecycleError> {
-    let minimum = if member == actor {
-        Role::Viewer
-    } else {
-        Role::Owner
-    };
-    require_role(state, room_id, actor, minimum).await?;
+    require_removal(state, room_id, actor, member).await?;
     if member_role(state, room_id, member).await? == Role::Owner {
         return Err(LifecycleError::Conflict(OWNER_CANNOT_LEAVE));
     }
@@ -180,12 +191,47 @@ pub async fn transfer_ownership(
     Ok(())
 }
 
+/// Leaving needs only membership; removing someone else needs the right to share.
+pub(crate) async fn require_removal(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+    member: Uuid,
+) -> Result<(), LifecycleError> {
+    match member == actor {
+        true => require_role(state, room_id, actor, Role::Viewer)
+            .await
+            .map(drop),
+        false => require_sharer(state, room_id, actor).await.map(drop),
+    }
+}
+
+/// The one rule for changing who has access to a room: see [`Role::may_share`].
+pub(crate) async fn require_sharer(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+) -> Result<Role, LifecycleError> {
+    let role = require_role(state, room_id, actor, Role::Viewer).await?;
+    let open = db::editors_can_share(&state.pool, room_id)
+        .await?
+        .unwrap_or(false);
+    if !role.may_share(open) {
+        return Err(LifecycleError::Forbidden(format!(
+            "Only {} can share project {room_id}",
+            Role::sharers(open)
+        )));
+    }
+    Ok(role)
+}
+
+/// The actor's role in the room, refused when it is below `minimum`.
 pub(crate) async fn require_role(
     state: &AppState,
     room_id: &str,
     actor: Uuid,
     minimum: Role,
-) -> Result<(), LifecycleError> {
+) -> Result<Role, LifecycleError> {
     let role = db::role_in(&state.pool, room_id, actor)
         .await?
         .ok_or_else(|| room_not_found(room_id))?;
@@ -195,7 +241,7 @@ pub(crate) async fn require_role(
             minimum.as_str()
         )));
     }
-    Ok(())
+    Ok(role)
 }
 
 async fn member_role(

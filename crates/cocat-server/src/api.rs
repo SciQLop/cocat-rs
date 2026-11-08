@@ -29,6 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_members))
         .routes(routes!(set_member_role, remove_member))
         .routes(routes!(transfer_ownership))
+        .routes(routes!(set_editors_can_share))
         .routes(routes!(legacy_rooms))
         .routes(routes!(legacy_room_users))
         .merge(crate::catalogues_api::router())
@@ -242,6 +243,8 @@ struct ListedRoom {
     role: &'static str,
     /// The caller's own project, made with the account: clients open it by default.
     personal: bool,
+    /// Whether the project's editors may share it as its owner does.
+    editors_can_share: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -303,6 +306,11 @@ struct RoleBody {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct SharingBody {
+    allowed: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct OwnerBody {
     user_id: Uuid,
 }
@@ -334,11 +342,13 @@ async fn list_rooms(
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<ListedRoom>>, ApiError> {
     let own = db::personal_room(&state.pool, user.id).await?;
+    let closed = db::rooms_closed_to_editors(&state.pool, user.id).await?;
     let rooms = db::list_user_rooms(&state.pool, user.id)
         .await?
         .into_iter()
         .map(|(room, role)| ListedRoom {
             personal: own.as_deref() == Some(room.id.as_str()),
+            editors_can_share: !closed.contains(&room.id),
             id: room.id,
             name: room.name,
             role: role.as_str(),
@@ -378,7 +388,7 @@ async fn create_room(
         (status = 200, description = "The renamed room", body = RoomOut),
         (status = 400, description = "The name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
-        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 403, description = "The caller is a viewer", body = Detail),
         (status = 404, description = "No such room", body = Detail),
         (status = 422, description = "The name is empty or too long", body = Detail),
     )
@@ -389,8 +399,8 @@ async fn rename_room(
     ApiPath(room_id): ApiPath<String>,
     JsonBody(body): JsonBody<NameBody>,
 ) -> Result<Json<RoomOut>, ApiError> {
-    let room = lifecycle::rename_room(&state, &room_id, user.id, &body.name.0).await?;
-    Ok(Json(RoomOut::new(room, Role::Owner)))
+    let (room, role) = lifecycle::rename_room(&state, &room_id, user.id, &body.name.0).await?;
+    Ok(Json(RoomOut::new(room, role)))
 }
 
 #[utoipa::path(
@@ -456,7 +466,7 @@ async fn list_members(
         (status = 204, description = "The role is set"),
         (status = 400, description = "The role cannot be assigned", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
-        (status = 403, description = "The caller may not change roles", body = Detail),
+        (status = 403, description = "The caller may not share the project", body = Detail),
         (status = 404, description = "No such room or member", body = Detail),
         (status = 409, description = "The owner keeps the owner role", body = Detail),
         (status = 422, description = "The body is not a role", body = Detail),
@@ -483,7 +493,7 @@ async fn set_member_role(
     responses(
         (status = 204, description = "The membership is gone"),
         (status = 401, description = "No valid session", body = Detail),
-        (status = 403, description = "The caller may not remove this member", body = Detail),
+        (status = 403, description = "The caller may not share the project", body = Detail),
         (status = 404, description = "No such room or member", body = Detail),
         (status = 409, description = "The owner cannot leave or be removed", body = Detail),
         (status = 422, description = "The user id is not an account id", body = Detail),
@@ -519,6 +529,32 @@ async fn transfer_ownership(
     JsonBody(body): JsonBody<OwnerBody>,
 ) -> Result<StatusCode, ApiError> {
     lifecycle::transfer_ownership(&state, &room_id, user.id, body.user_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Lets the project's editors share it as its owner does (`true`, the default), or keeps
+/// sharing to the owner (`false`).
+#[utoipa::path(
+    put,
+    path = "/api/rooms/{room_id}/editors-can-share",
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
+    request_body = SharingBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The setting is saved"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such room", body = Detail),
+        (status = 422, description = "The body is not a setting", body = Detail),
+    )
+)]
+async fn set_editors_can_share(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<SharingBody>,
+) -> Result<StatusCode, ApiError> {
+    lifecycle::set_editors_can_share(&state, &room_id, user.id, body.allowed).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

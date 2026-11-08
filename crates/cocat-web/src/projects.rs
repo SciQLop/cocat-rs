@@ -18,6 +18,14 @@ pub struct Project {
     pub name: String,
     #[serde(deserialize_with = "role")]
     pub role: Role,
+    /// Whether the project's editors may share it. A created or renamed project's answer does
+    /// not say; a new project lets them.
+    #[serde(default = "allowed")]
+    pub editors_can_share: bool,
+}
+
+fn allowed() -> bool {
+    true
 }
 
 fn role<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Role, D::Error> {
@@ -34,11 +42,11 @@ pub struct Actions {
 }
 
 impl Actions {
-    /// The owner renames and deletes; everyone else can only leave.
+    /// The owner renames and deletes, editors rename and leave, viewers only leave.
     pub fn of(role: Role) -> Self {
         let owner = role == Role::Owner;
         Self {
-            rename: owner,
+            rename: role.can_write(),
             leave: !owner,
             delete: owner,
         }
@@ -142,6 +150,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             role,
+            editors_can_share: true,
         }
     }
 
@@ -175,18 +184,41 @@ mod tests {
     }
 
     #[test]
-    fn editors_and_viewers_can_only_leave() {
-        for role in [Role::Editor, Role::Viewer] {
-            assert_eq!(
-                Actions::of(role),
-                Actions {
-                    rename: false,
-                    leave: true,
-                    delete: false
-                },
-                "{role:?}"
-            );
-        }
+    fn editors_rename_and_leave() {
+        assert_eq!(
+            Actions::of(Role::Editor),
+            Actions {
+                rename: true,
+                leave: true,
+                delete: false
+            }
+        );
+    }
+
+    #[test]
+    fn viewers_can_only_leave() {
+        assert_eq!(
+            Actions::of(Role::Viewer),
+            Actions {
+                rename: false,
+                leave: true,
+                delete: false
+            }
+        );
+    }
+
+    #[test]
+    fn the_list_says_whether_editors_share() {
+        let listed: Vec<Project> = serde_json::from_str(
+            r#"[{"id":"a","name":"A","role":"editor","editors_can_share":false},
+                {"id":"b","name":"B","role":"owner"}]"#,
+        )
+        .unwrap();
+        assert!(!listed[0].editors_can_share);
+        assert!(
+            listed[1].editors_can_share,
+            "a created project lets editors share"
+        );
     }
 
     #[test]

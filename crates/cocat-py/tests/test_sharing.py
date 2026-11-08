@@ -204,3 +204,48 @@ def test_project_url_escapes_the_id_as_one_segment():
         cc.project_url(url + "/", "lab", share=True)
         == "https://cocat.example.org/cocat-dev/ui/rooms/lab/browse#share"
     )
+
+
+def listed(server, cookie):
+    return next(item for item in cc.projects(server.url, cookie) if item.id == server.project_id)
+
+
+def test_an_editor_invites_while_editors_may_share(server):
+    editor = account(server, "editor@example.org", "editor")
+
+    created = cc.invite(server.url, editor, server.project_id, "viewer", email="guest@example.org")
+
+    assert listed(server, editor).editors_can_share is True
+    [pending] = cc.invitations(server.url, editor, server.project_id)
+    assert pending["id"] == created["id"]
+
+
+def test_with_sharing_kept_to_the_owner_an_editor_is_forbidden(server):
+    editor = account(server, "editor@example.org", "editor")
+
+    cc.set_editors_can_share(server.url, server.cookie, server.project_id, False)
+
+    assert listed(server, editor).editors_can_share is False
+    assert listed(server, server.cookie).editors_can_share is False
+    with pytest.raises(cc.Forbidden):
+        cc.invite(server.url, editor, server.project_id, "viewer")
+    with pytest.raises(cc.Forbidden) as refused:
+        cc.invitations(server.url, editor, server.project_id)
+    assert refused.value.status == 403
+    assert cc.invitations(server.url, server.cookie, server.project_id) == []
+
+
+def test_only_the_owner_changes_who_may_share(server):
+    editor = account(server, "editor@example.org", "editor")
+
+    with pytest.raises(cc.Forbidden):
+        cc.set_editors_can_share(server.url, editor, server.project_id, False)
+
+    cc.set_editors_can_share(server.url, server.cookie, server.project_id, False)
+    cc.set_editors_can_share(server.url, server.cookie, server.project_id, True)
+    assert listed(server, editor).editors_can_share is True
+
+
+def test_a_project_info_lets_editors_share_by_default():
+    assert cc.ProjectInfo("a", "A", "owner").editors_can_share is True
+    assert cc.ProjectInfo("a", "A", "owner", editors_can_share=False).editors_can_share is False

@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::db::{self, RoomRow};
-use crate::lifecycle::{LifecycleError, require_role};
+use crate::lifecycle::{LifecycleError, require_sharer};
 use crate::mail::{self, Mailer};
 
 /// One predicate, used by preview, accept, consume and list: an invitation nobody revoked,
@@ -62,7 +62,7 @@ pub async fn create(
     expires_in_days: u32,
     max_uses: Option<u32>,
 ) -> Result<(i64, String), LifecycleError> {
-    require_role(state, room_id, actor, Role::Owner).await?;
+    require_sharer(state, room_id, actor).await?;
     if role == Role::Owner {
         return Err(LifecycleError::Conflict(
             "An invitation cannot grant the owner role",
@@ -220,7 +220,7 @@ pub async fn list(
     room_id: &str,
     actor: Uuid,
 ) -> Result<Vec<Invitation>, LifecycleError> {
-    require_role(state, room_id, actor, Role::Owner).await?;
+    require_sharer(state, room_id, actor).await?;
     let predicate = usable("invitation");
     let rows = sqlx::query(AssertSqlSafe(format!(
         "SELECT invitation.id, invitation.email, invitation.role, invitation.expires_at,
@@ -241,7 +241,7 @@ pub async fn revoke(
     actor: Uuid,
     invitation_id: i64,
 ) -> Result<(), LifecycleError> {
-    require_role(state, room_id, actor, Role::Owner).await?;
+    require_sharer(state, room_id, actor).await?;
     let revoked = sqlx::query("UPDATE invitation SET revoked = TRUE WHERE id = ? AND room_id = ?")
         .bind(invitation_id)
         .bind(room_id)

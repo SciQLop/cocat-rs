@@ -204,6 +204,7 @@ async fn create_list_rename_delete_room() {
     assert_eq!(status, StatusCode::OK);
     let mut listed_room = room.clone();
     listed_room["personal"] = json!(false);
+    listed_room["editors_can_share"] = json!(true);
     assert_eq!(listed, json!([listed_room]));
 
     let (status, renamed) = fixture
@@ -286,15 +287,15 @@ async fn member_management() {
 async fn errors_map_to_status() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    let editor = fixture.user("editor@example.org").await;
+    let viewer = fixture.user("viewer@example.org").await;
     let stranger = fixture.user("stranger@example.org").await;
     fixture.room(owner, "room-status", "Status").await;
-    fixture.member("room-status", editor, Role::Editor).await;
+    fixture.member("room-status", viewer, Role::Viewer).await;
 
     let (renamed, _) = fixture
         .patch(
             "/api/rooms/room-status",
-            Some(&fixture.token(editor).await),
+            Some(&fixture.token(viewer).await),
             json!({"name": "X"}),
         )
         .await;
@@ -663,7 +664,7 @@ async fn the_error_messages_are_pythons() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(
         body,
-        json!({"detail": "Project room-words requires the owner role"})
+        json!({"detail": "Project room-words requires the editor role"})
     );
 
     let (status, body) = fixture

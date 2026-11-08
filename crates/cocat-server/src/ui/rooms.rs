@@ -23,10 +23,9 @@ pub(crate) struct NameForm {
     name: String,
 }
 
-struct OwnerForms {
-    rename_action: String,
-    delete_action: String,
-    delete_confirm: String,
+struct DeleteForm {
+    action: String,
+    confirm: String,
 }
 
 struct LeaveForm {
@@ -40,7 +39,9 @@ struct RoomLine {
     name: String,
     href: String,
     role: &'static str,
-    owner: Option<OwnerForms>,
+    /// Where a rename goes: owners and editors rename.
+    rename: Option<String>,
+    delete: Option<DeleteForm>,
     leave: Option<LeaveForm>,
 }
 
@@ -86,10 +87,10 @@ fn line(state: &AppState, id: String, name: String, role: Role) -> RoomLine {
     RoomLine {
         href: state.links.path(&format!("/rooms/{segment}")),
         role: role.as_str(),
-        owner: (role == Role::Owner).then(|| OwnerForms {
-            rename_action: action("rename"),
-            delete_action: action("delete"),
-            delete_confirm: format!("Delete {name}?"),
+        rename: role.can_write().then(|| action("rename")),
+        delete: (role == Role::Owner).then(|| DeleteForm {
+            action: action("delete"),
+            confirm: format!("Delete {name}?"),
         }),
         leave: (role != Role::Owner).then(|| LeaveForm {
             action: action("leave"),

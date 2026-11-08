@@ -10,11 +10,10 @@ use utoipa_axum::routes;
 
 use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, RoomOut};
 use crate::lifecycle::LifecycleError;
-use crate::lifecycle::require_role;
+use crate::lifecycle::require_sharer;
 use crate::mail::{Address, is_placeholder};
 use crate::openapi::Detail;
 use crate::{AppState, db, invitations};
-use cocat_core::role::Role;
 
 const INVITATION_LIFETIME_DAYS: u32 = 14;
 
@@ -226,7 +225,7 @@ async fn revoke_invitation(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// What the owner's invitation form suggests: the people they work with who are not members.
+/// What the invitation form suggests to whoever may share: the people they work with who are not members.
 #[utoipa::path(
     get,
     path = "/api/rooms/{room_id}/suggestions",
@@ -244,7 +243,7 @@ async fn suggestions(
     CurrentUser(user): CurrentUser,
     ApiPath(room_id): ApiPath<String>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    require_role(&state, &room_id, user.id, Role::Owner).await?;
+    require_sharer(&state, &room_id, user.id).await?;
     let members = db::list_members(&state.pool, &room_id).await?;
     let emails: Vec<&str> = members
         .iter()

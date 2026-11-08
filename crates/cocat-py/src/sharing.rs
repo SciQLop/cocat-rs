@@ -139,6 +139,22 @@ fn project_groups(
     answer(py, cocat_client::project_groups(&url, &cookie, &project_id))
 }
 
+/// Lets the project's editors share it as its owner does (`True`), or keeps sharing to the
+/// owner (`False`). Only the owner may.
+#[pyfunction]
+fn set_editors_can_share(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    project_id: String,
+    allowed: bool,
+) -> Result<()> {
+    done(
+        py,
+        cocat_client::set_editors_can_share(&url, &cookie, &project_id, allowed),
+    )
+}
+
 /// The project's page in the web app; with `share`, the page opens its Share dialog.
 #[pyfunction]
 #[pyo3(signature = (url, project_id, share=false))]
@@ -155,6 +171,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(invitations, module)?)?;
     module.add_function(wrap_pyfunction!(revoke_invitation, module)?)?;
     module.add_function(wrap_pyfunction!(project_groups, module)?)?;
+    module.add_function(wrap_pyfunction!(set_editors_can_share, module)?)?;
     module.add_function(wrap_pyfunction!(project_url, module)?)?;
     Ok(())
 }

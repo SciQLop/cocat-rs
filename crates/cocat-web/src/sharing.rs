@@ -1,6 +1,6 @@
 //! Who a project or a group is shared with, and what the visitor may change there. The
-//! rules are the server's: only a project's owner changes who is in it, and only a group's
-//! owner changes who is in the group.
+//! rules are the server's: a project's owner, and its editors while the owner lets them,
+//! change who is in it (`Role::may_share`); only a group's owner changes who is in the group.
 
 use std::str::FromStr;
 
@@ -57,14 +57,20 @@ fn role<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Role, D::Error> {
     Role::from_str(&name).map_err(de::Error::custom)
 }
 
-/// Whether the visitor changes who is in the project: invites, roles, groups, links.
-pub fn manages(visitor: Role) -> bool {
-    visitor == Role::Owner
+/// A member's row has a role picker and Remove: the visitor may share, and it is not the
+/// owner.
+pub fn member_editable(sharer: bool, member: Role) -> bool {
+    sharer && member != Role::Owner
 }
 
-/// A member's row has a role picker and Remove: the visitor manages, and it is not the owner.
-pub fn member_editable(visitor: Role, member: Role) -> bool {
-    manages(visitor) && member != Role::Owner
+/// What the dialog tells someone who may not share: who may.
+pub fn sharing_note(visitor: Role, editors_can_share: bool) -> Option<String> {
+    (!visitor.may_share(editors_can_share)).then(|| {
+        format!(
+            "Only {} can invite people or change access.",
+            Role::sharers(editors_can_share)
+        )
+    })
 }
 
 /// A group member's row has Remove: the visitor owns the group, and it is not the owner.
@@ -266,21 +272,26 @@ mod tests {
     }
 
     #[test]
-    fn only_the_owner_changes_who_is_in_the_project() {
-        assert!(manages(Role::Owner));
-        assert!(!manages(Role::Editor));
-        assert!(!manages(Role::Viewer));
+    fn whoever_may_not_share_is_told_who_may() {
+        assert_eq!(sharing_note(Role::Owner, false), None);
+        assert_eq!(sharing_note(Role::Editor, true), None);
+        assert_eq!(
+            sharing_note(Role::Editor, false).as_deref(),
+            Some("Only the owner can invite people or change access.")
+        );
+        assert_eq!(
+            sharing_note(Role::Viewer, true).as_deref(),
+            Some("Only the owner and editors can invite people or change access.")
+        );
     }
 
     #[test]
     fn the_owner_row_never_has_controls() {
-        assert!(member_editable(Role::Owner, Role::Editor));
-        assert!(member_editable(Role::Owner, Role::Viewer));
-        assert!(!member_editable(Role::Owner, Role::Owner));
-        for visitor in [Role::Editor, Role::Viewer] {
-            for row in [Role::Owner, Role::Editor, Role::Viewer] {
-                assert!(!member_editable(visitor, row), "{visitor:?} on {row:?}");
-            }
+        assert!(member_editable(true, Role::Editor));
+        assert!(member_editable(true, Role::Viewer));
+        assert!(!member_editable(true, Role::Owner));
+        for row in [Role::Owner, Role::Editor, Role::Viewer] {
+            assert!(!member_editable(false, row), "{row:?}");
         }
     }
 

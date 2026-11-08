@@ -187,11 +187,18 @@ the sockets that carried it (1008) immediately.
 | `GET /api/groups/{id}/members` | any member | members, by email |
 | `DELETE /api/groups/{id}/members/{user_id}` | owner, or yourself | remove a member (the owner cannot leave) |
 | `GET /api/rooms/{room_id}/groups` | any project member | the groups the project is shared with |
-| `PUT`/`DELETE /api/rooms/{room_id}/groups/{id}` | project owner | grant `{"role":"editor"\|"viewer"}`; unshare |
+| `PUT`/`DELETE /api/rooms/{room_id}/groups/{id}` | whoever may share the project | grant `{"role":"editor"\|"viewer"}` (a group you belong to); unshare |
 
 Group invitations (`POST /api/groups/{id}/invitations`, `GET` to list, `DELETE` to revoke,
 plus `POST /api/group-invitations/preview` and `/accept`) always admit a member. When an
 email is given and a mailer is configured, the link is mailed and the reply carries no token.
+
+**Who may share a project.** Its owner, and its editors while the project's
+`editors_can_share` is true (the default; `GET /api/rooms` lists it for each project). Sharing
+is inviting, listing and revoking invitations, changing roles, removing members and granting
+groups. Only the owner turns it off or on, with `PUT /api/rooms/{room_id}/editors-can-share`
+`{"allowed": false}`, and only the owner deletes the project or transfers it. Editors rename.
+Nobody can demote or remove the owner, or grant the owner role.
 
 Removing someone from a project directly does **not** remove group access: while a group they
 belong to still holds a grant, they keep the project at the group's role. Remove them from the
@@ -517,8 +524,11 @@ trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
 **Managing a project.** The calls behind the web app's Share dialog, for a tool that shows who
 has access or shares a project. Members, invitations and groups come back as dicts shaped like
 the server's JSON; ids of members are account ids (uuid strings), ids of invitations integers.
-Only the owner may change roles, remove others, invite or see the invitations; every member
-may list the members and the groups. `role` is `"viewer"` or `"editor"`: the server refuses
+Whoever may share the project may change roles, remove others, invite and see or revoke the
+invitations: the owner always, and editors unless the owner turned that off with
+`set_editors_can_share(url, cookie, project_id, False)` (owner only; `ProjectInfo.editors_can_share`
+says which). Everyone else gets `Forbidden`. Nobody can change the owner's role or remove the
+owner. Every member may list the members and the groups. `role` is `"viewer"` or `"editor"`: the server refuses
 anything else with a `ServerError` (422). An invitation with an `email` admits only that
 address, once; without one it is a link anyone may use, `max_uses` times (no limit by
 default). It expires after `expires_in_days` (1 to 90, 14 by default). `link` is the page

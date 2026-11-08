@@ -19,6 +19,6 @@ pub use login::{Credentials, LoginError, RoomInfo, login, rooms};
 pub use projects::{
     CreatedInvitation, INVITATION_DAYS, Invitation, Member, NewInvitation, ProjectGroup,
     create_project, invitations, invite, members, project_groups, project_url, remove_member,
-    revoke_invitation, set_role,
+    revoke_invitation, set_editors_can_share, set_role,
 };
 pub use room::{Room, RoomError, Status};

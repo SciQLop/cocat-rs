@@ -1,5 +1,6 @@
 //! The project page a server without the catalogue browser keeps: members, groups and, for
-//! the owner, invitations. With the browser installed, its Share dialog does this instead.
+//! whoever may share, invitations. With the browser installed, its Share dialog does this
+//! instead.
 
 use askama::Template;
 use cocat_core::role::Role;
@@ -17,9 +18,19 @@ struct LeaveForm {
 struct MemberControls {
     role_action: String,
     remove_action: String,
-    owner_action: String,
     remove_confirm: String,
-    transfer_confirm: String,
+    transfer: Option<Transfer>,
+}
+
+struct Transfer {
+    action: String,
+    confirm: String,
+}
+
+/// The owner's switch that lets editors share.
+struct SharingSwitch {
+    action: String,
+    allowed: bool,
 }
 
 struct MemberLine {
@@ -81,6 +92,9 @@ pub(super) struct RoomPage {
     members: Vec<MemberLine>,
     groups: GroupPanel,
     panel: Option<InvitationPanel>,
+    switch: Option<SharingSwitch>,
+    /// Who may share, said to someone who may not.
+    sharers: String,
 }
 
 /// The page of `room`, which `user` reaches with `role`.
@@ -93,16 +107,27 @@ pub(super) async fn build(
     share_link: Option<String>,
 ) -> Result<RoomPage, lifecycle::LifecycleError> {
     let base = format!("/rooms/{}", segment(&room.id));
-    let members = members_of(state, &base, &room.id, role).await?;
-    let groups = groups_of(state, &base, user.id, &room.id, role).await?;
-    let panel = match role {
-        Role::Owner => {
+    let open = db::editors_can_share(&state.pool, &room.id)
+        .await?
+        .unwrap_or(false);
+    let actor = Actor {
+        role,
+        sharer: role.may_share(open),
+    };
+    let members = members_of(state, &base, &room.id, actor).await?;
+    let groups = groups_of(state, &base, user.id, &room.id, actor).await?;
+    let panel = match actor.sharer {
+        true => {
             let emails: Vec<&str> = members.iter().map(|member| member.email.as_str()).collect();
             let suggestions = invitations::suggestions(state, user.id, &emails).await?;
             Some(panel(state, &base, user.id, &room.id, share_link, suggestions).await?)
         }
-        _ => None,
+        false => None,
     };
+    let switch = (role == Role::Owner).then(|| SharingSwitch {
+        action: state.links.path(&format!("{base}/editors-can-share")),
+        allowed: open,
+    });
     let leave = (role != Role::Owner).then(|| LeaveForm {
         action: state.links.path(&format!("{base}/leave")),
         confirm: format!("Leave {}?", room.name),
@@ -117,27 +142,38 @@ pub(super) async fn build(
         members,
         groups,
         panel,
+        switch,
+        sharers: Role::sharers(open).to_owned(),
     })
+}
+
+/// What the visitor may do on the page.
+#[derive(Clone, Copy)]
+struct Actor {
+    role: Role,
+    sharer: bool,
 }
 
 async fn members_of(
     state: &AppState,
     base: &str,
     room_id: &str,
-    actor_role: Role,
+    actor: Actor,
 ) -> Result<Vec<MemberLine>, lifecycle::LifecycleError> {
     let rows = db::list_members(&state.pool, room_id).await?;
     Ok(rows
         .into_iter()
         .map(|(user, role)| {
-            let editable = actor_role == Role::Owner && role != Role::Owner;
+            let editable = actor.sharer && role != Role::Owner;
             let member = format!("{base}/members/{}", user.id);
             let controls = editable.then(|| MemberControls {
                 role_action: state.links.path(&format!("{member}/role")),
                 remove_action: state.links.path(&format!("{member}/remove")),
-                owner_action: state.links.path(&format!("{member}/owner")),
                 remove_confirm: format!("Remove {}?", user.email),
-                transfer_confirm: format!("Make {} the owner?", user.email),
+                transfer: (actor.role == Role::Owner).then(|| Transfer {
+                    action: state.links.path(&format!("{member}/owner")),
+                    confirm: format!("Make {} the owner?", user.email),
+                }),
             });
             MemberLine {
                 id: user.id.to_string(),
@@ -154,12 +190,12 @@ async fn groups_of(
     base: &str,
     actor: Uuid,
     room_id: &str,
-    actor_role: Role,
+    visitor: Actor,
 ) -> Result<GroupPanel, lifecycle::LifecycleError> {
     let grants = groups::room_groups(state, room_id, actor).await?;
     let granted: Vec<&str> = grants.iter().map(|(group, _)| group.id.as_str()).collect();
-    let picker = match actor_role {
-        Role::Owner => groups::list_for(state, actor)
+    let picker = match visitor.sharer {
+        true => groups::list_for(state, actor)
             .await?
             .into_iter()
             .filter(|(group, _)| !granted.contains(&group.id.as_str()))
@@ -168,14 +204,14 @@ async fn groups_of(
                 label: group.name,
             })
             .collect(),
-        _ => Vec::new(),
+        false => Vec::new(),
     };
     Ok(GroupPanel {
         action: state.links.path(&format!("{base}/groups")),
         picker,
         groups: grants
             .into_iter()
-            .map(|(group, role)| group_line(state, base, group, role, actor_role))
+            .map(|(group, role)| group_line(state, base, group, role, visitor.sharer))
             .collect(),
     })
 }
@@ -185,9 +221,9 @@ fn group_line(
     base: &str,
     group: groups::GroupRow,
     role: Role,
-    actor_role: Role,
+    sharer: bool,
 ) -> GroupLine {
-    let controls = (actor_role == Role::Owner).then(|| GroupControls {
+    let controls = sharer.then(|| GroupControls {
         action: state.links.path(&format!("{base}/groups")),
         remove_action: state
             .links

@@ -25,27 +25,31 @@ link someone sent you.</p>
       <td class="name"><a href="{{ room.href }}">{{ room.name }}</a></td>
       <td><span class="role">{{ room.role }}</span></td>
       <td class="actions">
-{% match room.owner %}
-{% when Some with (owner) %}
+{% match room.rename %}
+{% when Some with (rename) %}
         <details class="edit">
           <summary>Rename</summary>
-          <form method="post" action="{{ owner.rename_action }}">
+          <form method="post" action="{{ rename }}">
             <input id="rename-{{ room.id }}" name="name" type="text" value="{{ room.name }}"
                    aria-label="New name">
             <button type="submit" class="small">Save</button>
           </form>
         </details>
-        <form method="post" action="{{ owner.delete_action }}" data-confirm="{{ owner.delete_confirm }}">
+{% when None %}
+{% endmatch %}
+{% match room.delete %}
+{% when Some with (delete) %}
+        <form method="post" action="{{ delete.action }}" data-confirm="{{ delete.confirm }}">
           <button type="submit" class="danger">Delete</button>
         </form>
 {% when None %}
+{% endmatch %}
 {% match room.leave %}
 {% when Some with (leave) %}
         <form method="post" action="{{ leave.action }}" data-confirm="{{ leave.confirm }}">
           <button type="submit" class="quiet">Leave</button>
         </form>
 {% when None %}
-{% endmatch %}
 {% endmatch %}
       </td>
     </tr>

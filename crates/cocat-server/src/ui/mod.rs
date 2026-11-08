@@ -62,6 +62,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(room::remove),
         )
         .route(
+            "/rooms/{room_id}/editors-can-share",
+            post(room::editors_can_share),
+        )
+        .route(
             "/rooms/{room_id}/members/{member}/owner",
             post(room::transfer),
         )

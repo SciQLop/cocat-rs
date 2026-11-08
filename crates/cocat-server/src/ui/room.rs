@@ -48,6 +48,13 @@ pub(crate) struct GroupGrantForm {
     role: String,
 }
 
+/// An HTML checkbox is sent only when ticked.
+#[derive(Debug, Deserialize)]
+pub(crate) struct SharingForm {
+    #[serde(default)]
+    allowed: Option<String>,
+}
+
 #[derive(Template)]
 #[template(path = "room_not_found.html")]
 struct NotFoundPage {
@@ -97,7 +104,7 @@ pub(crate) async fn set_role(
     if role == Role::Owner {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, Role::Owner).await {
+    if let Err(error) = lifecycle::require_sharer(&state, &room_id, user.id).await {
         return answer(&state, Err(error), &page_of(&room_id), String::new());
     }
     let email = match member_answer(&state, &room_id, member).await {
@@ -114,12 +121,7 @@ pub(crate) async fn remove(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
-    let minimum = if member == user.id {
-        Role::Viewer
-    } else {
-        Role::Owner
-    };
-    if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, minimum).await {
+    if let Err(error) = lifecycle::require_removal(&state, &room_id, user.id, member).await {
         return answer(&state, Err(error), &page_of(&room_id), String::new());
     }
     let email = match member_answer(&state, &room_id, member).await {
@@ -154,6 +156,21 @@ pub(crate) async fn transfer(
         &page_of(&room_id),
         format!("{email} now owns the project"),
     )
+}
+
+pub(crate) async fn editors_can_share(
+    Path(room_id): Path<String>,
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Form(form): Form<SharingForm>,
+) -> Response {
+    let allowed = form.allowed.is_some();
+    let result = lifecycle::set_editors_can_share(&state, &room_id, user.id, allowed).await;
+    let done = match allowed {
+        true => "Editors can now change access and share",
+        false => "Only you can now change access and share",
+    };
+    answer(&state, result, &page_of(&room_id), done.to_owned())
 }
 
 pub(crate) async fn invite(

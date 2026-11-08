@@ -207,8 +207,8 @@ pub async fn remove_member(
     Ok(())
 }
 
-/// Shares a room with a group. The actor must own the room and belong to the group, so a
-/// group they cannot see answers 404. A changed grant revokes the group's members in that
+/// Shares a room with a group. The actor must be allowed to share the room and belong to the
+/// group, so a group they cannot see answers 404. A changed grant revokes the group's members in that
 /// room, because their sockets carry the old role.
 pub async fn grant(
     state: &AppState,
@@ -217,7 +217,7 @@ pub async fn grant(
     actor: Uuid,
     role: Role,
 ) -> Result<(GroupRow, Role), LifecycleError> {
-    lifecycle::require_role(state, room_id, actor, Role::Owner).await?;
+    lifecycle::require_sharer(state, room_id, actor).await?;
     if role == Role::Owner {
         return Err(LifecycleError::Invalid(
             "A group cannot be granted the owner role",
@@ -255,15 +255,15 @@ pub async fn grant(
     Ok((group, role))
 }
 
-/// Takes the room away from the group. The actor must own the room; they need not belong
-/// to the group any more.
+/// Takes the room away from the group. The actor must be allowed to share the room; they
+/// need not belong to the group any more.
 pub async fn ungrant(
     state: &AppState,
     room_id: &str,
     group_id: &str,
     actor: Uuid,
 ) -> Result<(), LifecycleError> {
-    lifecycle::require_role(state, room_id, actor, Role::Owner).await?;
+    lifecycle::require_sharer(state, room_id, actor).await?;
     let mut tx = db::begin_immediate(&state.pool).await?;
     let members = members_of(&mut tx, group_id).await?;
     let deleted = sqlx::query("DELETE FROM room_group WHERE room_id = ? AND group_id = ?")

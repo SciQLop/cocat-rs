@@ -791,6 +791,49 @@ pub async fn rename_room(pool: &SqlitePool, room_id: &str, name: &str) -> Result
     Ok(updated.rows_affected() > 0)
 }
 
+/// Whether the room's editors may share it, or `None` for an unknown room.
+pub async fn editors_can_share(pool: &SqlitePool, room_id: &str) -> Result<Option<bool>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT editors_can_share FROM room WHERE id = ?")
+            .bind(room_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn set_editors_can_share(
+    pool: &SqlitePool,
+    room_id: &str,
+    allowed: bool,
+) -> Result<bool, DbError> {
+    let updated = sqlx::query("UPDATE room SET editors_can_share = ? WHERE id = ?")
+        .bind(allowed)
+        .bind(room_id)
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
+/// The rooms `user_id` reaches whose owner keeps sharing to themselves.
+pub async fn rooms_closed_to_editors(
+    pool: &SqlitePool,
+    user_id: Uuid,
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT room.id FROM room
+         WHERE room.editors_can_share = FALSE
+           AND (room.id IN (SELECT room_id FROM membership WHERE user_id = ?)
+             OR room.id IN (SELECT room_group.room_id
+                            FROM room_group
+                              JOIN group_member ON group_member.group_id = room_group.group_id
+                            WHERE group_member.user_id = ?))",
+    )
+    .bind(user_id.to_string())
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn delete_room(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
     let deleted = sqlx::query("DELETE FROM room WHERE id = ?")
         .bind(room_id)

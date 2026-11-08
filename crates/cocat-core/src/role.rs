@@ -30,6 +30,25 @@ impl Role {
         }
     }
 
+    /// Whether this member may change who has access: invite, revoke invitations, change
+    /// roles, remove members and share with groups. The owner always may; an editor may while
+    /// the owner lets editors share, as in Google Docs.
+    pub fn may_share(&self, editors_can_share: bool) -> bool {
+        match self {
+            Role::Owner => true,
+            Role::Editor => editors_can_share,
+            Role::Viewer => false,
+        }
+    }
+
+    /// Who may share a project, in words: "the owner", or "the owner and editors".
+    pub fn sharers(editors_can_share: bool) -> &'static str {
+        match editors_can_share {
+            true => "the owner and editors",
+            false => "the owner",
+        }
+    }
+
     /// Higher wins when one user is granted a role twice, as in the Python server:
     /// a member is never demoted by an add, only promoted.
     pub fn rank(&self) -> u8 {
@@ -72,6 +91,16 @@ mod tests {
             assert_eq!(json, format!("\"{}\"", role.as_str()));
             assert_eq!(serde_json::from_str::<Role>(&json).unwrap(), role);
         }
+    }
+
+    #[test]
+    fn the_owner_shares_and_editors_share_while_allowed() {
+        assert!(Role::Owner.may_share(false));
+        assert!(Role::Owner.may_share(true));
+        assert!(Role::Editor.may_share(true));
+        assert!(!Role::Editor.may_share(false));
+        assert!(!Role::Viewer.may_share(true));
+        assert!(!Role::Viewer.may_share(false));
     }
 
     #[test]

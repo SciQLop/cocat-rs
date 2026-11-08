@@ -21,7 +21,7 @@
 {% call help::hint(frame.help_href, "catalogues", "catalogues", "Open catalogues to see and edit the events, the trash and the history.") %}{% endcall %}
 
 <h2>Members</h2>
-{% call help::hint(frame.help_href, "roles", "roles", "Viewers look, editors change catalogues and events, the owner manages the project.") %}{% endcall %}
+{% call help::hint(frame.help_href, "roles", "roles", "Viewers look, editors change catalogues and events, the owner manages the project and decides whether editors may share it.") %}{% endcall %}
 <div class="table-wrap">
 <table class="members">
   <thead>
@@ -42,10 +42,14 @@
           </select>
           <button type="submit" class="quiet">Change role</button>
         </form>
-        <form method="post" action="{{ controls.owner_action }}"
-              data-confirm="{{ controls.transfer_confirm }}">
+{% match controls.transfer %}
+{% when Some with (transfer) %}
+        <form method="post" action="{{ transfer.action }}"
+              data-confirm="{{ transfer.confirm }}">
           <button type="submit" class="quiet">Transfer ownership</button>
         </form>
+{% when None %}
+{% endmatch %}
         <form method="post" action="{{ controls.remove_action }}"
               data-confirm="{{ controls.remove_confirm }}">
           <button type="submit" class="danger">Remove</button>
@@ -58,6 +62,15 @@
   </tbody>
 </table>
 </div>
+{% match switch %}
+{% when Some with (switch) %}
+<form method="post" action="{{ switch.action }}" class="inline add-row">
+  <label><input type="checkbox" name="allowed"{% if switch.allowed %} checked{% endif %}>
+    Editors can change access and share</label>
+  <button type="submit" class="quiet">Save</button>
+</form>
+{% when None %}
+{% endmatch %}
 
 <h2>Groups</h2>
 {% call help::hint(frame.help_href, "groups", "groups", "Share the project with a whole group at once. Everyone in it gets the role you pick.") %}{% endcall %}
@@ -190,6 +203,6 @@
 </div>
 {% endif %}
 {% when None %}
-<p class="empty">Only the owner can manage invitations.</p>
+<p class="empty">Only {{ sharers }} can invite people or change access.</p>
 {% endmatch %}
 {% endblock %}

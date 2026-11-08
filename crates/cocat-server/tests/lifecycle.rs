@@ -322,10 +322,13 @@ async fn changing_a_role_does_not_close_other_members() {
 }
 
 #[tokio::test]
-async fn an_editor_cannot_change_a_role() {
+async fn with_sharing_closed_an_editor_cannot_change_a_role() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     fixture.room("room-forbidden", owner).await;
+    db::set_editors_can_share(&fixture.state.pool, "room-forbidden", false)
+        .await
+        .unwrap();
     let editor = fixture
         .member("room-forbidden", "editor@example.org", Role::Editor)
         .await;
@@ -345,7 +348,7 @@ async fn an_editor_cannot_change_a_role() {
 
     assert!(
         matches!(&error, LifecycleError::Forbidden(message)
-            if message == "Project room-forbidden requires the owner role"),
+            if message == "Only the owner can share project room-forbidden"),
         "{error:?}"
     );
 }
