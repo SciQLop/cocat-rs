@@ -6,7 +6,7 @@ use bytes::Bytes;
 use cocat_core::model::{self, CATALOGUES, CatalogueSummary, EVENTS, EventRecord, Status};
 use serde::Serialize;
 use serde_json::Value;
-use yrs::{Doc, Map, Out, ReadTxn, Transact};
+use yrs::{Doc, Map, Out, ReadTxn, StateVector, Transact};
 
 use super::versions::apply;
 
@@ -51,6 +51,27 @@ pub fn replay_until(records: &[Bytes], end: u64) -> Doc {
         apply(&doc, record);
     }
     doc
+}
+
+/// The room before record `split`, and after records `split..end`: one replay, then a copy of
+/// its state takes the version's own records, rather than replaying the log twice.
+pub fn before_and_after(records: &[Bytes], split: usize, end: usize) -> (Doc, Doc) {
+    let before = replay_until(&records[..split], u64::MAX);
+    let after = copy(&before);
+    for record in &records[split..end] {
+        apply(&after, record);
+    }
+    (before, after)
+}
+
+/// Pending updates travel with the copy: a state update includes them.
+fn copy(doc: &Doc) -> Doc {
+    let state = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    let copy = Doc::new();
+    apply(&copy, &state);
+    copy
 }
 
 /// With a catalogue, only that catalogue and the events that are its members on either side.
@@ -227,8 +248,7 @@ mod tests {
     use cocat_core::model::{self, EventField, NewCatalogue, Status};
     use cocat_core::time::Timestamp;
     use serde_json::json;
-    use yrs::updates::decoder::Decode;
-    use yrs::{ReadTxn, StateVector, Transact, TransactionMut, Update};
+    use yrs::{ReadTxn, Transact, TransactionMut};
 
     use super::*;
 
@@ -239,17 +259,6 @@ mod tests {
 
     fn write<T>(doc: &Doc, edit: impl FnOnce(&mut TransactionMut) -> T) {
         edit(&mut doc.transact_mut());
-    }
-
-    fn copy(doc: &Doc) -> Doc {
-        let update = doc
-            .transact()
-            .encode_state_as_update_v1(&StateVector::default());
-        let copy = Doc::new();
-        copy.transact_mut()
-            .apply_update(Update::decode_v1(&update).unwrap())
-            .unwrap();
-        copy
     }
 
     fn catalogue(uuid: &str) -> NewCatalogue {
@@ -265,6 +274,53 @@ mod tests {
             .iter()
             .map(|event| (event.uuid.as_str(), event.change))
             .collect()
+    }
+
+    type Edit = Box<dyn FnOnce(&mut TransactionMut)>;
+
+    /// Each write as the record a client would send.
+    fn records(doc: &Doc, writes: Vec<Edit>) -> Vec<Bytes> {
+        writes
+            .into_iter()
+            .map(|edit| {
+                let seen = doc.transact().state_vector();
+                write(doc, edit);
+                Bytes::from(doc.transact().encode_state_as_update_v1(&seen))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_replay_gives_the_states_two_replays_give() {
+        let records = records(
+            &Doc::new(),
+            vec![
+                Box::new(|txn| {
+                    model::create_event(txn, &event("a")).unwrap();
+                }),
+                Box::new(|txn| {
+                    model::create_event(txn, &event("b")).unwrap();
+                }),
+                Box::new(|txn| {
+                    model::set_event_field(txn, "a", &EventField::Status(Status::Reviewed))
+                        .unwrap();
+                }),
+                Box::new(|txn| assert!(model::delete_event(txn, "b"))),
+            ],
+        );
+
+        let (before, after) = before_and_after(&records, 1, 3);
+
+        let expected = diff(
+            &replay_until(&records[..1], u64::MAX),
+            &replay_until(&records[..3], u64::MAX),
+            None,
+        );
+        assert_eq!(diff(&before, &after, None), expected);
+        assert_eq!(
+            changes(&expected),
+            [("a", Change::Changed), ("b", Change::Added)]
+        );
     }
 
     #[test]

@@ -450,7 +450,7 @@ impl RoomManager {
     {
         let started = Instant::now();
         let loaded = self
-            .cold(room_id, move |update_dir, id| {
+            .cold(room_id, 1, move |update_dir, id| {
                 let doc = Doc::new();
                 for update in read_updates(update_dir, id)? {
                     let _ = apply(&doc, &update);
@@ -504,14 +504,15 @@ impl RoomManager {
     }
 
     /// Answers from the room's records as written on disk, each with its valid stamp, after
-    /// the open room flushed: a version just written is part of the answer.
-    pub async fn read_log<T, F>(&self, room_id: &str, read: F) -> Result<T, RoomError>
+    /// the open room flushed: a version just written is part of the answer. The read is
+    /// charged for the `docs` whole documents `read` holds at once.
+    pub async fn read_log<T, F>(&self, room_id: &str, docs: u64, read: F) -> Result<T, RoomError>
     where
         T: Send + 'static,
         F: FnOnce(&[Bytes], &[Option<Stamp>]) -> T + Send + 'static,
     {
         self.flush(room_id).await?;
-        self.cold(room_id, move |update_dir, id| {
+        self.cold(room_id, docs, move |update_dir, id| {
             let records = read_updates(update_dir, id)?;
             let stamps = read_stamps(update_dir, id).map_err(|source| StoreError::Io {
                 path: stamps_file(update_dir, id),
@@ -523,8 +524,9 @@ impl RoomManager {
         .await
     }
 
-    /// Runs `load` on the blocking pool under a cold-read slot and the memory budget.
-    async fn cold<T, F>(&self, room_id: &str, load: F) -> Result<T, RoomError>
+    /// Runs `load` on the blocking pool under a cold-read slot and the memory budget, charged
+    /// for the `docs` documents it builds.
+    async fn cold<T, F>(&self, room_id: &str, docs: u64, load: F) -> Result<T, RoomError>
     where
         T: Send + 'static,
         F: FnOnce(&Path, &str) -> Result<T, StoreError> + Send + 'static,
@@ -535,7 +537,7 @@ impl RoomManager {
             .acquire_owned()
             .await
             .map_err(|_| RoomError::Unanswered)?;
-        let charged = self.admit_cold_read(room_id)?;
+        let charged = self.admit_cold_read(room_id, docs)?;
         let update_dir = self.update_dir.clone();
         let id = room_id.to_owned();
         let loaded = tokio::task::spawn_blocking(move || {
@@ -554,12 +556,13 @@ impl RoomManager {
     /// Admits one cold read and charges it in one step, under the registry lock `get_or_open`
     /// also takes: measuring the budget, then taking it, would let two reads both see the
     /// room for one and both be admitted.
-    fn admit_cold_read(&self, room_id: &str) -> Result<Charge, RoomError> {
+    fn admit_cold_read(&self, room_id: &str, docs: u64) -> Result<Charge, RoomError> {
         let rooms = self.rooms.lock().map_err(|_| RoomError::Registry)?;
         let estimate = fs::metadata(room_file(&self.update_dir, room_id))
             .map(|metadata| metadata.len())
             .unwrap_or(0)
-            .saturating_mul(MEMORY_PER_FILE_BYTE);
+            .saturating_mul(MEMORY_PER_FILE_BYTE)
+            .saturating_mul(docs);
         if let Some(budget) = self.budget {
             let cold = self.cold_bytes.load(Ordering::Relaxed);
             let needed = rooms
@@ -1916,6 +1919,27 @@ mod tests {
             peak.load(Ordering::SeqCst),
             1,
             "two cold reads parsed the same room at once"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_log_read_is_charged_for_each_document_it_builds() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "log").unwrap();
+        store
+            .append(Bytes::from(update_with("key", "value")))
+            .unwrap();
+        store.write().unwrap();
+        let one_doc =
+            fs::metadata(room_file(dir.path(), "log")).unwrap().len() * MEMORY_PER_FILE_BYTE;
+        let manager = RoomManager::new(dir.path().to_path_buf(), Some(one_doc * 3 / 2));
+
+        let one = manager.read_log("log", 1, |records, _| records.len()).await;
+        assert_eq!(one.unwrap(), 1);
+        let two = manager.read_log("log", 2, |records, _| records.len()).await;
+        assert!(
+            matches!(two, Err(RoomError::OverBudget { .. })),
+            "two documents fit a budget for one and a half: {two:?}"
         );
     }
 

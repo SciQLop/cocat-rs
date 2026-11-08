@@ -18,7 +18,7 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
-use crate::history::diff::{Diff, diff, members, replay_until};
+use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Version, span, versions};
 use crate::openapi::Detail;
 use crate::{AppState, db, lifecycle, presence};
@@ -110,7 +110,7 @@ async fn list(
     };
     // simplify: every request replays the whole log (0.7 s on the largest production
     // room); cache the versions per room keyed by its record count when that hurts.
-    let mut versions = state.rooms.read_log(&room_id, versions).await?;
+    let mut versions = state.rooms.read_log(&room_id, 1, versions).await?;
     if let Some(filter) = filter {
         versions.retain(|version| filter.keeps(version));
         for version in &mut versions {
@@ -153,10 +153,9 @@ async fn changes(
     membership(&state, &room_id, user.id).await?;
     let changes = state
         .rooms
-        .read_log(&room_id, move |records, slots| {
+        .read_log(&room_id, 2, move |records, slots| {
             let span = span(slots, version)?;
-            let before = replay_until(&records[..span.start], u64::MAX);
-            let after = replay_until(&records[..span.end], u64::MAX);
+            let (before, after) = before_and_after(records, span.start, span.end);
             Some(diff(&before, &after, query.catalogue.as_deref()))
         })
         .await?
@@ -186,7 +185,7 @@ async fn state_at(
     membership(&state, &room_id, user.id).await?;
     let update = state
         .rooms
-        .read_log(&room_id, move |records, slots| {
+        .read_log(&room_id, 1, move |records, slots| {
             let past = replay_until(&records[..span(slots, version)?.end], u64::MAX);
             let update = past
                 .transact()
@@ -290,7 +289,7 @@ async fn restore(
     lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
     let update = state
         .rooms
-        .read_log(&room_id, move |records, slots| {
+        .read_log(&room_id, 2, move |records, slots| {
             let end = span(slots, version)?.end;
             Some(restore_update(records, end, body.catalogue.as_deref()))
         })
@@ -308,8 +307,7 @@ async fn restore(
 /// record `end` again. It is built on a replay, the way a client edits its replica: edits
 /// the room takes meanwhile merge with it as any concurrent edit does.
 fn restore_update(records: &[Bytes], end: usize, catalogue: Option<&str>) -> Vec<u8> {
-    let past = replay_until(&records[..end], u64::MAX);
-    let present = replay_until(records, u64::MAX);
+    let (past, present) = before_and_after(records, end, records.len());
     let mut txn = present.transact_mut();
     model::restore(&mut txn, &past, catalogue);
     txn.encode_update_v1()
@@ -326,7 +324,7 @@ async fn writable_version(
     lifecycle::require_role(state, room_id, user, Role::Editor).await?;
     state
         .rooms
-        .read_log(room_id, move |_, slots| span(slots, version))
+        .read_log(room_id, 1, move |_, slots| span(slots, version))
         .await?
         .and_then(|span| Some(row(span.start)?..=row(span.end - 1)?))
         .ok_or_else(no_such_version)
