@@ -477,15 +477,14 @@ impl RoomManager {
         Ok(())
     }
 
-    /// Writes `user`'s restore of `version`, like a client frame: quota-checked, appended,
-    /// stamped as a restore and broadcast. A room nobody is in opens for the write and unloads
-    /// after it. `Ok(false)` when the update changed nothing.
-    pub async fn restore_as(
+    /// Writes an update on `author`'s behalf, like a client frame: quota-checked, appended,
+    /// stamped with the author and broadcast. A room nobody is in opens for the write and
+    /// unloads after it. `Ok(false)` when the update changed nothing.
+    pub async fn write_as(
         &self,
         room_id: &str,
         allowance: u64,
-        user: Uuid,
-        version: u64,
+        author: Author,
         update: Vec<u8>,
     ) -> Result<bool, RoomError> {
         for _ in 0..WRITE_TRIES {
@@ -495,7 +494,7 @@ impl RoomManager {
                 tokio::task::spawn_blocking(move || rooms.get_or_open_within(&id, allowance))
                     .await
                     .map_err(|_| RoomError::Unanswered)??;
-            match room.restore_as(user, version, update.clone()).await {
+            match room.write_as(author, update.clone()).await {
                 Err(RoomError::Gone) => continue,
                 written => return written,
             }
@@ -702,18 +701,11 @@ impl RoomHandle {
         }
     }
 
-    /// Has the room thread take `update` as if `user` had sent it in a frame, stamped as a
-    /// restore of `version`.
-    pub async fn restore_as(
-        &self,
-        user: Uuid,
-        version: u64,
-        update: Vec<u8>,
-    ) -> Result<bool, RoomError> {
+    /// Has the room thread take `update` as if `author` had sent it in a frame.
+    pub async fn write_as(&self, author: Author, update: Vec<u8>) -> Result<bool, RoomError> {
         let (done, written) = oneshot::channel();
-        self.send(RoomCommand::Restore {
-            user,
-            version,
+        self.send(RoomCommand::Write {
+            author,
             update,
             done,
         })
@@ -774,10 +766,9 @@ enum RoomCommand {
     Read {
         read: Box<dyn FnOnce(&Doc) + Send>,
     },
-    /// A restore the server writes on a user's behalf; answers whether it changed the room.
-    Restore {
-        user: Uuid,
-        version: u64,
+    /// An update the server writes on a user's behalf; answers whether it changed the room.
+    Write {
+        author: Author,
         update: Vec<u8>,
         done: oneshot::Sender<Result<bool, CloseReason>>,
     },
@@ -961,9 +952,8 @@ fn room_loop(
                         read(&doc);
                         Step::Serving
                     }
-                    RoomCommand::Restore {
-                        user,
-                        version,
+                    RoomCommand::Write {
+                        author,
                         update,
                         done,
                     } => {
@@ -974,7 +964,7 @@ fn room_loop(
                             &mut seen,
                             limit,
                             update,
-                            Author::Restore { user, version },
+                            author,
                         );
                         if let Ok(Some(frame)) = &written {
                             full_state = None;
@@ -1166,7 +1156,7 @@ fn close_room(
             if backlog.iter().any(|command| {
                 matches!(
                     command,
-                    RoomCommand::Attach { .. } | RoomCommand::Restore { .. }
+                    RoomCommand::Attach { .. } | RoomCommand::Write { .. }
                 )
             }) {
                 return true;
@@ -1248,7 +1238,7 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             RoomCommand::Attach { .. }
             | RoomCommand::Frame { .. }
             | RoomCommand::Read { .. }
-            | RoomCommand::Restore { .. } => {}
+            | RoomCommand::Write { .. } => {}
             #[cfg(test)]
             RoomCommand::Panic => {}
         }
@@ -1558,7 +1548,7 @@ fn handle_update(
 
 /// Who an update comes from, as its stamp records it.
 #[derive(Debug, Clone, Copy)]
-enum Author {
+pub enum Author {
     #[cfg(test)]
     Nobody,
     Client(Uuid),

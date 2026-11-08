@@ -12,15 +12,18 @@ use bytes::Bytes;
 use cocat_core::model;
 use cocat_core::role::Role;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use time::macros::format_description;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
-use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::api::{self, ApiError, ApiPath, CurrentUser, JsonBody, membership};
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Saved, Version, span, spans, versions};
 use crate::openapi::Detail;
+use crate::room::Author;
 use crate::{AppState, db, lifecycle, presence};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -31,6 +34,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(name, unname))
         .routes(routes!(restore))
         .routes(routes!(commit))
+        .routes(routes!(copy))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -200,15 +204,115 @@ async fn state_at(
     let update = state
         .rooms
         .read_log(&room_id, 1, move |records, slots| {
-            let past = replay_until(&records[..span(slots, &saved, version)?.end], u64::MAX);
-            let update = past
-                .transact()
-                .encode_state_as_update_v1(&StateVector::default());
-            Some(update)
+            Some(state_until(records, span(slots, &saved, version)?.end))
         })
         .await?
         .ok_or_else(no_such_version)?;
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], update))
+}
+
+/// The room as of the version ending before record `end`, as one update.
+fn state_until(records: &[Bytes], end: usize) -> Vec<u8> {
+    replay_until(&records[..end], u64::MAX)
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default())
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Copied {
+    /// The new project's id.
+    room: String,
+    name: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/history/{version}/copy",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("version" = u64, Path, description = "Version id: its first record"),
+    ),
+    request_body = api::NameBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "A new project, owned by the caller, holding the version as its first change", body = Copied),
+        (status = 400, description = "The name has control characters", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, version or membership", body = Detail),
+        (status = 409, description = "The copy does not fit in the caller's storage quota", body = Detail),
+        (status = 422, description = "The name is empty or too long", body = Detail),
+    )
+)]
+async fn copy(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, version)): ApiPath<(String, u64)>,
+    JsonBody(body): JsonBody<api::NameBody>,
+) -> Result<(StatusCode, Json<Copied>), ApiError> {
+    membership(&state, &room_id, user.id).await?;
+    let saved = saved(&state, &room_id).await?;
+    let (update, started_ms) = state
+        .rooms
+        .read_log(&room_id, 1, move |records, slots| {
+            let span = span(slots, &saved, version)?;
+            let started_ms = slots
+                .get(span.start)
+                .copied()
+                .flatten()
+                .map(|stamp| stamp.at_ms);
+            Some((state_until(records, span.end), started_ms))
+        })
+        .await?
+        .ok_or_else(no_such_version)?;
+    let original = db::room_name(&state.pool, &room_id)
+        .await?
+        .unwrap_or_default();
+    let room = lifecycle::create_room(&state, user.id, &body.name.0).await?;
+    if let Err(error) = write_first_version(&state, &room.id, user.id, update).await {
+        lifecycle::delete_room(&state, &room.id, user.id).await?;
+        return Err(error);
+    }
+    let first = copy_name(&original, started_ms);
+    db::name_version(&state.pool, &room.id, 0..=0, &first, user.id).await?;
+    let copied = Copied {
+        room: room.id,
+        name: room.name,
+    };
+    Ok((StatusCode::CREATED, Json(copied)))
+}
+
+async fn write_first_version(
+    state: &AppState,
+    room_id: &str,
+    user: Uuid,
+    update: Vec<u8>,
+) -> Result<(), ApiError> {
+    let allowance = state.rooms.allowance(&state.pool, room_id).await?;
+    state
+        .rooms
+        .write_as(room_id, allowance, Author::Client(user), update)
+        .await?;
+    Ok(())
+}
+
+/// "Copied from <project>, <date the version started>", cut to a version name's 100
+/// characters.
+fn copy_name(project: &str, started_ms: Option<i64>) -> String {
+    let date = started_ms.and_then(utc_minute);
+    let name = match date {
+        Some(date) => format!("Copied from {project}, {date}"),
+        None => format!("Copied from {project}"),
+    };
+    name.chars().take(100).collect()
+}
+
+fn utc_minute(ms: i64) -> Option<String> {
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
+        .ok()?
+        .format(format_description!(
+            "[year]-[month]-[day] [hour]:[minute] UTC"
+        ))
+        .ok()
 }
 
 #[utoipa::path(
@@ -396,7 +500,15 @@ async fn restore(
     let allowance = state.rooms.allowance(&state.pool, &room_id).await?;
     let restored = state
         .rooms
-        .restore_as(&room_id, allowance, user.id, version, update)
+        .write_as(
+            &room_id,
+            allowance,
+            Author::Restore {
+                user: user.id,
+                version,
+            },
+            update,
+        )
         .await?;
     Ok(Json(Restored { restored }))
 }
@@ -530,4 +642,23 @@ fn view(
 
 fn no_such_version() -> ApiError {
     ApiError::NotFound("No such version".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_name;
+
+    #[test]
+    fn a_copy_name_carries_the_date_when_the_version_has_one() {
+        assert_eq!(
+            copy_name("Paper", Some(1_700_000_000_000)),
+            "Copied from Paper, 2023-11-14 22:13 UTC"
+        );
+        assert_eq!(copy_name("Paper", None), "Copied from Paper");
+    }
+
+    #[test]
+    fn a_copy_name_fits_a_version_name() {
+        assert_eq!(copy_name(&"x".repeat(200), None).chars().count(), 100);
+    }
 }

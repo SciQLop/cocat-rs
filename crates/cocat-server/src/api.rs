@@ -260,14 +260,14 @@ impl TryFrom<String> for Name {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-struct NameBody {
+pub(crate) struct NameBody {
     #[schema(
         value_type = String,
         min_length = 1,
         max_length = 200,
         pattern = "^(?!\\s*$)[^\\u0000-\\u001F\\u007F]+$"
     )]
-    name: Name,
+    pub(crate) name: Name,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

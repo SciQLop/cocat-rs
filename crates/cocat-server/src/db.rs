@@ -253,6 +253,13 @@ pub async fn role_in(
     Ok(roles.into_iter().max_by_key(Role::rank))
 }
 
+pub async fn room_name(pool: &SqlitePool, room_id: &str) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar("SELECT name FROM room WHERE id = ?")
+        .bind(room_id)
+        .fetch_optional(pool)
+        .await?)
+}
+
 /// The account that owns a room, if a membership says anyone does.
 pub async fn room_owner(pool: &SqlitePool, room_id: &str) -> Result<Option<Uuid>, DbError> {
     let owner: Option<String> =
