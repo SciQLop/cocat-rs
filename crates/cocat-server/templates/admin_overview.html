@@ -52,7 +52,7 @@
 {% for room in largest %}
     <tr>
       <td class="name" title="Project id: {{ room.id }}">{{ room.name }}</td>
-      <td class="owner">{% if room.owner.is_empty() %}<span class="muted">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
+      <td class="owner">{% if room.public %}<span class="tag accent">public</span>{% else if room.owner.is_empty() %}<span class="muted">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
       <td data-sort="{{ room.size_bytes }}">{% include "admin_usage_room.html" %}</td>
       <td class="nowrap" data-sort="{% if room.open %}{{ room.clients }}{% else %}-1{% endif %}">{% if room.open %}{{ room.clients }} connected{% else %}<span class="muted">closed</span>{% endif %}</td>
     </tr>

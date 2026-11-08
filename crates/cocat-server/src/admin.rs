@@ -99,6 +99,7 @@ pub struct RoomRow {
     pub limit_bytes: u64,
     pub limit_override_mb: Option<u64>,
     pub members: u64,
+    pub public: bool,
     pub open: bool,
     pub clients: u64,
 }
@@ -113,6 +114,8 @@ pub enum AdminError {
     InvalidQuota,
     #[error("no such account")]
     UnknownUser,
+    #[error("a public catalogue has no owner")]
+    PublicRoom,
     #[error(transparent)]
     Db(#[from] DbError),
     #[error(transparent)]
@@ -229,6 +232,7 @@ pub async fn rooms(state: &AppState, actor: &User) -> Result<Vec<RoomRow>, Admin
             limit_bytes: room.limit_mb.map(megabytes).unwrap_or(limits.room),
             limit_override_mb: room.limit_mb,
             members: room.members,
+            public: room.public,
             open: state.rooms.is_open(&room.id),
             clients: state.rooms.clients_of(&room.id).await,
         });
@@ -283,6 +287,7 @@ pub async fn set_curator(
     if !db::set_curator(&state.pool, user, curator).await? {
         return Err(AdminError::UnknownUser);
     }
+    accounts::revoke_public(state, user).await?;
     Ok(())
 }
 
@@ -340,6 +345,9 @@ pub async fn set_room_owner(
         .ok_or(AdminError::UnknownUser)?;
     if !db::room_exists(&state.pool, room).await? {
         return Err(AdminError::NotFound);
+    }
+    if db::is_public(&state.pool, room).await? {
+        return Err(AdminError::PublicRoom);
     }
     let previous = db::room_owner(&state.pool, room).await?;
     db::add_member(&state.pool, room, target.id, Role::Editor).await?;

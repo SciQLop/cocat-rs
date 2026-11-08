@@ -46,8 +46,8 @@ pub(crate) async fn browse(
     Flash(flash): Flash,
     ShareLink(share_link): ShareLink,
 ) -> Response {
-    let room = match db::list_user_rooms(&state.pool, user.id).await {
-        Ok(rooms) => rooms.into_iter().find(|(room, _)| room.id == room_id),
+    let room = match db::room_for(&state.pool, &room_id, user.id).await {
+        Ok(room) => room,
         Err(error) => {
             tracing::warn!(%error, "cannot read the rooms of a visitor");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();

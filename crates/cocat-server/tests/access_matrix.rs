@@ -66,6 +66,8 @@ enum Guard {
     RoomOwner,
     GroupMember,
     GroupOwner,
+    /// Curators look after the public catalogues: here, the administrator.
+    Curator,
     Superuser,
 }
 
@@ -144,6 +146,8 @@ const ROWS: &[Row] = &[
     row("GET", "/api/me", Guard::SignedIn, Style::Api),
     row("GET", "/api/rooms", Guard::SignedIn, Style::Api),
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
+    row("GET", "/api/public", Guard::SignedIn, Style::Api),
+    row("POST", "/api/public", Guard::Curator, Style::Api),
     row("PATCH", "/api/rooms/{room}", Guard::RoomEditor, Style::Api).room_any(),
     row("DELETE", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
     row(
@@ -740,7 +744,7 @@ impl Caps {
             Guard::RoomOwner => self.room == Some(Role::Owner),
             Guard::GroupMember => self.group.is_some(),
             Guard::GroupOwner => self.group == Some(groups::GroupRole::Owner),
-            Guard::Superuser => self.superuser,
+            Guard::Curator | Guard::Superuser => self.superuser,
         }
     }
 }
@@ -947,7 +951,9 @@ impl World {
             ),
             ("PATCH", "/users/me") => (json, r#"{"password":"another-password"}"#.to_owned()),
             ("PATCH", "/users/{user}") => (json, r#"{"is_active":true}"#.to_owned()),
-            ("POST", "/api/rooms" | "/api/groups") => (json, r#"{"name":"another"}"#.to_owned()),
+            ("POST", "/api/rooms" | "/api/groups" | "/api/public") => {
+                (json, r#"{"name":"another"}"#.to_owned())
+            }
             ("PATCH", "/api/rooms/{room}" | "/api/groups/{group}") => {
                 (json, r#"{"name":"renamed"}"#.to_owned())
             }

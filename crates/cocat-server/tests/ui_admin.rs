@@ -216,3 +216,47 @@ async fn the_admin_is_told_they_cannot_demote_themselves() {
         .unwrap();
     assert!(me.is_superuser);
 }
+
+/// A public catalogue has no owner to give: the rooms page tags it and offers no owner form,
+/// and a hand-made form is refused with a message.
+#[tokio::test]
+async fn a_public_catalogue_shows_as_public_and_takes_no_owner() {
+    let fixture = Fixture::start().await;
+    let token = admin(&fixture).await;
+    let heir = fixture.verified("heir@example.org").await;
+    let room = db::PublicRoom {
+        id: "public.shocks".to_owned(),
+        name: "Shocks".to_owned(),
+        folder: None,
+        source: None,
+        description: None,
+    };
+    db::create_public_room(&fixture.state.pool, &room, heir)
+        .await
+        .unwrap();
+
+    let page = body_text(fixture.get("/ui/admin/rooms", Some(&token)).await).await;
+    assert!(
+        page.contains(r#"<span class="tag accent">public</span>"#),
+        "{page}"
+    );
+    assert!(
+        !page.contains("/ui/admin/rooms/public.shocks/owner"),
+        "{page}"
+    );
+
+    let response = fixture
+        .post(
+            "/ui/admin/rooms/public.shocks/owner",
+            Some(&token),
+            "email=heir%40example.org",
+        )
+        .await;
+    assert_eq!(location(&response), "/ui/admin/rooms");
+    assert_eq!(
+        db::room_owner(&fixture.state.pool, "public.shocks")
+            .await
+            .unwrap(),
+        None
+    );
+}

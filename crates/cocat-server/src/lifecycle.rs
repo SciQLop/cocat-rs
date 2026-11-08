@@ -12,6 +12,8 @@ const OWNER_KEEPS_OWNER_ROLE: &str = "The owner keeps the owner role";
 const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave or be removed";
 const LONG_NAME: &str = "Enter a name of at most 200 characters";
 const MAX_NAME: usize = 200;
+pub(crate) const NO_MEMBERS: &str =
+    "A public catalogue has no members: it cannot be shared, left or handed over";
 
 /// The noun a name belongs to, so rooms and groups word the same refusals differently.
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +100,7 @@ pub async fn set_editors_can_share(
     actor: Uuid,
     allowed: bool,
 ) -> Result<(), LifecycleError> {
+    refuse_public(state, room_id).await?;
     require_role(state, room_id, actor, Role::Owner).await?;
     if !db::set_editors_can_share(&state.pool, room_id, allowed).await? {
         return Err(room_not_found(room_id));
@@ -124,13 +127,18 @@ pub(crate) fn clean_name(name: &str, noun: Noun) -> Result<String, LifecycleErro
     Ok(trimmed.to_owned())
 }
 
-/// Deletes the room, its memberships and its file, closing every socket it had.
+/// Deletes the room, its memberships and its file, closing every socket it had. Its owner
+/// may, and a curator for a public catalogue, which has no owner.
 pub async fn delete_room(
     state: &AppState,
     room_id: &str,
     actor: Uuid,
 ) -> Result<(), LifecycleError> {
-    require_role(state, room_id, actor, Role::Owner).await?;
+    let deleter = match db::is_public(&state.pool, room_id).await? {
+        true => Role::Editor,
+        false => Role::Owner,
+    };
+    require_role(state, room_id, actor, deleter).await?;
     if !db::delete_room(&state.pool, room_id).await? {
         return Err(room_not_found(room_id));
     }
@@ -184,6 +192,7 @@ pub async fn transfer_ownership(
     actor: Uuid,
     new_owner: Uuid,
 ) -> Result<(), LifecycleError> {
+    refuse_public(state, room_id).await?;
     require_role(state, room_id, actor, Role::Owner).await?;
     member_role(state, room_id, new_owner).await?;
     db::set_owner(&state.pool, room_id, new_owner).await?;
@@ -198,6 +207,7 @@ pub(crate) async fn require_removal(
     actor: Uuid,
     member: Uuid,
 ) -> Result<(), LifecycleError> {
+    refuse_public(state, room_id).await?;
     match member == actor {
         true => require_role(state, room_id, actor, Role::Viewer)
             .await
@@ -212,6 +222,7 @@ pub(crate) async fn require_sharer(
     room_id: &str,
     actor: Uuid,
 ) -> Result<Role, LifecycleError> {
+    refuse_public(state, room_id).await?;
     let role = require_role(state, room_id, actor, Role::Viewer).await?;
     let open = db::editors_can_share(&state.pool, room_id)
         .await?
@@ -223,6 +234,15 @@ pub(crate) async fn require_sharer(
         )));
     }
     Ok(role)
+}
+
+/// Who has access to a public catalogue is not a list anyone keeps: every account reads it
+/// and curators edit it. So members, invitations, groups and sharing refuse it for everyone.
+pub(crate) async fn refuse_public(state: &AppState, room_id: &str) -> Result<(), LifecycleError> {
+    match db::is_public(&state.pool, room_id).await? {
+        true => Err(LifecycleError::Conflict(NO_MEMBERS)),
+        false => Ok(()),
+    }
 }
 
 /// The actor's role in the room, refused when it is below `minimum`.

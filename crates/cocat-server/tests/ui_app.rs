@@ -440,3 +440,37 @@ async fn without_the_bundle_the_projects_and_groups_pages_render() {
         assert!(page.contains(OWNER), "{page}");
     }
 }
+
+/// A public catalogue opens for any account, as a viewer, and as an editor for a curator.
+#[tokio::test]
+async fn browse_opens_a_public_catalogue_for_everyone_signed_in() {
+    let mut fixture = Fixture::start().await;
+    fixture.state.web_dir = Some(bundle(&fixture));
+    let reader = fixture.verified(STRANGER).await;
+    let curator = fixture.verified(OWNER).await;
+    db::set_curator(&fixture.state.pool, curator, true)
+        .await
+        .unwrap();
+    let room = db::PublicRoom {
+        id: "public.amda.shocks".to_owned(),
+        name: "Shocks".to_owned(),
+        folder: None,
+        source: None,
+        description: None,
+    };
+    db::create_public_room(&fixture.state.pool, &room, curator)
+        .await
+        .unwrap();
+
+    for (user, role) in [(reader, "viewer"), (curator, "editor")] {
+        let token = fixture.token(user).await;
+        let response = fixture
+            .get("/ui/rooms/public.amda.shocks/browse", Some(&token))
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_text(response).await;
+        let expected = format!(r#"<meta name="cocat-role" content="{role}">"#);
+        assert!(body.contains(&expected), "{expected} missing from {body}");
+        assert!(body.contains(r#"<meta name="cocat-room-name" content="Shocks">"#));
+    }
+}

@@ -119,6 +119,7 @@ struct RoomView {
     percent: u64,
     limit_override: String,
     members: u64,
+    public: bool,
     open: bool,
     clients: u64,
     limit_action: String,
@@ -399,6 +400,7 @@ fn room_view(state: &AppState, row: RoomRow) -> RoomView {
             .map(|mb| mb.to_string())
             .unwrap_or_default(),
         members: row.members,
+        public: row.public,
         open: row.open,
         clients: row.clients,
         limit_action: action("limit"),
@@ -474,7 +476,10 @@ fn answer(state: &AppState, page: &str, result: Result<(), AdminError>, done: &s
             return Redirect::to(&state.links.path("/rooms")).into_response();
         }
         Err(
-            error @ (AdminError::OwnAccount | AdminError::InvalidQuota | AdminError::UnknownUser),
+            error @ (AdminError::OwnAccount
+            | AdminError::InvalidQuota
+            | AdminError::UnknownUser
+            | AdminError::PublicRoom),
         ) => error.to_string(),
         Err(error) => {
             tracing::warn!(%error, "an administration action failed");

@@ -289,6 +289,7 @@ pub async fn room_groups(
     room_id: &str,
     actor: Uuid,
 ) -> Result<Vec<(GroupRow, Role)>, LifecycleError> {
+    lifecycle::refuse_public(state, room_id).await?;
     lifecycle::require_role(state, room_id, actor, Role::Viewer).await?;
     let rows = sqlx::query(
         "SELECT user_group.id, user_group.name, room_group.role

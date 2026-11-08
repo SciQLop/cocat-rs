@@ -286,6 +286,7 @@ async fn import_users(
         .execute(&mut *tx)
         .await?;
     sqlx::query(db::MARK_EMAIL_ROOMS).execute(&mut *tx).await?;
+    db::refuse_reserved_ids(&mut *tx).await?;
 
     if dry_run {
         tx.rollback().await.map_err(db::DbError::from)?;
@@ -486,6 +487,7 @@ async fn import_room_files(
         summary.rooms += 1;
         summary.memberships += 1;
     }
+    db::refuse_reserved_ids(&mut *tx).await?;
     if dry_run {
         tx.rollback().await.map_err(db::DbError::from)?;
     } else {

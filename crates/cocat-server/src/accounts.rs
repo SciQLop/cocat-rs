@@ -176,6 +176,7 @@ pub struct Change {
 pub async fn change(state: &AppState, user: User, change: Change) -> Result<User, AccountError> {
     let mut updated = user;
     let was_active = updated.is_active;
+    let was_superuser = updated.is_superuser;
     let mut ends_sessions = false;
     let moved = change
         .email
@@ -215,6 +216,9 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
         )
         .await;
     }
+    if (was_active && !updated.is_active) || was_superuser != updated.is_superuser {
+        revoke_public(state, updated.id).await?;
+    }
     if moved && let Some(mailer) = &state.mailer {
         send_verification(state, mailer, updated.id, &updated.email).await;
     }
@@ -241,6 +245,7 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, AccountError> {
     let deleted = db::delete_user(&mut *tx, id).await?;
     tx.commit().await.map_err(DbError::from)?;
     revoke_sockets(state, id, rooms).await;
+    revoke_public(state, id).await?;
     Ok(deleted)
 }
 
@@ -250,6 +255,15 @@ async fn revoke_sockets(state: &AppState, id: Uuid, rooms: Vec<(db::RoomRow, Rol
     for (room, _) in rooms {
         state.rooms.revoke(&room.id, id).await;
     }
+}
+
+/// Close the account's sockets on every public catalogue, once its role there changed: it
+/// became or stopped being a curator, or it can no longer sign in.
+pub(crate) async fn revoke_public(state: &AppState, id: Uuid) -> Result<(), DbError> {
+    for room in db::public_rooms(&state.pool).await? {
+        state.rooms.revoke(&room.id, id).await;
+    }
+    Ok(())
 }
 
 /// The account behind an address, or `None` when there is none, it is inactive, or it cannot

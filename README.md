@@ -205,6 +205,25 @@ Removing someone from a project directly does **not** remove group access: while
 belong to still holds a grant, they keep the project at the group's role. Remove them from the
 group, or unshare the project, to cut access.
 
+## Public catalogues
+
+Public catalogues are projects every signed-in account reads and only curators edit. Each
+holds one catalogue, so a client loads only the one it shows. Their ids start with `public.`
+(`public.amda.sharedcatalog_22`); nobody owns them. Curators are the administrators plus the
+accounts an administrator marks (admin pages, or `set-curator`).
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/public` | any user | the index: `id`, `name`, `folder` (`"AMDA/Solar wind"`), `source`, `description`, your `role`, `changed` |
+| `POST /api/public` | curators | `{"name", "folder"?, "source"?, "description"?, "key"?}` → 201; the id is `public.<key>` (409 if taken), random without a key |
+
+A public catalogue is then a project like any other: the socket, history, catalogues and
+export routes answer a reader as a viewer and a curator as an editor, and a reader can copy
+a version into a project of their own. Curators rename and delete one. Members, invitations,
+groups, sharing, leaving and transfer answer 409 for everyone. They are not in
+`GET /api/rooms`. The server refuses to start, and the import to run, when a project that
+is not public has a `public.` id (only an id imported from Python can).
+
 ## Web UI
 
 Server-rendered pages under `{COCAT_PROXY_PREFIX}/ui/`, with the paths and messages of the

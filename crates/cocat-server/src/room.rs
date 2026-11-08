@@ -404,6 +404,13 @@ impl RoomManager {
             .saturating_add(size(stamps_file(&self.update_dir, room_id)))
     }
 
+    /// When the room's file last changed, `None` before its first write.
+    pub fn room_changed(&self, room_id: &str) -> Option<std::time::SystemTime> {
+        fs::metadata(room_file(&self.update_dir, room_id))
+            .and_then(|metadata| metadata.modified())
+            .ok()
+    }
+
     /// Flushes every open room, waiting for each file write to reach the disk.
     pub async fn flush_all(&self) {
         let handles: Vec<RoomHandle> = match self.rooms.lock() {

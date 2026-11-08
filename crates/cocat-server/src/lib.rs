@@ -22,6 +22,7 @@ pub mod mail;
 pub mod oidc;
 pub mod openapi;
 pub mod presence;
+pub mod public_api;
 pub mod ratelimit;
 pub mod room;
 pub mod telemetry;

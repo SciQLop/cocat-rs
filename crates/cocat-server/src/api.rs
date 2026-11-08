@@ -36,6 +36,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(crate::history_api::router())
         .merge(crate::groups_api::router())
         .merge(crate::invitations_api::router())
+        .merge(crate::public_api::router())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -433,6 +434,7 @@ async fn delete_room(
         (status = 200, description = "The members and their roles", body = [MemberOut]),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+        (status = 409, description = "A public catalogue has no members", body = Detail),
     )
 )]
 async fn list_members(
@@ -440,6 +442,7 @@ async fn list_members(
     CurrentUser(user): CurrentUser,
     ApiPath(room_id): ApiPath<String>,
 ) -> Result<Json<Vec<MemberOut>>, ApiError> {
+    lifecycle::refuse_public(&state, &room_id).await?;
     membership(&state, &room_id, user.id).await?;
     let members = db::list_members(&state.pool, &room_id)
         .await?
@@ -615,6 +618,7 @@ pub async fn legacy_room_users(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<RoomUsers>, ApiError> {
+    lifecycle::refuse_public(&state, &room_id).await?;
     membership(&state, &room_id, user.id).await?;
     let members = db::list_members(&state.pool, &room_id).await?;
     Ok(Json(RoomUsers {

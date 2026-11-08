@@ -697,3 +697,67 @@ async fn an_imported_account_owning_the_room_named_by_its_email_gets_it_as_its_o
         "the room named like bob belongs to alice"
     );
 }
+
+/// A Python room whose id starts like a public catalogue's would be served to everyone signed
+/// in; the import stops and names it instead, and writes nothing.
+#[tokio::test]
+async fn a_python_room_with_a_public_catalogue_id_stops_the_import() {
+    let fixture = Fixture::start().await;
+    let python = fixture.dir.path().join("python.db");
+    std::fs::copy(Fixture::released(), &python).unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&python))
+        .await
+        .unwrap();
+    sqlx::query(r#"UPDATE "user" SET rooms = '["public.lab"]' WHERE email = 'carol@example.org'"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let error = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        Some(&python),
+        None,
+        false,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("public.lab"), "{error}");
+    assert!(error.contains("public catalogues"), "{error}");
+    assert!(
+        db::user_by_email(&fixture.pool, "carol@example.org")
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing was imported"
+    );
+}
+
+/// A room file named like a public catalogue, imported for an owner, stops the import too.
+#[tokio::test]
+async fn a_room_file_with_a_public_catalogue_id_stops_the_import() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "pwd", false, true)
+        .await
+        .unwrap();
+    let (mut store, _) = FileRoomStore::open(&fixture.updates, "public.lab").unwrap();
+    store.flush().unwrap();
+
+    let error = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("public.lab"), "{error}");
+    assert!(!db::room_exists(&fixture.pool, "public.lab").await.unwrap());
+}

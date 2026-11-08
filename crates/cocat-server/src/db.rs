@@ -33,6 +33,13 @@ pub enum DbError {
     NoSuchMembership { room_id: String, user_id: Uuid },
     #[error("{email} already has an account")]
     EmailTaken { email: String },
+    #[error(
+        "these projects have ids starting with \"{}\", which this server keeps for public \
+         catalogues: {}. They came from a Python server: rename them there and import again",
+        cocat_core::room_id::PUBLIC_PREFIX,
+        .0.join(", ")
+    )]
+    ReservedIds(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,22 +233,25 @@ pub async fn direct_role(
 
 /// The role a user holds on a room: the highest of their own membership and every
 /// grant made to a group they belong to. A grant can never be `owner`, so an owner
-/// only ever comes from a direct membership.
+/// only ever comes from a direct membership. A public catalogue has neither: every account
+/// views it and curators edit it.
 pub async fn role_in(
     pool: &SqlitePool,
     room_id: &str,
     user_id: Uuid,
 ) -> Result<Option<Role>, DbError> {
     let names: Vec<String> = sqlx::query_scalar(
-        "SELECT role FROM membership WHERE room_id = ? AND user_id = ?
+        r#"SELECT role FROM membership WHERE room_id = ?1 AND user_id = ?2
          UNION ALL
          SELECT room_group.role
          FROM room_group
            JOIN group_member ON group_member.group_id = room_group.group_id
-         WHERE room_group.room_id = ? AND group_member.user_id = ?",
+         WHERE room_group.room_id = ?1 AND group_member.user_id = ?2
+         UNION ALL
+         SELECT CASE WHEN "user".is_superuser OR "user".is_curator THEN 'editor' ELSE 'viewer' END
+         FROM room JOIN "user" ON "user".id = ?2
+         WHERE room.id = ?1 AND room.public"#,
     )
-    .bind(room_id)
-    .bind(user_id.to_string())
     .bind(room_id)
     .bind(user_id.to_string())
     .fetch_all(pool)
@@ -251,6 +261,22 @@ pub async fn role_in(
         .map(|name| role_from_name(name))
         .collect::<Result<_, _>>()?;
     Ok(roles.into_iter().max_by_key(Role::rank))
+}
+
+/// The room and the role `user_id` holds there, when they reach it at all.
+pub async fn room_for(
+    pool: &SqlitePool,
+    room_id: &str,
+    user_id: Uuid,
+) -> Result<Option<(RoomRow, Role)>, DbError> {
+    let Some(role) = role_in(pool, room_id, user_id).await? else {
+        return Ok(None);
+    };
+    let name = room_name(pool, room_id).await?;
+    Ok(name.map(|name| {
+        let id = room_id.to_owned();
+        (RoomRow { id, name }, role)
+    }))
 }
 
 pub async fn room_name(pool: &SqlitePool, room_id: &str) -> Result<Option<String>, DbError> {
@@ -420,11 +446,12 @@ pub struct AdminRoom {
     pub owner: Option<String>,
     pub members: u64,
     pub limit_mb: Option<u64>,
+    pub public: bool,
 }
 
 pub async fn admin_rooms(pool: &SqlitePool) -> Result<Vec<AdminRoom>, DbError> {
     let rows = sqlx::query(
-        "SELECT r.id, r.name, r.limit_mb,
+        "SELECT r.id, r.name, r.limit_mb, r.public,
                 (SELECT u.email FROM membership m JOIN \"user\" u ON u.id = m.user_id
                  WHERE m.room_id = r.id AND m.role = 'owner') AS owner,
                 (SELECT COUNT(*) FROM membership m WHERE m.room_id = r.id) AS members
@@ -440,6 +467,7 @@ pub async fn admin_rooms(pool: &SqlitePool) -> Result<Vec<AdminRoom>, DbError> {
             name: row.try_get("name")?,
             owner: row.try_get("owner")?,
             members: row.try_get::<i64, _>("members")?.max(0) as u64,
+            public: row.try_get("public")?,
             limit_mb: row
                 .try_get::<Option<i64>, _>("limit_mb")?
                 .and_then(|mb| u64::try_from(mb).ok()),
@@ -804,6 +832,72 @@ pub async fn personal_room(
     .bind(user.to_string())
     .fetch_optional(executor)
     .await?)
+}
+
+/// A public catalogue as the index lists it.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct PublicRoom {
+    pub id: String,
+    pub name: String,
+    pub folder: Option<String>,
+    pub source: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Makes a public catalogue: no owner and no members, so `created_by` only records who.
+pub async fn create_public_room(
+    pool: &SqlitePool,
+    room: &PublicRoom,
+    by: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO room (id, name, created_by, public, folder, source, description)
+         VALUES (?, ?, ?, TRUE, ?, ?, ?)",
+    )
+    .bind(&room.id)
+    .bind(&room.name)
+    .bind(by.to_string())
+    .bind(&room.folder)
+    .bind(&room.source)
+    .bind(&room.description)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Every public catalogue, by folder then name.
+pub async fn public_rooms(pool: &SqlitePool) -> Result<Vec<PublicRoom>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, name, folder, source, description FROM room WHERE public
+         ORDER BY folder IS NULL, folder, name, id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn is_public(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
+    let public: Option<bool> = sqlx::query_scalar("SELECT public FROM room WHERE id = ?")
+        .bind(room_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(public.unwrap_or(false))
+}
+
+/// Refuses a database where a project that is not public has a public catalogue's id: it
+/// came from Python, and serving it would hand its catalogues to everyone signed in.
+pub async fn refuse_reserved_ids(
+    executor: impl Executor<'_, Database = Sqlite>,
+) -> Result<(), DbError> {
+    let clashing: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM room WHERE NOT public AND substr(id, 1, ?) = ?")
+            .bind(cocat_core::room_id::PUBLIC_PREFIX.len() as i64)
+            .bind(cocat_core::room_id::PUBLIC_PREFIX)
+            .fetch_all(executor)
+            .await?;
+    match clashing.is_empty() {
+        true => Ok(()),
+        false => Err(DbError::ReservedIds(clashing)),
+    }
 }
 
 pub async fn rename_room(pool: &SqlitePool, room_id: &str, name: &str) -> Result<bool, DbError> {

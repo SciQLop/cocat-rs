@@ -345,6 +345,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         fs::create_dir_all(update_dir)?;
     }
     let pool = db::open(db_path).await?;
+    db::refuse_reserved_ids(&pool).await?;
     let secret = auth::load_secret(db_path)?;
     let rooms = RoomManager::new(update_dir.to_owned(), budget).with_storage(storage_limits()?);
     let state = AppState {
