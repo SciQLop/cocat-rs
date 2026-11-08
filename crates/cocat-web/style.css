@@ -291,6 +291,42 @@ a { color: var(--accent); text-underline-offset: 2px; }
   background: var(--span);
 }
 .bar.lane-b { bottom: 26px; background: var(--accent); }
+.strip { touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+.timeline:focus { outline: none; }
+.band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-left: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  cursor: grab;
+}
+.band:focus-visible { outline: none; box-shadow: var(--focus); }
+.handle {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 22px;
+  margin-top: -11px;
+  border-radius: 3px;
+  background: var(--accent);
+  cursor: ew-resize;
+}
+.handle.start { left: -5px; }
+.handle.stop { right: -5px; }
+.period-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 6px 4px;
+  font-size: 13px;
+}
+.period-line span { font-family: var(--mono); }
 .axis {
   display: flex;
   justify-content: space-between;

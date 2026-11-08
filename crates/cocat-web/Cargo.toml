@@ -27,6 +27,7 @@ web-sys = { version = "0.3", features = [
     "BinaryType",
     "Clipboard",
     "Document",
+    "DomRect",
     "Element",
     "History",
     "HtmlDetailsElement",
@@ -37,6 +38,7 @@ web-sys = { version = "0.3", features = [
     "MessageEvent",
     "Navigator",
     "Node",
+    "PointerEvent",
     "WebSocket",
     "Window",
 ] }

@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 
 use crate::help::{Shown, empty_text};
+use crate::period::Period;
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
@@ -11,7 +12,7 @@ use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
 use crate::views::table::Table;
-use crate::views::timeline::Timeline;
+use crate::views::timeline::{PeriodLine, Timeline};
 use crate::views::trash::TrashedCatalogues;
 
 /// The rows of what is on screen, or the rule's error.
@@ -29,13 +30,23 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
         Route::Default | Route::History { .. } | Route::Groups | Route::Group(_) => Ok(Vec::new()),
     });
     let query = RwSignal::new(String::new());
+    let period = RwSignal::new(None::<Period>);
     let sorting = RwSignal::new((SortKey::Start, false));
+    let matching = Memo::new(move |_| {
+        members.with(|members| match members {
+            Ok(rows) => query.with(|query| filter(rows, query)),
+            Err(_) => Vec::new(),
+        })
+    });
     let order = Memo::new(move |_| {
         members.with(|members| {
             let Ok(rows) = members else {
                 return Vec::new();
             };
-            let mut order = query.with(|query| filter(rows, query));
+            let mut order = matching.get();
+            if let Some(period) = period.get() {
+                order.retain(|&index| period.overlaps(rows[index].start, rows[index].stop));
+            }
             sorting.with(|(key, descending)| sort(rows, &mut order, key, *descending));
             order
         })
@@ -54,6 +65,7 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
         form.set(Form::Closed);
         picked.set(None);
         query.set(String::new());
+        period.set(None);
         selected.set(None);
     });
     let can_write = room.can_write();
@@ -98,7 +110,8 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
                 text="Deleted events and catalogues wait here. Restore puts one back; Delete for good cannot be undone."/>
             <TrashedCatalogues/>
         })}
-        <Timeline members order/>
+        <Timeline members matching period/>
+        <PeriodLine period order matching/>
         <Table members order sorting columns selected empty/>
     }
 }

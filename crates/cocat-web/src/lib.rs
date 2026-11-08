@@ -10,6 +10,7 @@ pub mod format;
 pub mod help;
 pub mod history;
 pub mod layout;
+pub mod period;
 pub mod presence;
 pub mod projects;
 pub mod route;
