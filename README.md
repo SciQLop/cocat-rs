@@ -108,7 +108,7 @@ restart.
 | 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
 | 1013 | try again later: the client fell more than 1024 frames behind, or the room would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
 | 1011 | internal error while attaching the socket |
-| 4507 | room storage limit reached: an update would take the room file past `COCAT_ROOM_MAX_MB` or its owner's quota |
+| 4507 | room storage limit reached: an update would take the room file and its history stamps past `COCAT_ROOM_MAX_MB` or its owner's quota |
 
 A handshake that does not offer the websocket subprotocol `cocat.v2` is refused before the
 upgrade with HTTP 426: it comes from a client of the first layout (see

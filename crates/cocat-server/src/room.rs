@@ -25,7 +25,9 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, ReadTxn, StateVector, Transact, Update};
 
-use crate::history::stamps::{Stamp, StampFile, read_stamps, stamp_for, stamps_file, valid_stamps};
+use crate::history::stamps::{
+    ENTRY, Stamp, StampFile, read_stamps, stamp_for, stamps_file, valid_stamps,
+};
 use crate::presence::Presence;
 
 pub type ClientId = u64;
@@ -287,11 +289,7 @@ impl RoomManager {
         let mut used = 0u64;
         for owned in crate::db::owned_rooms(pool, owner).await? {
             if owned != room_id {
-                used = used.saturating_add(
-                    fs::metadata(room_file(&self.update_dir, &owned))
-                        .map(|metadata| metadata.len())
-                        .unwrap_or(0),
-                );
+                used = used.saturating_add(self.room_size(&owned));
             }
         }
         Ok(room_limit.min(owner_limit.saturating_sub(used)))
@@ -399,11 +397,11 @@ impl RoomManager {
         (open, clients)
     }
 
-    /// The size of the room's file on disk, zero when no update has been written yet.
+    /// What the room takes on disk, its file and its stamps; zero when nothing was written.
     pub fn room_size(&self, room_id: &str) -> u64 {
-        fs::metadata(room_file(&self.update_dir, room_id))
-            .map(|metadata| metadata.len())
-            .unwrap_or(0)
+        let size = |path: PathBuf| fs::metadata(path).map_or(0, |metadata| metadata.len());
+        size(room_file(&self.update_dir, room_id))
+            .saturating_add(size(stamps_file(&self.update_dir, room_id)))
     }
 
     /// Flushes every open room, waiting for each file write to reach the disk.
@@ -1525,10 +1523,19 @@ fn handle_update(
     if payload == [0, 0] {
         return Ok(None);
     }
-    // The payload's size bounds what an append adds, and the check runs before the update is
-    // applied so a refused update leaves the document and the file as they were. A repeated
-    // update at the boundary is refused with the rest: it costs a reconnection, not data.
-    if store.total_size().saturating_add(payload.len() as u64) > limit {
+    // The payload's size and one stamp bound what an append adds, and the check runs before
+    // the update is applied so a refused update leaves the document and the files as they
+    // were. A repeated update at the boundary is refused with the rest: it costs a
+    // reconnection, not data.
+    let (stamped, stamp) = stamps
+        .as_ref()
+        .map_or((0, 0), |stamps| (stamps.size(), ENTRY as u64));
+    let after = store
+        .total_size()
+        .saturating_add(stamped)
+        .saturating_add(stamp)
+        .saturating_add(payload.len() as u64);
+    if after > limit {
         crate::telemetry::refused("storage_quota");
         return Err(CloseReason::Full);
     }
@@ -2579,6 +2586,63 @@ mod tests {
         )
         .expect("another client still writes under the limit");
         assert!(accepted.is_some(), "the later small update is broadcast");
+    }
+
+    #[test]
+    fn the_stamps_count_against_the_room_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _records) = FileRoomStore::open(dir.path(), "lab").unwrap();
+        let mut stamps = Some(StampFile::open(dir.path(), "lab").unwrap());
+        let (doc, mut seen) = (Doc::new(), StateVector::default());
+        let first = update_with("key", "value");
+        handle_update(
+            &doc,
+            &mut store,
+            &mut stamps,
+            &mut seen,
+            u64::MAX,
+            first,
+            Author::Nobody,
+        )
+        .unwrap();
+
+        let second = update_with("second", "value");
+        let limit = store.total_size() + second.len() as u64 + 8;
+        assert_eq!(
+            handle_update(
+                &doc,
+                &mut store,
+                &mut stamps,
+                &mut seen,
+                limit,
+                second,
+                Author::Nobody
+            ),
+            Err(CloseReason::Full),
+            "the room file fits, its stamps do not"
+        );
+    }
+
+    #[tokio::test]
+    async fn owner_quota_counts_other_rooms_stamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::db::open(&dir.path().join("test.db")).await.unwrap();
+        let owner = crate::db::create_user(&pool, "owner@example.org", "pwd", false, true)
+            .await
+            .unwrap();
+        for room in ["first", "second"] {
+            crate::db::create_room(&pool, owner, room, room)
+                .await
+                .unwrap();
+        }
+        fs::write(stamps_file(dir.path(), "first"), [0u8; 96]).unwrap();
+        let manager = RoomManager::new(dir.path().to_owned(), None).with_storage(StorageLimits {
+            room: u64::MAX,
+            owner: 196,
+        });
+
+        assert_eq!(manager.allowance(&pool, "second").await.unwrap(), 100);
+        assert_eq!(manager.room_size("first"), 96);
     }
 
     #[tokio::test]

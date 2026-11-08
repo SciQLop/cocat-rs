@@ -13,7 +13,7 @@ use xxhash_rust::xxh3::xxh3_64;
 /// record u64, user 16 bytes (all zero = none), at_ms i64, len u32, restore u32, hash u64;
 /// all little-endian. `restore` is 0 for an ordinary record, else the restored version + 1,
 /// so entries written before restores existed read as ordinary.
-const ENTRY: usize = 48;
+pub const ENTRY: usize = 48;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stamp {
@@ -95,6 +95,8 @@ pub struct StampFile {
     file: File,
     pending: Vec<u8>,
     needs_sync: bool,
+    /// The file's length once the pending stamps are written; it counts in the room's size.
+    size: u64,
 }
 
 impl StampFile {
@@ -113,11 +115,17 @@ impl StampFile {
             file,
             pending: Vec::new(),
             needs_sync: false,
+            size: whole,
         })
     }
 
     pub fn append(&mut self, stamp: Stamp) {
         self.pending.extend_from_slice(&stamp.encode());
+        self.size += ENTRY as u64;
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
     }
 
     /// A failed write is cut back to the last whole entry and the stamps stay pending.
