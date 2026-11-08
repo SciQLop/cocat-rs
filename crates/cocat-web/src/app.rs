@@ -11,13 +11,14 @@ use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
 use crate::views::header::Header;
 use crate::views::history::HistoryPage;
+use crate::views::projects::Projects;
 use crate::views::sidebar::Sidebar;
 use cocat_core::model;
 
 pub fn start() {
     console_error_panic_hook::set_once();
     match read_config() {
-        Ok(config) => leptos::mount::mount_to_body(move || view! { <App config/> }),
+        Ok(config) => leptos::mount::mount_to_body(move || view! { <Shell config/> }),
         Err(error) => leptos::mount::mount_to_body(move || failure(error.to_string())),
     }
 }
@@ -43,17 +44,40 @@ fn failure(message: String) -> impl IntoView {
     }
 }
 
+/// Holds the open project; each project gets an `App` of its own, so switching starts from a
+/// fresh room, connection and view state.
+#[component]
+fn Shell(config: RoomConfig) -> impl IntoView {
+    let projects = Projects::new(config);
+    provide_context(projects);
+    projects.reload();
+    // The shell lives as long as the page: nothing to remove the listener for.
+    let _ = window_event_listener(leptos::ev::popstate, move |_| projects.arrived());
+    let opened = Memo::new(move |_| projects.open.with(|config| config.room_id.clone()));
+    move || {
+        opened.with(|_| {
+            let config = projects.open.get_untracked();
+            view! { <App config/> }
+        })
+    }
+}
+
 #[component]
 fn App(config: RoomConfig) -> impl IntoView {
     let room = Room::new(config);
     provide_context(room.clone());
-    if let Err(error) = connection::connect(room.clone()) {
-        return failure(format!("The project cannot sync: {error}")).into_any();
-    }
+    let connection = match connection::connect(room.clone()) {
+        Ok(connection) => StoredValue::new_local(connection),
+        Err(error) => return failure(format!("The project cannot sync: {error}")).into_any(),
+    };
+    on_cleanup(move || {
+        connection.try_with_value(|connection| connection.close());
+    });
     let (editor, published) = (room.can_write(), room.editing);
     let route = RwSignal::new(current_route());
-    // The page lives as long as the listener: nothing to remove it for.
-    let _ = window_event_listener(leptos::ev::hashchange, move |_| route.set(current_route()));
+    let listener =
+        window_event_listener(leptos::ev::hashchange, move |_| route.set(current_route()));
+    on_cleanup(move || listener.remove());
     let shown = Memo::new(move |_| {
         let first = room.read(|txn| model::catalogues(txn).into_iter().next().map(|c| c.uuid));
         route.get().or_first(first.as_deref())

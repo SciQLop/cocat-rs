@@ -7,6 +7,8 @@ pub mod event_editor;
 pub mod event_panel;
 pub mod header;
 pub mod history;
+pub mod project_dialogs;
+pub mod projects;
 pub mod rule;
 pub mod rule_editor;
 pub mod sidebar;

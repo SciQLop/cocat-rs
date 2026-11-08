@@ -5,6 +5,7 @@ use crate::presence::Peer;
 use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
+use crate::views::projects::ProjectMenu;
 
 #[component]
 pub fn Header(shown: Memo<Route>) -> impl IntoView {
@@ -22,11 +23,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                 "cocat"
             </a>
             <nav class="crumbs" aria-label="Breadcrumb">
-                <a href="../rooms">"My projects"</a>
-                <span aria-hidden="true">"/"</span>
-                <a class="here" href=format!("../rooms/{}", config.room_id)>
-                    {config.room_name.clone()}
-                </a>
+                <ProjectMenu/>
                 <Show when=in_history>
                     <span aria-hidden="true">"/"</span>
                     <span class="here" aria-current="page">"History"</span>

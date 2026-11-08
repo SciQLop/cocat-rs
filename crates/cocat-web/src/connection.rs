@@ -30,12 +30,25 @@ struct Link {
     backoff: RefCell<Backoff>,
     presence: RefCell<Presence>,
     render_queued: Rc<Cell<bool>>,
+    /// Set once the page moved to another project: no more sockets.
+    stopped: Cell<bool>,
     handlers: Handlers,
 }
 
-/// Keeps the room's replica in step with the server for as long as the page lives: the
+/// The room's link to the server, until [`Connection::close`].
+pub struct Connection(Rc<Link>);
+
+impl Connection {
+    /// Ends the link for good: the socket closes, no reconnect follows, and the document's
+    /// observer lets go of the link.
+    pub fn close(&self) {
+        self.0.stop();
+    }
+}
+
+/// Keeps the room's replica in step with the server until the connection closes: the
 /// document's observer owns the link.
-pub fn connect(room: Room) -> Result<(), TransactionAcqError> {
+pub fn connect(room: Room) -> Result<Connection, TransactionAcqError> {
     let link = Rc::new_cyclic(|link: &Weak<Link>| Link {
         room: room.clone(),
         socket: RefCell::new(None),
@@ -43,6 +56,7 @@ pub fn connect(room: Room) -> Result<(), TransactionAcqError> {
         backoff: RefCell::new(Backoff::default()),
         presence: RefCell::new(Presence::new(room.doc.clone())),
         render_queued: Rc::default(),
+        stopped: Cell::new(false),
         handlers: handlers(link),
     });
     let observer = link.clone();
@@ -55,7 +69,7 @@ pub fn connect(room: Room) -> Result<(), TransactionAcqError> {
     let announcer = link.clone();
     Effect::new(move |_| announcer.announce(room.editing.get()));
     link.open();
-    Ok(())
+    Ok(Connection(link))
 }
 
 fn handlers(link: &Weak<Link>) -> Handlers {
@@ -82,6 +96,9 @@ fn handlers(link: &Weak<Link>) -> Handlers {
 
 impl Link {
     fn open(self: &Rc<Self>) {
+        if self.stopped.get() {
+            return;
+        }
         let Ok(socket) = WebSocket::new_with_str(&self.room.config.ws_url, SUBPROTOCOL) else {
             self.closed();
             return;
@@ -146,6 +163,17 @@ impl Link {
         let delay = self.backoff.borrow_mut().next_delay();
         let link = self.clone();
         set_timeout(move || link.open(), delay);
+    }
+
+    fn stop(&self) {
+        self.stopped.set(true);
+        let _ = self.room.doc.unobserve_update_v1("browser");
+        if let Some(socket) = self.socket.take() {
+            socket.set_onopen(None);
+            socket.set_onclose(None);
+            socket.set_onmessage(None);
+            let _ = socket.close();
+        }
     }
 
     /// Updates come in bursts; the views read the replica once per frame at most.

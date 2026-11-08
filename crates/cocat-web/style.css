@@ -736,3 +736,112 @@ a.button { text-decoration: none; }
 }
 .avatar + .avatar { margin-left: -8px; }
 .events tr.row.peer { background: color-mix(in srgb, var(--peer) 9%, transparent); box-shadow: inset 3px 0 0 var(--peer); }
+
+/* Project menu: the open project's name in the header lists the others. */
+
+.project-menu { position: relative; min-width: 0; }
+.project-switch {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(360px, 60vw);
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.project-switch::-webkit-details-marker { display: none; }
+.project-switch:hover { background: var(--chip); }
+.project-switch .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-switch .caret { color: var(--muted); font-weight: 400; }
+/* A click outside the open menu lands on this layer, which is part of the summary: it closes. */
+.project-menu[open] > .project-switch::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  cursor: default;
+}
+.project-menu .menu {
+  position: absolute;
+  left: 0;
+  z-index: 4;
+  margin-top: 4px;
+  padding: 6px;
+  width: 290px;
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
+}
+.project-menu .menu .eyebrow { padding: 4px 8px; }
+.project-menu .menu hr { width: 100%; border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
+.project-menu .menu > :is(button, a) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 7px 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.project-menu .menu > :is(button, a):hover { background: var(--chip); }
+.project-menu .menu .danger { color: var(--danger); }
+.project-entry .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-entry small { color: var(--muted); flex: none; }
+.project-entry[aria-current] { background: var(--accent-soft); font-weight: 600; }
+.project-menu .menu .hint { padding: 6px 8px 2px; }
+
+.project-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.25);
+}
+.project-dialog::backdrop { background: rgb(28 35 49 / 0.35); }
+.project-dialog h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+.project-dialog p { margin: 0; overflow-wrap: anywhere; }
+.project-dialog .name-form { gap: 12px; }
+
+@media (max-width: 480px) {
+  .project-menu { position: static; }
+  .project-menu .menu {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 80vh;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-radius: 12px 12px 0 0;
+  }
+  .project-menu[open] > .project-switch::before { background: rgb(28 35 49 / 0.35); }
+  .project-menu .menu > :is(button, a) { padding: 11px 8px; }
+  .project-dialog {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+}

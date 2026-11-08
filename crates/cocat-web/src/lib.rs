@@ -11,6 +11,7 @@ pub mod help;
 pub mod history;
 pub mod layout;
 pub mod presence;
+pub mod projects;
 pub mod route;
 pub mod rows;
 pub mod rule_text;

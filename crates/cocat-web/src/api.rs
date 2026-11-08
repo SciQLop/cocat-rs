@@ -1,5 +1,5 @@
-//! The history routes of the server's API. Same-origin requests, so the browser sends the
-//! session cookie with each.
+//! The project and history routes of the server's API. Same-origin requests, so the browser
+//! sends the session cookie with each.
 
 use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
@@ -7,6 +7,7 @@ use serde_json::json;
 use thiserror::Error;
 
 use crate::history::{Diff, History, Version, endpoint, refusal_text, save_body};
+use crate::projects::{Project, rooms_url};
 use crate::session::RoomConfig;
 
 #[derive(Debug, Error)]
@@ -17,7 +18,7 @@ pub enum ApiError {
     Refused(String),
     #[error("the server's answer does not read: {0}")]
     Format(#[from] serde_json::Error),
-    #[error("the history's address cannot be built")]
+    #[error("the server's address cannot be built")]
     Url,
 }
 
@@ -107,6 +108,43 @@ pub async fn copy_version(
     let body = json!({ "name": name }).to_string();
     let copied: Copied = json_body(Request::post(&url), body).await?;
     Ok(copied.room)
+}
+
+/// The visitor's projects, by name.
+pub async fn projects(api: &str) -> Result<Vec<Project>, ApiError> {
+    json(Request::get(&rooms(api, &[])?)).await
+}
+
+/// A new project, owned by the visitor.
+pub async fn create_project(api: &str, name: &str) -> Result<Project, ApiError> {
+    let body = json!({ "name": name }).to_string();
+    json_body(Request::post(&rooms(api, &[])?), body).await
+}
+
+pub async fn rename_project(api: &str, id: &str, name: &str) -> Result<Project, ApiError> {
+    let body = json!({ "name": name }).to_string();
+    json_body(Request::patch(&rooms(api, &[id])?), body).await
+}
+
+pub async fn delete_project(api: &str, id: &str) -> Result<(), ApiError> {
+    checked(Request::delete(&rooms(api, &[id])?).send().await?).await?;
+    Ok(())
+}
+
+/// Leaving is removing one's own membership, which takes the visitor's account id.
+pub async fn leave_project(api: &str, id: &str) -> Result<(), ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Me {
+        id: String,
+    }
+    let me: Me = json(Request::get(&format!("{api}/me"))).await?;
+    let url = rooms(api, &[id, "members", &me.id])?;
+    checked(Request::delete(&url).send().await?).await?;
+    Ok(())
+}
+
+fn rooms(api: &str, segments: &[&str]) -> Result<String, ApiError> {
+    rooms_url(api, segments).ok_or(ApiError::Url)
 }
 
 fn url(config: &RoomConfig, path: &[&str], query: &[(&str, &str)]) -> Result<String, ApiError> {
