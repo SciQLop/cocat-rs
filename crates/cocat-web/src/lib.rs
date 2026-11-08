@@ -7,6 +7,7 @@ pub mod catalogues;
 pub mod detail;
 pub mod edit;
 pub mod format;
+pub mod help;
 pub mod history;
 pub mod layout;
 pub mod presence;

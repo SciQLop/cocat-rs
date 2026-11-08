@@ -5,6 +5,7 @@ mod admin;
 mod app;
 mod frame;
 mod groups;
+mod help;
 mod invitation;
 mod landing;
 mod login;
@@ -29,6 +30,7 @@ use crate::lifecycle::LifecycleError;
 pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/", get(frame::index))
+        .route("/help", get(help::page))
         .route("/login", get(login::page).post(login::login))
         .route("/logout", post(login::logout))
         .route("/request-verify", post(login::request_verify))

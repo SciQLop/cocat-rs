@@ -1,0 +1,3 @@
+{% macro hint(help_href, anchor, topic, text) -%}
+<p class="hint">{{ text }} <a class="help-link" href="{{ help_href }}#{{ anchor }}" aria-label="Help: {{ topic }}">?</a></p>
+{%- endmacro %}

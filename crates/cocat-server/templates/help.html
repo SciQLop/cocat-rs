@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block content %}
+<article class="help">
+<h1>Help</h1>
+<p class="meta">cocat keeps catalogues of time intervals that you and your colleagues edit
+together, in the browser, in SciQLop and from Python.</p>
+
+<nav class="toc" aria-label="Contents">
+  <ul>
+    <li><a href="#projects">Projects</a></li>
+    <li><a href="#catalogues">Catalogues and events</a></li>
+    <li><a href="#smart-catalogues">Smart catalogues</a></li>
+    <li><a href="#history">History</a></li>
+    <li><a href="#sharing">Sharing</a></li>
+    <li><a href="#groups">Groups</a></li>
+    <li><a href="#roles">Roles</a></li>
+    <li><a href="#presence">Who is here</a></li>
+    <li><a href="#sciqlop-python">SciQLop and Python</a></li>
+    <li><a href="#account">Your account</a></li>
+  </ul>
+</nav>
+
+<section>
+<h2 id="projects">Projects</h2>
+<p>Projects hold catalogues and their events. Everyone in a project sees and can work on
+everything in it, with the role you give them. An event can belong to several catalogues of
+the same project. The project's history covers all of it.</p>
+<p>Your account starts with a project called “My catalogues”. It is private until you share
+it.</p>
+<p>To share only some catalogues, create a project for them on
+<a href="{{ rooms_href }}">My projects</a>, and share that one.</p>
+<p>SciQLop and Python call a project a “room”.</p>
+</section>
+
+<section>
+<h2 id="catalogues">Catalogues and events</h2>
+<p>A catalogue is a named list of events. On a project's page, press
+<strong>Open catalogues</strong> to see them on a timeline and in a table.</p>
+<p>An event is a time interval. It has:</p>
+<ul>
+  <li><strong>Start</strong> and <strong>stop</strong>, in UTC.</li>
+  <li><strong>Tags</strong>: short words to sort events, like “shock”.</li>
+  <li><strong>Status</strong>: preliminary, confirmed, reviewed, final or rejected.</li>
+  <li><strong>Confidence</strong>: a number from 0 to 1.</li>
+  <li><strong>Attributes</strong>: your own named values, like a spacecraft or a density.</li>
+  <li><strong>Comment</strong>: free text.</li>
+</ul>
+<p>Pick a row to open the event. Editors change it there. Its <strong>Listed in</strong> part
+shows its catalogues, and adds it to another one.</p>
+<p>Deleting an event or a catalogue moves it to the <strong>Trash</strong>, at the bottom of
+the catalogue list. From there, <strong>Restore</strong> puts it back.
+<strong>Delete for good</strong> removes it, and cannot be undone.</p>
+</section>
+
+<section>
+<h2 id="smart-catalogues">Smart catalogues</h2>
+<p>A smart catalogue has a rule. The rule picks events from the whole project. Its list
+updates by itself while people edit. You can still add events to it by hand.</p>
+<p>You make one from Python, or by importing a tscat dynamic catalogue. In the catalogue
+browser, <strong>Edit rule</strong> changes the rule. Before you save, the editor says in
+words what the rule picks, or what is wrong with it.</p>
+<p>A rule is written in JSON. A few examples:</p>
+{% for (what, rule) in rules %}
+<figure class="rule-example">
+  <figcaption>{{ what }}</figcaption>
+  <pre><code>{{ rule }}</code></pre>
+</figure>
+{% endfor %}
+<p>A rule can test <code>start</code>, <code>stop</code>, <code>tags</code>,
+<code>status</code>, <code>confidence</code>, <code>author</code>, <code>products</code>,
+and any attribute as <code>#name</code>. Write times like
+<code>2020-01-01T00:00:00Z</code>. Gaps are in seconds.</p>
+<p>Some rules make new intervals, like the last example. Those intervals are read-only. To
+keep what a smart catalogue holds today, use <strong>More → Materialize…</strong>. It
+freezes the result into a normal catalogue, where joined intervals become events you can
+edit.</p>
+</section>
+
+<section>
+<h2 id="history">History</h2>
+<p>The server keeps every version of a project. In the catalogue browser, press
+<strong>History</strong> to see them, newest first.</p>
+<p>A version is a run of changes by one person. A new version starts when:</p>
+<ul>
+  <li>they pause for more than 5 minutes,</li>
+  <li>an hour has passed since the version began,</li>
+  <li>someone else makes a change,</li>
+  <li>someone restores a version,</li>
+  <li>or someone presses <strong>Save version</strong>.</li>
+</ul>
+<p><strong>Save version</strong> ends the current version on purpose. Give it a name, like
+“paper v1”, and a note that says why, like “as submitted”. Saved versions carry a mark in the
+list. <strong>Name this version</strong> names any version later.</p>
+<p>Pick a version to see what it changed: the events it added, changed and removed.</p>
+<p><strong>Restore this version</strong> makes the project as it was then. Opened from a
+catalogue, the history shows that catalogue only, and a restore brings back only that
+catalogue. Nothing is lost. Events made since then go to the trash. The restore is a new
+version, so you can undo it by restoring the version before it.</p>
+</section>
+
+<section>
+<h2 id="sharing">Sharing</h2>
+<p>The owner shares a project from its page, in three ways:</p>
+<ul>
+  <li><strong>Share link</strong>: anyone with the link can join, with the role you pick. It
+  works for 14 days, as many times as needed. The Uses column counts who joined.</li>
+  <li><strong>Email invitation</strong>: we send a link to one address. It works once, for
+  that address only, for 14 days.</li>
+  <li><strong>Group</strong>: everyone in a group gets the project at once.</li>
+</ul>
+<p><strong>Revoke</strong> stops a link or an invitation at once.</p>
+<p>Any member can <strong>Leave</strong> a project, from its page or from My projects. The
+owner cannot leave: they transfer ownership first. <strong>Transfer ownership</strong> hands
+the project to another member, and the old owner stays as an editor.</p>
+
+<h3 id="groups">Groups</h3>
+<p>A group is a set of people you share many projects with. Create one on
+<a href="{{ groups_href }}">My groups</a>, then invite people with a share link or by
+email.</p>
+<p>On a project's page, its owner shares it with a group they belong to, as editor or viewer.
+Everyone in the group gets the project, including people who join the group later. Someone
+who reaches a project both directly and through a group gets the higher of the two
+roles.</p>
+<p>The group's owner invites and removes members, renames it and deletes it. Members can
+leave.</p>
+</section>
+
+<section>
+<h2 id="roles">Roles</h2>
+<dl>
+  <dt>Viewer</dt>
+  <dd>Sees the catalogues, the events, the members and the history. Changes nothing.</dd>
+  <dt>Editor</dt>
+  <dd>Also adds, changes and deletes events and catalogues, edits rules, and saves, names
+  and restores versions.</dd>
+  <dt>Owner</dt>
+  <dd>Also renames or deletes the project, invites people, shares it with groups, changes
+  roles, removes members and transfers ownership. A project has one owner.</dd>
+</dl>
+<p>Deleting a project deletes its catalogues and its history for everyone.</p>
+</section>
+
+<section>
+<h2 id="presence">Who is here</h2>
+<p>In the catalogue browser, the round badges at the top are the other people in the
+project right now. Hover one to see who it is.</p>
+<p>When someone edits an event, its row shows in their colour. Changes reach everyone at
+once. <strong>Live</strong>, at the top right, says your changes are reaching the server.</p>
+</section>
+
+<section>
+<h2 id="sciqlop-python">SciQLop and Python</h2>
+<p>This server's address is <code>{{ server_url }}</code>.</p>
+<p><strong>SciQLop</strong>: in the cocat plugin's settings, enter that address, then sign in
+with your email and password. Your projects appear there. Edits show up here live, and the
+other way round.</p>
+<p><strong>Python</strong>, with the <code>cocat_rs</code> package. Python calls a project a
+room, and Save version <code>commit</code>.</p>
+<pre><code>import cocat_rs
+
+url = "{{ server_url }}"
+cookie = cocat_rs.login(url, "you@example.org", "your password")
+for project in cocat_rs.rooms(url, cookie):
+    print(project.id, project.name, project.role)
+
+room = cocat_rs.Room.open("cocat-cache", project.id)
+room.connect(url, cookie)
+room.wait_synced(10)
+for catalogue in room.catalogues():
+    print(catalogue.name, len(catalogue.events))
+
+room.save()
+cocat_rs.commit(url, cookie, project.id, name="paper v1", message="as submitted")</code></pre>
+</section>
+
+<section>
+<h2 id="account">Your account</h2>
+<ul>
+  <li><a href="{{ account_href }}">Account</a>: change your password. If you sign in
+  through your institution, your password lives there.</li>
+  <li>If your institution gave no email address, the Account page asks you for one.</li>
+  <li>Forgot your password? Use the link on the sign-in page.</li>
+  <li><a href="{{ groups_href }}">My groups</a>: the groups you belong to, and the projects
+  they share.</li>
+</ul>
+</section>
+</article>
+{% endblock %}

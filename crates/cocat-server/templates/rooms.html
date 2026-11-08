@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "hint.html" as help %}
 {% block content %}
 <div class="page-head">
   <h1>My projects</h1>
@@ -8,6 +9,7 @@
     <button type="submit">Create</button>
   </form>
 </div>
+{% call help::hint(frame.help_href, "projects", "projects", "A project holds catalogues, their events and their history, and the people who work on them.") %}{% endcall %}
 {% if rooms.is_empty() %}
 <p class="empty">You are not a member of any project yet. Create one, or open an invitation
 link someone sent you.</p>

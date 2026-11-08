@@ -180,6 +180,24 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .catalogue.trash { color: var(--muted); margin-top: 12px; }
 
 .quiet { color: var(--muted); margin: 0; }
+
+/* A one-line explanation, with a "?" to the matching help section; as on the account pages. */
+.hint { color: var(--muted); font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.hint .help-link {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.hint .help-link:hover { color: var(--accent); border-color: var(--accent); }
+.versions > .hint { padding: 0 20px 12px; }
 .sidebar .quiet { padding: 0 8px; }
 
 .content {

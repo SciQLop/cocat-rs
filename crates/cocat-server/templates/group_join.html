@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% import "hint.html" as help %}
 {% block content %}
 <article class="card">
 <h1>Join a group</h1>
+{% call help::hint(frame.help_href, "groups", "groups", "Joining a group gives you every project shared with it.") %}{% endcall %}
 <form method="post" action="{{ action }}"{% if submit_on_load %} data-submit-fragment{% endif %}>
   <input type="hidden" name="token" value="">
 </form>

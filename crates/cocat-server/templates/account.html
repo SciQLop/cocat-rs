@@ -1,8 +1,10 @@
 {% extends "base.html" %}
+{% import "hint.html" as help %}
 {% block content %}
 <article class="card">
 <h1>Account</h1>
 <p class="email muted">{{ email }}</p>
+{% call help::hint(frame.help_href, "account", "your account", "Your sign-in details. Your projects are under My projects, your groups under My groups.") %}{% endcall %}
 {% match confirm_href %}
 {% when Some with (href) %}
 <p><a href="{{ href }}" role="button" class="quiet">Confirm your email</a></p>

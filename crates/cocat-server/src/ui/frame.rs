@@ -120,6 +120,7 @@ pub(crate) struct Frame {
     pub mark_href: String,
     pub logo_href: String,
     pub home_href: String,
+    pub help_href: String,
     pub scripts: Vec<String>,
     pub header: Option<Header>,
     pub flash: Option<String>,
@@ -133,6 +134,7 @@ impl Frame {
             mark_href: asset_href(links, "mark.png"),
             logo_href: asset_href(links, "logo.webp"),
             home_href: links.app("/"),
+            help_href: links.path("/help"),
             scripts: ["fragment.js", "confirm.js", "copy.js", "sort.js"]
                 .into_iter()
                 .map(|script| asset_href(links, script))

@@ -6,7 +6,7 @@ use leptos::prelude::*;
 use crate::edit::{self, rule_preview};
 use crate::state::Room;
 use crate::views::actions::Form;
-use crate::views::controls::{Error, commit, error_line};
+use crate::views::controls::{Error, Hint, commit, error_line};
 
 #[component]
 pub fn RuleEditor(uuid: String, form: RwSignal<Form>) -> impl IntoView {
@@ -46,6 +46,8 @@ pub fn RuleEditor(uuid: String, form: RwSignal<Form>) -> impl IntoView {
                 Ok(words) => view! { <p class="rule-ok">"Reads as: " {words}</p> }.into_any(),
                 Err(problem) => view! { <p class="field-error" role="alert">{problem}</p> }.into_any(),
             }}
+            <Hint anchor="smart-catalogues" topic="smart catalogues"
+                text=r#"Example: {"filter": {"all": true}, "where": {"cmp": ["confidence", ">=", 0.8]}}. Tests: cmp, contains, match, has, and, or, not."#/>
             {error_line(error)}
             <div class="row-buttons">
                 <button type="button" class="button primary" disabled=move || preview.with(Result::is_err)

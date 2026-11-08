@@ -88,6 +88,11 @@ impl Links {
         format!("{origin}{}", self.app(path))
     }
 
+    /// The address SciQLop and Python connect to, when `COCAT_PUBLIC_URL` names it.
+    pub fn public_base(&self) -> Option<String> {
+        (!self.origin.is_empty()).then(|| format!("{}{}", self.origin, self.prefix))
+    }
+
     /// The page that accepts a group invitation, whose token sits in the fragment so it
     /// never reaches an access log or a Referer header.
     pub fn group_invitation(&self, token: &str) -> String {
@@ -135,6 +140,15 @@ mod tests {
             _ => None,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn the_public_base_is_the_origin_and_prefix() {
+        assert_eq!(
+            links("https://cocat.example.org/ignored", "cocat-dev").public_base(),
+            Some("https://cocat.example.org/cocat-dev".to_owned())
+        );
+        assert_eq!(links("", "cocat-dev").public_base(), None);
     }
 
     #[test]

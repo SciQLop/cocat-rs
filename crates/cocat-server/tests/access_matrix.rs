@@ -366,6 +366,7 @@ const ROWS: &[Row] = &[
         Style::Api,
     ),
     row("GET", "/ui/", Guard::Public, Style::UiAction),
+    row("GET", "/ui/help", Guard::Public, Style::UiPage),
     row("GET", "/ui/login", Guard::Public, Style::UiPage),
     row("POST", "/ui/login", Guard::Public, Style::UiAction),
     row("POST", "/ui/logout", Guard::Public, Style::UiAction),

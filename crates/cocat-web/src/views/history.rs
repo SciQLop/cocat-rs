@@ -15,7 +15,7 @@ use crate::history::{
 };
 use crate::route::Route;
 use crate::state::Room;
-use crate::views::controls::{Error, confirm, error_line, go_to};
+use crate::views::controls::{Error, Hint, confirm, error_line, go_to};
 
 /// Unchanged events shown at most below a version's changes.
 // simplify: a plain table, cut at this many rows; the live table's virtualised rows would
@@ -285,6 +285,8 @@ fn SaveVersion(
     };
     view! {
         <form class="name-form save-form" on:submit=send>
+            <Hint anchor="history" topic="saving a version"
+                text="The name shows in the list, like “paper v1”. The note says why, like “as submitted”."/>
             <label>
                 <span class="field-label">"Name (optional)"</span>
                 <input type="text" maxlength="100" node_ref=name/>
@@ -513,6 +515,8 @@ fn VersionList(
                     "Named only"
                 </label>
             </div>
+            <Hint anchor="history" topic="history"
+                text="A version is one person's run of changes. A 5-minute pause, an hour, or Save version starts the next one."/>
             {editor.then(|| view! {
                 <div class="save-version">
                     <Show when=move || !saving.get()>

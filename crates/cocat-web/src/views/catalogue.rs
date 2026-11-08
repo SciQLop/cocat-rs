@@ -2,10 +2,12 @@
 
 use leptos::prelude::*;
 
+use crate::help::{Shown, empty_text};
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
 use crate::views::actions::{Actions, Form, Materialize};
+use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
 use crate::views::table::Table;
@@ -54,6 +56,12 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
         query.set(String::new());
         selected.set(None);
     });
+    let can_write = room.can_write();
+    let reader = room.clone();
+    let empty = Signal::derive(move || {
+        let filtered = members.with(|members| members.as_ref().is_ok_and(|rows| !rows.is_empty()));
+        empty_text(showing(&reader, &shown.get()), filtered, can_write)
+    });
     let keys = Memo::new(move |_| {
         members.with(|members| {
             members
@@ -85,9 +93,25 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
             (Form::Materialize, Route::Catalogue(uuid)) => Some(view! { <Materialize uuid form/> }.into_any()),
             _ => None,
         }}
-        {move || (shown.get() == Route::Trash).then(|| view! { <TrashedCatalogues/> })}
+        {move || (shown.get() == Route::Trash).then(|| view! {
+            <Hint anchor="catalogues" topic="the trash"
+                text="Deleted events and catalogues wait here. Restore puts one back; Delete for good cannot be undone."/>
+            <TrashedCatalogues/>
+        })}
         <Timeline members order/>
-        <Table members order sorting columns selected/>
+        <Table members order sorting columns selected empty/>
+    }
+}
+
+fn showing(room: &Room, shown: &Route) -> Shown {
+    match shown {
+        Route::Catalogue(uuid) => Shown::Catalogue {
+            smart: room
+                .read(|txn| cocat_core::model::catalogue(txn, uuid))
+                .is_some_and(|catalogue| catalogue.rule.is_some()),
+        },
+        Route::Trash => Shown::Trash,
+        Route::Default | Route::History { .. } => Shown::NoCatalogue,
     }
 }
 

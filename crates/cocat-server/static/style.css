@@ -101,6 +101,7 @@ p { margin: 0 0 1rem; }
 .brand img { display: block; }
 
 .site-nav { display: flex; gap: 1.25rem; flex: 1; }
+.site-nav:last-child { justify-content: flex-end; }
 .site-nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
 .site-nav a:hover, .site-nav a[aria-current="page"] { color: var(--ink); }
 
@@ -128,6 +129,24 @@ main {
 .crumbs { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; }
 .crumbs a { color: var(--muted); }
 .meta { color: var(--muted); margin: 0.25rem 0 0; }
+
+/* A one-line explanation under a heading, with a "?" to the matching help section. */
+.hint { color: var(--muted); font-size: 0.875rem; margin: -0.35rem 0 0.9rem; }
+.hint .help-link {
+  display: inline-grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-left: 0.2rem;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+  vertical-align: 0.05em;
+}
+.hint .help-link:hover { color: var(--accent); border-color: var(--accent); }
 
 /* Controls. */
 
@@ -345,6 +364,7 @@ details.edit > form input { width: 14rem; }
 @media (max-width: 40rem) {
   .site-header .bar { flex-wrap: wrap; gap: 0.75rem 1rem; }
   .site-nav { order: 3; flex-basis: 100%; }
+  .site-nav:last-child { order: 0; flex-basis: auto; }
   .who .email { display: none; }
   td.actions { white-space: normal; }
 }
@@ -522,3 +542,28 @@ th button.sort:focus-visible { box-shadow: var(--focus); border-radius: 3px; }
 th[aria-sort] { color: var(--ink); }
 th[aria-sort="ascending"] button.sort::after { content: " ↑"; }
 th[aria-sort="descending"] button.sort::after { content: " ↓"; }
+
+/* Help: one readable column, a contents strip, and code that scrolls inside its box. */
+
+.help { max-width: 44rem; }
+.help h2 { scroll-margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid var(--rule); }
+.help h3 { margin-top: 1.5rem; scroll-margin-top: 1rem; }
+.help ul { padding-left: 1.25rem; margin: 0 0 1rem; }
+.help li { margin-bottom: 0.25rem; }
+.help code { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.875em; }
+.help pre {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+  overflow-x: auto;
+}
+.help .toc { margin: 1.5rem 0 0; }
+.help .toc ul { display: flex; flex-wrap: wrap; gap: 0.35rem 1.25rem; list-style: none; padding: 0; }
+.help .toc li { margin: 0; }
+.rule-example { margin: 0; }
+.rule-example figcaption { font-size: 0.875rem; color: var(--muted); margin-bottom: 0.3rem; }
+.help dl { margin: 0 0 1rem; }
+.help dt { font-weight: 600; }
+.help dd { margin: 0 0 0.75rem; }

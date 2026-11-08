@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "hint.html" as help %}
 {% block content %}
 <div class="page-head">
   <h1>My groups</h1>
@@ -8,9 +9,10 @@
     <button type="submit">Create</button>
   </form>
 </div>
+{% call help::hint(frame.help_href, "groups", "groups", "A group shares many projects with the same people at once.") %}{% endcall %}
 {% if groups.is_empty() %}
-<p class="empty">You are not a member of any group yet. A group shares projects with all its
-members at once.</p>
+<p class="empty">You are not a member of any group yet. Create one, or open an invitation
+link someone sent you.</p>
 {% else %}
 <div class="table-wrap">
 <table class="groups">

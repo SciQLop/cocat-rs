@@ -38,6 +38,7 @@ pub fn Table(
     sorting: RwSignal<(SortKey, bool)>,
     columns: Memo<Vec<String>>,
     selected: RwSignal<Option<Row>>,
+    empty: Signal<&'static str>,
 ) -> impl IntoView {
     let peers = expect_context::<Room>().peers;
     let editors = Memo::new(move |_| peers.with(|peers| editing(peers)));
@@ -74,7 +75,7 @@ pub fn Table(
             <tr class="spacer" style=format!("height: {}px", (total - range.end) as f64 * ROW)></tr>
         }
     };
-    let empty = move || order.with(Vec::is_empty);
+    let none_shown = move || order.with(Vec::is_empty);
     view! {
         <div class="table-scroll" node_ref=scroller on:scroll=move |_| measure()>
             <table class="events" style=move || {
@@ -100,8 +101,8 @@ pub fn Table(
                 </thead>
                 <tbody>{body}</tbody>
             </table>
-            <Show when=empty>
-                <p class="quiet empty">"No events to show."</p>
+            <Show when=none_shown>
+                <p class="quiet empty">{empty}</p>
             </Show>
         </div>
     }

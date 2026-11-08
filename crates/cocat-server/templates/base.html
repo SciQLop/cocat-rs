@@ -19,6 +19,7 @@
       <a href="{{ header.rooms_href }}">My projects</a>
       <a href="{{ header.groups_href }}">My groups</a>
       <a href="{{ header.account_href }}">Account</a>
+      <a href="{{ frame.help_href }}">Help</a>
 {% match header.admin_href %}{% when Some with (href) %}      <a href="{{ href }}">Admin</a>
 {% when None %}{% endmatch %}    </nav>
     <div class="who">
@@ -33,6 +34,9 @@
 <header class="site-header">
   <div class="bar">
     <a class="brand" href="{{ frame.home_href }}">{% include "mark.html" %}cocat</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="{{ frame.help_href }}">Help</a>
+    </nav>
   </div>
 </header>
 {% endmatch %}

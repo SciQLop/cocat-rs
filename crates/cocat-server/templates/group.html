@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "hint.html" as help %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -42,6 +43,7 @@
 </div>
 
 <h2>Projects shared with this group</h2>
+{% call help::hint(frame.help_href, "groups", "groups", "Every member gets these projects, with the role shown, including people who join later.") %}{% endcall %}
 {% if rooms.is_empty() %}
 <p class="empty">No project is shared with this group. Share one from the project's page.</p>
 {% else %}

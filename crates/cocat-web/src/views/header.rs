@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use crate::help;
 use crate::presence::Peer;
 use crate::route::Route;
 use crate::state::Room;
@@ -36,6 +37,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                 <Show when=move || !in_history()>
                     <a class="button history-button" href=history.clone()>"History"</a>
                 </Show>
+                <a class="button help-button" href=help::PAGE target="_blank" rel="noopener">"Help"</a>
                 <Show when=move || read_only>
                     <span class="chip">"Read-only"</span>
                 </Show>
@@ -61,6 +63,12 @@ fn Avatars() -> impl IntoView {
         let plural = if count == 1 { "person" } else { "people" };
         format!("{count} other {plural} in this project")
     };
+    let title = move || {
+        format!(
+            "{}. A row in someone's colour is the event they are editing.",
+            label()
+        )
+    };
     let avatar = |peer: Peer| {
         view! {
             <span class="avatar" title=peer.email style=format!("background: {}", peer.color)>
@@ -70,7 +78,7 @@ fn Avatars() -> impl IntoView {
     };
     view! {
         <Show when=move || peers.with(|peers| !peers.is_empty())>
-            <div class="avatars" role="group" aria-label=label>
+            <div class="avatars" role="group" aria-label=label title=title>
                 <For each=move || peers.get() key=|peer| peer.email.clone() children=avatar/>
             </div>
         </Show>

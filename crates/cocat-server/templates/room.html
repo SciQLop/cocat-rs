@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "hint.html" as help %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -17,8 +18,10 @@
     <a class="button" href="{{ browse_href }}">Open catalogues</a>
   </div>
 </div>
+{% call help::hint(frame.help_href, "catalogues", "catalogues", "Open catalogues to see and edit the events, the trash and the history.") %}{% endcall %}
 
 <h2>Members</h2>
+{% call help::hint(frame.help_href, "roles", "roles", "Viewers look, editors change catalogues and events, the owner manages the project.") %}{% endcall %}
 <div class="table-wrap">
 <table class="members">
   <thead>
@@ -57,6 +60,7 @@
 </div>
 
 <h2>Groups</h2>
+{% call help::hint(frame.help_href, "groups", "groups", "Share the project with a whole group at once. Everyone in it gets the role you pick.") %}{% endcall %}
 {% if !groups.picker.is_empty() %}
 <form method="post" action="{{ groups.action }}" class="inline add-row">
   <label for="share-group">Share with a group</label>
@@ -111,6 +115,7 @@
 {% endif %}
 
 <h2>Invitations</h2>
+{% call help::hint(frame.help_href, "sharing", "sharing", "A share link lets anyone who has it join. An email invitation works once, for one address.") %}{% endcall %}
 {% match panel %}
 {% when Some with (panel) %}
 <div class="panels">

@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use yrs::TransactionMut;
 
 use crate::edit::EditError;
+use crate::help;
 use crate::state::Room;
 
 /// The error of the last write a control made, shown next to it; `None` once one succeeds.
@@ -39,6 +40,18 @@ pub fn now() -> Option<Timestamp> {
 
 pub fn go_to(hash: &str) {
     let _ = window().location().set_hash(hash);
+}
+
+/// One line of explanation, with a "?" that opens the matching help section in a new tab.
+#[component]
+pub fn Hint(text: &'static str, anchor: &'static str, topic: &'static str) -> impl IntoView {
+    view! {
+        <p class="hint">
+            {text} " "
+            <a class="help-link" href=help::href(anchor) target="_blank" rel="noopener"
+                aria-label=format!("Help: {topic}")>"?"</a>
+        </p>
+    }
 }
 
 /// A name input with its submit and cancel buttons. `submit` answers the error to show, if
