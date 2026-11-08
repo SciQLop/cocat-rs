@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::admin::{self, AdminError, Overview, RoomRow, UserRow};
 use crate::db::User;
+use crate::links::segment;
 use crate::ui::frame::{self, Flash, Frame, RequireUser};
 
 #[derive(Template)]
@@ -375,7 +376,7 @@ fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
 }
 
 fn room_view(state: &AppState, row: RoomRow) -> RoomView {
-    let segment = path_segment(&row.id);
+    let segment = segment(&row.id);
     let action = |suffix: &str| {
         state
             .links
@@ -414,13 +415,6 @@ fn megabytes(text: &str) -> Result<Option<u64>, std::num::ParseIntError> {
     } else {
         text.parse().map(Some)
     }
-}
-
-/// A room id as one URL path segment: ids imported from Python may hold spaces and dots.
-fn path_segment(id: &str) -> String {
-    form_urlencoded::byte_serialize(id.as_bytes())
-        .collect::<String>()
-        .replace('+', "%20")
 }
 
 fn percent(used: u64, limit: u64) -> u64 {

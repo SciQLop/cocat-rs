@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
+use crate::links::segment;
 use crate::ui::frame::{self, Frame, MaybeUser, RequireUser};
 use crate::ui::{query_value, token_from_text};
 use crate::{AppState, db, invitations, lifecycle};
@@ -108,7 +109,12 @@ pub(crate) async fn accept(
     match invitations::accept(&state, &wanted, &user).await {
         Ok((room, _)) => frame::flash(
             &state.links,
-            Redirect::to(&state.links.path(&format!("/rooms/{}/browse", room.id))).into_response(),
+            Redirect::to(
+                &state
+                    .links
+                    .path(&format!("/rooms/{}/browse", segment(&room.id))),
+            )
+            .into_response(),
             &format!("You joined {}", room.name),
         ),
         Err(error) => refuse(&state, error),

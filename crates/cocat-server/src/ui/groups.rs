@@ -9,6 +9,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::groups::{self, GroupRole};
+use crate::links::segment;
 use crate::ui::frame::{self, Flash, Frame, MaybeUser, RequireUser, ShareLink};
 use crate::ui::{answer, query_value, redirect, redirect_to, token_from_text};
 use crate::{AppState, db, invitations, lifecycle, mail};
@@ -265,7 +266,7 @@ async fn detail_page(
         .await?
         .into_iter()
         .map(|(room, role)| SharedRoom {
-            href: state.links.path(&format!("/rooms/{}", room.id)),
+            href: state.links.path(&format!("/rooms/{}", segment(&room.id))),
             name: room.name,
             role: role.as_str(),
         })

@@ -5,6 +5,8 @@
 
 use thiserror::Error;
 
+pub use cocat_core::room_id::path_segment as segment;
+
 /// The origin others reach the app at, and the reverse-proxy prefix.
 ///
 /// `Default` is the link set of a server with no configured origin: `ui` then answers a
@@ -131,7 +133,14 @@ fn prefix(configured: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::Links;
+    use super::{Links, segment};
+
+    #[test]
+    fn an_imported_id_is_one_path_segment() {
+        assert_eq!(segment("Bepi MSA?#%"), "Bepi%20MSA%3F%23%25");
+        assert_eq!(segment("a/b.c+d~"), "a%2Fb.c+d~");
+        assert_eq!(segment("lab-2_x"), "lab-2_x");
+    }
 
     fn links(origin: &str, prefix: &str) -> Links {
         Links::from_env(&|name| match name {

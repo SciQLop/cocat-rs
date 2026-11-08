@@ -12,6 +12,7 @@ use axum::response::{Html, IntoResponse, Response};
 use cocat_core::role::Role;
 use tower_http::services::ServeDir;
 
+use crate::links::segment;
 use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
 use crate::{AppState, db};
 
@@ -63,7 +64,7 @@ pub(crate) async fn browse(
         room_id: &room.id,
         room_name: &room.name,
         role: role.as_str(),
-        socket: state.links.socket(&format!("/room/{}", room.id)),
+        socket: state.links.socket(&format!("/room/{}", segment(&room.id))),
         api: state.links.app("/api"),
         email: &user.email,
         flash,
@@ -96,7 +97,7 @@ pub(crate) async fn entry(
     user: &db::User,
 ) -> Result<Option<String>, Box<Response>> {
     match db::list_user_rooms(&state.pool, user.id).await {
-        Ok(rooms) => Ok(opening(&rooms).map(|room| format!("/rooms/{}/browse", room.id))),
+        Ok(rooms) => Ok(opening(&rooms).map(|room| format!("/rooms/{}/browse", segment(&room.id)))),
         Err(error) => {
             tracing::warn!(%error, "cannot read the rooms of a visitor");
             Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))

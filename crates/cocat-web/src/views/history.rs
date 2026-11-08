@@ -17,6 +17,7 @@ use crate::history::{
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{Error, Hint, confirm, error_line, go_to};
+use crate::views::projects::Projects;
 
 /// Unchanged events shown at most below a version's changes.
 // simplify: a plain table, cut at this many rows; the live table's virtualised rows would
@@ -126,13 +127,14 @@ fn Banner(
     reload: Callback<()>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
+    let projects = expect_context::<Projects>();
     let page = page();
     let reader = room.clone();
     let subject = Memo::new(move |_| match scope.get() {
         Some(uuid) => reader
             .read(|txn| cocat_core::model::catalogue(txn, &uuid))
             .map_or_else(|| "this catalogue".to_owned(), |catalogue| catalogue.name),
-        None => reader.config.room_name.clone(),
+        None => projects.open.with(|config| config.room_name.clone()),
     });
     let when = move || {
         version.with(|version| {
@@ -221,7 +223,10 @@ fn CopyVersion(id: u64, open: RwSignal<bool>) -> impl IntoView {
             input.select();
         }
     });
-    let suggestion = copy_suggestion(&config.room_name);
+    let name = expect_context::<Projects>()
+        .open
+        .with_untracked(|open| open.room_name.clone());
+    let suggestion = copy_suggestion(&name);
     let send = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
         let name = input.get().map(|input| input.value()).unwrap_or_default();

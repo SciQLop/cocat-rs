@@ -332,3 +332,58 @@ async fn personal_room(fixture: &Fixture, user: Uuid, name: &str) -> String {
         .0
         .id
 }
+
+/// Ids imported from Python can hold anything; every link and redirect escapes them as one
+/// path segment, and the routes read them back whole.
+#[tokio::test]
+async fn a_project_id_with_url_characters_survives_every_link() {
+    let mut fixture = Fixture::start().await;
+    fixture.state.web_dir = Some(bundle(&fixture));
+    let owner = fixture.verified(OWNER).await;
+    let id = "Bepi MSA?#%";
+    let path = "Bepi%20MSA%3F%23%25";
+    imported_room(&fixture, owner, id).await;
+    let token = fixture.token(owner).await;
+
+    let app = fixture.get("/ui/app", Some(&token)).await;
+    let page = fixture
+        .get(&format!("/ui/rooms/{path}"), Some(&token))
+        .await;
+    let invite = fixture
+        .post(
+            &format!("/ui/rooms/{path}/invitations"),
+            Some(&token),
+            "role=viewer&kind=link",
+        )
+        .await;
+    let browse = fixture
+        .get(&format!("/ui/rooms/{path}/browse"), Some(&token))
+        .await;
+
+    assert_eq!(location(&app), format!("/ui/rooms/{path}/browse"));
+    assert_eq!(location(&page), format!("/ui/rooms/{path}/browse#share"));
+    assert_eq!(location(&invite), format!("/ui/rooms/{path}"));
+    assert_eq!(browse.status(), StatusCode::OK);
+    let body = body_text(browse).await;
+    assert!(
+        body.contains(&format!(r#"<meta name="cocat-ws" content="/room/{path}">"#)),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"<meta name="cocat-room" content="Bepi MSA?#%">"#),
+        "{body}"
+    );
+}
+
+/// What the import writes for a Python room: the id as it was, unchecked.
+async fn imported_room(fixture: &Fixture, owner: Uuid, id: &str) {
+    sqlx::query("INSERT INTO room (id, name, created_by) VALUES (?, 'Bepi MSA', ?)")
+        .bind(id)
+        .bind(owner.to_string())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    db::add_member(&fixture.state.pool, id, owner, Role::Owner)
+        .await
+        .unwrap();
+}

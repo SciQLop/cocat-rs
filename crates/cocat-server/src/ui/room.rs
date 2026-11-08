@@ -12,6 +12,7 @@ use cocat_core::role::Role;
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::links::segment;
 use crate::ui::frame::{self, Frame, RequireUser};
 use crate::ui::{answer, redirect, redirect_to};
 use crate::{AppState, db, groups, invitations, lifecycle, mail};
@@ -60,7 +61,7 @@ pub(crate) async fn page(
     State(state): State<AppState>,
 ) -> Response {
     match db::role_in(&state.pool, &room_id, user.id).await {
-        Ok(Some(_)) => redirect_to(&state, &format!("/rooms/{room_id}/browse#share")),
+        Ok(Some(_)) => redirect_to(&state, &format!("{}/browse#share", page_of(&room_id))),
         Ok(None) => not_found(&state, &user),
         Err(error) => {
             tracing::warn!(%error, "cannot read a room page");
@@ -82,12 +83,7 @@ pub(crate) async fn set_role(
         return StatusCode::BAD_REQUEST.into_response();
     }
     if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, Role::Owner).await {
-        return answer(
-            &state,
-            Err(error),
-            &format!("/rooms/{room_id}"),
-            String::new(),
-        );
+        return answer(&state, Err(error), &page_of(&room_id), String::new());
     }
     let email = match member_answer(&state, &room_id, member).await {
         Ok(email) => email,
@@ -95,7 +91,7 @@ pub(crate) async fn set_role(
     };
     let result = lifecycle::set_member_role(&state, &room_id, user.id, member, role).await;
     let done = format!("{email} is now a {}", role.as_str());
-    answer(&state, result, &format!("/rooms/{room_id}"), done)
+    answer(&state, result, &page_of(&room_id), done)
 }
 
 pub(crate) async fn remove(
@@ -109,12 +105,7 @@ pub(crate) async fn remove(
         Role::Owner
     };
     if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, minimum).await {
-        return answer(
-            &state,
-            Err(error),
-            &format!("/rooms/{room_id}"),
-            String::new(),
-        );
+        return answer(&state, Err(error), &page_of(&room_id), String::new());
     }
     let email = match member_answer(&state, &room_id, member).await {
         Ok(email) => email,
@@ -124,7 +115,7 @@ pub(crate) async fn remove(
     answer(
         &state,
         result,
-        &format!("/rooms/{room_id}"),
+        &page_of(&room_id),
         format!("Removed {email}"),
     )
 }
@@ -135,12 +126,7 @@ pub(crate) async fn transfer(
     State(state): State<AppState>,
 ) -> Response {
     if let Err(error) = lifecycle::require_role(&state, &room_id, user.id, Role::Owner).await {
-        return answer(
-            &state,
-            Err(error),
-            &format!("/rooms/{room_id}"),
-            String::new(),
-        );
+        return answer(&state, Err(error), &page_of(&room_id), String::new());
     }
     let email = match member_answer(&state, &room_id, member).await {
         Ok(email) => email,
@@ -150,7 +136,7 @@ pub(crate) async fn transfer(
     answer(
         &state,
         result,
-        &format!("/rooms/{room_id}"),
+        &page_of(&room_id),
         format!("{email} now owns the project"),
     )
 }
@@ -167,7 +153,7 @@ pub(crate) async fn invite(
     if role == Role::Owner {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let target = format!("/rooms/{room_id}");
+    let target = page_of(&room_id);
     let address = form.email.trim();
     if form.kind == "link" || address.is_empty() {
         return match invitations::create(
@@ -226,7 +212,7 @@ pub(crate) async fn share_group(
     if role == Role::Owner {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let target = format!("/rooms/{room_id}");
+    let target = page_of(&room_id);
     let granted = match groups::room_groups(&state, &room_id, user.id).await {
         Ok(grants) => grants.iter().any(|(group, _)| group.id == form.group),
         Err(error) => return answer(&state, Err(error), &target, String::new()),
@@ -247,7 +233,7 @@ pub(crate) async fn stop_sharing_group(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
-    let target = format!("/rooms/{room_id}");
+    let target = page_of(&room_id);
     let name = match groups::room_groups(&state, &room_id, user.id).await {
         Ok(grants) => grants
             .into_iter()
@@ -272,7 +258,7 @@ pub(crate) async fn revoke(
     answer(
         &state,
         result,
-        &format!("/rooms/{room_id}"),
+        &page_of(&room_id),
         "Invitation revoked".to_owned(),
     )
 }
@@ -290,16 +276,17 @@ async fn member_answer(
 ) -> Result<String, Box<Response>> {
     match db::member_email(&state.pool, room_id, member).await {
         Ok(Some(email)) => Ok(email),
-        Ok(None) => Err(Box::new(redirect(
-            state,
-            &format!("/rooms/{room_id}"),
-            NOT_A_MEMBER,
-        ))),
+        Ok(None) => Err(Box::new(redirect(state, &page_of(room_id), NOT_A_MEMBER))),
         Err(error) => {
             tracing::warn!(%error, "cannot read a member");
             Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))
         }
     }
+}
+
+/// The project's old page, which the form actions answer with.
+fn page_of(room_id: &str) -> String {
+    format!("/rooms/{}", segment(room_id))
 }
 
 pub(super) fn not_found(state: &AppState, user: &db::User) -> Response {

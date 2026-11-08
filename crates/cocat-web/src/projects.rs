@@ -7,6 +7,8 @@ use cocat_core::role::Role;
 use serde::{Deserialize, Deserializer, de};
 use url::Url;
 
+use cocat_core::room_id::path_segment;
+
 use crate::session::RoomConfig;
 
 /// One project as `GET /api/rooms` lists it.
@@ -78,7 +80,7 @@ pub fn arrival(open: &str, path: &str, projects: &[Project]) -> Arrival {
     let Some(segment) = room_in_path(path) else {
         return Arrival::Reload;
     };
-    let here = |id: &str| escaped(id).as_deref() == Some(segment.as_str());
+    let here = |id: &str| path_segment(id) == segment;
     if here(open) {
         return Arrival::Stay;
     }
@@ -96,13 +98,6 @@ fn room_in_path(path: &str) -> Option<String> {
         return None;
     };
     Some((*id).to_owned())
-}
-
-/// `id` escaped as one path segment, the way the address bar shows it.
-fn escaped(id: &str) -> Option<String> {
-    let mut url = Url::parse(PAGE).ok()?;
-    url.path_segments_mut().ok()?.push(id);
-    url.path_segments()?.next_back().map(str::to_owned)
 }
 
 const PAGE: &str = "http://page.invalid/";

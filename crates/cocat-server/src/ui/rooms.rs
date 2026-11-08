@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use cocat_core::role::Role;
 use serde::Deserialize;
 
+use crate::links::segment;
 use crate::ui::frame::{self, Flash, Frame, RequireUser};
 use crate::{AppState, db, lifecycle};
 
@@ -80,9 +81,10 @@ pub(crate) async fn page(
 }
 
 fn line(state: &AppState, id: String, name: String, role: Role) -> RoomLine {
-    let action = |suffix: &str| state.links.path(&format!("/rooms/{id}/{suffix}"));
+    let segment = segment(&id);
+    let action = |suffix: &str| state.links.path(&format!("/rooms/{segment}/{suffix}"));
     RoomLine {
-        href: state.links.path(&format!("/rooms/{id}")),
+        href: state.links.path(&format!("/rooms/{segment}")),
         role: role.as_str(),
         owner: (role == Role::Owner).then(|| OwnerForms {
             rename_action: action("rename"),

@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use cocat_core::room_id::path_segment;
 use cocat_core::time::Timestamp;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -314,7 +315,7 @@ pub fn copy_suggestion(project: &str) -> String {
 
 /// The catalogue browser of another project, relative to the app's `<base>`.
 pub fn browse_href(room_id: &str) -> String {
-    format!("../rooms/{room_id}/browse")
+    format!("../rooms/{}/browse", path_segment(room_id))
 }
 
 /// Reloads of the version list, one request at a time: a reload asked for while one runs
@@ -501,6 +502,10 @@ mod tests {
     #[test]
     fn the_copy_opens_in_its_own_browser() {
         assert_eq!(browse_href("4f2a"), "../rooms/4f2a/browse");
+        assert_eq!(
+            browse_href("Bepi MSA?#%"),
+            "../rooms/Bepi%20MSA%3F%23%25/browse"
+        );
     }
 
     /// 2026-11-08 12:00 UTC.
