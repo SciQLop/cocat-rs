@@ -11,7 +11,7 @@ use crate::db::{self, DbError, RoomRow};
 const OWNER_KEEPS_OWNER_ROLE: &str = "The owner keeps the owner role";
 const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave or be removed";
 const LONG_NAME: &str = "Enter a name of at most 200 characters";
-const MAX_NAME: usize = 200;
+pub(crate) const MAX_NAME: usize = 200;
 pub(crate) const NO_MEMBERS: &str =
     "A public catalogue has no members: it cannot be shared, left or handed over";
 

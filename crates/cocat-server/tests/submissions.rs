@@ -844,3 +844,42 @@ async fn a_submission_over_the_authors_storage_is_refused() {
     let detail = said["detail"].as_str().unwrap();
     assert!(detail.starts_with("Your storage is full"), "{detail}");
 }
+
+#[tokio::test]
+async fn proposing_a_change_to_a_catalogue_with_a_long_name_names_the_copy_within_the_limit() {
+    let world = World::start().await;
+    let long = "é".repeat(250);
+    let room = db::PublicRoom {
+        id: "public.long".to_owned(),
+        name: long.clone(),
+        folder: None,
+        source: None,
+        description: None,
+        public_count: None,
+        counted_file: None,
+    };
+    assert!(
+        db::create_public_room(&world.state.pool, &room, world.curator)
+            .await
+            .unwrap()
+    );
+    world
+        .edit(&room.id, world.curator, |txn| {
+            catalogue(txn, "pub", &["p1"])
+        })
+        .await;
+
+    let (status, copied) = world
+        .call(
+            world.author,
+            Method::POST,
+            "/api/public/public.long/proposals",
+            Some(json!({})),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    let name = copied["name"].as_str().unwrap();
+    assert_eq!(name.chars().count(), 200, "{name}");
+    assert!(name.ends_with("é (proposed change)"), "{name}");
+}

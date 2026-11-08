@@ -452,9 +452,7 @@ async fn propose(
     let (room, name) = match body.room {
         Some(room) => copy_into(&state, &room, user.id, &catalogue, update).await?,
         None => {
-            let name = body
-                .name
-                .unwrap_or_else(|| format!("{} (proposed change)", public.name));
+            let name = body.name.unwrap_or_else(|| proposal_name(&public.name));
             let first = copy_name(&public.name, None);
             let making = make_copy(state.clone(), user.id, name, update, first);
             let made = tokio::spawn(making).await.map_err(|error| {
@@ -781,6 +779,16 @@ async fn create_public(
         }
         tried += 1;
     }
+}
+
+/// "<public name> (proposed change)", the public name cut so the whole fits a project name.
+fn proposal_name(public: &str) -> String {
+    const SUFFIX: &str = " (proposed change)";
+    let kept: String = public
+        .chars()
+        .take(lifecycle::MAX_NAME - SUFFIX.len())
+        .collect();
+    format!("{}{SUFFIX}", kept.trim_end())
 }
 
 /// The title as a key: lower-case ASCII letters, digits and dashes.
