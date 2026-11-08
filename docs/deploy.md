@@ -6,7 +6,7 @@ option; this page says which ones an operator needs and how they fit together.
 
 ## The image
 
-Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.3.1`) and
+Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.4.0`) and
 `latest`. The release workflow (`.github/workflows/publish.yml`) builds it from
 `docker/Dockerfile` when a `v*` tag is pushed.
 
@@ -137,7 +137,7 @@ The admin pages cut them off at once.
 
 `tools/amda_public.py` copies AMDA's shared catalogues and time tables (222 lists, about
 316,000 intervals) into the server as public catalogues, one per list. Run it from any
-machine with `speasy` and a `cocat-rs` that has `update_public_catalogue` (newer than 0.3.1,
+machine with `speasy` and a `cocat-rs` that has `update_public_catalogue` (0.4.0 or newer,
 or built from this repository), as a curator, against a server that has `PATCH /api/public`:
 
 ```sh
