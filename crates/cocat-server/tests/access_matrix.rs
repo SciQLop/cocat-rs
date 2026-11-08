@@ -230,6 +230,14 @@ const ROWS: &[Row] = &[
     )
     .room_any()
     .tolerant(),
+    row(
+        "POST",
+        "/api/rooms/{room}/history/{version}/restore",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any()
+    .tolerant(),
     row("GET", "/api/groups", Guard::SignedIn, Style::Api),
     row("POST", "/api/groups", Guard::SignedIn, Style::Api),
     row(
@@ -869,6 +877,9 @@ impl World {
             }
             ("PUT", "/api/rooms/{room}/history/{version}/name") => {
                 (json, r#"{"name":"paper v1"}"#.to_owned())
+            }
+            ("POST", "/api/rooms/{room}/history/{version}/restore") => {
+                (json, r#"{"catalogue":null}"#.to_owned())
             }
             ("POST", "/api/rooms/{room}/owner") => {
                 (json, format!(r#"{{"user_id":"{}"}}"#, self.target))

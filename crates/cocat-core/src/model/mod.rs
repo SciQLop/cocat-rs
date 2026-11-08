@@ -15,6 +15,7 @@ mod migrate;
 mod provenance;
 mod read;
 mod registry;
+mod restore;
 mod values;
 mod write;
 
@@ -30,6 +31,7 @@ pub use migrate::{Migration, migrate_v1};
 pub use provenance::{comment, create_origin, origin, set_comment};
 pub use read::{catalogue, catalogues, event, event_catalogues, existing_tags, is_v1, trash};
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
+pub use restore::restore;
 pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,
     purge_catalogue, purge_event, remove_catalogue_attributes, remove_catalogue_events,

@@ -49,6 +49,8 @@ pub const COLD_READ_SLOTS: usize = 2;
 
 /// One megabyte, the unit administrators set quotas in.
 const MEGABYTE: u64 = 1024 * 1024;
+/// A room can unload between being found and being written to; a retry opens it again.
+const WRITE_TRIES: usize = 3;
 
 fn megabytes(mb: u64) -> u64 {
     mb.saturating_mul(MEGABYTE)
@@ -164,6 +166,10 @@ pub enum RoomError {
     },
     #[error("the room did not answer the read")]
     Unanswered,
+    #[error("the room unloaded before the write reached it")]
+    Gone,
+    #[error("the room reached its storage limit")]
+    Full,
     #[error(transparent)]
     Db(#[from] crate::db::DbError),
 }
@@ -472,6 +478,31 @@ impl RoomManager {
         Ok(())
     }
 
+    /// Writes one update as `user`, like a client frame: quota-checked, appended, stamped and
+    /// broadcast. A room nobody is in opens for the write and unloads after it. `Ok(false)`
+    /// when the update changed nothing.
+    pub async fn write_as(
+        &self,
+        room_id: &str,
+        allowance: u64,
+        user: Uuid,
+        update: Vec<u8>,
+    ) -> Result<bool, RoomError> {
+        for _ in 0..WRITE_TRIES {
+            let rooms = self.clone();
+            let id = room_id.to_owned();
+            let room =
+                tokio::task::spawn_blocking(move || rooms.get_or_open_within(&id, allowance))
+                    .await
+                    .map_err(|_| RoomError::Unanswered)??;
+            match room.write_as(user, update.clone()).await {
+                Err(RoomError::Gone) => continue,
+                written => return written,
+            }
+        }
+        Err(RoomError::Gone)
+    }
+
     /// Answers from the room's records as written on disk, each with its valid stamp, after
     /// the open room flushed: a version just written is part of the answer.
     pub async fn read_log<T, F>(&self, room_id: &str, read: F) -> Result<T, RoomError>
@@ -665,6 +696,18 @@ impl RoomHandle {
         }
     }
 
+    /// Has the room thread take `update` as if `user` had sent it in a frame.
+    pub async fn write_as(&self, user: Uuid, update: Vec<u8>) -> Result<bool, RoomError> {
+        let (done, written) = oneshot::channel();
+        self.send(RoomCommand::Write { user, update, done })
+            .map_err(|_| RoomError::Gone)?;
+        match written.await {
+            Ok(Ok(changed)) => Ok(changed),
+            Ok(Err(_)) => Err(RoomError::Full),
+            Err(_) => Err(RoomError::Unanswered),
+        }
+    }
+
     /// How many sockets the room thread holds open right now.
     pub async fn clients(&self) -> u64 {
         let (done, count) = oneshot::channel();
@@ -712,6 +755,12 @@ enum RoomCommand {
     /// Runs a question against the document on the room's own thread.
     Read {
         read: Box<dyn FnOnce(&Doc) + Send>,
+    },
+    /// An update the server writes on a user's behalf; answers whether it changed the room.
+    Write {
+        user: Uuid,
+        update: Vec<u8>,
+        done: oneshot::Sender<Result<bool, CloseReason>>,
     },
     /// Only the tests send this: the room thread has to survive its own panic.
     #[cfg(test)]
@@ -812,6 +861,7 @@ fn room_loop(
                 };
             let stepped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut broadcast = None;
+                let mut answer = None;
                 let step = match command {
                     RoomCommand::Attach {
                         client,
@@ -879,6 +929,27 @@ fn room_loop(
                         read(&doc);
                         Step::Serving
                     }
+                    RoomCommand::Write { user, update, done } => {
+                        let written = handle_update(
+                            &doc,
+                            &mut store,
+                            &mut stamps,
+                            &mut seen,
+                            limit,
+                            update,
+                            Some(user),
+                        );
+                        if let Ok(Some(frame)) = &written {
+                            full_state = None;
+                            broadcast = Some(frame.clone());
+                        }
+                        answer = Some((done, written.map(|frame| frame.is_some())));
+                        if clients.is_empty() {
+                            Step::Detach(None)
+                        } else {
+                            Step::Serving
+                        }
+                    }
                     #[cfg(test)]
                     RoomCommand::Panic => panic!("a command asked the room to panic"),
                 };
@@ -890,6 +961,9 @@ fn room_loop(
                 }
                 if let Some(frame) = broadcast {
                     broadcast_to(&mut clients, frame);
+                }
+                if let Some((done, written)) = answer {
+                    let _ = done.send(written);
                 }
                 step
             }));
@@ -1038,8 +1112,8 @@ fn drain(commands: &Option<Receiver<RoomCommand>>, backlog: &mut VecDeque<RoomCo
     }
 }
 
-/// Returns true when a client is still queued under the registry lock, so the room must
-/// keep serving; false when it removed itself and dropped its command receiver.
+/// Returns true when a client or a write is still queued under the registry lock, so the
+/// room must keep serving; false when it removed itself and dropped its command receiver.
 fn close_room(
     room_id: &str,
     registry: &Rooms,
@@ -1049,10 +1123,12 @@ fn close_room(
     match registry.lock() {
         Ok(mut rooms) => {
             drain(commands, backlog);
-            if backlog
-                .iter()
-                .any(|command| matches!(command, RoomCommand::Attach { .. }))
-            {
+            if backlog.iter().any(|command| {
+                matches!(
+                    command,
+                    RoomCommand::Attach { .. } | RoomCommand::Write { .. }
+                )
+            }) {
                 return true;
             }
             rooms.remove(room_id);
@@ -1129,7 +1205,10 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             RoomCommand::Clients { done } => {
                 let _ = done.send(0);
             }
-            RoomCommand::Attach { .. } | RoomCommand::Frame { .. } | RoomCommand::Read { .. } => {}
+            RoomCommand::Attach { .. }
+            | RoomCommand::Frame { .. }
+            | RoomCommand::Read { .. }
+            | RoomCommand::Write { .. } => {}
             #[cfg(test)]
             RoomCommand::Panic => {}
         }

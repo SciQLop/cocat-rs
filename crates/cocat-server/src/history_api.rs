@@ -7,6 +7,7 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
+use bytes::Bytes;
 use cocat_core::model;
 use cocat_core::role::Role;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(changes))
         .routes(routes!(state_at))
         .routes(routes!(name, unname))
+        .routes(routes!(restore))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -232,6 +234,70 @@ async fn unname(
     let version = writable_version(&state, &room_id, user.id, version).await?;
     db::unname_version(&state.pool, &room_id, version).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct RestoreBody {
+    /// Restore only this catalogue and its members' events; the whole room when absent.
+    #[serde(default)]
+    catalogue: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Restored {
+    /// False when the room already equalled the version.
+    restored: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/history/{version}/restore",
+    params(
+        ("room_id" = String, Path, description = "Room id"),
+        ("version" = u64, Path, description = "Version id: its last record"),
+    ),
+    request_body = RestoreBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The room, or the catalogue, equals the version again, through one new change by the caller", body = Restored),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller cannot write to the room", body = Detail),
+        (status = 404, description = "No such room, version or membership", body = Detail),
+        (status = 409, description = "The room reached its storage limit", body = Detail),
+    )
+)]
+async fn restore(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, version)): ApiPath<(String, u64)>,
+    JsonBody(body): JsonBody<RestoreBody>,
+) -> Result<Json<Restored>, ApiError> {
+    lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
+    let update = state
+        .rooms
+        .read_log(&room_id, move |records, slots| {
+            span(slots, version)?;
+            Some(restore_update(records, version, body.catalogue.as_deref()))
+        })
+        .await?
+        .ok_or_else(no_such_version)?;
+    let allowance = state.rooms.allowance(&state.pool, &room_id).await?;
+    let restored = state
+        .rooms
+        .write_as(&room_id, allowance, user.id, update)
+        .await?;
+    Ok(Json(Restored { restored }))
+}
+
+/// The update that makes the room as written so far equal to the version again. It is
+/// built on a replay, the way a client edits its replica: edits the room takes meanwhile
+/// merge with it as any concurrent edit does.
+fn restore_update(records: &[Bytes], version: u64, catalogue: Option<&str>) -> Vec<u8> {
+    let past = replay_until(records, version);
+    let present = replay_until(records, u64::MAX);
+    let mut txn = present.transact_mut();
+    model::restore(&mut txn, &past, catalogue);
+    txn.encode_update_v1()
 }
 
 /// The version as the database stores it, once the caller may write and the version exists.

@@ -145,6 +145,22 @@ impl Fixture {
         body["versions"].as_array().unwrap().clone()
     }
 
+    async fn restore(&self, version: u64, user: Uuid) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{ROOM}/history/{version}/restore");
+        let body = Some(json!({ "catalogue": null }));
+        let (status, _, bytes) = self.call(Method::POST, &path, user, body).await;
+        (status, json_of(&bytes))
+    }
+
+    /// The room as of its newest version, as the state route serves it.
+    async fn latest(&self) -> Doc {
+        let newest = ids(&self.history(self.alice).await)[0];
+        let path = format!("/api/rooms/{ROOM}/history/{newest}/state");
+        let (status, _, bytes) = self.call(Method::GET, &path, self.alice, None).await;
+        assert_eq!(status, StatusCode::OK);
+        doc_of(&bytes)
+    }
+
     async fn name(&self, version: u64, user: Uuid, name: &str) -> (StatusCode, Value) {
         let path = format!("/api/rooms/{ROOM}/history/{version}/name");
         let body = Some(json!({ "name": name }));
@@ -159,6 +175,14 @@ fn json_of(bytes: &[u8]) -> Value {
     } else {
         serde_json::from_slice(bytes).expect("the response is not JSON")
     }
+}
+
+fn doc_of(update: &[u8]) -> Doc {
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(Update::decode_v1(update).unwrap())
+        .unwrap();
+    doc
 }
 
 fn event(uuid: &str) -> EventRecord {
@@ -415,4 +439,92 @@ async fn a_static_catalogue_filter_keeps_its_members_event_edits() {
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(ids(body["versions"].as_array().unwrap()), [3, 1, 0]);
+}
+
+#[tokio::test]
+async fn restore_is_broadcast_to_a_connected_client_and_stamped_with_the_restorer() {
+    let fixture = two_versions().await;
+    let room = fixture.state.rooms.get_or_open(ROOM).unwrap();
+    let (out, mut inbox) = outbox();
+    room.attach(1, fixture.carol, Role::Viewer, out).unwrap();
+    inbox.frames.recv().await.expect("the sync step 1");
+
+    let (status, body) = fixture.restore(0, fixture.alice).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "restored": true }));
+    let frame = inbox.frames.recv().await.expect("the restore");
+    let Message::Sync(SyncMessage::Update(update)) = Message::decode_v1(&frame).unwrap() else {
+        panic!("the restore is not an update frame");
+    };
+    fixture
+        .doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&update).unwrap())
+        .unwrap();
+    let txn = fixture.doc.transact();
+    assert_eq!(model::event(&txn, "a").unwrap().confidence, None);
+    assert_eq!(
+        model::event(&txn, "b").unwrap().status,
+        model::Status::Deleted
+    );
+    let versions = fixture.history(fixture.carol).await;
+    assert_eq!(ids(&versions), [2, 1, 0]);
+    assert_eq!(versions[0]["author_email"], "alice@x.org");
+}
+
+#[tokio::test]
+async fn a_viewer_cannot_restore() {
+    let fixture = two_versions().await;
+
+    let (status, body) = fixture.restore(0, fixture.carol).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        body["detail"],
+        format!("Room {ROOM} requires the editor role")
+    );
+    assert_eq!(ids(&fixture.history(fixture.alice).await), [1, 0]);
+}
+
+#[tokio::test]
+async fn a_restore_is_itself_a_version_and_can_be_undone() {
+    let fixture = two_versions().await;
+
+    assert_eq!(fixture.restore(0, fixture.alice).await.0, StatusCode::OK);
+    fixture.state.rooms.flush(ROOM).await.unwrap();
+    assert!(
+        !fixture.state.rooms.is_open(ROOM),
+        "a room opened for a restore stays open"
+    );
+    let restored = fixture.latest().await;
+    assert_eq!(
+        model::event(&restored.transact(), "b").unwrap().status,
+        model::Status::Deleted
+    );
+
+    let (status, body) = fixture.restore(1, fixture.bob).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "restored": true }));
+    assert_eq!(ids(&fixture.history(fixture.alice).await), [3, 2, 1, 0]);
+    let undone = fixture.latest().await;
+    let txn = undone.transact();
+    assert_eq!(model::event(&txn, "a").unwrap().confidence, Some(0.5));
+    assert_eq!(
+        model::event(&txn, "b").unwrap().status,
+        model::Status::Confirmed
+    );
+
+    let (_, again) = fixture.restore(1, fixture.bob).await;
+    assert_eq!(again, json!({ "restored": false }));
+}
+
+#[tokio::test]
+async fn restoring_an_unknown_version_is_404() {
+    let fixture = two_versions().await;
+
+    let (status, body) = fixture.restore(7, fixture.bob).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["detail"], "No such version");
 }

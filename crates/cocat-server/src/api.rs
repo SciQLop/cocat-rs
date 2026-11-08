@@ -168,6 +168,7 @@ impl From<RoomError> for ApiError {
             RoomError::OverBudget { .. } => {
                 Self::Unavailable("Server memory budget reached".to_owned())
             }
+            RoomError::Full => Self::Conflict("The room reached its storage limit".to_owned()),
             other => {
                 tracing::error!(%other, "the room could not be read");
                 Self::Internal
