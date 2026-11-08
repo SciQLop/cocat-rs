@@ -444,8 +444,8 @@ maturin develop -m crates/cocat-py/Cargo.toml
 pip install target/wheels/cocat_rs-*.whl
 ```
 
-Before 0.3.0 the package said room: `Room`, `RoomInfo`, `rooms()` and `room_id=`. Those
-names still work in 0.3 with a `DeprecationWarning` naming the new one, and go in 0.4.
+Before 0.3.0 the package said room: `Room`, `RoomInfo`, `rooms()` and `room_id=`. Since
+0.4.0 only `Project`, `ProjectInfo`, `projects()` and `project_id=` exist.
 
 **Script mode** works on the cached copy, as cocat's own API does:
 

@@ -287,3 +287,8 @@ def test_a_cache_from_before_accounts_had_folders_is_kept_and_named(
 
     assert before and all(path.read_bytes() == data for path, data in before.items())
     assert any("no longer used" in record.getMessage() for record in caplog.records)
+
+
+def test_room_id_is_an_unknown_keyword_of_set_config() -> None:
+    with pytest.raises(TypeError):
+        api.set_config(room_id="lab")

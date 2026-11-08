@@ -404,3 +404,16 @@ def test_columns_and_existing_tags(project):
     hidden = project.create_event(start=START, stop=STOP, tags=["hidden"])
     hidden.delete()
     assert project.existing_tags() == ["t1", "t2"]
+
+
+@pytest.mark.parametrize("old", ["Room", "RoomInfo", "rooms"])
+def test_the_names_from_before_projects_are_gone(old):
+    with pytest.raises(AttributeError):
+        getattr(cc, old)
+
+
+def test_room_id_is_an_unknown_keyword(cache):
+    with pytest.raises(TypeError):
+        cc.Project.open(cache, room_id="lab")
+    with pytest.raises(TypeError):
+        cc.history("http://127.0.0.1:1", "cookie", room_id="lab")

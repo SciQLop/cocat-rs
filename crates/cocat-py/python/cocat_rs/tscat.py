@@ -11,10 +11,8 @@ import json
 from pathlib import Path
 
 from ._native import export_tscat_json
-from ._old_names import renamed_keywords
 
 
-@renamed_keywords(room="project")
 def import_database(project):
     """Imports the local tscat database, read through tscat so it runs its own migrations.
     Returns the imported catalogues."""
@@ -58,13 +56,11 @@ def _stored_predicates(tscat):
     return {uuid: predicate for uuid, predicate in rows if predicate}
 
 
-@renamed_keywords(room="project")
 def import_json(project, path):
     """Imports a file tscat's `export_json` wrote. Returns the imported catalogues."""
     return _import(project, Path(path).read_text())
 
 
-@renamed_keywords(room="project")
 def export_json(project, catalogues, path):
     """Writes catalogues (objects, uuids or names) in tscat's JSON format. A smart
     catalogue is written with its current members as events and no predicate; derived

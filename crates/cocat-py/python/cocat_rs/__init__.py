@@ -4,7 +4,7 @@ import asyncio
 import logging
 import threading
 
-from . import _native, _old_names
+from . import _native
 from ._native import (
     Catalogue,
     Conflict,
@@ -15,18 +15,23 @@ from ._native import (
     ServerError,
     ServerNotFound,
     Unauthorized,
+    commit,
+    copy_version,
     create_project,
     create_public_catalogue,
+    history,
     invitations,
     invite,
     login,
     members,
+    name_version,
     project_groups,
     project_url,
     projects,
     propose_change,
     public_catalogues,
     remove_member,
+    restore,
     review_submission,
     revoke_invitation,
     rule_from_tscat,
@@ -38,13 +43,6 @@ from ._native import (
     update_public_catalogue,
     withdraw_submission,
 )
-
-_accepts_room_id = _old_names.renamed_keywords(room_id="project_id")
-commit = _accepts_room_id(_native.commit)
-copy_version = _accepts_room_id(_native.copy_version)
-history = _accepts_room_id(_native.history)
-name_version = _accepts_room_id(_native.name_version)
-restore = _accepts_room_id(_native.restore)
 
 __all__ = [
     "Catalogue",
@@ -169,12 +167,10 @@ class Project:
         self._running = False
 
     @classmethod
-    @_old_names.renamed_keywords(room_id="project_id")
     def open(cls, cache_dir, project_id):
         return cls(_native.Project.open(str(cache_dir), str(project_id)))
 
     @classmethod
-    @_old_names.renamed_keywords(room_id="project_id")
     def at(cls, url, cookie, project_id, version):
         """The project as of a version: read-only, and offline once fetched."""
         return cls(_native.Project.at(url, cookie, str(project_id), version))
@@ -267,10 +263,6 @@ class Project:
                 method,
                 registration.listener,
             )
-
-
-def __getattr__(name):
-    return _old_names.attribute(globals(), name)
 
 
 # The script mode re-exports Python cocat's names, so `import cocat_rs as cocat`

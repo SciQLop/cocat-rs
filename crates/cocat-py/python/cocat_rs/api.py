@@ -19,7 +19,6 @@ from urllib.parse import urlparse
 import keyring
 
 from . import Project
-from ._old_names import renamed_keywords
 from ._native import ProjectInfo, export_votable as _export_votable
 from ._native import account_id as _account_id
 from ._native import login as _login
@@ -78,7 +77,6 @@ def _reset() -> None:
     SESSION = Session()
 
 
-@renamed_keywords(room_id="project_id")
 def set_config(
     *,
     host: str | None = None,

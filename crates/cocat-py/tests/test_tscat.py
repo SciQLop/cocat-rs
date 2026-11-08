@@ -271,3 +271,8 @@ def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, pr
 
     smart = next(c for c in project.catalogues() if c.name == "smart")
     assert json.dumps(smart.rule).count(target_uuid) == 1
+
+
+def test_room_is_an_unknown_keyword_of_the_tscat_functions(tmp_path):
+    with pytest.raises(TypeError):
+        cc_tscat.import_json(room=None, path=tmp_path / "tscat.json")
