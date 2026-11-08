@@ -63,6 +63,8 @@ and the user database while production keeps running (SQLite's online backup for
 database; a project file copied mid-append ends in a partial record the Rust server drops), then
 runs `cocat-server import`. The optional address takes the project files no Python account
 lists. Read the import summary it prints: users, projects, memberships and invitations.
+Production marks nobody as an administrator of the dev server, so the script notes the dev
+administrators before deleting and grants them the flag again after the import.
 
 `update-cocat-rs-dev` is the same procedure as `update-cocat-server`: pull, keep the previous
 container as `cocat-rs-dev_old`, run, regenerate the systemd unit and enable it with `--now`

@@ -20,6 +20,14 @@ OWNER=${1:+--owner $1}
 if podman container exists "$NAME"; then
     podman stop "$NAME"
 fi
+# Production marks nobody as an administrator of the dev server: remember who is one now,
+# to grant it again after the import.
+ADMINS=$(podman unshare python3 -c '
+import os, sqlite3, sys
+if os.path.exists(sys.argv[1]):
+    db = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+    print("\n".join(email for (email,) in db.execute("SELECT email FROM \"user\" WHERE is_superuser")))
+' "$DATA/db/cocat-rs.db")
 # The production files and the dev copy belong to the containers' cocat user (uid 1000
 # inside, a subordinate uid outside), so the copy runs inside podman's user namespace.
 podman unshare bash -c '
@@ -36,6 +44,12 @@ podman run --rm --entrypoint /usr/local/bin/cocat-server \
     -v "$DATA/storage:/storage:Z" -v "$DATA/db:/db:Z" -v "$DATA/copy:/copy:Z" \
     "$IMAGE" import --update-dir /storage --db /db/cocat-rs.db \
     --users /copy/users.db $OWNER
+
+for email in $ADMINS; do
+    podman run --rm --entrypoint /usr/local/bin/cocat-server -v "$DATA/db:/db:Z" "$IMAGE" \
+        set-superuser --email "$email" --db_path /db/cocat-rs.db \
+        || echo "$email is not in the new copy: not an administrator any more"
+done
 
 if podman container exists "$NAME"; then
     podman start "$NAME"
