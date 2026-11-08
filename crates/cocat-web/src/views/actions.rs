@@ -46,8 +46,12 @@ pub fn Actions(
             room.with_value(|room| trash_catalogue(room, &uuid, error));
         }
     };
+    let menu = NodeRef::<leptos::html::Details>::new();
     let toggle = move |which: Form| {
         form.update(|open| *open = if *open == which { Form::Closed } else { which });
+        if let Some(menu) = menu.get_untracked() {
+            let _ = menu.remove_attribute("open");
+        }
     };
     view! {
         <Show when=move || smart.get() == Some(true)>
@@ -55,10 +59,11 @@ pub fn Actions(
                 on:click=move |_| toggle(Form::Rule)>"Edit rule"</button>
         </Show>
         <Show when=move || smart.get().is_some()>
-            <details class="menu-button">
+            <details class="menu-button" node_ref=menu>
                 <summary aria-label="More actions">"More"</summary>
                 <div class="menu">
-                    <Show when=move || smart.get() == Some(true)>
+                    <Show when=move || smart.get() == Some(true)
+                        fallback=move || view! { <button type="button" on:click=move |_| toggle(Form::Rule)>"Add a rule…"</button> }>
                         <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
                     </Show>
                     <button type="button" class="danger" on:click=trash>"Move catalogue to trash…"</button>

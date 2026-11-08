@@ -1,4 +1,5 @@
-//! A smart catalogue's rule as JSON, checked as it is typed and saved only when it reads.
+//! A catalogue's rule as JSON, checked as it is typed and saved only when it reads. A
+//! catalogue without one becomes smart once its first rule is saved.
 
 use cocat_core::model;
 use leptos::prelude::*;
@@ -13,11 +14,8 @@ pub fn RuleEditor(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     let room = expect_context::<Room>();
     let current =
         room.read_untracked(|txn| model::catalogue(txn, &uuid).and_then(|found| found.rule));
-    let text = RwSignal::new(
-        current
-            .and_then(|rule| serde_json::to_string_pretty(&rule).ok())
-            .unwrap_or_default(),
-    );
+    let adding = current.is_none();
+    let text = RwSignal::new(edit::rule_text(current.as_ref()));
     let reader = room.clone();
     let preview = Memo::new(move |_| {
         let name = |uuid: &str| {
@@ -37,6 +35,9 @@ pub fn RuleEditor(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     };
     view! {
         <section class="inline-form rule-editor" aria-label="Rule editor">
+            {adding.then(|| view! {
+                <p class="quiet">"With a rule, this catalogue becomes smart: it keeps the events it lists and adds every event the rule picks, as people edit."</p>
+            })}
             <label class="field">
                 <span class="field-label">"Rule (JSON)"</span>
                 <textarea class="mono" rows="8" spellcheck="false" prop:value=move || text.get()

@@ -236,6 +236,16 @@ pub fn rule_preview(
     Ok(describe(&check_rule(text)?, name)?)
 }
 
+/// What the rule editor opens with: the catalogue's rule, or for a catalogue without one an
+/// example to change, so "Add a rule" starts from something that reads.
+pub fn rule_text(rule: Option<&Value>) -> String {
+    let example = serde_json::json!({
+        "filter": {"all": true},
+        "where": {"cmp": ["confidence", ">=", 0.8]},
+    });
+    serde_json::to_string_pretty(rule.unwrap_or(&example)).unwrap_or_default()
+}
+
 pub fn set_rule(txn: &mut TransactionMut<'_>, uuid: &str, text: &str) -> Result<(), EditError> {
     let rule = check_rule(text)?;
     found(
@@ -533,6 +543,27 @@ mod tests {
             new_catalogue(txn, "  ", "ann@example.org").map(drop)
         });
         assert_eq!(error, "a catalogue needs a name");
+    }
+
+    #[test]
+    fn a_new_rule_starts_from_an_example_that_reads() {
+        let text = rule_text(None);
+
+        assert_eq!(
+            rule_preview(&text, &|_| None).unwrap(),
+            rule_preview(
+                r#"{"filter": {"all": true}, "where": {"cmp": ["confidence", ">=", 0.8]}}"#,
+                &|_| None
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn an_existing_rule_opens_as_itself() {
+        let rule = json!({"filter": {"all": true}, "where": {"contains": ["tags", "shock"]}});
+
+        assert_eq!(check_rule(&rule_text(Some(&rule))).unwrap(), rule);
     }
 
     #[test]

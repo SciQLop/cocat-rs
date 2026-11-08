@@ -56,9 +56,11 @@ the catalogue list. From there, <strong>Restore</strong> puts it back.
 <h2 id="smart-catalogues">Smart catalogues</h2>
 <p>A smart catalogue has a rule. The rule picks events from the whole project. Its list
 updates by itself while people edit. You can still add events to it by hand.</p>
-<p>You make one from Python, or by importing a tscat dynamic catalogue. In the catalogue
-browser, <strong>Edit rule</strong> changes the rule. Before you save, the editor says in
-words what the rule picks, or what is wrong with it.</p>
+<p>To make one in the catalogue browser, open a catalogue and use <strong>More → Add a
+rule…</strong>. The editor starts with an example to change. The catalogue keeps the events
+it lists and adds the ones the rule picks. On a smart catalogue, <strong>Edit rule</strong>
+changes the rule. Before you save, the editor says in words what the rule picks, or what is
+wrong with it. Python and a tscat dynamic catalogue import make smart catalogues too.</p>
 <p>A rule is written in JSON. A few examples:</p>
 {% for (what, rule) in rules %}
 <figure class="rule-example">

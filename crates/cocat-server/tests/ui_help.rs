@@ -168,3 +168,13 @@ async fn the_smart_catalogue_help_names_the_freeze_button() {
     assert!(smart.contains("More → Freeze…"), "{smart}");
     assert!(!smart.to_lowercase().contains("materializ"), "{smart}");
 }
+
+#[tokio::test]
+async fn the_smart_catalogue_help_says_how_to_make_one_in_the_browser() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let smart = section_text(&help, "smart-catalogues");
+    assert!(smart.contains("More → Add a rule…"), "{smart}");
+}
