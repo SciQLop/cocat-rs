@@ -129,7 +129,7 @@ fn lock(shared: &Shared) -> MutexGuard<'_, Collected> {
 }
 
 /// A record that does not decode or apply is skipped, as the room skips it on load.
-fn apply(doc: &Doc, record: &[u8]) {
+pub(super) fn apply(doc: &Doc, record: &[u8]) {
     if let Ok(update) = Update::decode_v1(record) {
         let _ = doc.transact_mut().apply_update(update);
     }
