@@ -393,13 +393,17 @@ catalogue = api.create_catalogue(name="events", author="you@example.org")
 api.save()
 ```
 
-**Client mode** keeps the same `Room` in step with a server through the websocket:
+**Client mode** keeps the same `Room` in step with a server through the websocket.
+`connect` takes the server's address, the one you log in to (with its path prefix behind a
+proxy), and adds `/room/<id>` itself:
 
 ```python
 import cocat_rs
 
+url = "http://localhost:8000"
+cookie = cocat_rs.login(url, "you@example.org", "secret")
 room = cocat_rs.Room.open("/tmp/cocat", "my-room")
-room.connect("ws://localhost:8000/room/my-room", cookie, credentials=("you@example.org", "secret"))
+room.connect(url, cookie, credentials=("you@example.org", "secret"))
 room.wait_synced(10)
 
 print(room.status)                      # offline, connecting, synced, unauthorized
