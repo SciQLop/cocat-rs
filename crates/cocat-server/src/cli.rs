@@ -342,7 +342,9 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         crate::telemetry::install(bind, token)?;
         let _sampler = crate::telemetry::spawn_sampler(state.clone());
     }
-    println!("listening on {}", listener.local_addr()?);
+    let address = listener.local_addr()?;
+    println!("listening on {address}");
+    tracing::info!(%address, "cocat-server serving");
     io::stdout().flush()?;
 
     axum::serve(

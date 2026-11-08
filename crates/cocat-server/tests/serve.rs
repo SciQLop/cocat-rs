@@ -151,6 +151,27 @@ async fn serve_prints_the_bound_port() {
 }
 
 #[tokio::test]
+async fn serve_writes_its_log_to_stderr() {
+    let mut server = Server::spawn().await;
+    let stderr = server.child.stderr.take().unwrap();
+    let mut lines = BufReader::new(stderr).lines();
+    let logged = timeout(WAIT, async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if line.contains("cocat-server") && line.contains("serving") {
+                return line;
+            }
+        }
+        panic!("the server closed stderr without logging");
+    })
+    .await
+    .expect("the server logged nothing");
+
+    assert!(logged.contains("INFO"), "{logged}");
+
+    server.interrupt().await;
+}
+
+#[tokio::test]
 async fn the_root_answers_the_landing_page() {
     let mut server = Server::spawn().await;
     let mut stream = TcpStream::connect(server.addr).await.unwrap();

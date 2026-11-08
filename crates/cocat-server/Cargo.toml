@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 tower-http = { version = "0.6", features = ["fs"] }
 tungstenite = "0.30"
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 utoipa = { version = "6", features = ["macros", "uuid"] }
@@ -50,7 +51,6 @@ proptest = "1"
 tempfile = "3"
 tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }
-tracing-subscriber = "0.3"
 
 [lints]
 workspace = true
