@@ -24,7 +24,7 @@ own thread, so it is stamped and broadcast like any client write.
   `cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
   and, when cocat-py changes, the Python suite (see README "Tests").
 - One build or test command at a time, in the foreground. Never two cargo runs in parallel.
-- Commit straight to `main`; never push. `git grep -n -I -E "/home/jeandet|/tmp/claude-"` stays empty.
+- Commit straight to `main`; never push. No machine-local paths in committed files.
 - History never rewrites the room file: restore and naming only append or touch the database.
 - A version's author is the account that sent its records; records without a valid stamp are
   "before history" (author `None`), still listed and diffable.
