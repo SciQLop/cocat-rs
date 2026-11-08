@@ -143,3 +143,13 @@ On cocat-dev, two people edit the same catalogue, one in SciQLop and one in the 
 and each sees the other's edits live; the history lists their versions with names and
 summaries; restoring an earlier version brings the catalogue back for both; Python reads
 the same history.
+
+## Later: copies and "Apply" (decided 2026-11-08)
+
+People never see developer words. On screen: "Save version" (with a name and a note),
+"Restore this version", "What changed", "Make a copy from this version" (a new project equal
+to a past version, same uuids), and, not built yet, **"Apply to <original project name>"**
+to bring a copy's changes back. Apply opens a preview first: what it adds, changes and
+removes, and the events changed on both sides, where the person picks which value to keep.
+Only then an "Apply" button writes. Build it when someone actually works in a copy and
+wants their changes back.
