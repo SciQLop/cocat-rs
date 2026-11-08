@@ -432,3 +432,36 @@ fn run_cli_output(db_path: &Path, args: &[&str]) -> std::process::Output {
         .output()
         .unwrap()
 }
+
+#[tokio::test]
+async fn create_room_refuses_an_id_kept_for_public_catalogues() {
+    let (dir, pool) = seeded_db().await;
+    let owner = db::create_user(&pool, "owner@example.org", "pwd", false, true)
+        .await
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cocat-server"))
+        .args(["create-room", "--owner", "owner@example.org"])
+        .args(["--room-id", "public.test", "--db_path"])
+        .arg(dir.path().join("test.db"))
+        .output()
+        .unwrap();
+    let direct = db::create_room(&pool, owner, "public.other", "Other").await;
+
+    assert!(!output.status.success(), "create-room took a public id");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "\"public.test\" starts with \"public.\", which this server keeps for public catalogues"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        matches!(direct, Err(db::DbError::ReservedId(_))),
+        "{direct:?}"
+    );
+    assert!(
+        db::refuse_reserved_ids(&pool).await.is_ok(),
+        "a room was made"
+    );
+}

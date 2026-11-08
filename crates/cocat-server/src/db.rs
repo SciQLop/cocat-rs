@@ -40,6 +40,12 @@ pub enum DbError {
         .0.join(", ")
     )]
     ReservedIds(Vec<String>),
+    #[error(
+        "\"{0}\" starts with \"{prefix}\", which this server keeps for public catalogues: \
+         choose another id",
+        prefix = cocat_core::room_id::PUBLIC_PREFIX
+    )]
+    ReservedId(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -756,6 +762,9 @@ pub async fn create_room(
     room_id: &str,
     name: &str,
 ) -> Result<(), DbError> {
+    if cocat_core::room_id::is_public_id(room_id) {
+        return Err(DbError::ReservedId(room_id.to_owned()));
+    }
     let mut tx = pool.begin().await?;
     insert_room(&mut tx, owner_id, room_id, name).await?;
     tx.commit().await?;
