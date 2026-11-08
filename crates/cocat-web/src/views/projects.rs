@@ -11,22 +11,26 @@ use crate::projects::{Actions, Arrival, Project, arrival, title};
 use crate::route::Route;
 use crate::session::RoomConfig;
 use crate::views::controls::{Hint, go_to};
+use crate::views::notice::Notice;
 use crate::views::project_dialogs::{Dialog, ProjectDialog};
 
 /// The visitor's projects and the one the page holds. The page shows the open one; changing
-/// its id brings up a fresh room, connection and views.
+/// its id brings up a fresh room, connection and views. The notice is about the project the
+/// page opened with, so it goes when another one opens.
 #[derive(Clone, Copy)]
 pub struct Projects {
     pub list: RwSignal<Vec<Project>>,
     pub open: RwSignal<RoomConfig>,
+    pub notice: RwSignal<Option<Notice>>,
 }
 
 impl Projects {
-    pub fn new(config: RoomConfig) -> Self {
+    pub fn new(config: RoomConfig, notice: Option<Notice>) -> Self {
         set_title(&config.room_name);
         Self {
             list: RwSignal::new(Vec::new()),
             open: RwSignal::new(config),
+            notice: RwSignal::new(notice),
         }
     }
 
@@ -113,6 +117,7 @@ impl Projects {
 
     fn show(self, next: RoomConfig) {
         set_title(&next.room_name);
+        self.notice.set(None);
         self.open.set(next);
     }
 }

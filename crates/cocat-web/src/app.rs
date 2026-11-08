@@ -58,9 +58,8 @@ fn failure(message: String) -> impl IntoView {
 /// fresh room, connection and view state.
 #[component]
 fn Shell(config: RoomConfig) -> impl IntoView {
-    let projects = Projects::new(config);
+    let projects = Projects::new(config, read_notice());
     provide_context(projects);
-    provide_context(RwSignal::new(read_notice()));
     projects.reload();
     // The shell lives as long as the page: nothing to remove the listener for.
     let _ = window_event_listener(leptos::ev::popstate, move |_| projects.arrived());

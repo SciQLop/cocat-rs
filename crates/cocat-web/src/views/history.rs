@@ -339,9 +339,10 @@ fn SaveVersion(
         spawn_local(async move {
             match api::save_version(&config, &typed, &noted).await {
                 Ok(id) => {
-                    open.set(false);
-                    reload.run(());
-                    go_to(&history(scope.get_untracked(), Some(id)).hash());
+                    if let Some(next) = after_save(open, scope, id) {
+                        reload.run(());
+                        go_to(&next);
+                    }
                 }
                 Err(failure) => error.set(Some(failure.to_string())),
             }
@@ -742,6 +743,15 @@ fn HistoryIcon() -> impl IntoView {
             <path d="M3 3v5h5M12 7v5l3 2"></path>
         </svg>
     }
+}
+
+/// Where the page goes once a version is saved: the version, in the scope it was saved
+/// from. `None` when the form went away while the server answered (the user left the
+/// history or switched project): its signals are gone, and reading one would panic.
+fn after_save(open: RwSignal<bool>, scope: Memo<Option<String>>, id: u64) -> Option<String> {
+    let catalogue = scope.try_get_untracked()?;
+    let closed = open.try_set(false).is_some();
+    (!closed).then(|| history(catalogue, Some(id)).hash())
 }
 
 fn history(catalogue: Option<String>, version: Option<u64>) -> Route {

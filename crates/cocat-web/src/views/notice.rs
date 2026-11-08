@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 
 use crate::views::invite::CopyLink;
+use crate::views::projects::Projects;
 
 #[derive(Debug, Clone)]
 pub struct Notice {
@@ -13,7 +14,7 @@ pub struct Notice {
 
 #[component]
 pub fn NoticeBar() -> impl IntoView {
-    let notice = expect_context::<RwSignal<Option<Notice>>>();
+    let notice = expect_context::<Projects>().notice;
     move || {
         notice.get().map(|shown| {
             view! {
