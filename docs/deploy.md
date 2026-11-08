@@ -129,6 +129,10 @@ They run the server's CLI on `/db/cocat-rs.db`. An account created this way is a
 verified. The README's [Seeding](../README.md#seeding) lists the full commands;
 `add-user-to-room` and `remove-user-from-room` have wrappers too.
 
+These commands only change the database. A running server reads every open socket's role
+again every 30 seconds, so a revoked role or removed member is cut off within that time.
+The admin pages cut them off at once.
+
 ## Public catalogues from AMDA
 
 `tools/amda_public.py` copies AMDA's shared catalogues and time tables (222 lists, about

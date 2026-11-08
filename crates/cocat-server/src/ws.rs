@@ -1,6 +1,7 @@
 //! The websocket route: authenticate the cookie and check the role before the handshake,
 //! then bridge the socket to the room's actor thread.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -30,6 +31,11 @@ pub const INTERNAL_ERROR: u16 = 1011;
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const ATTACH_TRIES: usize = 3;
+
+/// How often every open socket's role is read again. The API and admin pages close a
+/// socket as soon as its role changes; the command line runs in its own process and only
+/// reaches the database, so its changes land at the next check.
+pub const ROLE_CHECK_PERIOD: Duration = Duration::from_secs(30);
 
 /// The largest frame or message a socket accepts: uvicorn's default `ws_max_size`, so a
 /// client cannot make the server buffer more than this. A bigger one is closed with 1009.
@@ -306,6 +312,28 @@ async fn attach(
         }
     }
     Err(AttachError::Gone(RoomGone))
+}
+
+pub fn spawn_role_checks(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(ROLE_CHECK_PERIOD);
+        loop {
+            ticker.tick().await;
+            check_roles(&state).await;
+        }
+    })
+}
+
+/// Closes every socket whose account no longer has the role it was admitted with.
+pub async fn check_roles(state: &AppState) {
+    let sockets: HashSet<_> = state.rooms.sockets().await.into_iter().collect();
+    for (room_id, user, role) in sockets {
+        match db::role_in(&state.pool, &room_id, user).await {
+            Ok(current) if current == Some(role) => {}
+            Ok(_) => state.rooms.revoke(&room_id, user).await,
+            Err(error) => tracing::warn!(%error, room = %room_id, "cannot re-read a role"),
+        }
+    }
 }
 
 fn next_client() -> ClientId {

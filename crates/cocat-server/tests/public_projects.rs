@@ -747,3 +747,51 @@ async fn a_readers_history_names_curators_and_contributors_never_their_emails() 
         ["reader@example.org", "curator@example.org"]
     );
 }
+
+/// What `set-curator --revoke` does from its own process: it can only reach the database, so
+/// the server's periodic role check is what closes the demoted curator's socket.
+#[tokio::test]
+async fn a_curator_unmarked_from_the_command_line_is_cut_off_at_the_next_role_check() {
+    let world = World::start().await;
+    let id = world.public(json!({"name": "Shocks"})).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = ws::router(world.state.clone());
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let token = auth::start_session(&world.state.pool, world.curator)
+        .await
+        .unwrap();
+    let mut request = format!("ws://{address}/room/{id}")
+        .into_client_request()
+        .unwrap();
+    let headers = request.headers_mut();
+    headers.insert(
+        "sec-websocket-protocol",
+        cocat_core::SUBPROTOCOL.parse().unwrap(),
+    );
+    headers.insert(
+        header::COOKIE,
+        format!("fastapiusersauth={token}").parse().unwrap(),
+    );
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    socket.next().await;
+
+    ws::check_roles(&world.state).await;
+    assert_eq!(world.state.rooms.clients_of(&id).await, 1, "a curator kept");
+    db::set_curator(&world.state.pool, world.curator, false)
+        .await
+        .unwrap();
+    ws::check_roles(&world.state).await;
+
+    let close = loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), socket.next())
+            .await
+            .expect("the socket stayed open")
+        {
+            Some(Ok(WsMessage::Close(frame))) => break frame,
+            Some(Ok(_)) => continue,
+            other => panic!("expected a close, got {other:?}"),
+        }
+    };
+    assert_eq!(close.map(|frame| u16::from(frame.code)), Some(1008));
+}

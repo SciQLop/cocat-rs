@@ -395,6 +395,26 @@ impl RoomManager {
         }
     }
 
+    /// Every open socket: its room, its account and the role it was admitted with.
+    pub async fn sockets(&self) -> Vec<(String, Uuid, Role)> {
+        let handles: Vec<(String, RoomHandle)> = match self.rooms.lock() {
+            Ok(rooms) => rooms
+                .iter()
+                .map(|(id, handle)| (id.clone(), handle.clone()))
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        let mut sockets = Vec::new();
+        for (room_id, handle) in handles {
+            let held = handle.sockets().await;
+            sockets.extend(
+                held.into_iter()
+                    .map(|(user, role)| (room_id.clone(), user, role)),
+            );
+        }
+        sockets
+    }
+
     /// How many rooms are open and how many sockets they hold together.
     pub async fn open_counts(&self) -> (u64, u64) {
         let handles: Vec<RoomHandle> = match self.rooms.lock() {
@@ -738,11 +758,16 @@ impl RoomHandle {
 
     /// How many sockets the room thread holds open right now.
     pub async fn clients(&self) -> u64 {
-        let (done, count) = oneshot::channel();
+        self.sockets().await.len() as u64
+    }
+
+    /// Who holds the room's sockets, with the role each was admitted with.
+    pub async fn sockets(&self) -> Vec<(Uuid, Role)> {
+        let (done, held) = oneshot::channel();
         if self.commands.send(RoomCommand::Clients { done }).is_ok() {
-            count.await.unwrap_or(0)
+            held.await.unwrap_or_default()
         } else {
-            0
+            Vec::new()
         }
     }
 
@@ -777,9 +802,10 @@ enum RoomCommand {
     Flush {
         done: oneshot::Sender<()>,
     },
-    /// Answers how many sockets the room still holds.
+    /// Answers who holds the room's sockets, one entry per socket, with the role each
+    /// was admitted with.
     Clients {
-        done: oneshot::Sender<u64>,
+        done: oneshot::Sender<Vec<(Uuid, Role)>>,
     },
     /// Runs a question against the document on the room's own thread.
     Read {
@@ -964,7 +990,8 @@ fn room_loop(
                         Step::Serving
                     }
                     RoomCommand::Clients { done } => {
-                        let _ = done.send(clients.len() as u64);
+                        let held = clients.values().map(|held| (held.user, held.role));
+                        let _ = done.send(held.collect());
                         Step::Serving
                     }
                     RoomCommand::Read { read } => {
@@ -1252,7 +1279,7 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
                 let _ = done.send(());
             }
             RoomCommand::Clients { done } => {
-                let _ = done.send(0);
+                let _ = done.send(Vec::new());
             }
             RoomCommand::Attach { .. }
             | RoomCommand::Frame { .. }

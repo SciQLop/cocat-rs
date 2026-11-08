@@ -85,7 +85,8 @@ enum Command {
         #[arg(long = "db_path", default_value = "./test.db")]
         db_path: PathBuf,
     },
-    /// Grant or revoke the administrator flag on an account.
+    /// Grant or revoke the administrator flag on an account. A running server applies it to
+    /// open sockets within 30 seconds.
     SetSuperuser {
         #[arg(long)]
         email: String,
@@ -94,7 +95,8 @@ enum Command {
         #[arg(long = "db_path", default_value = "./test.db")]
         db_path: PathBuf,
     },
-    /// Mark an account a curator of the public catalogues, or no longer.
+    /// Mark an account a curator of the public catalogues, or no longer. A running server
+    /// applies it to open sockets within 30 seconds.
     SetCurator {
         #[arg(long)]
         email: String,
@@ -370,6 +372,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         crate::telemetry::install(bind, token)?;
         let _sampler = crate::telemetry::spawn_sampler(state.clone());
     }
+    let _role_checks = ws::spawn_role_checks(state.clone());
     let address = listener.local_addr()?;
     println!("listening on {address}");
     tracing::info!(%address, "cocat-server serving");
