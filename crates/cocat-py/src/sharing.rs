@@ -1,7 +1,9 @@
 //! Managing a project from Python: creating one, its members, invitations and groups, as
 //! dicts shaped like the server's JSON; refusals raise the typed server errors.
 
-use cocat_client::{INVITATION_DAYS, LoginError, NewInvitation, NewPublicCatalogue};
+use cocat_client::{
+    INVITATION_DAYS, LoginError, NewInvitation, NewPublicCatalogue, PublicCatalogueChanges,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde::Serialize;
@@ -156,7 +158,7 @@ fn set_editors_can_share(
 }
 
 /// The public catalogues, as dicts with `id`, `name`, `folder`, `source`, `description`,
-/// `role` and `changed`. Open one like any project, by its id.
+/// `role`, `changed` and `count` (events outside the trash). Open one like any project, by its id.
 #[pyfunction]
 fn public_catalogues(py: Python<'_>, url: String, cookie: String) -> Result<Py<PyAny>> {
     answer(py, cocat_client::public_catalogues(&url, &cookie))
@@ -190,6 +192,36 @@ fn create_public_catalogue(
     Ok(created.id)
 }
 
+/// Changes what the index says about a public catalogue; only curators may. A field left
+/// `None` stays, an empty string clears it.
+#[pyfunction]
+#[pyo3(signature = (url, cookie, id, name=None, folder=None, source=None, description=None))]
+#[allow(clippy::too_many_arguments)]
+fn update_public_catalogue(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    id: String,
+    name: Option<String>,
+    folder: Option<String>,
+    source: Option<String>,
+    description: Option<String>,
+) -> Result<()> {
+    let changes = PublicCatalogueChanges {
+        name: name.as_deref(),
+        folder: folder.as_deref(),
+        source: source.as_deref(),
+        description: description.as_deref(),
+    };
+    py.detach(|| {
+        block_on(cocat_client::update_public_catalogue(
+            &url, &cookie, &id, &changes,
+        ))
+    })?
+    .map_err(http_error)?;
+    Ok(())
+}
+
 /// The project's page in the web app; with `share`, the page opens its Share dialog.
 #[pyfunction]
 #[pyo3(signature = (url, project_id, share=false))]
@@ -210,5 +242,6 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(project_url, module)?)?;
     module.add_function(wrap_pyfunction!(public_catalogues, module)?)?;
     module.add_function(wrap_pyfunction!(create_public_catalogue, module)?)?;
+    module.add_function(wrap_pyfunction!(update_public_catalogue, module)?)?;
     Ok(())
 }

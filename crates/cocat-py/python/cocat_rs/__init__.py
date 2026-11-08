@@ -30,6 +30,7 @@ from ._native import (
     rule_from_tscat,
     set_editors_can_share,
     set_role,
+    update_public_catalogue,
 )
 
 _accepts_room_id = _old_names.renamed_keywords(room_id="project_id")
@@ -70,6 +71,7 @@ __all__ = [
     "rule_from_tscat",
     "set_editors_can_share",
     "set_role",
+    "update_public_catalogue",
 ]
 
 log = logging.getLogger("cocat_rs")

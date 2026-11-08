@@ -91,6 +91,8 @@ pub struct PublicCatalogue {
     pub description: Option<String>,
     pub role: Role,
     pub changed: Option<String>,
+    /// How many events it holds outside the trash; `None` when the server could not count.
+    pub count: Option<i64>,
 }
 
 /// What a new public catalogue says; `key` makes its id `public.<key>`.
@@ -108,6 +110,31 @@ pub async fn public_catalogues(
     cookie: &str,
 ) -> Result<Vec<PublicCatalogue>, LoginError> {
     let request = api_request(Method::GET, url, cookie, &["public"])?;
+    Ok(send(request).await?.json().await?)
+}
+
+/// What to change in a public catalogue's entry: `None` keeps a field, an empty string
+/// clears it (the name cannot be cleared).
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct PublicCatalogueChanges<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+}
+
+/// Changes what the index says about a public catalogue; only curators may.
+pub async fn update_public_catalogue(
+    url: &str,
+    cookie: &str,
+    id: &str,
+    changes: &PublicCatalogueChanges<'_>,
+) -> Result<PublicCatalogue, LoginError> {
+    let request = api_request(Method::PATCH, url, cookie, &["public", id])?.json(changes);
     Ok(send(request).await?.json().await?)
 }
 

@@ -214,8 +214,9 @@ accounts an administrator marks (admin pages, or `set-curator`).
 
 | Route | Who | What |
 |---|---|---|
-| `GET /api/public` | any user | the index: `id`, `name`, `folder` (`"AMDA/Solar wind"`), `source`, `description`, your `role`, `changed` |
+| `GET /api/public` | any user | the index: `id`, `name`, `folder` (`"AMDA/Solar wind"`), `source`, `description`, your `role`, `changed`, `count` (events outside the trash) |
 | `POST /api/public` | curators | `{"name", "folder"?, "source"?, "description"?, "key"?}` → 201; the id is `public.<key>` (409 if taken), random without a key |
+| `PATCH /api/public/{id}` | curators | `{"name"?, "folder"?, "source"?, "description"?}` → 200 with the entry; a field left out stays, a blank one is cleared (not the name); 404 for an id that is not public |
 
 A public catalogue is then a project like any other: the socket, history, catalogues and
 export routes answer a reader as a viewer and a curator as an editor, and a reader can copy
@@ -542,11 +543,13 @@ trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
 ```
 
 **Public catalogues.** `public_catalogues(url, cookie)` lists them as dicts (`id`, `name`,
-`folder`, `source`, `description`, your `role`, `changed`). Open one like any project, with its
+`folder`, `source`, `description`, your `role`, `changed`, `count`). Open one like any project, with its
 id: a curator gets an editable project, everyone else a read-only one. A curator makes one
 with `create_public_catalogue(url, cookie, name, folder=None, source=None, description=None,
 key=None)`, which answers its id (`public.<key>`, or a random one); anyone else gets
-`Forbidden`, a key already taken `Conflict`.
+`Forbidden`, a key already taken `Conflict`. `update_public_catalogue(url, cookie, id,
+name=None, folder=None, source=None, description=None)` changes its entry: `None` keeps a
+field, `""` clears it.
 
 ```python
 index = cocat_rs.public_catalogues(url, cookie)

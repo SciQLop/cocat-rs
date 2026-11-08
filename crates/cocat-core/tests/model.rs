@@ -405,6 +405,7 @@ fn a_deleted_event_goes_to_the_trash_and_comes_back() {
         Vec::new()
     );
     assert_eq!(model::catalogue(&txn, ALPHA).unwrap().event_count, 0);
+    assert_eq!(model::live_event_count(&txn), 0);
     assert_eq!(model::event(&txn, EVENT).unwrap().status, Status::Deleted);
     let trash: Vec<String> = model::trash(&txn)
         .into_iter()
@@ -421,6 +422,7 @@ fn a_deleted_event_goes_to_the_trash_and_comes_back() {
     );
     assert_eq!(model::event_catalogues(&txn, EVENT), [BETA, ALPHA]);
     assert!(model::trash(&txn).is_empty());
+    assert_eq!(model::live_event_count(&txn), 1);
 }
 
 #[test]

@@ -93,3 +93,34 @@ def test_nobody_shares_one(server):
             cc.members(server.url, cookie, public_id)
         with pytest.raises(cc.Conflict):
             cc.invite(server.url, cookie, public_id, role="viewer")
+
+
+def test_a_curator_changes_what_the_index_says_and_it_counts_the_events(server, tmp_path):
+    curator = account(server, "curator@example.org", "set-curator")
+    public_id = cc.create_public_catalogue(
+        server.url, curator, "Shocks", folder="AMDA", source="AMDA", description="d"
+    )
+    with pytest.raises(cc.Forbidden):
+        cc.update_public_catalogue(server.url, server.cookie, public_id, name="mine")
+    with pytest.raises(cc.ServerNotFound):
+        cc.update_public_catalogue(server.url, curator, "public.nope", name="x")
+
+    cc.update_public_catalogue(
+        server.url, curator, public_id, name="ACE shocks", folder="AMDA/Solar wind", description=""
+    )
+
+    [entry] = cc.public_catalogues(server.url, server.cookie)
+    assert entry["name"] == "ACE shocks"
+    assert entry["folder"] == "AMDA/Solar wind"
+    assert entry["source"] == "AMDA"
+    assert entry["description"] is None
+    assert entry["count"] == 0
+
+    writer = connected(tmp_path / "curator", public_id, server.url, curator)
+    kept = writer.create_event("2020-01-01T00:00:00", "2020-01-01T01:00:00")
+    gone = writer.create_event("2020-01-02T00:00:00", "2020-01-02T01:00:00")
+    writer.create_catalogue(name="ACE shocks", events=[kept, gone])
+    gone.delete()
+    writer.save(15)
+    writer.close()
+    wait_until(lambda: cc.public_catalogues(server.url, server.cookie)[0]["count"] == 1)

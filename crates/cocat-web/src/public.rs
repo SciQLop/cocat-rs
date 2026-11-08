@@ -16,6 +16,8 @@ pub struct PublicCatalogue {
     #[serde(deserialize_with = "role")]
     pub role: Role,
     pub changed: Option<String>,
+    #[serde(default)]
+    pub count: Option<i64>,
 }
 
 impl PublicCatalogue {
@@ -32,6 +34,12 @@ impl PublicCatalogue {
     /// The day it last changed, `2026-11-08`.
     pub fn day(&self) -> Option<&str> {
         self.changed.as_deref().and_then(|at| at.get(..10))
+    }
+
+    /// "12691 events", or nothing when the server did not count them.
+    pub fn events(&self) -> Option<String> {
+        let count = usize::try_from(self.count?).ok()?;
+        Some(crate::stats::heading(count, count))
     }
 
     fn matches(&self, words: &[String]) -> bool {
@@ -110,6 +118,7 @@ mod tests {
             description: description.map(str::to_owned),
             role: Role::Viewer,
             changed: Some("2026-11-08T10:00:00Z".into()),
+            count: Some(1),
         }
     }
 
@@ -135,6 +144,14 @@ mod tests {
         assert!(!listed[0].project().editors_can_share);
         assert_eq!(listed[0].day(), None);
         assert_eq!(entry("x", None, None).day(), Some("2026-11-08"));
+        assert_eq!(listed[0].events(), None, "an older server sends no count");
+        assert_eq!(entry("x", None, None).events().as_deref(), Some("1 event"));
+        let counted: PublicCatalogue = serde_json::from_str(
+            r#"{"id":"public.b","name":"B","folder":null,"source":null,
+                "description":null,"role":"viewer","changed":null,"count":12691}"#,
+        )
+        .unwrap();
+        assert_eq!(counted.events().as_deref(), Some("12691 events"));
     }
 
     #[test]

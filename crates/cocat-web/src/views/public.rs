@@ -80,6 +80,7 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
                 {catalogue.description.clone().map(|text| view! { <span class="description">{text}</span> })}
                 <span class="meta">
                     {catalogue.source.clone().map(|source| view! { <span class="source">{source}</span> })}
+                    {catalogue.events().map(|events| view! { <span>{events}</span> })}
                     {day.map(|day| view! { <span>{day}</span> })}
                 </span>
             </button>

@@ -599,3 +599,103 @@ async fn the_socket_names_the_role_and_a_curator_unmarked_is_cut_off() {
     };
     assert_eq!(close.map(|frame| u16::from(frame.code)), Some(1008));
 }
+
+#[tokio::test]
+async fn a_curator_changes_what_the_index_says_and_nobody_else_can() {
+    let world = World::start().await;
+    let id = world
+        .public(json!({"name": "Shocks", "folder": "AMDA", "source": "AMDA", "description": "d"}))
+        .await;
+    let path = format!("/api/public/{id}");
+
+    let (status, changed) = world
+        .call(
+            Some(world.curator),
+            Method::PATCH,
+            &path,
+            Some(json!({"name": " ACE shocks ", "folder": "AMDA/Solar wind", "description": ""})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    assert_eq!(changed["id"], id.as_str());
+    assert_eq!(changed["name"], "ACE shocks");
+    assert_eq!(changed["folder"], "AMDA/Solar wind");
+    assert_eq!(changed["source"], "AMDA", "a field left out stays");
+    assert_eq!(changed["description"], Value::Null, "a blank field clears");
+    let (_, index) = world
+        .call(Some(world.reader), Method::GET, "/api/public", None)
+        .await;
+    assert_eq!(index[0]["name"], "ACE shocks");
+    assert_eq!(index[0]["folder"], "AMDA/Solar wind");
+
+    let rename = Some(json!({"name": "mine"}));
+    let (status, body) = world
+        .call(Some(world.reader), Method::PATCH, &path, rename.clone())
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["detail"], "Only curators can change public catalogues");
+    let (status, _) = world.call(None, Method::PATCH, &path, rename.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = world
+        .call(Some(world.admin), Method::PATCH, &path, rename.clone())
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    db::create_room(&world.state.pool, world.curator, "lab", "Lab")
+        .await
+        .unwrap();
+    for (target, body, wanted) in [
+        (
+            "/api/public/public.nope",
+            rename.clone(),
+            StatusCode::NOT_FOUND,
+        ),
+        ("/api/public/lab", rename.clone(), StatusCode::NOT_FOUND),
+        (
+            path.as_str(),
+            Some(json!({"name": "  "})),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            path.as_str(),
+            Some(json!({"folder": "x".repeat(201)})),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let (status, answer) = world
+            .call(Some(world.curator), Method::PATCH, target, body.clone())
+            .await;
+        assert_eq!(status, wanted, "{target} {body:?}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn the_index_counts_the_events_and_follows_their_changes() {
+    let world = World::start().await;
+    let id = world.public(json!({"name": "Shocks"})).await;
+    let count = || async {
+        let (_, index) = world
+            .call(Some(world.reader), Method::GET, "/api/public", None)
+            .await;
+        index[0]["count"].clone()
+    };
+    assert_eq!(count().await, json!(0), "an empty catalogue holds none");
+
+    world.seed(&id);
+    assert_eq!(count().await, json!(1));
+    assert_eq!(count().await, json!(1), "the stored count answers again");
+
+    let doc = Doc::new();
+    let update = {
+        let mut txn = doc.transact_mut();
+        let at = Timestamp::parse("2021-01-01T00:00:00Z").unwrap();
+        model::create_event(&mut txn, &EventRecord::new("e2", at, at)).unwrap();
+        model::create_event(&mut txn, &EventRecord::new("e3", at, at)).unwrap();
+        model::delete_event(&mut txn, "e3");
+        txn.encode_update_v1()
+    };
+    let (mut store, _) = FileRoomStore::open(&world.update_dir, &id).unwrap();
+    store.append(bytes::Bytes::from(update)).unwrap();
+    store.flush().unwrap();
+    assert_eq!(count().await, json!(2), "the trash does not count");
+}

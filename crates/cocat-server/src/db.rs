@@ -842,6 +842,9 @@ pub struct PublicRoom {
     pub folder: Option<String>,
     pub source: Option<String>,
     pub description: Option<String>,
+    /// How many events it held when last counted, from the room file `counted_file` names.
+    pub public_count: Option<i64>,
+    pub counted_file: Option<String>,
 }
 
 /// Makes a public catalogue: no owner and no members, so `created_by` only records who.
@@ -868,11 +871,52 @@ pub async fn create_public_room(
 /// Every public catalogue, by folder then name.
 pub async fn public_rooms(pool: &SqlitePool) -> Result<Vec<PublicRoom>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, name, folder, source, description FROM room WHERE public
-         ORDER BY folder IS NULL, folder, name, id",
+        "SELECT id, name, folder, source, description, public_count, counted_file FROM room
+         WHERE public ORDER BY folder IS NULL, folder, name, id",
     )
     .fetch_all(pool)
     .await?)
+}
+
+pub async fn public_room(pool: &SqlitePool, room_id: &str) -> Result<Option<PublicRoom>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, name, folder, source, description, public_count, counted_file FROM room
+         WHERE public AND id = ?",
+    )
+    .bind(room_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// Writes what the index says about a public catalogue: its name, folder, source and
+/// description.
+pub async fn update_public_room(pool: &SqlitePool, room: &PublicRoom) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE room SET name = ?, folder = ?, source = ?, description = ? WHERE public AND id = ?",
+    )
+    .bind(&room.name)
+    .bind(&room.folder)
+    .bind(&room.source)
+    .bind(&room.description)
+    .bind(&room.id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn store_public_count(
+    pool: &SqlitePool,
+    room_id: &str,
+    count: i64,
+    counted_file: &str,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE room SET public_count = ?, counted_file = ? WHERE public AND id = ?")
+        .bind(count)
+        .bind(counted_file)
+        .bind(room_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn is_public(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {

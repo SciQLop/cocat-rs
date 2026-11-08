@@ -148,6 +148,7 @@ const ROWS: &[Row] = &[
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
     row("GET", "/api/public", Guard::SignedIn, Style::Api),
     row("POST", "/api/public", Guard::Curator, Style::Api),
+    row("PATCH", "/api/public/{public}", Guard::Curator, Style::Api),
     row("PATCH", "/api/rooms/{room}", Guard::RoomEditor, Style::Api).room_any(),
     row("DELETE", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
     row(
@@ -752,6 +753,7 @@ impl Caps {
 struct World {
     state: AppState,
     room: String,
+    public: String,
     group: String,
     spare: String,
     user: Uuid,
@@ -794,6 +796,7 @@ impl World {
 
         let target = user(&state, "target@example.org", hashed).await;
         let room = lifecycle::create_room(&state, owner, "lab").await.unwrap();
+        let public = public_catalogue(&state, admin).await;
         db::add_member(&state.pool, &room.id, target, Role::Viewer)
             .await
             .unwrap();
@@ -851,6 +854,7 @@ impl World {
         Self {
             state,
             room: room.id,
+            public,
             group: group.id,
             spare: spare.id,
             user: stranger,
@@ -874,6 +878,7 @@ impl World {
     fn path(&self, template: &str) -> String {
         template
             .replace("{room}", &self.room)
+            .replace("{public}", &self.public)
             .replace("{group_invitation}", &self.group_invitation.to_string())
             .replace("{spare}", &self.spare)
             .replace("{group}", &self.group)
@@ -954,7 +959,7 @@ impl World {
             ("POST", "/api/rooms" | "/api/groups" | "/api/public") => {
                 (json, r#"{"name":"another"}"#.to_owned())
             }
-            ("PATCH", "/api/rooms/{room}" | "/api/groups/{group}") => {
+            ("PATCH", "/api/rooms/{room}" | "/api/groups/{group}" | "/api/public/{public}") => {
                 (json, r#"{"name":"renamed"}"#.to_owned())
             }
             ("PATCH", "/api/rooms/{room}/members/{member}") => {
@@ -1101,6 +1106,22 @@ async fn superuser(state: &AppState, email: &str, hashed: &str) -> Uuid {
     account.is_superuser = true;
     db::save_user(&state.pool, &account).await.unwrap();
     id
+}
+
+async fn public_catalogue(state: &AppState, by: Uuid) -> String {
+    let room = db::PublicRoom {
+        id: "public.amda.shared_1".to_owned(),
+        name: "Shocks".to_owned(),
+        folder: None,
+        source: None,
+        description: None,
+        public_count: None,
+        counted_file: None,
+    };
+    db::create_public_room(&state.pool, &room, by)
+        .await
+        .unwrap();
+    room.id
 }
 
 async fn member(state: &AppState, group: &str, user: Uuid) {

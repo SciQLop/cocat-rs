@@ -18,8 +18,8 @@ pub use history::{commit, copy_version, history, name_version, restore, version_
 pub use login::{Credentials, LoginError, RoomInfo, login, rooms};
 pub use projects::{
     CreatedInvitation, INVITATION_DAYS, Invitation, Member, NewInvitation, NewPublicCatalogue,
-    ProjectGroup, PublicCatalogue, create_project, create_public_catalogue, invitations, invite,
-    members, project_groups, project_url, public_catalogues, remove_member, revoke_invitation,
-    set_editors_can_share, set_role,
+    ProjectGroup, PublicCatalogue, PublicCatalogueChanges, create_project, create_public_catalogue,
+    invitations, invite, members, project_groups, project_url, public_catalogues, remove_member,
+    revoke_invitation, set_editors_can_share, set_role, update_public_catalogue,
 };
 pub use room::{Room, RoomError, Status};

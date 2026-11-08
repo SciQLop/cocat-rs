@@ -1,9 +1,11 @@
 //! The public catalogues under `/api/public`: the index every signed-in account reads, and
-//! a new one, which only curators make. Each is a project, opened like any other.
+//! the new ones and changes to what the index says, which only curators make. Each is a
+//! project, opened like any other.
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use cocat_core::model;
 use cocat_core::role::Role;
 use cocat_core::room_id::public_id;
 use serde::{Deserialize, Serialize};
@@ -12,14 +14,17 @@ use time::format_description::well_known::Rfc3339;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
+use yrs::Transact;
 
 use crate::AppState;
-use crate::api::{ApiError, CurrentUser, JsonBody};
+use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody};
 use crate::db::{self, PublicRoom};
 use crate::lifecycle::{self, Noun};
 use crate::openapi::Detail;
 
 const NOT_A_CURATOR: &str = "Only curators can create public catalogues";
+const NOT_A_CURATOR_TO_CHANGE: &str = "Only curators can change public catalogues";
+const NO_SUCH_CATALOGUE: &str = "No such public catalogue";
 const BAD_KEY: &str =
     "A key is dot-separated parts of letters, digits, '_' and '-', at most 64 characters";
 const LONG_FOLDER: &str = "Enter a folder or a source of at most 200 characters";
@@ -28,7 +33,9 @@ const MAX_LABEL: usize = 200;
 const MAX_DESCRIPTION: usize = 2000;
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(index, create))
+    OpenApiRouter::new()
+        .routes(routes!(index, create))
+        .routes(routes!(change))
 }
 
 /// A public catalogue in the index.
@@ -45,6 +52,8 @@ struct PublicOut {
     role: &'static str,
     /// When its events last changed (RFC 3339), `null` while it holds none.
     changed: Option<String>,
+    /// How many events it holds outside the trash; `null` when it could not be counted.
+    count: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -56,6 +65,15 @@ struct NewPublic {
     /// Makes the id `public.<key>`, so an import finds its catalogue again; a random one
     /// without it.
     key: Option<String>,
+}
+
+/// What to change; a field left out stays, a blank one is cleared (the name cannot be).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct PublicChanges {
+    name: Option<String>,
+    folder: Option<String>,
+    source: Option<String>,
+    description: Option<String>,
 }
 
 #[utoipa::path(
@@ -72,11 +90,10 @@ async fn index(
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<PublicOut>>, ApiError> {
     let role = role_of(&state, user.id).await?;
-    let listed = db::public_rooms(&state.pool)
-        .await?
-        .into_iter()
-        .map(|room| out(&state, room, role))
-        .collect();
+    let mut listed = Vec::new();
+    for room in db::public_rooms(&state.pool).await? {
+        listed.push(out(&state, room, role).await);
+    }
     Ok(Json(listed))
 }
 
@@ -110,7 +127,42 @@ async fn create(
         )));
     }
     db::create_public_room(&state.pool, &room, user.id).await?;
-    Ok((StatusCode::CREATED, Json(out(&state, room, Role::Editor))))
+    Ok((
+        StatusCode::CREATED,
+        Json(out(&state, room, Role::Editor).await),
+    ))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/public/{room_id}",
+    params(("room_id" = String, Path, description = "The public catalogue's id")),
+    request_body = PublicChanges,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The public catalogue as changed", body = PublicOut),
+        (status = 400, description = "A field is empty or too long", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not a curator", body = Detail),
+        (status = 404, description = "No public catalogue has that id", body = Detail),
+        (status = 422, description = "The body is not a change", body = Detail),
+    )
+)]
+async fn change(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<PublicChanges>,
+) -> Result<Json<PublicOut>, ApiError> {
+    if !db::is_curator(&state.pool, user.id).await? {
+        return Err(ApiError::Forbidden(NOT_A_CURATOR_TO_CHANGE.to_owned()));
+    }
+    let room = db::public_room(&state.pool, &room_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(NO_SUCH_CATALOGUE.to_owned()))?;
+    let room = changed(room, body)?;
+    db::update_public_room(&state.pool, &room).await?;
+    Ok(Json(out(&state, room, Role::Editor).await))
 }
 
 async fn role_of(state: &AppState, user: Uuid) -> Result<Role, ApiError> {
@@ -120,11 +172,12 @@ async fn role_of(state: &AppState, user: Uuid) -> Result<Role, ApiError> {
     })
 }
 
-fn out(state: &AppState, room: PublicRoom, role: Role) -> PublicOut {
+async fn out(state: &AppState, room: PublicRoom, role: Role) -> PublicOut {
     let changed = state
         .rooms
         .room_changed(&room.id)
         .and_then(|at| OffsetDateTime::from(at).format(&Rfc3339).ok());
+    let count = counted(state, &room).await;
     PublicOut {
         id: room.id,
         name: room.name,
@@ -133,7 +186,48 @@ fn out(state: &AppState, room: PublicRoom, role: Role) -> PublicOut {
         description: room.description,
         role: role.as_str(),
         changed,
+        count,
     }
+}
+
+/// The events the catalogue holds: the stored count while the room file is the one it was
+/// taken from, else a fresh count, stored for the next look. A failed count answers the
+/// stored one.
+// simplify: the index counts each changed catalogue while it answers, so the first look after
+// a bulk import loads every room the import wrote, once. Count when a room unloads instead if
+// that wait shows.
+async fn counted(state: &AppState, room: &PublicRoom) -> Option<i64> {
+    let file = file_stamp(state, &room.id);
+    if room.counted_file.as_deref() == Some(file.as_str()) {
+        return room.public_count;
+    }
+    let read = state
+        .rooms
+        .read(&room.id, |doc| model::live_event_count(&doc.transact()))
+        .await;
+    let count = match read.map(i64::try_from) {
+        Ok(Ok(count)) => count,
+        Ok(Err(_)) => return room.public_count,
+        Err(error) => {
+            tracing::warn!(room = %room.id, %error, "the public catalogue could not be counted");
+            return room.public_count;
+        }
+    };
+    if let Err(error) = db::store_public_count(&state.pool, &room.id, count, &file).await {
+        tracing::warn!(room = %room.id, %error, "the public catalogue count was not stored");
+    }
+    Some(count)
+}
+
+/// Names the room file as it is now. The file only grows between compactions, so its size
+/// tells two writes apart even when the clock gives them the same modification time.
+fn file_stamp(state: &AppState, room_id: &str) -> String {
+    let modified = state
+        .rooms
+        .room_changed(room_id)
+        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos());
+    format!("{}:{modified}", state.rooms.room_size(room_id))
 }
 
 fn checked(body: NewPublic) -> Result<PublicRoom, ApiError> {
@@ -142,15 +236,45 @@ fn checked(body: NewPublic) -> Result<PublicRoom, ApiError> {
         Some(key) => public_id(key).map_err(|_| invalid(BAD_KEY))?,
         None => public_id(&Uuid::new_v4().simple().to_string()).map_err(|_| invalid(BAD_KEY))?,
     };
-    let name = lifecycle::clean_name(&body.name, Noun::Room)?;
     Ok(PublicRoom {
         id,
-        name,
-        folder: label(body.folder, MAX_LABEL).map_err(|_| invalid(LONG_FOLDER))?,
-        source: label(body.source, MAX_LABEL).map_err(|_| invalid(LONG_FOLDER))?,
-        description: label(body.description, MAX_DESCRIPTION)
-            .map_err(|_| invalid(LONG_DESCRIPTION))?,
+        name: lifecycle::clean_name(&body.name, Noun::Room)?,
+        folder: folder_or_source(body.folder)?,
+        source: folder_or_source(body.source)?,
+        description: description(body.description)?,
+        public_count: None,
+        counted_file: None,
     })
+}
+
+fn changed(room: PublicRoom, body: PublicChanges) -> Result<PublicRoom, ApiError> {
+    Ok(PublicRoom {
+        name: match body.name {
+            None => room.name,
+            Some(name) => lifecycle::clean_name(&name, Noun::Room)?,
+        },
+        folder: match body.folder {
+            None => room.folder,
+            given => folder_or_source(given)?,
+        },
+        source: match body.source {
+            None => room.source,
+            given => folder_or_source(given)?,
+        },
+        description: match body.description {
+            None => room.description,
+            given => description(given)?,
+        },
+        ..room
+    })
+}
+
+fn folder_or_source(value: Option<String>) -> Result<Option<String>, ApiError> {
+    label(value, MAX_LABEL).map_err(|_| ApiError::BadRequest(LONG_FOLDER.to_owned()))
+}
+
+fn description(value: Option<String>) -> Result<Option<String>, ApiError> {
+    label(value, MAX_DESCRIPTION).map_err(|_| ApiError::BadRequest(LONG_DESCRIPTION.to_owned()))
 }
 
 /// A trimmed optional field: blank is none, longer than `max` characters is refused.

@@ -32,6 +32,14 @@ pub fn event<T: ReadTxn>(txn: &T, uuid: &str) -> Option<EventRecord> {
     record(txn, uuid, &object(txn, EVENTS, uuid)?)
 }
 
+/// How many events the room holds outside the trash.
+pub fn live_event_count<T: ReadTxn>(txn: &T) -> usize {
+    entries(txn, EVENTS)
+        .iter()
+        .filter(|(_, map)| !is_deleted(txn, map))
+        .count()
+}
+
 /// The events in the trash, in time order.
 pub fn trash<T: ReadTxn>(txn: &T) -> Vec<EventRecord> {
     let mut records: Vec<EventRecord> = entries(txn, EVENTS)
