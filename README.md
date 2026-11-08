@@ -458,6 +458,11 @@ catalogue = api.create_catalogue(name="events", author="you@example.org")
 api.save()
 ```
 
+Each account keeps its own cache in a folder named after its account id under `file_path`
+(`/tmp/cocat/<account id>/`), so two accounts sharing `file_path` never touch each other's
+offline edits. Caches written directly in `file_path` by earlier versions are left as they
+were, not read, and named in one warning: open one with `Project.open` to send what it holds.
+
 **Client mode** keeps the same `Project` in step with a server through the websocket.
 `connect` takes the server's address, the one you log in to (with its path prefix behind a
 proxy), and adds `/room/<id>` itself:
@@ -486,7 +491,8 @@ version from `Project.at`: every write raises `RuntimeError` ("this project is r
 you (viewer)") before it touches the project, since the server would drop it. When a viewer
 connects with a cache holding changes the server never took (made before the role was known,
 or by cocat_rs 0.3.0), the cache is dropped and the project reloaded from the server, with one
-warning in the `cocat_client` log. A role changed while connected closes the socket; with
+warning in the `cocat_client` log. Give each account its own cache folder (script mode does):
+the drop clears whatever that folder holds for the project. A role changed while connected closes the socket; with
 `credentials` the project logs in again and picks up the new role, without them it ends in
 `unauthorized` until `set_cookie` or `connect`.
 

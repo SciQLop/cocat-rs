@@ -85,6 +85,19 @@ pub async fn rooms(url: &str, cookie: &str) -> Result<Vec<RoomInfo>, LoginError>
     rows.into_iter().map(room_info).collect()
 }
 
+/// The id of the account behind the session.
+pub async fn account_id(url: &str, cookie: &str) -> Result<String, LoginError> {
+    #[derive(Deserialize)]
+    struct Me {
+        id: String,
+    }
+    let request = reqwest::Client::new()
+        .get(base(url)?.join("api/me")?)
+        .header(reqwest::header::COOKIE, cookie_header(cookie));
+    let me: Me = send(request).await?.json().await?;
+    Ok(me.id)
+}
+
 /// The names Python cocat and this server gave an account's own project.
 const PERSONAL_ROOM_NAMES: [&str; 2] = ["My catalogues", "Personal"];
 

@@ -1705,6 +1705,13 @@ fn login(py: Python<'_>, url: String, username: String, password: String) -> Res
     cookie.map_err(http_error)
 }
 
+/// The id of the account behind the cookie.
+#[pyfunction]
+fn account_id(py: Python<'_>, url: String, cookie: String) -> Result<String> {
+    let id = py.detach(|| block_on(cocat_client::account_id(&url, &cookie)))?;
+    id.map_err(http_error)
+}
+
 #[pyfunction]
 fn projects(py: Python<'_>, url: String, cookie: String) -> Result<Vec<ProjectInfo>> {
     let projects = py
@@ -1855,6 +1862,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<ProjectInfo>()?;
     module.add_function(wrap_pyfunction!(login, module)?)?;
     module.add_function(wrap_pyfunction!(projects, module)?)?;
+    module.add_function(wrap_pyfunction!(account_id, module)?)?;
     module.add_function(wrap_pyfunction!(history, module)?)?;
     module.add_function(wrap_pyfunction!(restore, module)?)?;
     module.add_function(wrap_pyfunction!(name_version, module)?)?;

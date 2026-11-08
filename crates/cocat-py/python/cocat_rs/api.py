@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import logging
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
@@ -20,9 +21,12 @@ import keyring
 from . import Project
 from ._old_names import renamed_keywords
 from ._native import ProjectInfo, export_votable as _export_votable
+from ._native import account_id as _account_id
 from ._native import login as _login
 from ._native import projects as _projects
 
+
+log = logging.getLogger("cocat_rs")
 
 CONNECT_TIMEOUT = 30.0
 REFRESH_TIMEOUT = 30.0
@@ -98,11 +102,31 @@ def _connect() -> None:
         raise RuntimeError("Username or password not provided")
     if SESSION.project_id is None:
         SESSION.project_id = _default_project(SESSION.base_url(), SESSION.cookie)
-    project = Project.open(str(Path(SESSION.file_path)), SESSION.project_id)
+    cache = _account_cache(SESSION.base_url(), SESSION.cookie)
+    project = Project.open(str(cache), SESSION.project_id)
     project.connect(SESSION.base_url(), SESSION.cookie)
     project.wait_synced(CONNECT_TIMEOUT)
     SESSION.project = project
     atexit.register(save_on_exit)
+
+
+def _account_cache(base_url: str, cookie: str) -> Path:
+    """The account's own folder under `file_path`.
+
+    A viewer's connect drops the cached changes the server never took; with one folder
+    per account, that never reaches another account's offline edits.
+    """
+    shared = Path(SESSION.file_path)
+    if any(shared.glob("*.y")):
+        log.warning(
+            "the caches directly in %s are no longer used: each account now keeps its "
+            "own in %s/<account id>. They are left as they were; open one with "
+            "cocat_rs.Project.open(%r, project_id) to send edits it still holds",
+            shared,
+            shared,
+            str(shared),
+        )
+    return shared / _account_id(base_url, cookie)
 
 
 def log_in(

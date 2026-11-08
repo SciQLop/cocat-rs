@@ -220,3 +220,70 @@ def test_create_event_takes_naive_datetimes_as_utc(server, tmp_path) -> None:
 
     assert event.start.utcoffset().total_seconds() == 0
     assert event.start.microsecond == 500000
+
+
+def add_viewer(server, email: str) -> None:
+    from conftest import PASSWORD, run
+
+    database = str(server.directory / "cocat.db")
+    run("create-user", "--email", email, "--password", PASSWORD, "--db_path", database)
+    run(
+        "add-user-to-room",
+        "--email",
+        email,
+        "--room_id",
+        server.project_id,
+        "--role",
+        "viewer",
+        "--db_path",
+        database,
+    )
+
+
+def caches(tmp_path) -> list:
+    return sorted(path.parent for path in (tmp_path / "cache").rglob("*.y"))
+
+
+def test_two_accounts_sharing_a_cache_folder_keep_their_own_caches(server, tmp_path) -> None:
+    add_viewer(server, "viewer@example.org")
+    configure(server, tmp_path, project_id=server.project_id)
+    api.log_in(server.email, "hunter2")
+    api.create_catalogue(name="sent")
+    api.save()
+    api.log_out()
+    [owners] = caches(tmp_path)
+    offline = cocat_rs.Project.open(str(owners), server.project_id)
+    offline.create_catalogue(name="unsent")
+    offline.close()
+
+    api._reset()
+    configure(server, tmp_path, project_id=server.project_id)
+    api.log_in("viewer@example.org", "hunter2")
+    assert api.SESSION.project.read_only
+    until(lambda: api.get_catalogue("sent").name == "sent")
+    api.log_out()
+
+    kept = cocat_rs.Project.open(str(owners), server.project_id)
+    try:
+        assert sorted(c.name for c in kept.catalogues()) == ["sent", "unsent"]
+    finally:
+        kept.close()
+    assert len(caches(tmp_path)) == 2
+    assert all(cache.parent == tmp_path / "cache" for cache in caches(tmp_path))
+
+
+def test_a_cache_from_before_accounts_had_folders_is_kept_and_named(
+    server, tmp_path, caplog
+) -> None:
+    configure(server, tmp_path, project_id=server.project_id)
+    old = cocat_rs.Project.open(str(tmp_path / "cache"), server.project_id)
+    old.create_catalogue(name="from before")
+    old.close()
+    before = {path: path.read_bytes() for path in (tmp_path / "cache").glob("*.y")}
+
+    with caplog.at_level("WARNING", logger="cocat_rs"):
+        api.log_in(server.email, "hunter2")
+    api.log_out()
+
+    assert before and all(path.read_bytes() == data for path, data in before.items())
+    assert any("no longer used" in record.getMessage() for record in caplog.records)
