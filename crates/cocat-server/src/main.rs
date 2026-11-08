@@ -18,12 +18,15 @@ async fn main() -> ExitCode {
 }
 
 /// Info and above by default; `RUST_LOG` (e.g. `RUST_LOG=debug,sqlx=warn`) overrides it.
-/// Stderr, because stdout carries `listening on <address>` for whoever started us.
+/// Stderr, because stdout carries `listening on <address>` for whoever started us. Colours
+/// only on a terminal: container logs and collectors get plain text.
 fn log_to_stderr() {
+    use std::io::IsTerminal;
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .init();
 }

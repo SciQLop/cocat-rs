@@ -167,6 +167,10 @@ async fn serve_writes_its_log_to_stderr() {
     .expect("the server logged nothing");
 
     assert!(logged.contains("INFO"), "{logged}");
+    assert!(
+        !logged.contains('\u{1b}'),
+        "colour codes in a log that goes to a pipe: {logged:?}"
+    );
 
     server.interrupt().await;
 }
