@@ -1,8 +1,9 @@
-//! Where things go on screen: the table's rendered window and the timeline's spans.
+//! Where things go on screen: the table's rendered window and the timeline's histogram.
 
 use std::ops::Range;
 
 use crate::format::{date_text, minute_text};
+use crate::period::Extent;
 
 /// Rows rendered beyond each edge of the view, so a scroll shows rows already there.
 const OVERSCAN: usize = 10;
@@ -47,51 +48,61 @@ fn pill_width(tag: &str) -> f64 {
     tag.chars().count() as f64 * TAG_CHAR + TAG_PADDING
 }
 
-/// A bar on the timeline, in percent of its width.
+/// A bar of the timeline's histogram, in percent of the strip's width and height.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Span {
+pub struct Bar {
     pub left: f64,
     pub width: f64,
-    pub lane: u8,
+    pub height: f64,
 }
 
-/// The timeline's bars for ranges in time order: events alternate between two lanes, and
-/// a lane's events closer than one of `buckets` slices of the strip share a bar, so the
-/// strip draws at most two bars per slice however many events there are.
-pub fn spans(ranges: &[(i64, i64)], buckets: usize) -> Vec<Span> {
-    let (Some(first), Some(last)) = (
-        ranges.iter().map(|range| range.0).min(),
-        ranges.iter().map(|range| range.1).max(),
-    ) else {
+/// How many of `ranges` overlap each of `buckets` equal slices of `extent`. An event
+/// counts in every slice it touches, so an instant counts in one.
+pub fn histogram(ranges: &[(i64, i64)], extent: &Extent, buckets: usize) -> Vec<u32> {
+    if buckets == 0 {
         return Vec::new();
-    };
-    let length = (last - first).max(1) as f64;
-    let bucket = |time: i64| (time - first) as f64 / length * buckets as f64;
-    let mut lanes: [Vec<(usize, usize)>; 2] = [Vec::new(), Vec::new()];
-    for (index, &(start, stop)) in ranges.iter().enumerate() {
-        let from = (bucket(start).floor() as usize).min(buckets.saturating_sub(1));
-        let to = (bucket(stop).ceil() as usize).max(from + 1);
-        let lane = &mut lanes[index % 2];
-        match lane.last_mut() {
-            Some(bar) if from <= bar.1 => bar.1 = bar.1.max(to),
-            _ => lane.push((from, to)),
-        }
     }
-    let percent = |slices: usize| slices as f64 * 100.0 / buckets as f64;
-    let mut spans: Vec<Span> = (0..2u8)
-        .flat_map(|lane| {
-            lanes[usize::from(lane)]
-                .iter()
-                .map(move |&(from, to)| Span {
-                    left: percent(from),
-                    width: percent(to - from),
-                    lane,
-                })
+    let length = (extent.last - extent.first).max(1) as f64;
+    let slice = |time: i64| (time - extent.first) as f64 / length * buckets as f64;
+    let mut steps = vec![0i64; buckets + 1];
+    for &(start, stop) in ranges {
+        let from = (slice(start).floor().max(0.0) as usize).min(buckets - 1);
+        let to = (slice(stop).ceil() as usize).clamp(from + 1, buckets);
+        steps[from] += 1;
+        steps[to] -= 1;
+    }
+    steps[..buckets]
+        .iter()
+        .scan(0i64, |count, step| {
+            *count += step;
+            Some(u32::try_from(*count).unwrap_or(0))
         })
-        .collect();
-    spans.sort_by(|left, right| left.left.total_cmp(&right.left));
-    spans
+        .collect()
 }
+
+/// The histogram as bars: slices in a row with the same count share a bar, empty slices
+/// draw nothing, and heights scale to the fullest slice with a floor so one event shows.
+pub fn bars(counts: &[u32]) -> Vec<Bar> {
+    let fullest = f64::from(counts.iter().copied().max().unwrap_or(0).max(1));
+    let percent = |slices: usize| slices as f64 * 100.0 / counts.len() as f64;
+    counts
+        .chunk_by(|left, right| left == right)
+        .scan(0, |from, run| {
+            let left = *from;
+            *from += run.len();
+            Some((left, run))
+        })
+        .filter(|(_, run)| run[0] > 0)
+        .map(|(from, run)| Bar {
+            left: percent(from),
+            width: percent(run.len()),
+            height: (f64::from(run[0]) / fullest * 100.0).max(LOWEST_BAR),
+        })
+        .collect()
+}
+
+/// The shortest bar, in percent of the strip's height.
+const LOWEST_BAR: f64 = 12.0;
 
 /// `count` labels spread evenly from `first` to `last`, both included.
 pub fn ticks(first: i64, last: i64, count: usize) -> Vec<String> {
@@ -150,38 +161,72 @@ mod tests {
         assert_eq!(window(0.0, 400.0, 40.0, 0), 0..0);
     }
 
+    const YEAR: Extent = Extent {
+        first: 0,
+        last: 100,
+    };
+
     #[test]
-    fn events_far_apart_get_a_span_each_in_alternating_lanes() {
-        let ranges = [(0, 10), (90, 100)];
+    fn each_slice_counts_the_events_that_overlap_it() {
+        let counts = histogram(&[(0, 10), (5, 30), (90, 100)], &YEAR, 10);
+        assert_eq!(counts, [2, 1, 1, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn an_instant_counts_once_even_at_the_strip_s_end() {
+        assert_eq!(histogram(&[(55, 55)], &YEAR, 10)[5], 1);
+        assert_eq!(histogram(&[(100, 100)], &YEAR, 10)[9], 1);
+        assert_eq!(histogram(&[(55, 55)], &YEAR, 10).iter().sum::<u32>(), 1);
+    }
+
+    #[test]
+    fn a_strip_of_one_instant_counts_every_event() {
+        let instant = Extent { first: 7, last: 7 };
+        assert_eq!(histogram(&[(7, 7), (7, 7)], &instant, 4), [2, 0, 0, 0]);
+    }
+
+    #[test]
+    fn many_events_cost_one_pass() {
+        let ranges: Vec<(i64, i64)> = (0..100_000).map(|i| (i, i + 50_000)).collect();
+        let extent = Extent {
+            first: 0,
+            last: 150_000,
+        };
+        let counts = histogram(&ranges, &extent, 400);
+        assert_eq!(counts.len(), 400);
+        let fullest = counts.iter().copied().max().unwrap_or(0);
+        assert!((50_000..=50_375).contains(&fullest), "{fullest}");
+    }
+
+    #[test]
+    fn bars_scale_to_the_fullest_slice_and_merge_equal_neighbours() {
         assert_eq!(
-            spans(&ranges, 100),
+            bars(&[4, 4, 0, 2]),
             [
-                Span {
+                Bar {
                     left: 0.0,
-                    width: 10.0,
-                    lane: 0
+                    width: 50.0,
+                    height: 100.0
                 },
-                Span {
-                    left: 90.0,
-                    width: 10.0,
-                    lane: 1
+                Bar {
+                    left: 75.0,
+                    width: 25.0,
+                    height: 50.0
                 },
             ]
         );
     }
 
     #[test]
-    fn events_closer_than_a_bucket_share_a_span() {
-        let ranges: Vec<(i64, i64)> = (0..10_000).map(|i| (i, i + 1)).collect();
-        let spans = spans(&ranges, 200);
-        assert!(spans.len() <= 400, "{} spans", spans.len());
-        assert_eq!(spans.iter().filter(|span| span.lane == 0).count(), 1);
+    fn a_lone_event_beside_a_crowd_still_shows() {
+        let bars = bars(&[1000, 0, 1]);
+        assert_eq!(bars[1].height, LOWEST_BAR);
     }
 
     #[test]
-    fn a_point_event_still_shows() {
-        let spans = spans(&[(0, 0), (50, 50), (100, 100)], 100);
-        assert!(spans.iter().all(|span| span.width > 0.0));
+    fn no_events_draw_no_bars() {
+        assert!(bars(&[0, 0, 0]).is_empty());
+        assert!(bars(&[]).is_empty());
     }
 
     #[test]

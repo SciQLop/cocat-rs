@@ -76,13 +76,28 @@ impl Period {
 
     /// "2019-11-03 → 2019-11-09", with the times when it is shorter than two days.
     pub fn text(&self) -> String {
+        let (start, stop) = self.ends();
+        format!("{start} → {stop}")
+    }
+
+    fn ends(&self) -> (String, String) {
         let label = if self.stop - self.start < TIMES_UNDER {
             minute_text
         } else {
             date_text
         };
-        format!("{} → {}", label(self.start), label(self.stop))
+        (label(self.start), label(self.stop))
     }
+}
+
+/// "Timeline: 412 events from 2019-11-03 to 2019-11-09", for those who do not see it.
+pub fn strip_label(count: usize, extent: Option<Extent>) -> String {
+    let Some(extent) = extent else {
+        return "Timeline: no events".to_owned();
+    };
+    let (first, last) = Period::between(extent.first, extent.last).ends();
+    let plural = if count == 1 { "" } else { "s" };
+    format!("Timeline: {count} event{plural} from {first} to {last}")
 }
 
 /// "2019-11-03 → 2019-11-09 · 37 of 412 events".
@@ -310,6 +325,27 @@ mod tests {
             counts_text(&period, 1, 1),
             "2019-11-03 → 2019-11-09 · 1 of 1 event"
         );
+    }
+
+    #[test]
+    fn the_strip_says_how_many_events_it_spans_and_when() {
+        let extent = Extent {
+            first: DAY0,
+            last: DAY0 + 6 * DAY,
+        };
+        assert_eq!(
+            strip_label(412, Some(extent)),
+            "Timeline: 412 events from 2019-11-03 to 2019-11-09"
+        );
+        let short = Extent {
+            first: DAY0,
+            last: DAY0 + 3600 * SECOND,
+        };
+        assert_eq!(
+            strip_label(1, Some(short)),
+            "Timeline: 1 event from 2019-11-03 00:00 to 2019-11-03 01:00"
+        );
+        assert_eq!(strip_label(0, None), "Timeline: no events");
     }
 
     #[test]

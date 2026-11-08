@@ -110,7 +110,7 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
                 text="Deleted events and catalogues wait here. Restore puts one back; Delete for good cannot be undone."/>
             <TrashedCatalogues/>
         })}
-        <Timeline members matching period/>
+        <Timeline members matching period selected/>
         <PeriodLine period order matching/>
         <Table members order sorting columns selected empty/>
     }

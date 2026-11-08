@@ -4,8 +4,9 @@ use leptos::html::Div;
 use leptos::prelude::*;
 use web_sys::PointerEvent;
 
-use crate::layout::{Span, spans, ticks};
-use crate::period::{Extent, Grip, Period, Tap, counts_text};
+use crate::layout::{Bar, bars, histogram, ticks};
+use crate::period::{Extent, Grip, Period, Tap, counts_text, strip_label};
+use crate::rows::Row;
 use crate::views::catalogue::Members;
 
 /// Slices of the strip: about two pixels each at desktop width.
@@ -17,9 +18,10 @@ const TOUCH_REACH: f64 = 18.0;
 
 #[derive(Clone, PartialEq, Default)]
 struct Strip {
-    spans: Vec<Span>,
+    bars: Vec<Bar>,
     ticks: Vec<String>,
     extent: Option<Extent>,
+    label: String,
 }
 
 #[component]
@@ -27,35 +29,40 @@ pub fn Timeline(
     members: Members,
     matching: Memo<Vec<usize>>,
     period: RwSignal<Option<Period>>,
+    selected: RwSignal<Option<Row>>,
 ) -> impl IntoView {
     let strip = Memo::new(move |_| {
         members.with(|members| {
             let Ok(rows) = members else {
                 return Strip::default();
             };
-            let mut ranges: Vec<(i64, i64)> = matching.with(|matching| {
+            let ranges: Vec<(i64, i64)> = matching.with(|matching| {
                 matching
                     .iter()
                     .map(|&index| (rows[index].start, rows[index].stop))
                     .collect()
             });
-            ranges.sort_unstable();
             let extent = Extent::of(&ranges);
             Strip {
-                spans: spans(&ranges, BUCKETS),
+                bars: extent
+                    .map(|extent| bars(&histogram(&ranges, &extent, BUCKETS)))
+                    .unwrap_or_default(),
                 ticks: extent
                     .map(|extent| ticks(extent.first, extent.last, TICKS))
                     .unwrap_or_default(),
                 extent,
+                label: strip_label(ranges.len(), extent),
             }
         })
     });
     let extent = Memo::new(move |_| strip.with(|strip| strip.extent));
     view! {
-        <section class="timeline" aria-label="Timeline" tabindex="-1"
+        <section class="timeline" tabindex="-1"
+            aria-label=move || strip.with(|strip| strip.label.clone())
             on:keydown=move |event| if event.key() == "Escape" { period.set(None); }>
             <Brush extent period>
-                {move || strip.with(|strip| strip.spans.iter().map(bar).collect_view())}
+                {move || strip.with(|strip| strip.bars.iter().map(bar).collect_view())}
+                {move || marker(extent.get()?, selected.get()?)}
             </Brush>
             <div class="axis">
                 {move || strip.with(|strip| {
@@ -172,7 +179,18 @@ pub fn PeriodLine(
     }
 }
 
-fn bar(span: &Span) -> impl IntoView + use<> {
-    let style = format!("left: {:.3}%; width: {:.3}%", span.left, span.width);
-    view! { <span class="bar" class:lane-b=span.lane == 1 style=style></span> }
+fn bar(bar: &Bar) -> impl IntoView + use<> {
+    let style = format!(
+        "left: {:.3}%; width: {:.3}%; height: {:.1}%",
+        bar.left, bar.width, bar.height
+    );
+    view! { <span class="bar" style=style></span> }
+}
+
+/// Where the event open in the detail panel lies.
+fn marker(extent: Extent, row: Row) -> Option<impl IntoView + use<>> {
+    let left = extent.percent_of(row.start);
+    let width = extent.percent_of(row.stop) - left;
+    let style = format!("left: {left:.3}%; width: {width:.3}%");
+    Some(view! { <span class="marker" style=style aria-hidden="true"></span> })
 }
