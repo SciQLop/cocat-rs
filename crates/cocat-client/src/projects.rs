@@ -81,6 +81,46 @@ pub async fn create_project(url: &str, cookie: &str, name: &str) -> Result<RoomI
     })
 }
 
+/// A public catalogue in the server's index: every account reads it, curators edit it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicCatalogue {
+    pub id: String,
+    pub name: String,
+    pub folder: Option<String>,
+    pub source: Option<String>,
+    pub description: Option<String>,
+    pub role: Role,
+    pub changed: Option<String>,
+}
+
+/// What a new public catalogue says; `key` makes its id `public.<key>`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct NewPublicCatalogue<'a> {
+    pub name: &'a str,
+    pub folder: Option<&'a str>,
+    pub source: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub key: Option<&'a str>,
+}
+
+pub async fn public_catalogues(
+    url: &str,
+    cookie: &str,
+) -> Result<Vec<PublicCatalogue>, LoginError> {
+    let request = api_request(Method::GET, url, cookie, &["public"])?;
+    Ok(send(request).await?.json().await?)
+}
+
+/// Makes a public catalogue; only curators may.
+pub async fn create_public_catalogue(
+    url: &str,
+    cookie: &str,
+    catalogue: &NewPublicCatalogue<'_>,
+) -> Result<PublicCatalogue, LoginError> {
+    let request = api_request(Method::POST, url, cookie, &["public"])?.json(catalogue);
+    Ok(send(request).await?.json().await?)
+}
+
 pub async fn members(url: &str, cookie: &str, room_id: &str) -> Result<Vec<Member>, LoginError> {
     let request = room_request(Method::GET, url, cookie, room_id, &["members"])?;
     Ok(send(request).await?.json().await?)

@@ -541,6 +541,19 @@ cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
 trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
 ```
 
+**Public catalogues.** `public_catalogues(url, cookie)` lists them as dicts (`id`, `name`,
+`folder`, `source`, `description`, your `role`, `changed`). Open one like any project, with its
+id: a curator gets an editable project, everyone else a read-only one. A curator makes one
+with `create_public_catalogue(url, cookie, name, folder=None, source=None, description=None,
+key=None)`, which answers its id (`public.<key>`, or a random one); anyone else gets
+`Forbidden`, a key already taken `Conflict`.
+
+```python
+index = cocat_rs.public_catalogues(url, cookie)
+shocks = cocat_rs.Project.open(cache, index[0]["id"])
+shocks.connect(url, cookie)                      # read-only unless you are a curator
+```
+
 **Managing a project.** The calls behind the web app's Share dialog, for a tool that shows who
 has access or shares a project. Members, invitations and groups come back as dicts shaped like
 the server's JSON; ids of members are account ids (uuid strings), ids of invitations integers.

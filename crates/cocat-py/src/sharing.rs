@@ -1,7 +1,7 @@
 //! Managing a project from Python: creating one, its members, invitations and groups, as
 //! dicts shaped like the server's JSON; refusals raise the typed server errors.
 
-use cocat_client::{INVITATION_DAYS, LoginError, NewInvitation};
+use cocat_client::{INVITATION_DAYS, LoginError, NewInvitation, NewPublicCatalogue};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde::Serialize;
@@ -155,6 +155,41 @@ fn set_editors_can_share(
     )
 }
 
+/// The public catalogues, as dicts with `id`, `name`, `folder`, `source`, `description`,
+/// `role` and `changed`. Open one like any project, by its id.
+#[pyfunction]
+fn public_catalogues(py: Python<'_>, url: String, cookie: String) -> Result<Py<PyAny>> {
+    answer(py, cocat_client::public_catalogues(&url, &cookie))
+}
+
+/// Makes a public catalogue and answers its id; only curators may. With `key` the id is
+/// `public.<key>`, so a script that imports a list finds it again.
+#[pyfunction]
+#[pyo3(signature = (url, cookie, name, folder=None, source=None, description=None, key=None))]
+#[allow(clippy::too_many_arguments)]
+fn create_public_catalogue(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    name: String,
+    folder: Option<String>,
+    source: Option<String>,
+    description: Option<String>,
+    key: Option<String>,
+) -> Result<String> {
+    let new = NewPublicCatalogue {
+        name: &name,
+        folder: folder.as_deref(),
+        source: source.as_deref(),
+        description: description.as_deref(),
+        key: key.as_deref(),
+    };
+    let created = py
+        .detach(|| block_on(cocat_client::create_public_catalogue(&url, &cookie, &new)))?
+        .map_err(http_error)?;
+    Ok(created.id)
+}
+
 /// The project's page in the web app; with `share`, the page opens its Share dialog.
 #[pyfunction]
 #[pyo3(signature = (url, project_id, share=false))]
@@ -173,5 +208,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(project_groups, module)?)?;
     module.add_function(wrap_pyfunction!(set_editors_can_share, module)?)?;
     module.add_function(wrap_pyfunction!(project_url, module)?)?;
+    module.add_function(wrap_pyfunction!(public_catalogues, module)?)?;
+    module.add_function(wrap_pyfunction!(create_public_catalogue, module)?)?;
     Ok(())
 }
