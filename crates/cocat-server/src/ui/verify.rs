@@ -65,7 +65,7 @@ pub(crate) async fn submit(
 fn answer(state: &AppState, text: &'static str) -> Answer {
     let done = text == VERIFIED || text == ALREADY;
     let (target, label) = if done {
-        ("/rooms", "Continue to my rooms")
+        ("/app", "Open my catalogues")
     } else {
         ("/login", "Sign in to get a new link")
     };

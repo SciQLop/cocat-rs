@@ -20,10 +20,10 @@ struct Landing {
     sciqlop: &'static str,
 }
 
-/// Signed-in visitors go to their rooms; everyone else is asked to sign in.
+/// Signed-in visitors go to the app; everyone else is asked to sign in.
 pub async fn landing(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if signed_in_user(&state, &headers).await.is_some() {
-        return Redirect::to(&state.links.path("/rooms")).into_response();
+        return Redirect::to(&state.links.path("/app")).into_response();
     }
     frame::page(Landing {
         frame: Frame::new(&state.links, None, "cocat"),

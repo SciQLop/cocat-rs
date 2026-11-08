@@ -99,7 +99,7 @@ async fn change_password() {
     let ended = fixture.get("/ui/rooms", Some(&token)).await;
     assert_eq!(location(&ended), "/ui/login?next=%2Fui%2Frooms");
     let signed_in = fixture.login(MEMBER, NEW_PASSWORD, None).await;
-    assert_eq!(location(&signed_in), "/ui/rooms");
+    assert_eq!(location(&signed_in), "/ui/app");
     let old = fixture.login(MEMBER, PASSWORD, None).await;
     assert_eq!(location(&old), "/ui/login?error=credentials");
 }
@@ -126,7 +126,7 @@ async fn wrong_current_password_changes_nothing() {
     let page = body_text(response).await;
     assert!(page.contains("Wrong password"), "{page}");
     let old = fixture.login(MEMBER, PASSWORD, None).await;
-    assert_eq!(location(&old), "/ui/rooms");
+    assert_eq!(location(&old), "/ui/app");
     let new = fixture.login(MEMBER, NEW_PASSWORD, None).await;
     assert_eq!(location(&new), "/ui/login?error=credentials");
 }

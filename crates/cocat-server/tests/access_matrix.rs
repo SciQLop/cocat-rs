@@ -410,6 +410,7 @@ const ROWS: &[Row] = &[
         Style::UiPage,
     )
     .room_any(),
+    row("GET", "/ui/app", Guard::SignedIn, Style::UiAction),
     row("GET", "/ui/app/{asset}", Guard::Public, Style::UiPage),
     row(
         "POST",

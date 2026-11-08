@@ -285,7 +285,24 @@ async fn login_page_redirects_a_signed_in_visitor() {
     let response = fixture.get("/ui/login", Some(&token)).await;
 
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
+}
+
+#[tokio::test]
+async fn login_page_sends_a_signed_in_visitor_to_their_next() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified("member@example.org").await;
+    let token = fixture.token(user).await;
+
+    let local = fixture
+        .get("/ui/login?next=%2Fui%2Faccount", Some(&token))
+        .await;
+    let foreign = fixture
+        .get("/ui/login?next=https%3A%2F%2Fevil.com", Some(&token))
+        .await;
+
+    assert_eq!(location(&local), "/ui/account");
+    assert_eq!(location(&foreign), "/ui/app");
 }
 
 #[tokio::test]
@@ -296,20 +313,20 @@ async fn login_sets_cookie_and_redirects() {
     let response = fixture.login("member@example.org", PASSWORD, None).await;
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
     let cookie = set_cookie(&response).expect("a session cookie");
     assert!(cookie.starts_with("fastapiusersauth="), "{cookie}");
     assert!(cookie.contains("HttpOnly"), "{cookie}");
 }
 
 #[tokio::test]
-async fn default_next_is_rooms() {
+async fn default_next_is_the_app() {
     let fixture = Fixture::start().await;
     fixture.verified("member@example.org").await;
 
     let response = fixture.login("member@example.org", PASSWORD, None).await;
 
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
 }
 
 #[tokio::test]
@@ -380,7 +397,7 @@ async fn foreign_next_refused() {
         let response = fixture
             .login("member@example.org", PASSWORD, Some(next))
             .await;
-        assert_eq!(location(&response), "/ui/rooms", "{next:?} was followed");
+        assert_eq!(location(&response), "/ui/app", "{next:?} was followed");
     }
 }
 
@@ -410,7 +427,7 @@ async fn raw_newline_next_redirects_cleanly() {
         .await;
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
 }
 
 #[tokio::test]
@@ -547,7 +564,7 @@ async fn login_flood_does_not_block_signup() {
         .await;
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
 }
 
 #[tokio::test]
@@ -594,5 +611,5 @@ async fn off_site_next_falls_back_inside_the_prefix() {
         .await;
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/cocat-dev/ui/rooms");
+    assert_eq!(location(&response), "/cocat-dev/ui/app");
 }

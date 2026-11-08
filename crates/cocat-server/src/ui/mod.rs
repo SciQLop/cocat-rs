@@ -111,6 +111,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/oauth/{name}/login", get(oauth::login))
         .route("/oauth/{name}/callback", get(oauth::callback))
         .route("/static/{file}", get(frame::static_asset))
+        .route("/app", get(app::open))
         .route("/app/{*path}", get(app::file))
         .layer(middleware::from_fn_with_state(
             state.clone(),

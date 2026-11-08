@@ -71,17 +71,14 @@ async fn the_landing_page_keeps_the_proxy_prefix() {
 }
 
 #[tokio::test]
-async fn a_signed_in_visitor_goes_to_their_rooms() {
+async fn a_signed_in_visitor_goes_to_the_app() {
     let fixture = Fixture::start().await;
     let id = fixture.verified("landing@example.org").await;
     let token = fixture.token(id).await;
 
     let response = fixture.get("/", Some(&token)).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response.headers().get(header::LOCATION).unwrap(),
-        "/ui/rooms"
-    );
+    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/ui/app");
 }
 
 #[tokio::test]

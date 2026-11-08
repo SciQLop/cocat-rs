@@ -47,7 +47,8 @@ pub(crate) async fn page(
     State(state): State<AppState>,
 ) -> Response {
     if user.is_some() {
-        return Redirect::temporary(&state.links.path("/rooms")).into_response();
+        let target = safe_next(query.get("next").map(String::as_str), &state.links);
+        return Redirect::temporary(&target).into_response();
     }
     frame::page(LoginPage {
         frame: Frame::new(&state.links, None, "Sign in"),
@@ -134,7 +135,7 @@ fn failed(state: &AppState, key: &str) -> Response {
     Redirect::to(&format!("{}?error={key}", state.links.path("/login"))).into_response()
 }
 
-/// Only follow a `next` that stays on this site; anything else is the rooms page.
+/// Only follow a `next` that stays on this site; anything else opens the app.
 ///
 /// The value is resolved against a placeholder origin the way a browser resolves a
 /// `Location`, so tab, carriage return and newline are stripped and a backslash counts
@@ -143,7 +144,7 @@ fn failed(state: &AppState, key: &str) -> Response {
 /// result carries the reverse-proxy prefix: the proxy strips it from the request, and a
 /// `next` value is a path on this site either way.
 pub(crate) fn safe_next(value: Option<&str>, links: &crate::links::Links) -> String {
-    let default = links.path("/rooms");
+    let default = links.path("/app");
     let Some(value) = value else {
         return default;
     };

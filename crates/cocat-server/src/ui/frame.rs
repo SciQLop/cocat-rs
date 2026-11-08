@@ -405,7 +405,7 @@ fn origin_authority(origin: &str) -> Option<String> {
 }
 
 pub(crate) async fn index(State(state): State<AppState>) -> Response {
-    Redirect::temporary(&state.links.path("/rooms")).into_response()
+    Redirect::temporary(&state.links.path("/app")).into_response()
 }
 
 /// An asset's URL, named by its content: the assets are cached for a year, so a changed file

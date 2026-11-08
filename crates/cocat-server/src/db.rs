@@ -721,6 +721,9 @@ pub async fn create_room(
 /// it "Personal"; rooms imported from Python keep that name.
 pub const PERSONAL_ROOM_NAME: &str = "My catalogues";
 
+/// The names an account's own room may carry: today's, and the one Python cocat gave it.
+pub const PERSONAL_ROOM_NAMES: [&str; 2] = [PERSONAL_ROOM_NAME, "Personal"];
+
 /// Python's `create_personal_room`: a bare-uuid room named [`PERSONAL_ROOM_NAME`] whose
 /// owner is `user`. Registration and `create-user` both run it.
 pub async fn create_personal_room(pool: &SqlitePool, user: Uuid) -> Result<(), DbError> {

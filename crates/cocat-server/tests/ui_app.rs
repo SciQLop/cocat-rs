@@ -224,3 +224,106 @@ async fn the_room_page_opens_the_catalogues() {
         "{page}"
     );
 }
+
+#[tokio::test]
+async fn the_app_requires_login() {
+    let fixture = Fixture::start().await;
+
+    let response = fixture.get("/ui/app", None).await;
+
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(location(&response), "/ui/login?next=%2Fui%2Fapp");
+}
+
+#[tokio::test]
+async fn the_app_opens_the_personal_project() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(OWNER).await;
+    lifecycle::create_room(&fixture.state, user, "A first project")
+        .await
+        .unwrap();
+    db::create_personal_room(&fixture.state.pool, user)
+        .await
+        .unwrap();
+    let personal = personal_room(&fixture, user, db::PERSONAL_ROOM_NAME).await;
+    let token = fixture.token(user).await;
+
+    let response = fixture.get("/ui/app", Some(&token)).await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), format!("/ui/rooms/{personal}/browse"));
+}
+
+#[tokio::test]
+async fn the_app_opens_a_personal_project_imported_from_python() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(OWNER).await;
+    lifecycle::create_room(&fixture.state, user, "A first project")
+        .await
+        .unwrap();
+    let personal = lifecycle::create_room(&fixture.state, user, "Personal")
+        .await
+        .unwrap()
+        .id;
+    let token = fixture.token(user).await;
+
+    let response = fixture.get("/ui/app", Some(&token)).await;
+
+    assert_eq!(location(&response), format!("/ui/rooms/{personal}/browse"));
+}
+
+#[tokio::test]
+async fn someone_else_s_personal_project_is_not_the_one_opened() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.verified(OWNER).await;
+    let viewer = fixture.verified(VIEWER).await;
+    let theirs = lifecycle::create_room(&fixture.state, owner, db::PERSONAL_ROOM_NAME)
+        .await
+        .unwrap()
+        .id;
+    db::add_member(&fixture.state.pool, &theirs, viewer, Role::Viewer)
+        .await
+        .unwrap();
+    let own = lifecycle::create_room(&fixture.state, viewer, "Personal")
+        .await
+        .unwrap()
+        .id;
+    let token = fixture.token(viewer).await;
+
+    let response = fixture.get("/ui/app", Some(&token)).await;
+
+    assert_eq!(location(&response), format!("/ui/rooms/{own}/browse"));
+}
+
+#[tokio::test]
+async fn without_a_personal_project_the_app_opens_the_first_one() {
+    let fixture = Fixture::start().await;
+    let (room, viewer) = room_with_viewer(&fixture).await;
+    let token = fixture.token(viewer).await;
+
+    let response = fixture.get("/ui/app", Some(&token)).await;
+
+    assert_eq!(location(&response), format!("/ui/rooms/{room}/browse"));
+}
+
+#[tokio::test]
+async fn without_any_project_the_app_sends_to_the_projects_list() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(STRANGER).await;
+    let token = fixture.token(user).await;
+
+    let response = fixture.get("/ui/app", Some(&token)).await;
+
+    assert_eq!(location(&response), "/ui/rooms");
+}
+
+async fn personal_room(fixture: &Fixture, user: Uuid, name: &str) -> String {
+    db::list_user_rooms(&fixture.state.pool, user)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|(room, _)| room.name == name)
+        .unwrap()
+        .0
+        .id
+}

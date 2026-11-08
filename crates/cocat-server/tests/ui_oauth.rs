@@ -100,7 +100,7 @@ async fn good_callback_signs_in() {
     .await;
 
     assert_eq!(done.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&done), "/ui/rooms");
+    assert_eq!(location(&done), "/ui/app");
     assert!(cookie_named(&done, "fastapiusersauth").is_some());
     let user = db::user_by_email(&fixture.state.pool, MEMBER)
         .await

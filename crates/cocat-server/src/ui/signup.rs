@@ -83,7 +83,7 @@ async fn signed_in(state: &AppState, id: uuid::Uuid) -> Response {
     match auth::start_session(&state.pool, id).await {
         Ok(token) => (
             [(header::SET_COOKIE, auth::set_cookie(&token))],
-            Redirect::to(&state.links.path("/rooms")),
+            Redirect::to(&state.links.path("/app")),
         )
             .into_response(),
         Err(error) => {

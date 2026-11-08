@@ -142,13 +142,13 @@ async fn body_text(response: Response) -> String {
 }
 
 #[tokio::test]
-async fn root_redirects_to_rooms() {
+async fn root_redirects_to_the_app() {
     let fixture = Fixture::start().await;
 
     let response = fixture.get("/ui/", None).await;
 
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
 }
 
 #[tokio::test]
@@ -238,7 +238,7 @@ async fn prefix_applies_to_links_and_redirects() {
     );
 
     let root = fixture.get("/ui/", None).await;
-    assert_eq!(location(&root), "/cocat/ui/rooms");
+    assert_eq!(location(&root), "/cocat/ui/app");
 
     let anonymous = fixture.get("/ui/rooms", None).await;
     assert_eq!(location(&anonymous), "/cocat/ui/login?next=%2Fui%2Frooms");

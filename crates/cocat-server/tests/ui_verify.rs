@@ -25,7 +25,7 @@ async fn the_landing_page_says_it_is_verifying_and_offers_nothing_to_click() {
     );
     assert!(page.contains(r#"type="hidden" name="token""#), "{page}");
     assert!(!page.contains("<button"), "{page}");
-    assert!(!page.contains(r#"href="/ui/rooms""#), "{page}");
+    assert!(!page.contains(r#"href="/ui/app""#), "{page}");
 }
 
 /// After the answer the only thing to do is to go on: no form, no button posting again.
@@ -61,7 +61,7 @@ async fn a_valid_token_verifies_the_account() {
     let page = body_text(response).await;
     assert!(page.contains("Your address is verified."), "{page}");
     assert!(
-        page.contains(r#"<a href="/ui/rooms" class="button">Continue to my rooms</a>"#),
+        page.contains(r#"<a href="/ui/app" class="button">Open my catalogues</a>"#),
         "{page}"
     );
     assert!(!page.contains(r#"class="error""#), "{page}");
@@ -76,7 +76,7 @@ async fn a_valid_token_verifies_the_account() {
         .expect("the account exists");
     assert!(user.is_verified);
     let signed_in = fixture.login(NEW, PASSWORD, None).await;
-    assert_eq!(location(&signed_in), "/ui/rooms");
+    assert_eq!(location(&signed_in), "/ui/app");
 }
 
 #[tokio::test]
@@ -94,10 +94,7 @@ async fn an_already_verified_address_is_reported() {
 
     let page = body_text(response).await;
     assert!(page.contains("Your address is already verified."), "{page}");
-    assert!(
-        page.contains(r#"href="/ui/rooms" class="button""#),
-        "{page}"
-    );
+    assert!(page.contains(r#"href="/ui/app" class="button""#), "{page}");
     assert_answered(&page);
 }
 

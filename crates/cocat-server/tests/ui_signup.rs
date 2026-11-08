@@ -56,13 +56,13 @@ async fn the_created_message_reaches_the_login_page() {
 }
 
 #[tokio::test]
-async fn sign_up_without_a_mailer_lands_in_the_rooms() {
+async fn sign_up_without_a_mailer_lands_in_the_app() {
     let fixture = Fixture::start().await;
 
     let response = fixture.sign_up(NEW, PASSWORD).await;
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(location(&response), "/ui/rooms");
+    assert_eq!(location(&response), "/ui/app");
     let cookie = set_cookie(&response).expect("a session cookie");
     let token = cookie_token(&cookie);
     let rooms = fixture.get("/ui/rooms", Some(&token)).await;

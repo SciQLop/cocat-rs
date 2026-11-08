@@ -196,7 +196,7 @@ async fn signed_in(state: &AppState, user: crate::db::User) -> Response {
     let target = if mail::is_placeholder(&user.email) {
         state.links.path("/confirm-email")
     } else {
-        state.links.path("/rooms")
+        state.links.path("/app")
     };
     let response = Redirect::to(&target).into_response();
     let response = with_cookie(response, &auth::set_cookie(&token));

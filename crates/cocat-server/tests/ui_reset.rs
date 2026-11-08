@@ -126,7 +126,7 @@ async fn the_whole_flow() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(location(&response), "/ui/login?reset=1");
     let signed_in = fixture.login(MEMBER, NEW_PASSWORD, None).await;
-    assert_eq!(location(&signed_in), "/ui/rooms");
+    assert_eq!(location(&signed_in), "/ui/app");
     assert!(set_cookie(&signed_in).is_some());
     let old = fixture.login(MEMBER, PASSWORD, None).await;
     assert_eq!(location(&old), "/ui/login?error=credentials");
@@ -235,5 +235,5 @@ async fn a_mismatched_repeat_is_refused() {
     assert!(page.contains("The new passwords differ"), "{page}");
     assert!(!page.contains(&token), "the token was echoed: {page}");
     let old = fixture.login(MEMBER, PASSWORD, None).await;
-    assert_eq!(location(&old), "/ui/rooms");
+    assert_eq!(location(&old), "/ui/app");
 }

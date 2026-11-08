@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
+use cocat_core::role::Role;
 use tower_http::services::ServeDir;
 
 use crate::ui::frame::{self, Frame, RequireUser};
@@ -70,6 +71,33 @@ pub(crate) async fn browse(
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// Where the app opens: the visitor's own project, else the first they can open, else the
+/// projects list, where they can make one.
+pub(crate) async fn open(
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+) -> Response {
+    let rooms = match db::list_user_rooms(&state.pool, user.id).await {
+        Ok(rooms) => rooms,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the rooms of a visitor");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let target = match opening(&rooms) {
+        Some(room) => format!("/rooms/{}/browse", room.id),
+        None => "/rooms".to_owned(),
+    };
+    super::redirect_to(&state, &target)
+}
+
+fn opening(rooms: &[(db::RoomRow, Role)]) -> Option<&db::RoomRow> {
+    let personal = rooms.iter().find(|(room, role)| {
+        *role == Role::Owner && db::PERSONAL_ROOM_NAMES.contains(&room.name.as_str())
+    });
+    personal.or(rooms.first()).map(|(room, _)| room)
 }
 
 /// The bundle's `index.html`, or `None` when no bundle is installed.
