@@ -10,8 +10,9 @@ use wasm_bindgen::JsValue;
 
 use crate::api;
 use crate::history::{
-    Cell, Change, Day, DiffRow, Reloads, Version, author, by_day, catalogue_line, clock,
-    counts_text, diff_counts, diff_rows, past_rows, summary, unchanged_rows, when_text,
+    Cell, Change, Day, DiffRow, Reloads, Version, author, browse_href, by_day, catalogue_line,
+    clock, copy_suggestion, counts_text, diff_counts, diff_rows, past_rows, summary,
+    unchanged_rows, when_text,
 };
 use crate::route::Route;
 use crate::state::Room;
@@ -115,8 +116,8 @@ fn reload_when_the_project_changes(room: &Room, reload: Callback<()>) {
     on_cleanup(stop);
 }
 
-/// What is on screen, and the read-only notice with "Back to now" and, for editors,
-/// naming and restoring.
+/// What is on screen, and the read-only notice with "Back to now", making a copy and, for
+/// editors, naming and restoring.
 #[component]
 fn Banner(
     id: u64,
@@ -147,6 +148,7 @@ fn Banner(
     };
     let message: Error = RwSignal::new(None);
     let naming = RwSignal::new(false);
+    let copying = RwSignal::new(false);
     let live = move || history(scope.get(), None).live().href(&page);
     let restore = {
         let room = room.clone();
@@ -187,6 +189,8 @@ fn Banner(
             </div>
             <div class="banner-buttons">
                 <a class="button" href=live>"Back to now"</a>
+                <button type="button" class="button" aria-expanded=move || copying.get().to_string()
+                    on:click=move |_| copying.update(|open| *open = !*open)>"Make a copy from this version"</button>
                 {editor.then(|| view! {
                     <button type="button" class="button" aria-expanded=move || naming.get().to_string()
                         on:click=move |_| naming.update(|open| *open = !*open)>"Name this version"</button>
@@ -197,6 +201,61 @@ fn Banner(
         {error_line(message)}
         <Show when=move || naming.get()>
             <NameVersion id version open=naming reload/>
+        </Show>
+        <Show when=move || copying.get()>
+            <CopyVersion id open=copying/>
+        </Show>
+    }
+}
+
+/// Makes a new project from the version, then links to it.
+#[component]
+fn CopyVersion(id: u64, open: RwSignal<bool>) -> impl IntoView {
+    let config = expect_context::<Room>().config.clone();
+    let input = NodeRef::<Input>::new();
+    let error: Error = RwSignal::new(None);
+    let made = RwSignal::new(None::<String>);
+    Effect::new(move |_| {
+        if let Some(input) = input.get() {
+            let _ = input.focus();
+            input.select();
+        }
+    });
+    let suggestion = copy_suggestion(&config.room_name);
+    let send = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        let name = input.get().map(|input| input.value()).unwrap_or_default();
+        let config = config.clone();
+        spawn_local(async move {
+            match api::copy_version(&config, id, &name).await {
+                Ok(room) => made.set(Some(room)),
+                Err(failure) => error.set(Some(failure.to_string())),
+            }
+        });
+    };
+    view! {
+        <Show when=move || made.with(Option::is_none) fallback=move || view! {
+            <div class="name-form version-name copy-done" role="status">
+                <p>"The copy is ready. It is a new project of yours; this one stays as it is."</p>
+                <div class="row-buttons">
+                    <a class="button primary" href=move || made.get().map(|room| browse_href(&room))>"Open the copy"</a>
+                    <button type="button" class="button" on:click=move |_| open.set(false)>"Close"</button>
+                </div>
+            </div>
+        }>
+            <form class="name-form version-name" on:submit=send.clone()>
+                <Hint anchor="history" topic="copying a version"
+                    text="The copy is a new project: the whole project as it was at this version. Try things there; the original does not change."/>
+                <label>
+                    <span class="field-label">"Name of the copy"</span>
+                    <input type="text" maxlength="200" node_ref=input value=suggestion.clone()/>
+                </label>
+                {error_line(error)}
+                <div class="row-buttons">
+                    <button type="submit" class="button primary">"Make the copy"</button>
+                    <button type="button" class="button" on:click=move |_| open.set(false)>"Cancel"</button>
+                </div>
+            </form>
         </Show>
     }
 }

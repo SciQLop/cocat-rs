@@ -93,6 +93,22 @@ pub async fn save_version(config: &RoomConfig, name: &str, note: &str) -> Result
     Ok(saved.version)
 }
 
+/// Makes a new project, owned by the visitor, holding the version; its id comes back.
+pub async fn copy_version(
+    config: &RoomConfig,
+    version: u64,
+    name: &str,
+) -> Result<String, ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Copied {
+        room: String,
+    }
+    let url = url(config, &[&version.to_string(), "copy"], &[])?;
+    let body = json!({ "name": name }).to_string();
+    let copied: Copied = json_body(Request::post(&url), body).await?;
+    Ok(copied.room)
+}
+
 fn url(config: &RoomConfig, path: &[&str], query: &[(&str, &str)]) -> Result<String, ApiError> {
     endpoint(&config.api_url, &config.room_id, path, query).ok_or(ApiError::Url)
 }

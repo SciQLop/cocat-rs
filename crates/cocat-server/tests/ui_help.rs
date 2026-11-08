@@ -124,3 +124,36 @@ async fn joining_and_account_pages_link_to_their_help() {
         "account",
     );
 }
+
+/// The `<section>` that holds the anchor, as it reads once the tags and line breaks are gone.
+fn section_text(page: &str, anchor: &str) -> String {
+    let start = page.find(&format!(r#"id="{anchor}""#)).unwrap();
+    let end = start + page[start..].find("</section>").unwrap();
+    let mut text = String::new();
+    let mut in_tag = false;
+    for character in page[start..end].chars() {
+        match character {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(character),
+            _ => {}
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[tokio::test]
+async fn the_history_help_explains_copies_in_plain_words() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let history = section_text(&help, "history");
+    assert!(
+        history.contains("Make a copy from this version"),
+        "{history}"
+    );
+    for word in ["fork", "branch", "merge", "commit", "diff"] {
+        assert!(!history.to_lowercase().contains(word), "{word}: {history}");
+    }
+}

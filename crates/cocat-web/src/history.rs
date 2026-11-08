@@ -307,6 +307,16 @@ pub fn save_body(name: &str, note: &str) -> Value {
     serde_json::json!({ "name": given(name), "message": given(note) })
 }
 
+/// The name "Make a copy from this version" suggests.
+pub fn copy_suggestion(project: &str) -> String {
+    format!("{project} (copy)")
+}
+
+/// The catalogue browser of another project, relative to the app's `<base>`.
+pub fn browse_href(room_id: &str) -> String {
+    format!("../rooms/{room_id}/browse")
+}
+
 /// Reloads of the version list, one request at a time: a reload asked for while one runs
 /// waits for it, and several such asks make one more reload.
 #[derive(Debug, Default)]
@@ -482,6 +492,16 @@ mod tests {
     use super::*;
     use crate::fixture::room;
     use yrs::ReadTxn;
+
+    #[test]
+    fn a_copy_is_suggested_under_the_project_name() {
+        assert_eq!(copy_suggestion("Storms 2024"), "Storms 2024 (copy)");
+    }
+
+    #[test]
+    fn the_copy_opens_in_its_own_browser() {
+        assert_eq!(browse_href("4f2a"), "../rooms/4f2a/browse");
+    }
 
     /// 2026-11-08 12:00 UTC.
     const NOW: i64 = 1_794_139_200_000;
