@@ -21,3 +21,10 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# Dependencies are compiled with optimisations in debug builds too: password hashing is
+# meant to be slow, and unoptimised it made the tests that sign many accounts up take
+# minutes. Same code and strength; only the compiler setting differs. Our own crates stay
+# unoptimised so they still compile fast.
+[profile.dev.package."*"]
+opt-level = 2

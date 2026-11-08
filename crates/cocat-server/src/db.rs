@@ -1083,3 +1083,18 @@ fn user_from_row(row: &SqliteRow) -> Result<User, sqlx::Error> {
         is_verified: row.try_get("is_verified")?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    /// The workspace builds the hashing crates optimised in tests to keep them fast; this
+    /// pins that the stored hash keeps argon2's full-strength defaults, so speeding tests up
+    /// can never be done by weakening the hash.
+    #[test]
+    fn passwords_are_stored_with_full_strength_argon2id() {
+        let hash = super::hash_password_blocking("correct horse battery staple").unwrap();
+        assert!(
+            hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+            "unexpected hash parameters: {hash}"
+        );
+    }
+}

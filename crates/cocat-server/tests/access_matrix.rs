@@ -14,6 +14,7 @@ use cocat_server::{
     AppState, auth, db, groups, invitations, lifecycle, links::Links, oidc, ratelimit::LoginLimit,
     ws,
 };
+use futures_util::StreamExt;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -1097,7 +1098,40 @@ async fn token(state: &AppState, user: Uuid) -> String {
     auth::start_session(&state.pool, user).await.unwrap()
 }
 
-#[tokio::test]
+/// Every case gets a fresh server, so cases are independent and can run side by side.
+const CASES_AT_ONCE: usize = 8;
+
+/// What went wrong when `kind` calls `row` on a fresh server, if anything.
+async fn answer_as(
+    providers: &[oidc::Provider],
+    hashed: &str,
+    row: &Row,
+    kind: Kind,
+) -> Option<String> {
+    let world = World::start(providers, hashed).await;
+    let caps = Caps::of(kind);
+    let token = world.token(kind);
+    let (status, location) = world
+        .call(
+            row,
+            if caps.signed_in {
+                token.as_deref()
+            } else {
+                None
+            },
+        )
+        .await;
+    check(row, &caps, status, location.as_deref())
+        .err()
+        .map(|(wanted, _)| {
+            format!(
+                "{} {} as {:?}: expected {}, got {}",
+                row.method, row.path, kind, wanted, status
+            )
+        })
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn every_route_answers_every_caller_as_the_table_says() {
     let fake = oidc_support::Fake::start().await;
     let links = Links::from_env(&|name| {
@@ -1107,30 +1141,15 @@ async fn every_route_answers_every_caller_as_the_table_says() {
     let providers = oidc::discover(vec![fake.config(true, "orcid")], &links).await;
     assert_eq!(providers.len(), 1, "the fake provider answered discovery");
     let hashed = db::hash_password(PASSWORD).await.unwrap();
-    let mut wrong = Vec::new();
-    for row in ROWS {
-        for kind in CALLERS {
-            let world = World::start(&providers, &hashed).await;
-            let caps = Caps::of(kind);
-            let token = world.token(kind);
-            let (status, location) = world
-                .call(
-                    row,
-                    if caps.signed_in {
-                        token.as_deref()
-                    } else {
-                        None
-                    },
-                )
-                .await;
-            if let Err((wanted, _)) = check(row, &caps, status, location.as_deref()) {
-                wrong.push(format!(
-                    "{} {} as {:?}: expected {}, got {}",
-                    row.method, row.path, kind, wanted, status
-                ));
-            }
-        }
-    }
+    let cases = ROWS
+        .iter()
+        .flat_map(|row| CALLERS.into_iter().map(move |kind| (row, kind)));
+    let wrong: Vec<String> = futures_util::stream::iter(cases)
+        .map(|(row, kind)| answer_as(&providers, &hashed, row, kind))
+        .buffer_unordered(CASES_AT_ONCE)
+        .filter_map(|wrong| async move { wrong })
+        .collect()
+        .await;
     assert!(
         wrong.is_empty(),
         "{} mismatches:\n{}",
