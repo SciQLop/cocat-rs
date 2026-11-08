@@ -252,9 +252,9 @@ mod tests {
         .unwrap();
         assert_eq!(members[1], member_with("u2", "b@x.org", Role::Viewer));
         let groups: Groups =
-            serde_json::from_str(r#"{"groups":[{"id":"g","name":"LPP","role":"editor"}]}"#)
+            serde_json::from_str(r#"{"groups":[{"id":"g","name":"Plasma team","role":"editor"}]}"#)
                 .unwrap();
-        assert_eq!(groups.groups[0].name, "LPP");
+        assert_eq!(groups.groups[0].name, "Plasma team");
         let invitations: Vec<Invitation> = serde_json::from_str(
             r#"[{"id":3,"email":null,"expires_at":"2026-11-20T10:00:00.000Z","uses":2,"max_uses":null}]"#,
         )

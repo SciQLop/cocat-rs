@@ -60,7 +60,7 @@ fn create_v1_event(txn: &mut yrs::TransactionMut<'_>, index: usize) {
         Arc::from("stop"),
         In::from(stop.unwrap().as_text().unwrap()),
     );
-    content.insert(Arc::from("author"), In::from("alexis.jeandet@lpp.fr"));
+    content.insert(Arc::from("author"), In::from("ada@example.org"));
     content.insert(Arc::from("tags"), set(&tags()));
     content.insert(Arc::from("products"), set(&products()));
     content.insert(Arc::from("rating"), In::from(Any::Null));
@@ -72,7 +72,7 @@ fn create_v1_event(txn: &mut yrs::TransactionMut<'_>, index: usize) {
 fn v2_event(index: usize) -> EventRecord {
     let stop = Timestamp::from_unix_nanos(start(index).unix_nanos().unwrap() + 30_000_000_000);
     let mut event = EventRecord::new(uuid(index), start(index), stop.unwrap());
-    event.author = Some("alexis.jeandet@lpp.fr".to_owned());
+    event.author = Some("ada@example.org".to_owned());
     event.created = Some(start(index));
     event.tags = tags();
     event.products = products();
