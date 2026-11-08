@@ -112,6 +112,7 @@ struct RoomPage {
     name: String,
     role: &'static str,
     rooms_href: String,
+    browse_href: String,
     leave: Option<LeaveForm>,
     members: Vec<MemberLine>,
     groups: GroupPanel,
@@ -175,6 +176,7 @@ async fn build_page(
         name: room.name,
         role: role.as_str(),
         rooms_href: state.links.path("/rooms"),
+        browse_href: state.links.path(&format!("/rooms/{room_id}/browse")),
         leave,
         members,
         groups,
@@ -543,7 +545,7 @@ async fn member_answer(
     }
 }
 
-fn not_found(state: &AppState, user: &db::User) -> Response {
+pub(super) fn not_found(state: &AppState, user: &db::User) -> Response {
     let page = NotFoundPage {
         frame: Frame::new(&state.links, Some(user), "Room not found"),
         rooms_href: state.links.path("/rooms"),

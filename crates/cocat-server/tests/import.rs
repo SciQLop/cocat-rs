@@ -50,6 +50,7 @@ impl Fixture {
             mailer: None,
             links: Links::default(),
             oidc: Vec::new(),
+            web_dir: None,
         }
     }
 

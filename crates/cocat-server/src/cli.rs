@@ -329,6 +329,9 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         mailer,
         links,
         oidc,
+        web_dir: std::env::var_os("COCAT_WEB_DIR")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from),
     };
 
     let listener = TcpListener::bind((host, port)).await?;

@@ -18,8 +18,8 @@ use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
-use uuid::Uuid;
 
+use crate::db::User;
 use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
 use crate::{AppState, auth, db, ui};
 
@@ -99,10 +99,11 @@ fn old_client() -> Response {
         .into_response()
 }
 
-async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(Uuid, Role)> {
-    let user = auth::authenticate(&state.pool, headers).await.ok()?;
-    let role = db::role_in(&state.pool, room_id, user).await.ok()?;
-    Some((user, role?))
+async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(User, Role)> {
+    let id = auth::authenticate(&state.pool, headers).await.ok()?;
+    let role = db::role_in(&state.pool, room_id, id).await.ok()??;
+    let user = db::user_by_id(&state.pool, id).await.ok()??;
+    Some((user, role))
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -113,12 +114,12 @@ async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
     let _ = socket.send(Message::Close(Some(frame))).await;
 }
 
-async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid, role: Role) {
+async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: User, role: Role) {
     if let Some(hook) = state.before_attach.clone() {
         hook().await;
     }
     let client = next_client();
-    let (room, inbox) = match attach(&state, &room_id, client, user, role).await {
+    let (room, inbox) = match attach(&state, &room_id, client, &user, role).await {
         Ok(attached) => attached,
         Err(AttachError::Room(RoomError::OverBudget {
             room_id,
@@ -143,7 +144,7 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: Uuid,
 
     // The room only knows the role the handshake granted; a revocation can land while the
     // socket is being attached. A role that cannot be re-read is not trusted either.
-    let close_now = match db::role_in(&state.pool, &room_id, user).await {
+    let close_now = match db::role_in(&state.pool, &room_id, user.id).await {
         Ok(Some(current)) if current == role => None,
         Ok(_) => Some(CloseReason::Revoked),
         Err(error) => {
@@ -283,7 +284,7 @@ async fn attach(
     state: &AppState,
     room_id: &str,
     client: ClientId,
-    user: Uuid,
+    user: &User,
     role: Role,
 ) -> Result<(RoomHandle, Inbox), AttachError> {
     let allowance = state.rooms.allowance(&state.pool, room_id).await?;
@@ -294,7 +295,7 @@ async fn attach(
             .await?
             .map_err(AttachError::Room)?;
         let (out, inbox) = outbox();
-        match room.attach(client, user, role, out) {
+        match room.attach(client, user.id, user.email.clone(), role, out) {
             Ok(()) => return Ok((room, inbox)),
             Err(RoomGone) => continue,
         }

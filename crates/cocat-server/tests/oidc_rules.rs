@@ -52,6 +52,7 @@ impl Fixture {
             mailer,
             links,
             oidc: Vec::new(),
+            web_dir: None,
         };
         Self { state, _dir: dir }
     }

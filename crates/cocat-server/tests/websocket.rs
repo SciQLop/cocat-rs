@@ -96,6 +96,7 @@ impl Fixture {
             mailer: None,
             links: Links::default(),
             oidc: Vec::new(),
+            web_dir: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -923,4 +924,46 @@ async fn a_room_file_of_the_first_layout_is_never_served() {
     }
     assert_eq!(fs::read(&file).unwrap(), V1_ROOM);
     assert_eq!(fixture.rooms.open_rooms(), 0);
+}
+
+#[tokio::test]
+async fn a_socket_relays_awareness_under_the_account_email() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-presence", "Presence")
+        .await
+        .unwrap();
+    let viewer = fixture.user("viewer@example.org").await;
+    db::add_member(&fixture.pool, "room-presence", viewer, Role::Viewer)
+        .await
+        .unwrap();
+    let mut first = fixture
+        .connect("room-presence", Some(&fixture.token(owner).await))
+        .await;
+    let mut second = fixture
+        .connect("room-presence", Some(&fixture.token(viewer).await))
+        .await;
+    next_message(&mut first).await;
+    next_message(&mut second).await;
+
+    let claim = yrs::sync::AwarenessUpdate {
+        clients: std::collections::HashMap::from([(
+            yrs::ClientID::new(42),
+            yrs::sync::awareness::AwarenessUpdateEntry {
+                clock: 1,
+                json: Arc::from(r#"{"user":{"email":"owner@example.org"}}"#),
+            },
+        )]),
+    };
+    second
+        .send(sync_frame(Message::Awareness(claim)))
+        .await
+        .unwrap();
+
+    let Message::Awareness(seen) = next_message(&mut first).await else {
+        panic!("expected an awareness update");
+    };
+    let state: serde_json::Value =
+        serde_json::from_str(&seen.clients[&yrs::ClientID::new(42)].json).unwrap();
+    assert_eq!(state["user"]["email"], "viewer@example.org");
 }

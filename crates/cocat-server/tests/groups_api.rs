@@ -58,6 +58,7 @@ impl Fixture {
             mailer: Mailer::from_env(&lookup).unwrap(),
             links: Links::from_env(&lookup).unwrap(),
             oidc: Vec::new(),
+            web_dir: None,
         };
         Self {
             state,
@@ -364,7 +365,8 @@ async fn owner_removes_member_and_their_sockets_close() {
 
     let room = fixture.state.rooms.get_or_open("room-shared").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, bob, Role::Editor, out).unwrap();
+    room.attach(1, bob, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     let (status, _) = fixture
         .delete(&format!("/api/groups/{id}/members/{bob}"), alice)
@@ -397,7 +399,8 @@ async fn delete_group_revokes_every_member_in_every_room() {
         let room = fixture.state.rooms.get_or_open(room_id).unwrap();
         for (client, user) in [(1, alice), (2, bob), (3, carol)] {
             let (out, inbox) = outbox();
-            room.attach(client, user, role, out).unwrap();
+            room.attach(client, user, "test@example.org".to_owned(), role, out)
+                .unwrap();
             inboxes.push(inbox);
         }
     }
@@ -439,7 +442,8 @@ async fn a_member_joined_just_before_the_delete_is_revoked() {
 
     let room = fixture.state.rooms.get_or_open("room-late").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, bob, Role::Editor, out).unwrap();
+    room.attach(1, bob, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     join(&fixture.pool, &id, bob, "member").await;
     grant(&fixture.pool, "room-late", &id, "editor").await;
@@ -580,7 +584,8 @@ async fn changing_a_grant_revokes_the_group_in_that_room() {
 
     let room = fixture.state.rooms.get_or_open("room-changed").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, bob, Role::Editor, out).unwrap();
+    room.attach(1, bob, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     let (status, _) = fixture
         .put(
@@ -612,7 +617,8 @@ async fn ungrant_revokes() {
 
     let room = fixture.state.rooms.get_or_open("room-ungranted").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, bob, Role::Editor, out).unwrap();
+    room.attach(1, bob, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     let (status, _) = fixture
         .delete(&format!("/api/rooms/room-ungranted/groups/{id}"), alice)
@@ -725,7 +731,8 @@ async fn accept_joins_as_member() {
 
     let room = fixture.state.rooms.get_or_open("room-join").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, bob, Role::Viewer, out).unwrap();
+    room.attach(1, bob, "test@example.org".to_owned(), Role::Viewer, out)
+        .unwrap();
 
     let (status, body) = invite(&fixture, &id, alice, json!({})).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

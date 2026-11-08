@@ -37,6 +37,7 @@ impl Fixture {
             mailer: None,
             links: Links::default(),
             oidc: Vec::new(),
+            web_dir: None,
         };
         Self {
             state,
@@ -298,7 +299,8 @@ async fn deleting_a_user_revokes_group_rooms() {
 
     let room = fixture.state.rooms.get_or_open("room-revoke").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, member, Role::Editor, out).unwrap();
+    room.attach(1, member, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     assert!(accounts::delete(&fixture.state, member).await.unwrap());
 
@@ -317,7 +319,8 @@ async fn a_room_joined_just_before_the_account_delete_is_revoked() {
 
     let room = fixture.state.rooms.get_or_open("room-late").unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, member, Role::Editor, out).unwrap();
+    room.attach(1, member, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     db::add_member(&fixture.pool, "room-late", member, Role::Editor)
         .await

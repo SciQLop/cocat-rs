@@ -20,12 +20,13 @@ use thiserror::Error;
 use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
 use tokio::sync::{Semaphore, oneshot};
 use uuid::Uuid;
-use yrs::sync::{Message, SyncMessage};
+use yrs::sync::{AwarenessUpdate, Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, ReadTxn, StateVector, Transact, Update};
 
 use crate::history::stamps::{Stamp, StampFile, read_stamps, stamp_for, stamps_file, valid_stamps};
+use crate::presence::Presence;
 
 pub type ClientId = u64;
 
@@ -629,10 +630,12 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
+    /// `email` is who the client is to the others in the room's awareness.
     pub fn attach(
         &self,
         client: ClientId,
         user: Uuid,
+        email: String,
         role: Role,
         out: Outbox,
     ) -> Result<(), RoomGone> {
@@ -640,6 +643,7 @@ impl RoomHandle {
             .send(RoomCommand::Attach {
                 client,
                 user,
+                email,
                 role,
                 out,
             })
@@ -727,6 +731,7 @@ enum RoomCommand {
     Attach {
         client: ClientId,
         user: Uuid,
+        email: String,
         role: Role,
         out: Outbox,
     },
@@ -769,6 +774,7 @@ enum RoomCommand {
 
 struct Client {
     user: Uuid,
+    email: String,
     role: Role,
     out: Outbox,
 }
@@ -845,6 +851,7 @@ fn room_loop(
     let mut full_state = None;
     let mut commands = Some(commands);
     let mut seen = doc.transact().state_vector();
+    let mut presence = Presence::default();
 
     'serving: loop {
         let mut schedule = SyncSchedule::new(Instant::now());
@@ -866,10 +873,20 @@ fn room_loop(
                     RoomCommand::Attach {
                         client,
                         user,
+                        email,
                         role,
                         out,
                     } => {
-                        attach(&doc, &mut clients, client, Client { user, role, out });
+                        let entry = Client {
+                            user,
+                            email,
+                            role,
+                            out,
+                        };
+                        attach(&doc, &mut clients, client, entry);
+                        if let Some(snapshot) = presence.snapshot() {
+                            deliver(&mut clients, client, snapshot);
+                        }
                         Step::Serving
                     }
                     RoomCommand::Frame { client, frame } => {
@@ -880,6 +897,7 @@ fn room_loop(
                             seen: &mut seen,
                             full_state: &mut full_state,
                             clients: &mut clients,
+                            presence: &mut presence,
                             limit,
                         };
                         match handle_frame(&mut serving, client, frame) {
@@ -960,6 +978,9 @@ fn room_loop(
                     write(&mut store, &mut stamps, &room_id);
                 }
                 if let Some(frame) = broadcast {
+                    broadcast_to(&mut clients, frame);
+                }
+                if let Some(frame) = presence.depart(|client| clients.contains_key(&client)) {
                     broadcast_to(&mut clients, frame);
                 }
                 if let Some((done, written)) = answer {
@@ -1314,8 +1335,20 @@ fn close_all(clients: &mut HashMap<ClientId, Client>, reason: CloseReason) {
 }
 
 fn broadcast_to(clients: &mut HashMap<ClientId, Client>, frame: Bytes) {
+    broadcast_except(clients, None, frame);
+}
+
+/// Sends `frame` to every client but `sender`.
+fn broadcast_except(
+    clients: &mut HashMap<ClientId, Client>,
+    sender: Option<ClientId>,
+    frame: Bytes,
+) {
     let mut dropped = Vec::new();
-    for (client, entry) in clients.iter() {
+    for (client, entry) in clients
+        .iter()
+        .filter(|(client, _)| Some(**client) != sender)
+    {
         match post(&entry.out, frame.clone()) {
             Post::Sent => {}
             Post::Full => dropped.push((*client, Some(CloseReason::TooSlow))),
@@ -1371,8 +1404,13 @@ fn handle_frame(
                 return Ok(None);
             }
         };
-    let Message::Sync(message) = message else {
-        return Ok(None);
+    let message = match message {
+        Message::Sync(message) => message,
+        Message::Awareness(update) => {
+            relay_awareness(serving, client, update);
+            return Ok(None);
+        }
+        _ => return Ok(None),
     };
     match message {
         SyncMessage::SyncStep1(state_vector) => {
@@ -1413,6 +1451,20 @@ fn handle_frame(
     }
 }
 
+/// Every role may publish its presence, a viewer included: it writes nothing to the room.
+fn relay_awareness(serving: &mut Serving<'_>, client: ClientId, update: AwarenessUpdate) {
+    let Some(email) = serving
+        .clients
+        .get(&client)
+        .map(|entry| entry.email.clone())
+    else {
+        return;
+    };
+    if let Some(frame) = serving.presence.update(client, &email, update) {
+        broadcast_except(serving.clients, Some(client), frame);
+    }
+}
+
 /// What one frame may reach on the room's thread: the document, the file it persists to, the
 /// room's own state vector, the cached full state, and the clients to answer or close.
 struct Serving<'a> {
@@ -1422,6 +1474,7 @@ struct Serving<'a> {
     seen: &'a mut StateVector,
     full_state: &'a mut Option<Bytes>,
     clients: &'a mut HashMap<ClientId, Client>,
+    presence: &'a mut Presence,
     limit: u64,
 }
 
@@ -1603,8 +1656,14 @@ mod tests {
 
     async fn full_state(room: &RoomHandle, client: ClientId) -> Doc {
         let (out, mut inbox) = outbox();
-        room.attach(client, Uuid::new_v4(), Role::Editor, out)
-            .expect("the room is open");
+        room.attach(
+            client,
+            Uuid::new_v4(),
+            "test@example.org".to_owned(),
+            Role::Editor,
+            out,
+        )
+        .expect("the room is open");
         room.frame(
             client,
             Bytes::from(Message::Sync(SyncMessage::SyncStep1(StateVector::default())).encode_v1()),
@@ -1636,11 +1695,14 @@ mod tests {
 
         let owner = Uuid::new_v4();
         let (out, _owner) = outbox();
-        room.attach(1, owner, Role::Owner, out).unwrap();
+        room.attach(1, owner, "test@example.org".to_owned(), Role::Owner, out)
+            .unwrap();
         let (out, _editor) = outbox();
-        room.attach(2, owner, Role::Editor, out).unwrap();
+        room.attach(2, owner, "test@example.org".to_owned(), Role::Editor, out)
+            .unwrap();
         let (out, mut observer) = outbox();
-        room.attach(3, owner, Role::Viewer, out).unwrap();
+        room.attach(3, owner, "test@example.org".to_owned(), Role::Viewer, out)
+            .unwrap();
 
         room.frame(
             2,
@@ -1696,6 +1758,7 @@ mod tests {
             1,
             Client {
                 user: Uuid::new_v4(),
+                email: "test@example.org".to_owned(),
                 role: Role::Owner,
                 out,
             },
@@ -1709,6 +1772,7 @@ mod tests {
                     seen: &mut StateVector::default(),
                     full_state: &mut None,
                     clients: &mut clients,
+                    presence: &mut Presence::default(),
                     limit: u64::MAX,
                 },
                 1,
@@ -1732,6 +1796,7 @@ mod tests {
             2,
             Client {
                 user: Uuid::new_v4(),
+                email: "test@example.org".to_owned(),
                 role: Role::Owner,
                 out,
             },
@@ -1747,6 +1812,7 @@ mod tests {
                     seen: &mut StateVector::default(),
                     full_state: &mut None,
                     clients: &mut clients,
+                    presence: &mut Presence::default(),
                     limit: u64::MAX,
                 },
                 2,
@@ -1813,6 +1879,7 @@ mod tests {
             7,
             Client {
                 user: Uuid::new_v4(),
+                email: "test@example.org".to_owned(),
                 role: Role::Viewer,
                 out,
             },
@@ -1833,6 +1900,7 @@ mod tests {
                     seen: &mut StateVector::default(),
                     full_state: &mut None,
                     clients: &mut clients,
+                    presence: &mut Presence::default(),
                     limit: u64::MAX,
                 },
                 7,
@@ -1848,7 +1916,13 @@ mod tests {
         let mut room = dying_room();
         let (out, _inbox) = outbox();
         room.handle
-            .attach(1, Uuid::new_v4(), Role::Editor, out)
+            .attach(
+                1,
+                Uuid::new_v4(),
+                "test@example.org".to_owned(),
+                Role::Editor,
+                out,
+            )
             .unwrap();
 
         assert!(close_room(
@@ -1874,7 +1948,13 @@ mod tests {
         assert!(room.registry.lock().unwrap().is_empty());
         let (out, _inbox) = outbox();
         assert_eq!(
-            room.handle.attach(1, Uuid::new_v4(), Role::Editor, out),
+            room.handle.attach(
+                1,
+                Uuid::new_v4(),
+                "test@example.org".to_owned(),
+                Role::Editor,
+                out
+            ),
             Err(RoomGone)
         );
     }
@@ -1904,7 +1984,14 @@ mod tests {
         let manager = RoomManager::new(dir.path().to_owned(), None);
         let room = manager.get_or_open("room-quiet").unwrap();
         let (out, mut inbox) = outbox();
-        room.attach(1, Uuid::new_v4(), Role::Editor, out).unwrap();
+        room.attach(
+            1,
+            Uuid::new_v4(),
+            "test@example.org".to_owned(),
+            Role::Editor,
+            out,
+        )
+        .unwrap();
         timeout(WAIT, inbox.frames.recv()).await.unwrap().unwrap();
 
         let payload = update_with("key", "value");
@@ -1926,8 +2013,14 @@ mod tests {
     }
 
     async fn join(room: &RoomHandle, client: ClientId, out: Outbox, inbox: &mut Inbox) -> Bytes {
-        room.attach(client, Uuid::new_v4(), Role::Editor, out)
-            .unwrap();
+        room.attach(
+            client,
+            Uuid::new_v4(),
+            "test@example.org".to_owned(),
+            Role::Editor,
+            out,
+        )
+        .unwrap();
         inbox.frames.recv().await.unwrap();
         room.frame(
             client,
@@ -2370,6 +2463,7 @@ mod tests {
                 client,
                 Client {
                     user: Uuid::new_v4(),
+                    email: "test@example.org".to_owned(),
                     role: Role::Owner,
                     out,
                 },
@@ -2388,6 +2482,7 @@ mod tests {
                 seen: &mut seen,
                 full_state: &mut full_state,
                 clients: &mut clients,
+                presence: &mut Presence::default(),
                 limit,
             },
             1,
@@ -2407,6 +2502,7 @@ mod tests {
                     seen: &mut seen,
                     full_state: &mut full_state,
                     clients: &mut clients,
+                    presence: &mut Presence::default(),
                     limit,
                 },
                 2,
@@ -2431,6 +2527,7 @@ mod tests {
                 seen: &mut seen,
                 full_state: &mut full_state,
                 clients: &mut clients,
+                presence: &mut Presence::default(),
                 limit,
             },
             1,

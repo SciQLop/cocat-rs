@@ -21,12 +21,14 @@ pub mod links;
 pub mod mail;
 pub mod oidc;
 pub mod openapi;
+pub mod presence;
 pub mod ratelimit;
 pub mod room;
 pub mod telemetry;
 pub mod ui;
 pub mod ws;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -53,4 +55,6 @@ pub struct AppState {
     pub links: Links,
     /// The providers that answered discovery at startup; empty keeps the password login alone.
     pub oidc: Vec<Provider>,
+    /// `COCAT_WEB_DIR`: the catalogue browser's bundle; `None` answers that it is not installed.
+    pub web_dir: Option<PathBuf>,
 }

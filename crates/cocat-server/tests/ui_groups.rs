@@ -211,7 +211,8 @@ async fn remove_closes_sockets_in_shared_rooms() {
         .unwrap();
     let open = fixture.state.rooms.get_or_open(&room).unwrap();
     let (out, mut inbox) = outbox();
-    open.attach(1, member, Role::Viewer, out).unwrap();
+    open.attach(1, member, "test@example.org".to_owned(), Role::Viewer, out)
+        .unwrap();
 
     let response = fixture
         .post(

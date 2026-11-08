@@ -49,7 +49,13 @@ async fn write_room(manager: &RoomManager, room_id: &str, key: &str, value: &str
     let handle = manager.get_or_open(room_id).unwrap();
     let (out, _inbox) = outbox();
     handle
-        .attach(1, Uuid::new_v4(), Role::Editor, out)
+        .attach(
+            1,
+            Uuid::new_v4(),
+            "test@example.org".to_owned(),
+            Role::Editor,
+            out,
+        )
         .expect("the room accepted the client");
     handle.frame(1, update_frame(key, value));
     handle.detach(1).await;
@@ -61,7 +67,15 @@ async fn reads_an_open_room_through_its_thread() {
     let manager = manager(&dir, None);
     let handle = manager.get_or_open(ROOM).unwrap();
     let (out, _inbox) = outbox();
-    handle.attach(1, Uuid::new_v4(), Role::Editor, out).unwrap();
+    handle
+        .attach(
+            1,
+            Uuid::new_v4(),
+            "test@example.org".to_owned(),
+            Role::Editor,
+            out,
+        )
+        .unwrap();
     handle.frame(1, update_frame("key", "value"));
 
     let value = manager.read(ROOM, |doc| content(doc, "key")).await.unwrap();
@@ -147,7 +161,16 @@ async fn read_survives_an_unload_race() {
         let handle = loop {
             let handle = manager.get_or_open(ROOM).unwrap();
             let (out, _inbox) = outbox();
-            if handle.attach(1, Uuid::new_v4(), Role::Editor, out).is_ok() {
+            if handle
+                .attach(
+                    1,
+                    Uuid::new_v4(),
+                    "test@example.org".to_owned(),
+                    Role::Editor,
+                    out,
+                )
+                .is_ok()
+            {
                 break handle;
             }
         };

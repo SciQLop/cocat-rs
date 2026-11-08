@@ -79,6 +79,7 @@ impl World {
             mailer: None,
             links: Links::default(),
             oidc: Vec::new(),
+            web_dir: None,
         }
     }
 
@@ -183,7 +184,7 @@ fn varint(mut value: usize) -> Vec<u8> {
 
 fn attach(room: &RoomHandle, client: ClientId, user: Uuid, role: Role) -> Inbox {
     let (out, inbox) = outbox();
-    let _ = room.attach(client, user, role, out);
+    let _ = room.attach(client, user, "test@example.org".to_owned(), role, out);
     inbox
 }
 

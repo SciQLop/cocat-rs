@@ -160,7 +160,8 @@ async fn change_role_closes_their_socket() {
     let member = member_of(&fixture, &id, GUEST, Role::Editor).await;
     let room = fixture.state.rooms.get_or_open(&id).unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, member, Role::Editor, out).unwrap();
+    room.attach(1, member, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
 
     let response = fixture
         .post(

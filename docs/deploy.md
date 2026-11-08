@@ -75,8 +75,26 @@ so systemd restarts it after a crash.
   roles as on Python.
 - SciQLop pointed at `https://sciqlop.lpp.polytechnique.fr/cocat-dev` opens one room through
   the Python client and shows its catalogues and events; the event count matches production.
+- A room's page has an "Open catalogues" button; it opens `/cocat-dev/ui/rooms/<id>/browse`,
+  which shows the cocat header and loads the room.
 - `podman logs cocat-rs-dev` shows no error; `ls /DATA/cocat_rs_dev/mail` holds the mails a
   sign-up or a reset would have sent.
+
+## The catalogue browser
+
+The browser app (`crates/cocat-web`) is a static bundle that trunk builds; the image builds it
+and copies it to `/usr/share/cocat/web`, and `COCAT_WEB_DIR` points the server at it. Without
+that variable, or with a directory missing its `index.html`, a room's `/browse` page answers
+503 "The catalogue browser is not installed on this server"; everything else works.
+
+The page tells the app where its room's websocket is. With `COCAT_PUBLIC_URL` set that is an
+absolute `wss://` (or `ws://`) URL under `COCAT_PROXY_PREFIX`; without, a path the browser
+resolves against the page, so it follows whatever scheme and host the visitor used. The nginx
+`location` block already carries the websocket headers the app needs.
+
+To build the bundle by hand: `rustup target add wasm32-unknown-unknown`,
+`cargo install trunk --version 0.22.1 --locked`, then `trunk build --release` in
+`crates/cocat-web` (the bundle lands in `crates/cocat-web/dist`).
 
 ## Bot protection
 

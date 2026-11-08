@@ -6,13 +6,16 @@
     <h1>{{ name }}</h1>
     <p class="meta">Your role: {{ role }}</p>
   </div>
+  <div class="inline">
 {% match leave %}
 {% when Some with (form) %}
-  <form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
-    <button type="submit" class="quiet">Leave</button>
-  </form>
+    <form method="post" action="{{ form.action }}" data-confirm="{{ form.confirm }}">
+      <button type="submit" class="quiet">Leave</button>
+    </form>
 {% when None %}
 {% endmatch %}
+    <a class="button" href="{{ browse_href }}">Open catalogues</a>
+  </div>
 </div>
 
 <h2>Members</h2>

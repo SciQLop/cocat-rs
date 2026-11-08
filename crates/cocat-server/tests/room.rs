@@ -54,7 +54,7 @@ fn update_frame(payload: &[u8]) -> Bytes {
 fn attach_as(handle: &RoomHandle, client: ClientId, user: Uuid, role: Role) -> Inbox {
     let (out, inbox) = outbox();
     handle
-        .attach(client, user, role, out)
+        .attach(client, user, "test@example.org".to_owned(), role, out)
         .expect("the room accepted the client");
     inbox
 }
@@ -72,7 +72,16 @@ fn attach_with_retry(
     for _ in 0..3 {
         let handle = manager.get_or_open(room_id).unwrap();
         let (out, inbox) = outbox();
-        if handle.attach(client, Uuid::new_v4(), role, out).is_ok() {
+        if handle
+            .attach(
+                client,
+                Uuid::new_v4(),
+                "test@example.org".to_owned(),
+                role,
+                out,
+            )
+            .is_ok()
+        {
             return (handle, inbox);
         }
     }
@@ -593,7 +602,13 @@ async fn a_room_file_that_cannot_be_loaded_does_not_hang() {
 
     let handle = manager.get_or_open("room-broken").unwrap();
     let (out, mut inbox) = outbox();
-    let _ = handle.attach(1, Uuid::new_v4(), Role::Editor, out);
+    let _ = handle.attach(
+        1,
+        Uuid::new_v4(),
+        "test@example.org".to_owned(),
+        Role::Editor,
+        out,
+    );
 
     let closed = timeout(Duration::from_secs(5), &mut inbox.close)
         .await

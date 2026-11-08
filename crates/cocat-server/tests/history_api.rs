@@ -49,6 +49,7 @@ impl Fixture {
             mailer: None,
             links: Links::default(),
             oidc: Vec::new(),
+            web_dir: None,
         };
         let user = |email: &'static str| {
             let pool = state.pool.clone();
@@ -243,7 +244,14 @@ async fn a_version_just_written_to_an_open_room_is_listed() {
     let fixture = Fixture::start().await;
     let room = fixture.state.rooms.get_or_open(ROOM).unwrap();
     let (out, _inbox) = outbox();
-    room.attach(1, fixture.bob, Role::Editor, out).unwrap();
+    room.attach(
+        1,
+        fixture.bob,
+        "test@example.org".to_owned(),
+        Role::Editor,
+        out,
+    )
+    .unwrap();
     let update = fixture.record(create("a"));
     room.frame(
         1,
@@ -446,7 +454,14 @@ async fn restore_is_broadcast_to_a_connected_client_and_stamped_with_the_restore
     let fixture = two_versions().await;
     let room = fixture.state.rooms.get_or_open(ROOM).unwrap();
     let (out, mut inbox) = outbox();
-    room.attach(1, fixture.carol, Role::Viewer, out).unwrap();
+    room.attach(
+        1,
+        fixture.carol,
+        "test@example.org".to_owned(),
+        Role::Viewer,
+        out,
+    )
+    .unwrap();
     inbox.frames.recv().await.expect("the sync step 1");
 
     let (status, body) = fixture.restore(0, fixture.alice).await;

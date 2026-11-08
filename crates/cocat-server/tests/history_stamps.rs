@@ -30,7 +30,8 @@ fn now_ms() -> i64 {
 /// Attaches `user` as an editor, sends one update and waits for the room to flush it.
 async fn write_as(room: &RoomHandle, user: Uuid, payload: &[u8]) -> Inbox {
     let (out, inbox) = outbox();
-    room.attach(1, user, Role::Editor, out).unwrap();
+    room.attach(1, user, "test@example.org".to_owned(), Role::Editor, out)
+        .unwrap();
     room.frame(
         1,
         Bytes::from(Message::Sync(SyncMessage::Update(payload.to_vec())).encode_v1()),

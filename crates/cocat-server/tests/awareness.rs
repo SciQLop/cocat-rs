@@ -1,0 +1,175 @@
+//! Presence: the room relays Yjs awareness between its clients, under the identity the server
+//! knows rather than the one a client claims.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use cocat_core::role::Role;
+use cocat_server::room::{Inbox, RoomHandle, RoomManager, outbox};
+use serde_json::{Value, json};
+use tempfile::TempDir;
+use tokio::time::timeout;
+use uuid::Uuid;
+use yrs::ClientID;
+use yrs::sync::awareness::{AwarenessUpdate, AwarenessUpdateEntry};
+use yrs::sync::{Message, SyncMessage};
+use yrs::updates::decoder::Decode;
+use yrs::updates::encoder::Encode;
+
+const WAIT: Duration = Duration::from_secs(5);
+
+struct Room {
+    handle: RoomHandle,
+    _dir: TempDir,
+}
+
+fn open() -> Room {
+    let dir = TempDir::new().unwrap();
+    let manager = RoomManager::new(dir.path().to_owned(), None);
+    Room {
+        handle: manager.get_or_open("lab").unwrap(),
+        _dir: dir,
+    }
+}
+
+fn join(room: &Room, client: u64, email: &str, role: Role) -> Inbox {
+    let (out, inbox) = outbox();
+    room.handle
+        .attach(client, Uuid::new_v4(), email.to_owned(), role, out)
+        .unwrap();
+    inbox
+}
+
+fn awareness(id: u64, clock: u32, state: Value) -> Bytes {
+    let update = AwarenessUpdate {
+        clients: HashMap::from([(
+            ClientID::new(id),
+            AwarenessUpdateEntry {
+                clock,
+                json: Arc::from(state.to_string()),
+            },
+        )]),
+    };
+    Bytes::from(Message::Awareness(update).encode_v1())
+}
+
+/// The next awareness update the client receives, skipping the sync handshake.
+async fn next_awareness(inbox: &mut Inbox) -> HashMap<u64, (u32, Value)> {
+    loop {
+        let frame = timeout(WAIT, inbox.frames.recv())
+            .await
+            .expect("no awareness frame arrived")
+            .expect("the room closed the client");
+        if let Message::Awareness(update) = Message::decode_v1(&frame).unwrap() {
+            return update
+                .clients
+                .into_iter()
+                .map(|(id, entry)| {
+                    (
+                        id.get(),
+                        (entry.clock, serde_json::from_str(&entry.json).unwrap()),
+                    )
+                })
+                .collect();
+        }
+    }
+}
+
+/// Proves nothing else is queued: a sync request is answered, and that answer comes first.
+async fn nothing_but_the_answer(room: &Room, client: u64, inbox: &mut Inbox) {
+    let step1 = Message::Sync(SyncMessage::SyncStep1(Default::default())).encode_v1();
+    room.handle.frame(client, Bytes::from(step1));
+    loop {
+        let frame = timeout(WAIT, inbox.frames.recv()).await.unwrap().unwrap();
+        match Message::decode_v1(&frame).unwrap() {
+            Message::Sync(SyncMessage::SyncStep2(_)) => return,
+            Message::Sync(SyncMessage::SyncStep1(_)) => continue,
+            other => panic!("expected no other frame, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn awareness_is_relayed_with_the_server_identity() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let mut bob = join(&room, 2, "bob@example.org", Role::Viewer);
+
+    room.handle.frame(
+        2,
+        awareness(
+            700,
+            1,
+            json!({"user": {"email": "alice@example.org", "color": "#000000"}, "editing": "e1"}),
+        ),
+    );
+
+    let seen = next_awareness(&mut alice).await;
+    let (clock, state) = &seen[&700];
+    assert_eq!(*clock, 1);
+    assert_eq!(state["editing"], "e1");
+    assert_eq!(state["user"]["email"], "bob@example.org");
+    let color = state["user"]["color"].as_str().unwrap();
+    assert!(
+        color.len() == 7 && color.starts_with('#') && color != "#000000",
+        "{color}"
+    );
+    nothing_but_the_answer(&room, 2, &mut bob).await;
+}
+
+#[tokio::test]
+async fn a_client_only_speaks_for_its_own_awareness_id() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let mut bob = join(&room, 2, "bob@example.org", Role::Editor);
+    room.handle
+        .frame(1, awareness(100, 1, json!({"editing": "a"})));
+    assert_eq!(next_awareness(&mut bob).await[&100].1["editing"], "a");
+
+    room.handle
+        .frame(2, awareness(100, 2, json!({"editing": "spoof"})));
+    room.handle
+        .frame(2, awareness(200, 1, json!({"editing": "b"})));
+    room.handle
+        .frame(2, awareness(201, 1, json!({"editing": "second id"})));
+
+    let seen = next_awareness(&mut alice).await;
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[&200].1["editing"], "b");
+    assert_eq!(seen[&200].1["user"]["email"], "bob@example.org");
+    nothing_but_the_answer(&room, 1, &mut alice).await;
+}
+
+#[tokio::test]
+async fn a_joining_client_sees_who_is_already_there() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    room.handle
+        .frame(1, awareness(100, 3, json!({"editing": null})));
+    nothing_but_the_answer(&room, 1, &mut alice).await;
+
+    let mut carol = join(&room, 3, "carol@example.org", Role::Viewer);
+
+    let seen = next_awareness(&mut carol).await;
+    assert_eq!(seen[&100].0, 3);
+    assert_eq!(seen[&100].1["user"]["email"], "alice@example.org");
+}
+
+#[tokio::test]
+async fn a_closed_client_disappears_from_awareness() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Editor);
+    room.handle
+        .frame(2, awareness(200, 4, json!({"editing": "b"})));
+    assert!(next_awareness(&mut alice).await.contains_key(&200));
+
+    room.handle.detach(2).await;
+
+    let seen = next_awareness(&mut alice).await;
+    let (clock, state) = &seen[&200];
+    assert!(*clock > 4, "the removal must win over the last state");
+    assert_eq!(*state, Value::Null);
+}

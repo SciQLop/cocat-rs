@@ -107,6 +107,7 @@ impl Server {
             mailer: None,
             links: Links::default(),
             oidc: Vec::new(),
+            web_dir: None,
         };
         let (ready, listening) = std::sync::mpsc::channel();
         let logins = Arc::clone(&self.logins);

@@ -2,6 +2,7 @@
 
 mod account;
 mod admin;
+mod app;
 mod frame;
 mod groups;
 mod invitation;
@@ -45,6 +46,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/invitation/accept", post(invitation::accept))
         .route("/rooms", get(rooms::page).post(rooms::create))
         .route("/rooms/{room_id}", get(room::page))
+        .route("/rooms/{room_id}/browse", get(app::browse))
         .route("/rooms/{room_id}/rename", post(rooms::rename))
         .route("/rooms/{room_id}/delete", post(rooms::delete))
         .route("/rooms/{room_id}/leave", post(rooms::leave))
@@ -107,6 +109,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/oauth/{name}/login", get(oauth::login))
         .route("/oauth/{name}/callback", get(oauth::callback))
         .route("/static/{file}", get(frame::static_asset))
+        .route("/app/{*path}", get(app::file))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             frame::clear_notices,

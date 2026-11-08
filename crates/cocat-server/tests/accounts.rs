@@ -82,6 +82,7 @@ impl Fixture {
             mailer: Mailer::from_env(&lookup).unwrap(),
             links: Links::from_env(&lookup).unwrap(),
             oidc: Vec::new(),
+            web_dir: None,
         };
         Self {
             state,

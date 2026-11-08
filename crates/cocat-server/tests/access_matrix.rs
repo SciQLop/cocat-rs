@@ -387,6 +387,14 @@ const ROWS: &[Row] = &[
     row("POST", "/ui/rooms", Guard::SignedIn, Style::UiAction),
     row("GET", "/ui/rooms/{room}", Guard::RoomViewer, Style::UiPage).room_any(),
     row(
+        "GET",
+        "/ui/rooms/{room}/browse",
+        Guard::RoomViewer,
+        Style::UiPage,
+    )
+    .room_any(),
+    row("GET", "/ui/app/{asset}", Guard::Public, Style::UiPage),
+    row(
         "POST",
         "/ui/rooms/{room}/rename",
         Guard::RoomOwner,
@@ -704,6 +712,7 @@ impl World {
             mailer: None,
             links: Links::default(),
             oidc: providers.to_vec(),
+            web_dir: Some(web_bundle(dir.path())),
         };
         let owner = user(&state, "owner@example.org", hashed).await;
         let editor = user(&state, "editor@example.org", hashed).await;
@@ -802,6 +811,7 @@ impl World {
             .replace("{member}", &self.target.to_string())
             .replace("{name}", "orcid")
             .replace("{file}", "style.css")
+            .replace("{asset}", "app.js")
             .replace("{swagger}", "swagger-ui.css")
     }
 
@@ -1288,4 +1298,17 @@ fn methods(call: &str) -> Vec<&'static str> {
     .filter(|(lower, _)| call.contains(&format!("{lower}(")))
     .map(|(_, upper)| upper)
     .collect()
+}
+
+/// The catalogue browser's bundle, reduced to what its two routes read.
+fn web_bundle(root: &Path) -> std::path::PathBuf {
+    let web = root.join("web");
+    fs::create_dir_all(&web).unwrap();
+    fs::write(
+        web.join("index.html"),
+        "<html><head></head><body></body></html>",
+    )
+    .unwrap();
+    fs::write(web.join("app.js"), "export {}").unwrap();
+    web
 }

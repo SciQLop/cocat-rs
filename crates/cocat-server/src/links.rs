@@ -73,6 +73,21 @@ impl Links {
         format!("{}{}", self.origin, self.path(path_and_fragment))
     }
 
+    /// The websocket URL of a route outside `/ui`, such as a room's socket.
+    ///
+    /// With `COCAT_PUBLIC_URL` it is absolute, `wss` for an `https` origin. Without, it is a
+    /// path the browser resolves against the page it is on, so it keeps the scheme and host
+    /// the browser really used even when a proxy rewrites the `Host` header or drops
+    /// `X-Forwarded-Proto` on the way in.
+    pub fn socket(&self, path: &str) -> String {
+        let origin = match self.origin.split_once("://") {
+            Some(("https", authority)) => format!("wss://{authority}"),
+            Some(("http", authority)) => format!("ws://{authority}"),
+            _ => self.origin.clone(),
+        };
+        format!("{origin}{}", self.app(path))
+    }
+
     /// The page that accepts a group invitation, whose token sits in the fragment so it
     /// never reaches an access log or a Referer header.
     pub fn group_invitation(&self, token: &str) -> String {
@@ -106,5 +121,32 @@ fn prefix(configured: &str) -> String {
         String::new()
     } else {
         format!("/{stripped}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Links;
+
+    fn links(origin: &str, prefix: &str) -> Links {
+        Links::from_env(&|name| match name {
+            "COCAT_PUBLIC_URL" => Some(origin.to_owned()),
+            "COCAT_PROXY_PREFIX" => Some(prefix.to_owned()),
+            _ => None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_socket_url_follows_the_public_scheme_and_prefix() {
+        assert_eq!(
+            links("https://cocat.example.org/ignored", "cocat-dev").socket("/room/lab"),
+            "wss://cocat.example.org/cocat-dev/room/lab"
+        );
+        assert_eq!(
+            links("http://127.0.0.1:6570", "").socket("/room/lab"),
+            "ws://127.0.0.1:6570/room/lab"
+        );
+        assert_eq!(links("", "/p/").socket("/room/lab"), "/p/room/lab");
     }
 }
