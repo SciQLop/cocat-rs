@@ -417,7 +417,7 @@ pub fn cookie_token(cookie: &str) -> String {
 }
 
 pub async fn body_text(response: Response) -> String {
-    let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 

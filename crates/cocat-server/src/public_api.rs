@@ -269,11 +269,11 @@ fn changed(room: PublicRoom, body: PublicChanges) -> Result<PublicRoom, ApiError
     })
 }
 
-fn folder_or_source(value: Option<String>) -> Result<Option<String>, ApiError> {
+pub(crate) fn folder_or_source(value: Option<String>) -> Result<Option<String>, ApiError> {
     label(value, MAX_LABEL).map_err(|_| ApiError::BadRequest(LONG_FOLDER.to_owned()))
 }
 
-fn description(value: Option<String>) -> Result<Option<String>, ApiError> {
+pub(crate) fn description(value: Option<String>) -> Result<Option<String>, ApiError> {
     label(value, MAX_DESCRIPTION).map_err(|_| ApiError::BadRequest(LONG_DESCRIPTION.to_owned()))
 }
 

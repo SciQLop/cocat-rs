@@ -283,7 +283,7 @@ async fn copy(
 
 /// Runs in its own task: a client that hangs up cannot cut it between the new project and
 /// its content. Any failure after the project exists removes it.
-async fn make_copy(
+pub(crate) async fn make_copy(
     state: AppState,
     user: Uuid,
     name: String,
@@ -328,7 +328,7 @@ async fn write_first_version(
 
 /// "Copied from <project>, <date the version started>", cut to a version name's 100
 /// characters.
-fn copy_name(project: &str, started_ms: Option<i64>) -> String {
+pub(crate) fn copy_name(project: &str, started_ms: Option<i64>) -> String {
     let date = started_ms.and_then(utc_minute);
     let name = match date {
         Some(date) => format!("Copied from {project}, {date}"),
@@ -457,25 +457,40 @@ async fn commit(
     JsonBody(body): JsonBody<CommitBody>,
 ) -> Result<Json<Committed>, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
-    let saved = saved(&state, &room_id).await?;
+    let name = body.name.as_ref().map(|name| name.0.as_str());
+    let message = body.message.as_ref().and_then(|note| note.0.as_deref());
+    let version = save_newest(&state, &room_id, user.id, name, message).await?;
+    Ok(Json(Committed { version }))
+}
+
+/// Saves the room's newest version, ending at its last record, with the name and note
+/// given; its id. 409 when nothing changed since the last saved version.
+pub(crate) async fn save_newest(
+    state: &AppState,
+    room_id: &str,
+    user: Uuid,
+    name: Option<&str>,
+    message: Option<&str>,
+) -> Result<u64, ApiError> {
+    let saved = saved(state, room_id).await?;
     let after = saved.last().copied().and_then(row);
     let records = state
         .rooms
-        .read_log(&room_id, 1, move |_, slots| spans(slots, &saved).pop())
+        .read_log(room_id, 1, move |_, slots| spans(slots, &saved).pop())
         .await?
         .and_then(rows)
         .ok_or_else(nothing_changed)?;
     let version = u64::try_from(*records.start()).map_err(|_| nothing_changed())?;
     let saving = db::SavedVersion {
         records,
-        name: body.name.as_ref().map(|name| name.0.as_str()),
-        message: body.message.as_ref().and_then(|note| note.0.as_deref()),
+        name,
+        message,
         after,
     };
-    if !db::save_version(&state.pool, &room_id, &saving, user.id).await? {
+    if !db::save_version(&state.pool, room_id, &saving, user).await? {
         return Err(nothing_changed());
     }
-    Ok(Json(Committed { version }))
+    Ok(version)
 }
 
 fn nothing_changed() -> ApiError {

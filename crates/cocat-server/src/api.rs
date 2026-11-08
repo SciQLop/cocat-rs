@@ -37,6 +37,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(crate::groups_api::router())
         .merge(crate::invitations_api::router())
         .merge(crate::public_api::router())
+        .merge(crate::submissions_api::router())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -90,6 +91,7 @@ pub enum ApiError {
     BadRequest(String),
     Unprocessable(String),
     Unavailable(String),
+    TooLarge(String),
     Internal,
 }
 
@@ -103,6 +105,7 @@ impl IntoResponse for ApiError {
             Self::BadRequest(detail) => (StatusCode::BAD_REQUEST, detail),
             Self::Unprocessable(detail) => (StatusCode::UNPROCESSABLE_ENTITY, detail),
             Self::Unavailable(detail) => (StatusCode::SERVICE_UNAVAILABLE, detail),
+            Self::TooLarge(detail) => (StatusCode::PAYLOAD_TOO_LARGE, detail),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal Server Error".to_owned(),
@@ -321,12 +324,27 @@ struct OwnerBody {
     path = "/api/me",
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The caller's account", body = UserRead),
+        (status = 200, description = "The caller's account", body = Me),
         (status = 401, description = "No valid session", body = Detail),
     )
 )]
-async fn me(CurrentUser(user): CurrentUser) -> Json<UserRead> {
-    Json(user.into())
+async fn me(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Me>, ApiError> {
+    let is_curator = db::is_curator(&state.pool, user.id).await?;
+    Ok(Json(Me {
+        user: user.into(),
+        is_curator,
+    }))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Me {
+    #[serde(flatten)]
+    user: UserRead,
+    /// Curators keep the public catalogues and review what people submit to them.
+    is_curator: bool,
 }
 
 #[utoipa::path(

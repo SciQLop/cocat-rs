@@ -1,0 +1,787 @@
+//! Submissions to the public catalogues under `/api/public`: anyone signed in offers one of
+//! their catalogues, or a change to a public one made on a copy of it; curators accept or
+//! decline; authors withdraw. Only the author and the curators see a submission.
+
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use cocat_core::model;
+use cocat_core::role::Role;
+use cocat_core::room_id::public_id;
+use serde::{Deserialize, Serialize};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+use uuid::Uuid;
+use yrs::{Doc, ReadTxn, StateVector, Transact};
+
+use crate::AppState;
+use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::db::{self, PublicRoom};
+use crate::history::diff::{Diff, diff, replay_until};
+use crate::history::versions::apply;
+use crate::history_api::{copy_name, make_copy, save_newest};
+use crate::lifecycle;
+use crate::openapi::Detail;
+use crate::public_api::{description, folder_or_source};
+use crate::room::Author;
+use crate::submissions::{
+    self, ACCEPTED, DECLINED, Decision, NewSubmission, Submission, WITHDRAWN,
+};
+
+const NEW: &str = "new";
+const UPDATE: &str = "update";
+const NO_SUCH_SUBMISSION: &str = "No such submission";
+const NO_SUCH_CATALOGUE: &str = "No such catalogue in this project";
+const NO_SUCH_PUBLIC: &str = "No such public catalogue";
+const NOT_A_COPY: &str = "This catalogue is not a copy of a public catalogue";
+const ONLY_CURATORS: &str = "Only curators review submissions";
+const ONLY_THE_AUTHOR: &str = "Only its author can withdraw a submission";
+const DECIDED: &str = "This submission was already decided or withdrawn";
+const TARGET_GONE: &str = "The public catalogue this submission changes was deleted";
+const EMPTY_PUBLIC: &str = "This public catalogue holds no catalogue yet";
+const INTO_PUBLIC: &str =
+    "Copy it into one of your projects: a public catalogue changes through submissions";
+const HELD_ALREADY: &str = "This project already holds a copy of this catalogue";
+const BAD_TITLE: &str = "Enter a title of at most 200 characters";
+const LONG_NOTE: &str = "Enter a note of at most 2000 characters";
+const MAX_TITLE: usize = 200;
+const MAX_NOTE: usize = 2000;
+/// A version name's limit.
+const MAX_VERSION_NAME: usize = 100;
+/// A slug this long leaves room for "-<n>" within a key's 64 characters.
+const MAX_SLUG: usize = 56;
+
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list, submit))
+        .routes(routes!(submit_update))
+        .routes(routes!(one))
+        .routes(routes!(review))
+        .routes(routes!(withdraw))
+        .routes(routes!(propose))
+        .routes(routes!(proposals))
+}
+
+/// A submission as its author and the curators see it.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct SubmissionOut {
+    id: i64,
+    /// `new`, or `update` for a change to a public catalogue.
+    kind: String,
+    /// The author's email.
+    author: String,
+    /// The public catalogue an update changes, or the one an accepted new one became.
+    target: Option<String>,
+    title: String,
+    folder: Option<String>,
+    description: Option<String>,
+    /// The author's note to the curators.
+    note: Option<String>,
+    /// `pending`, `accepted`, `declined` or `withdrawn`.
+    status: String,
+    /// The curator who decided it.
+    reviewer: Option<String>,
+    /// The curator's note.
+    review_note: Option<String>,
+    /// When it was submitted (RFC 3339).
+    created: String,
+    /// When it was accepted, declined or withdrawn.
+    decided: Option<String>,
+}
+
+impl From<Submission> for SubmissionOut {
+    fn from(submission: Submission) -> Self {
+        Self {
+            id: submission.id,
+            kind: submission.kind,
+            author: submission.author_email,
+            target: submission.target,
+            title: submission.title,
+            folder: submission.folder,
+            description: submission.description,
+            note: submission.note,
+            status: submission.status,
+            reviewer: submission.reviewer_email,
+            review_note: submission.review_note,
+            created: submission.created_at,
+            decided: submission.decided_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct SubmissionDetail {
+    #[serde(flatten)]
+    submission: SubmissionOut,
+    /// The public catalogue changed since the author copied it.
+    stale: bool,
+    /// What accepting it changes: against the public catalogue as it is now for an update,
+    /// every event for a new one.
+    changes: Diff,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct NewBody {
+    /// The project holding the catalogue.
+    room: String,
+    catalogue: String,
+    /// The catalogue's name when left out.
+    title: Option<String>,
+    folder: Option<String>,
+    description: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct UpdateBody {
+    /// The project holding the copy.
+    room: String,
+    catalogue: String,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct ReviewBody {
+    accept: bool,
+    note: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+struct ProposeBody {
+    /// One of the caller's projects; a new project when left out.
+    room: Option<String>,
+    /// The new project's name.
+    name: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ListQuery {
+    #[serde(default)]
+    mine: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Proposed {
+    /// The project holding the copy.
+    room: String,
+    /// That project's name.
+    name: String,
+    /// The copied catalogue's uuid, the public one's.
+    catalogue: String,
+}
+
+/// A catalogue copied out of a public catalogue.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct ProposalOut {
+    catalogue: String,
+    /// The public catalogue's id.
+    target: String,
+    /// The public catalogue's name.
+    name: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/public/submissions",
+    params(("mine" = Option<bool>, Query, description = "Only the caller's own; curators otherwise get everyone's")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The submissions, pending first, then the newest", body = [SubmissionOut]),
+        (status = 401, description = "No valid session", body = Detail),
+    )
+)]
+async fn list(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Vec<SubmissionOut>>, ApiError> {
+    let curator = db::is_curator(&state.pool, user.id).await?;
+    let author = (query.mine || !curator).then_some(user.id);
+    let listed = submissions::list(&state.pool, author).await?;
+    Ok(Json(listed.into_iter().map(SubmissionOut::from).collect()))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/submissions",
+    request_body = NewBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The catalogue and its events as they are now, waiting for a curator", body = SubmissionOut),
+        (status = 400, description = "A field is blank or too long", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller cannot write to the project", body = Detail),
+        (status = 404, description = "No such project, membership or catalogue", body = Detail),
+        (status = 413, description = "The catalogue is bigger than a project may be", body = Detail),
+        (status = 422, description = "The body is not a submission", body = Detail),
+    )
+)]
+async fn submit(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    JsonBody(body): JsonBody<NewBody>,
+) -> Result<(StatusCode, Json<SubmissionOut>), ApiError> {
+    lifecycle::require_role(&state, &body.room, user.id, Role::Editor).await?;
+    let (name, snapshot) = snapshot_of(&state, &body.room, &body.catalogue).await?;
+    let title = title(body.title.unwrap_or(name))?;
+    let folder = folder_or_source(body.folder)?;
+    let description = description(body.description)?;
+    let note = note(body.note)?;
+    let new = NewSubmission {
+        author: user.id,
+        kind: NEW,
+        target: None,
+        base: None,
+        catalogue: &body.catalogue,
+        title: &title,
+        folder: folder.as_deref(),
+        description: description.as_deref(),
+        note: note.as_deref(),
+        snapshot: &snapshot,
+    };
+    let id = submissions::insert(&state.pool, &new).await?;
+    Ok((StatusCode::CREATED, Json(stored(&state, id).await?)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/submissions/updates",
+    request_body = UpdateBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The copy as it is now, offered as the public catalogue's next version", body = SubmissionOut),
+        (status = 400, description = "The note is too long", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller cannot write to the project", body = Detail),
+        (status = 404, description = "No such project, membership or catalogue, or it is no copy of a public one", body = Detail),
+        (status = 413, description = "The catalogue is bigger than a project may be", body = Detail),
+        (status = 422, description = "The body is not a submission", body = Detail),
+    )
+)]
+async fn submit_update(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    JsonBody(body): JsonBody<UpdateBody>,
+) -> Result<(StatusCode, Json<SubmissionOut>), ApiError> {
+    lifecycle::require_role(&state, &body.room, user.id, Role::Editor).await?;
+    let proposal = submissions::proposals(&state.pool, &body.room)
+        .await?
+        .into_iter()
+        .find(|proposal| proposal.catalogue == body.catalogue)
+        .ok_or_else(|| ApiError::NotFound(NOT_A_COPY.to_owned()))?;
+    let note = note(body.note)?;
+    let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue).await?;
+    let new = NewSubmission {
+        author: user.id,
+        kind: UPDATE,
+        target: Some(&proposal.target),
+        base: Some(proposal.base),
+        catalogue: &body.catalogue,
+        title: &proposal.name,
+        folder: None,
+        description: None,
+        note: note.as_deref(),
+        snapshot: &snapshot,
+    };
+    let id = submissions::insert(&state.pool, &new).await?;
+    Ok((StatusCode::CREATED, Json(stored(&state, id).await?)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/public/submissions/{id}",
+    params(("id" = i64, Path, description = "The submission's id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The submission and what accepting it changes", body = SubmissionDetail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such submission, or the caller is neither its author nor a curator", body = Detail),
+    )
+)]
+async fn one(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(id): ApiPath<i64>,
+) -> Result<Json<SubmissionDetail>, ApiError> {
+    let (submission, _) = visible(&state, id, user.id).await?;
+    let snapshot = submissions::snapshot(&state.pool, id).await?;
+    let (changes, stale) = what_changed(&state, &submission, snapshot).await?;
+    Ok(Json(SubmissionDetail {
+        submission: submission.into(),
+        stale,
+        changes,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/submissions/{id}/review",
+    params(("id" = i64, Path, description = "The submission's id")),
+    request_body = ReviewBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "Accepted (the public catalogue now holds it) or declined", body = SubmissionOut),
+        (status = 400, description = "The note is too long", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is its author, not a curator", body = Detail),
+        (status = 404, description = "No such submission, or the caller is neither its author nor a curator", body = Detail),
+        (status = 409, description = "It was decided or withdrawn already, its public catalogue was deleted, or it does not fit", body = Detail),
+        (status = 422, description = "The body is not a review", body = Detail),
+    )
+)]
+async fn review(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(id): ApiPath<i64>,
+    JsonBody(body): JsonBody<ReviewBody>,
+) -> Result<Json<SubmissionOut>, ApiError> {
+    let (submission, curator) = visible(&state, id, user.id).await?;
+    if !curator {
+        return Err(ApiError::Forbidden(ONLY_CURATORS.to_owned()));
+    }
+    let note = note(body.note)?;
+    let decision = Decision {
+        status: if body.accept { ACCEPTED } else { DECLINED },
+        by: user.id,
+        note: note.as_deref(),
+    };
+    if !submissions::decide(&state.pool, id, &decision).await? {
+        return Err(ApiError::Conflict(DECIDED.to_owned()));
+    }
+    if body.accept
+        && let Err(error) = take_in(&state, &submission, user.id, note.as_deref()).await
+    {
+        submissions::reopen(&state.pool, id).await?;
+        return Err(error);
+    }
+    Ok(Json(stored(&state, id).await?))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/submissions/{id}/withdraw",
+    params(("id" = i64, Path, description = "The submission's id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "Withdrawn: curators no longer review it", body = SubmissionOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is a curator, not its author", body = Detail),
+        (status = 404, description = "No such submission, or the caller is neither its author nor a curator", body = Detail),
+        (status = 409, description = "It was decided or withdrawn already", body = Detail),
+    )
+)]
+async fn withdraw(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(id): ApiPath<i64>,
+) -> Result<Json<SubmissionOut>, ApiError> {
+    let (submission, _) = visible(&state, id, user.id).await?;
+    if !submission.is_by(user.id) {
+        return Err(ApiError::Forbidden(ONLY_THE_AUTHOR.to_owned()));
+    }
+    let decision = Decision {
+        status: WITHDRAWN,
+        by: user.id,
+        note: None,
+    };
+    if !submissions::decide(&state.pool, id, &decision).await? {
+        return Err(ApiError::Conflict(DECIDED.to_owned()));
+    }
+    Ok(Json(stored(&state, id).await?))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/{room_id}/proposals",
+    params(("room_id" = String, Path, description = "The public catalogue's id")),
+    request_body = ProposeBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "A copy of the public catalogue, same uuids, in the project given or a new one; it remembers where it came from", body = Proposed),
+        (status = 400, description = "The new project's name has control characters", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller cannot write to the project given", body = Detail),
+        (status = 404, description = "No such public catalogue, project or membership", body = Detail),
+        (status = 409, description = "The project is public, holds a copy already, or is full; or the public catalogue is empty", body = Detail),
+        (status = 422, description = "The body is not a proposal", body = Detail),
+    )
+)]
+async fn propose(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<ProposeBody>,
+) -> Result<(StatusCode, Json<Proposed>), ApiError> {
+    let public = db::public_room(&state.pool, &room_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(NO_SUCH_PUBLIC.to_owned()))?;
+    let (catalogue, update, base) = public_copy(&state, &public.id).await?;
+    let (room, name) = match body.room {
+        Some(room) => copy_into(&state, &room, user.id, &catalogue, update).await?,
+        None => {
+            let name = body
+                .name
+                .unwrap_or_else(|| format!("{} (proposed change)", public.name));
+            let first = copy_name(&public.name, None);
+            let making = make_copy(state.clone(), user.id, name, update, first);
+            let made = tokio::spawn(making).await.map_err(|error| {
+                tracing::warn!(%error, "a proposal stopped half way");
+                ApiError::Internal
+            })??;
+            (made.id, made.name)
+        }
+    };
+    submissions::link(&state.pool, &room, &catalogue, &public.id, base).await?;
+    let proposed = Proposed {
+        room,
+        name,
+        catalogue,
+    };
+    Ok((StatusCode::CREATED, Json(proposed)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/proposals",
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The project's catalogues copied out of public catalogues", body = [ProposalOut]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such project, or the caller is not a member", body = Detail),
+    )
+)]
+async fn proposals(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+) -> Result<Json<Vec<ProposalOut>>, ApiError> {
+    membership(&state, &room_id, user.id).await?;
+    let listed = submissions::proposals(&state.pool, &room_id).await?;
+    let out = listed
+        .into_iter()
+        .map(|proposal| ProposalOut {
+            catalogue: proposal.catalogue,
+            target: proposal.target,
+            name: proposal.name,
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+/// The submission, once the caller may see it: its author or a curator. Anyone else is
+/// told there is none. Says whether the caller is a curator.
+async fn visible(state: &AppState, id: i64, user: Uuid) -> Result<(Submission, bool), ApiError> {
+    let submission = submissions::one(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(NO_SUCH_SUBMISSION.to_owned()))?;
+    let curator = db::is_curator(&state.pool, user).await?;
+    if !curator && !submission.is_by(user) {
+        return Err(ApiError::NotFound(NO_SUCH_SUBMISSION.to_owned()));
+    }
+    Ok((submission, curator))
+}
+
+async fn stored(state: &AppState, id: i64) -> Result<SubmissionOut, ApiError> {
+    let submission = submissions::one(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(NO_SUCH_SUBMISSION.to_owned()))?;
+    Ok(submission.into())
+}
+
+/// The catalogue's name and the catalogue alone as one update, once it fits in a project.
+async fn snapshot_of(
+    state: &AppState,
+    room_id: &str,
+    catalogue: &str,
+) -> Result<(String, Vec<u8>), ApiError> {
+    let uuid = catalogue.to_owned();
+    let (name, snapshot) = state
+        .rooms
+        .read(room_id, move |doc| extracted(doc, &uuid))
+        .await?
+        .ok_or_else(|| ApiError::NotFound(NO_SUCH_CATALOGUE.to_owned()))?;
+    fits(state, &snapshot)?;
+    Ok((name, snapshot))
+}
+
+/// A catalogue outside the trash, alone, and its name.
+fn extracted(doc: &Doc, catalogue: &str) -> Option<(String, Vec<u8>)> {
+    let found = model::catalogue(&doc.transact(), catalogue).filter(|found| !found.deleted)?;
+    let alone = model::extract(doc, catalogue);
+    let update = alone
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    Some((found.name, update))
+}
+
+fn fits(state: &AppState, snapshot: &[u8]) -> Result<(), ApiError> {
+    let limit = state.rooms.limits().room;
+    let size = u64::try_from(snapshot.len()).unwrap_or(u64::MAX);
+    if size <= limit {
+        return Ok(());
+    }
+    Err(ApiError::TooLarge(format!(
+        "This catalogue is too big to submit: it takes {}, and a public catalogue holds at most {}",
+        bytes(size),
+        bytes(limit)
+    )))
+}
+
+fn bytes(size: u64) -> String {
+    const KB: u64 = 1024;
+    match size {
+        0..KB => format!("{size} bytes"),
+        KB..=1_048_575 => format!("{} kB", size.div_ceil(KB)),
+        _ => format!("{:.1} MB", size as f64 / 1_048_576.0),
+    }
+}
+
+/// The public catalogue's catalogue, as one update holding it alone, and how many changes
+/// the public catalogue had: the copy's base.
+async fn public_copy(state: &AppState, public: &str) -> Result<(String, Vec<u8>, i64), ApiError> {
+    state
+        .rooms
+        .read_log(public, 1, |records, _| {
+            let doc = replay_until(records, u64::MAX);
+            let uuid = model::catalogues(&doc.transact()).into_iter().next()?.uuid;
+            let (_, update) = extracted(&doc, &uuid)?;
+            Some((uuid, update, count(records.len())))
+        })
+        .await?
+        .ok_or_else(|| ApiError::Conflict(EMPTY_PUBLIC.to_owned()))
+}
+
+/// Writes the copy into one of the caller's projects; its id and name.
+async fn copy_into(
+    state: &AppState,
+    room_id: &str,
+    user: Uuid,
+    catalogue: &str,
+    update: Vec<u8>,
+) -> Result<(String, String), ApiError> {
+    lifecycle::require_role(state, room_id, user, Role::Editor).await?;
+    if db::is_public(&state.pool, room_id).await? {
+        return Err(ApiError::Conflict(INTO_PUBLIC.to_owned()));
+    }
+    let uuid = catalogue.to_owned();
+    let held = state
+        .rooms
+        .read(room_id, move |doc| {
+            model::catalogue(&doc.transact(), &uuid).is_some()
+        })
+        .await?;
+    if held {
+        return Err(ApiError::Conflict(HELD_ALREADY.to_owned()));
+    }
+    let allowance = state.rooms.allowance(&state.pool, room_id).await?;
+    state
+        .rooms
+        .write_as(room_id, allowance, Author::Client(user), update)
+        .await?;
+    let name = db::room_name(&state.pool, room_id)
+        .await?
+        .unwrap_or_default();
+    Ok((room_id.to_owned(), name))
+}
+
+/// What accepting changes, and whether the public catalogue changed since the author
+/// copied it.
+async fn what_changed(
+    state: &AppState,
+    submission: &Submission,
+    snapshot: Vec<u8>,
+) -> Result<(Diff, bool), ApiError> {
+    let catalogue = submission.catalogue.clone();
+    let target = submission
+        .target
+        .as_deref()
+        .filter(|_| submission.kind == UPDATE);
+    let Some(target) = target else {
+        return Ok((
+            diff(&Doc::new(), &doc_of(&snapshot), Some(&catalogue)),
+            false,
+        ));
+    };
+    let (changes, records) = state
+        .rooms
+        .read_log(target, 2, move |records, _| {
+            let current = replay_until(records, u64::MAX);
+            let changes = diff(&current, &doc_of(&snapshot), Some(&catalogue));
+            (changes, count(records.len()))
+        })
+        .await?;
+    let moved = submission.base.is_some_and(|base| records > base);
+    Ok((changes, submission.is_pending() && moved))
+}
+
+/// Writes an accepted submission into its public catalogue, a new one for a new
+/// submission, as one change by its author, then saves that version under the
+/// submission's name.
+async fn take_in(
+    state: &AppState,
+    submission: &Submission,
+    curator: Uuid,
+    note: Option<&str>,
+) -> Result<(), ApiError> {
+    let snapshot = submissions::snapshot(&state.pool, submission.id).await?;
+    let author = Uuid::parse_str(&submission.author).map_err(|_| ApiError::Internal)?;
+    let (target, written) = match (submission.kind.as_str(), &submission.target) {
+        (UPDATE, Some(target)) => {
+            let written = adopt_into(state, target, submission, snapshot, author).await?;
+            (target.clone(), written)
+        }
+        (UPDATE, None) => return Err(ApiError::Conflict(TARGET_GONE.to_owned())),
+        _ => (
+            new_public(state, submission, curator, snapshot, author).await?,
+            true,
+        ),
+    };
+    if written {
+        let name: String = format!("Submission {}: {}", submission.id, submission.title)
+            .chars()
+            .take(MAX_VERSION_NAME)
+            .collect();
+        save_newest(state, &target, curator, Some(&name), note).await?;
+    }
+    Ok(())
+}
+
+/// Makes the public catalogue's catalogue the snapshot; false when it already was.
+async fn adopt_into(
+    state: &AppState,
+    target: &str,
+    submission: &Submission,
+    snapshot: Vec<u8>,
+    author: Uuid,
+) -> Result<bool, ApiError> {
+    let catalogue = submission.catalogue.clone();
+    let update = state
+        .rooms
+        .read_log(target, 2, move |records, _| {
+            let present = replay_until(records, u64::MAX);
+            let mut txn = present.transact_mut();
+            model::adopt(&mut txn, &doc_of(&snapshot), &catalogue);
+            txn.encode_update_v1()
+        })
+        .await?;
+    let allowance = state.rooms.allowance(&state.pool, target).await?;
+    Ok(state
+        .rooms
+        .write_as(target, allowance, Author::Client(author), update)
+        .await?)
+}
+
+/// A public catalogue named after the submission, holding its snapshot; its id. Removed
+/// again when the snapshot cannot be written.
+async fn new_public(
+    state: &AppState,
+    submission: &Submission,
+    curator: Uuid,
+    snapshot: Vec<u8>,
+    author: Uuid,
+) -> Result<String, ApiError> {
+    let room = PublicRoom {
+        id: free_id(state, &submission.title).await?,
+        name: submission.title.clone(),
+        folder: submission.folder.clone(),
+        source: None,
+        description: submission.description.clone(),
+        public_count: None,
+        counted_file: None,
+    };
+    db::create_public_room(&state.pool, &room, curator).await?;
+    let allowance = state.rooms.allowance(&state.pool, &room.id).await?;
+    let written = state
+        .rooms
+        .write_as(&room.id, allowance, Author::Client(author), snapshot)
+        .await;
+    if let Err(error) = written {
+        if let Err(cleanup) = lifecycle::delete_room(state, &room.id, curator).await {
+            tracing::warn!(error = %cleanup, room = %room.id, "cannot remove a failed public catalogue");
+        }
+        return Err(error.into());
+    }
+    submissions::set_target(&state.pool, submission.id, &room.id).await?;
+    Ok(room.id)
+}
+
+/// `public.<slug of the title>`, with `-2`, `-3`… when taken.
+// simplify: two curators accepting two submissions of one title at the same instant can both
+// pick the same free id, and the second insert fails; reserve the id in the insert itself if
+// that ever shows.
+async fn free_id(state: &AppState, title: &str) -> Result<String, ApiError> {
+    let key = key(title);
+    let mut tried = 1;
+    loop {
+        let candidate = match tried {
+            1 => key.clone(),
+            n => format!("{key}-{n}"),
+        };
+        let id = public_id(&candidate).map_err(|_| ApiError::Internal)?;
+        if !db::room_exists(&state.pool, &id).await? {
+            return Ok(id);
+        }
+        tried += 1;
+    }
+}
+
+/// The title as a key: lower-case ASCII letters, digits and dashes.
+fn key(title: &str) -> String {
+    let slug: String = slug::slugify(title).chars().take(MAX_SLUG).collect();
+    match slug.trim_matches('-') {
+        "" => "catalogue".to_owned(),
+        slug => slug.to_owned(),
+    }
+}
+
+fn doc_of(update: &[u8]) -> Doc {
+    let doc = Doc::new();
+    apply(&doc, update);
+    doc
+}
+
+fn count(records: usize) -> i64 {
+    i64::try_from(records).unwrap_or(i64::MAX)
+}
+
+fn title(title: String) -> Result<String, ApiError> {
+    let title = title.trim();
+    match title.chars().count() {
+        1..=MAX_TITLE if !title.chars().any(char::is_control) => Ok(title.to_owned()),
+        _ => Err(ApiError::BadRequest(BAD_TITLE.to_owned())),
+    }
+}
+
+fn note(note: Option<String>) -> Result<Option<String>, ApiError> {
+    let note = note
+        .map(|note| note.trim().to_owned())
+        .filter(|note| !note.is_empty());
+    match note {
+        Some(note) if note.chars().count() > MAX_NOTE => {
+            Err(ApiError::BadRequest(LONG_NOTE.to_owned()))
+        }
+        note => Ok(note),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bytes, key};
+
+    #[test]
+    fn a_key_is_the_title_in_plain_lower_case() {
+        assert_eq!(key("Ondes de choc é"), "ondes-de-choc-e");
+        assert_eq!(key("ACE: shocks (2020)!"), "ace-shocks-2020");
+        assert_eq!(key("日本"), "ri-ben");
+        assert_eq!(key("???"), "catalogue");
+        assert!(key(&"long words ".repeat(20)).len() <= 56);
+    }
+
+    #[test]
+    fn sizes_read_in_plain_units() {
+        assert_eq!(bytes(200), "200 bytes");
+        assert_eq!(bytes(1500), "2 kB");
+        assert_eq!(bytes(3 * 1_048_576), "3.0 MB");
+    }
+}

@@ -25,6 +25,8 @@ pub mod presence;
 pub mod public_api;
 pub mod ratelimit;
 pub mod room;
+pub mod submissions;
+pub mod submissions_api;
 pub mod telemetry;
 pub mod ui;
 pub mod ws;

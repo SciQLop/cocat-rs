@@ -9,10 +9,10 @@ mod oidc_support;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use cocat_core::role::Role;
-use cocat_server::room::RoomManager;
+use cocat_server::room::{Author, RoomManager};
 use cocat_server::{
     AppState, auth, db, groups, invitations, lifecycle, links::Links, oidc, ratelimit::LoginLimit,
-    ws,
+    submissions, ws,
 };
 use futures_util::StreamExt;
 use std::fs;
@@ -68,6 +68,9 @@ enum Guard {
     GroupOwner,
     /// Curators look after the public catalogues: here, the administrator.
     Curator,
+    /// A submission's author (here, the project owner) or a curator.
+    SubmissionReader,
+    SubmissionAuthor,
     Superuser,
 }
 
@@ -99,6 +102,8 @@ enum Scope {
     RoomDirect,
     RoomAny,
     Group,
+    /// Those who see the submission: its author and the curators.
+    Submission,
 }
 
 struct Row {
@@ -149,6 +154,60 @@ const ROWS: &[Row] = &[
     row("GET", "/api/public", Guard::SignedIn, Style::Api),
     row("POST", "/api/public", Guard::Curator, Style::Api),
     row("PATCH", "/api/public/{public}", Guard::Curator, Style::Api),
+    row(
+        "POST",
+        "/api/public/{public}/proposals",
+        Guard::SignedIn,
+        Style::Api,
+    ),
+    row(
+        "GET",
+        "/api/public/submissions",
+        Guard::SignedIn,
+        Style::Api,
+    ),
+    row(
+        "POST",
+        "/api/public/submissions",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "POST",
+        "/api/public/submissions/updates",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "GET",
+        "/api/public/submissions/{submission}",
+        Guard::SubmissionReader,
+        Style::Api,
+    )
+    .submission_scope(),
+    row(
+        "POST",
+        "/api/public/submissions/{submission}/review",
+        Guard::Curator,
+        Style::Api,
+    )
+    .submission_scope(),
+    row(
+        "POST",
+        "/api/public/submissions/{submission}/withdraw",
+        Guard::SubmissionAuthor,
+        Style::Api,
+    )
+    .submission_scope(),
+    row(
+        "GET",
+        "/api/rooms/{room}/proposals",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
     row("PATCH", "/api/rooms/{room}", Guard::RoomEditor, Style::Api).room_any(),
     row("DELETE", "/api/rooms/{room}", Guard::RoomOwner, Style::Api).room_any(),
     row(
@@ -680,6 +739,11 @@ impl Row {
         self
     }
 
+    const fn submission_scope(mut self) -> Self {
+        self.scope = Scope::Submission;
+        self
+    }
+
     const fn group_scope(mut self) -> Self {
         self.scope = Scope::Group;
         self
@@ -704,6 +768,8 @@ struct Caps {
     room: Option<Role>,
     group: Option<groups::GroupRole>,
     superuser: bool,
+    /// The owner wrote the world's submission.
+    author: bool,
 }
 
 impl Caps {
@@ -732,6 +798,7 @@ impl Caps {
             room,
             group,
             superuser: kind == Kind::Superuser,
+            author: kind == Kind::Owner,
         }
     }
 
@@ -746,6 +813,8 @@ impl Caps {
             Guard::GroupMember => self.group.is_some(),
             Guard::GroupOwner => self.group == Some(groups::GroupRole::Owner),
             Guard::Curator | Guard::Superuser => self.superuser,
+            Guard::SubmissionReader => self.author || self.superuser,
+            Guard::SubmissionAuthor => self.author,
         }
     }
 }
@@ -762,6 +831,7 @@ struct World {
     invitation_token: String,
     group_invitation_token: String,
     invitation: i64,
+    submission: i64,
     tokens: Vec<(Kind, String)>,
     _dir: TempDir,
 }
@@ -797,6 +867,7 @@ impl World {
         let target = user(&state, "target@example.org", hashed).await;
         let room = lifecycle::create_room(&state, owner, "lab").await.unwrap();
         let public = public_catalogue(&state, admin).await;
+        let submission = submission(&state, &room.id, owner, &public).await;
         db::add_member(&state.pool, &room.id, target, Role::Viewer)
             .await
             .unwrap();
@@ -863,6 +934,7 @@ impl World {
             invitation_token,
             group_invitation_token,
             invitation,
+            submission,
             tokens,
             _dir: dir,
         }
@@ -879,6 +951,7 @@ impl World {
         template
             .replace("{room}", &self.room)
             .replace("{public}", &self.public)
+            .replace("{submission}", &self.submission.to_string())
             .replace("{group_invitation}", &self.group_invitation.to_string())
             .replace("{spare}", &self.spare)
             .replace("{group}", &self.group)
@@ -977,6 +1050,14 @@ impl World {
             ("POST", "/api/rooms/{room}/history/{version}/restore") => {
                 (json, r#"{"catalogue":null}"#.to_owned())
             }
+            ("POST", "/api/public/submissions" | "/api/public/submissions/updates") => (
+                json,
+                format!(r#"{{"room":"{}","catalogue":"c1"}}"#, self.room),
+            ),
+            ("POST", "/api/public/submissions/{submission}/review") => {
+                (json, r#"{"accept":false}"#.to_owned())
+            }
+            ("POST", "/api/public/{public}/proposals") => (json, "{}".to_owned()),
             ("POST", "/api/rooms/{room}/owner") => {
                 (json, format!(r#"{{"user_id":"{}"}}"#, self.target))
             }
@@ -1124,6 +1205,50 @@ async fn public_catalogue(state: &AppState, by: Uuid) -> String {
     room.id
 }
 
+/// Catalogue `c1` in the room, written by its owner; a copy of the public catalogue as far as
+/// the server knows; and the owner's submission of it.
+async fn submission(state: &AppState, room: &str, owner: Uuid, public: &str) -> i64 {
+    use yrs::{Doc, ReadTxn, StateVector, Transact};
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        let at = cocat_core::time::Timestamp::parse("2020-01-01T00:00:00Z").unwrap();
+        let event = cocat_core::model::EventRecord::new("e1", at, at);
+        cocat_core::model::create_event(&mut txn, &event).unwrap();
+        let catalogue = cocat_core::model::NewCatalogue {
+            uuid: "c1".to_owned(),
+            name: "Waves".to_owned(),
+            ..Default::default()
+        };
+        cocat_core::model::create_catalogue(&mut txn, &catalogue).unwrap();
+        cocat_core::model::add_catalogue_events(&mut txn, "c1", &["e1".to_owned()]);
+    }
+    let update = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    state
+        .rooms
+        .write_as(room, u64::MAX, Author::Client(owner), update.clone())
+        .await
+        .unwrap();
+    submissions::link(&state.pool, room, "c1", public, 0)
+        .await
+        .unwrap();
+    let new = submissions::NewSubmission {
+        author: owner,
+        kind: "new",
+        target: None,
+        base: None,
+        catalogue: "c1",
+        title: "Waves",
+        folder: None,
+        description: None,
+        note: None,
+        snapshot: &update,
+    };
+    submissions::insert(&state.pool, &new).await.unwrap()
+}
+
 async fn member(state: &AppState, group: &str, user: Uuid) {
     sqlx::query("INSERT INTO group_member (group_id, user_id, role) VALUES (?, ?, 'member')")
         .bind(group)
@@ -1230,6 +1355,7 @@ fn refusal_for(row: &Row, caps: &Caps) -> Refusal {
         Scope::RoomDirect => caps.direct.is_some(),
         Scope::RoomAny => caps.room.is_some(),
         Scope::Group => caps.group.is_some(),
+        Scope::Submission => caps.author || caps.superuser,
     };
     if inside { row.refusal } else { row.outsider }
 }

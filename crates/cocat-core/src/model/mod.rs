@@ -16,6 +16,7 @@ mod provenance;
 mod read;
 mod registry;
 mod restore;
+mod submission;
 mod values;
 mod write;
 
@@ -34,6 +35,7 @@ pub use read::{
 };
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
 pub use restore::restore;
+pub use submission::{adopt, extract};
 pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,
     purge_catalogue, purge_event, remove_catalogue_attributes, remove_catalogue_events,

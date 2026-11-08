@@ -44,6 +44,7 @@ utoipa-axum = "0.3"
 utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
+slug = "0.1.6"
 
 [dev-dependencies]
 palette = "0.7"
