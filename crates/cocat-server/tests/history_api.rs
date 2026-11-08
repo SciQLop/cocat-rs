@@ -7,7 +7,7 @@ use cocat_core::store::FileRoomStore;
 use cocat_core::time::Timestamp;
 use cocat_server::history::stamps::{StampFile, stamp_for};
 use cocat_server::room::{RoomManager, outbox};
-use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
+use cocat_server::{AppState, auth, db, links::Links, presence, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
@@ -237,6 +237,36 @@ async fn members_list_versions_with_author_emails() {
     assert_eq!(versions[0]["started_ms"], MINUTE);
     assert_eq!(versions[0]["name"], Value::Null);
     assert_eq!(versions[1]["author_email"], "alice@x.org");
+}
+
+#[tokio::test]
+async fn an_author_has_the_colour_presence_gives_the_account() {
+    let fixture = two_versions().await;
+
+    let versions = fixture.history(fixture.carol).await;
+
+    assert_eq!(versions[0]["author_color"], presence::color("bob@x.org"));
+    assert_eq!(versions[1]["author_color"], presence::color("alice@x.org"));
+}
+
+#[tokio::test]
+async fn an_event_filter_keeps_the_versions_that_touched_the_event() {
+    let fixture = two_versions().await;
+    fixture.write(fixture.alice, 2 * MINUTE, create("c"));
+    let filtered = |event: &'static str| {
+        let fixture = &fixture;
+        async move {
+            let path = format!("/api/rooms/{ROOM}/history?event={event}");
+            let (status, body) = fixture.get(&path, fixture.carol).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            ids(body["versions"].as_array().unwrap())
+        }
+    };
+
+    assert_eq!(filtered("a").await, [1, 0]);
+    assert_eq!(filtered("b").await, [1]);
+    assert_eq!(filtered("c").await, [2]);
+    assert_eq!(filtered("missing").await, Vec::<u64>::new());
 }
 
 #[tokio::test]

@@ -123,7 +123,8 @@ fn with_user(json: &str, email: &str) -> Option<String> {
     }
 }
 
-fn color(email: &str) -> &'static str {
+/// The colour an account shows in: in presence, and beside its versions in the history.
+pub fn color(email: &str) -> &'static str {
     let hash = xxhash_rust::xxh3::xxh3_64(email.as_bytes());
     COLORS[(hash % COLORS.len() as u64) as usize]
 }

@@ -20,7 +20,7 @@ use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
 use crate::history::diff::{Diff, diff, listed, replay_until};
 use crate::history::versions::{Version, span, versions};
 use crate::openapi::Detail;
-use crate::{AppState, db, lifecycle};
+use crate::{AppState, db, lifecycle, presence};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -36,11 +36,19 @@ struct CatalogueQuery {
     catalogue: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct HistoryQuery {
+    catalogue: Option<String>,
+    event: Option<String>,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 struct VersionView {
     #[serde(flatten)]
     version: Version,
     author_email: Option<String>,
+    /// The colour the author shows in presence.
+    author_color: Option<&'static str>,
     /// The name someone gave the version, else the one its import or materialization gave it.
     name: Option<String>,
 }
@@ -79,6 +87,7 @@ struct NameBody {
     params(
         ("room_id" = String, Path, description = "Room id"),
         ("catalogue" = Option<String>, Query, description = "Only the versions that touched this catalogue or its members' events; for a smart catalogue, any event"),
+        ("event" = Option<String>, Query, description = "Only the versions that added, changed or removed this event"),
     ),
     security(("cookie" = [])),
     responses(
@@ -91,7 +100,7 @@ async fn list(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     ApiPath(room_id): ApiPath<String>,
-    Query(query): Query<CatalogueQuery>,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Json<History>, ApiError> {
     membership(&state, &room_id, user.id).await?;
     let filter = match query.catalogue {
@@ -103,6 +112,9 @@ async fn list(
     let mut versions = state.rooms.read_log(&room_id, versions).await?;
     if let Some(filter) = filter {
         versions.retain(|version| filter.keeps(version));
+    }
+    if let Some(event) = query.event {
+        versions.retain(|version| version.events.contains(&event));
     }
     let names = db::version_names(&state.pool, &room_id).await?;
     let emails = author_emails(&state, &versions).await?;
@@ -382,10 +394,12 @@ fn view(
         .ok()
         .and_then(|id| names.get(&id))
         .cloned();
+    let author_email = version
+        .author
+        .and_then(|author| emails.get(&author).cloned());
     VersionView {
-        author_email: version
-            .author
-            .and_then(|author| emails.get(&author).cloned()),
+        author_color: author_email.as_deref().map(presence::color),
+        author_email,
         name: stored.or_else(|| version.auto_name.clone()),
         version,
     }
