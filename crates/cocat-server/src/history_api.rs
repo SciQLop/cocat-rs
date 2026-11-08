@@ -1,7 +1,7 @@
 //! A room's version history under `/api`: the versions, what each changed, the room as it
 //! was, and the names people give versions.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -16,7 +16,7 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
-use crate::history::diff::{Diff, diff, replay_until};
+use crate::history::diff::{Diff, diff, listed, replay_until};
 use crate::history::versions::{Version, span, versions};
 use crate::openapi::Detail;
 use crate::{AppState, db, lifecycle};
@@ -76,7 +76,7 @@ struct NameBody {
     path = "/api/rooms/{room_id}/history",
     params(
         ("room_id" = String, Path, description = "Room id"),
-        ("catalogue" = Option<String>, Query, description = "Only the versions that touched this catalogue; for a smart catalogue, also those that changed any event"),
+        ("catalogue" = Option<String>, Query, description = "Only the versions that touched this catalogue or its members' events; for a smart catalogue, any event"),
     ),
     security(("cookie" = [])),
     responses(
@@ -252,28 +252,37 @@ async fn writable_version(
     }
 }
 
-/// Which versions a catalogue's history shows.
+/// Which versions a catalogue's history shows: those that touched the catalogue or one of
+/// its members' events; for a smart catalogue, any event.
 struct Filter {
     catalogue: String,
     smart: bool,
+    members: BTreeSet<String>,
 }
 
 impl Filter {
-    /// Whether the catalogue has a rule is read from the room now: an open room answers
-    /// from memory, which is the browser's case.
+    /// The rule and the members are read from the room now: an open room answers from
+    /// memory, which is the browser's case.
     async fn new(state: &AppState, room_id: &str, catalogue: String) -> Result<Self, ApiError> {
         let uuid = catalogue.clone();
-        let smart = state
+        let (smart, members) = state
             .rooms
-            .read(room_id, move |doc: &Doc| has_rule(&doc.transact(), &uuid))
+            .read(room_id, move |doc: &Doc| {
+                let txn = doc.transact();
+                (has_rule(&txn, &uuid), listed(&txn, &uuid))
+            })
             .await?;
-        Ok(Self { catalogue, smart })
+        Ok(Self {
+            catalogue,
+            smart,
+            members,
+        })
     }
 
     fn keeps(&self, version: &Version) -> bool {
-        let changed_events =
-            version.events_added + version.events_changed + version.events_removed > 0;
-        version.catalogues.contains(&self.catalogue) || (self.smart && changed_events)
+        version.catalogues.contains(&self.catalogue)
+            || (self.smart && !version.events.is_empty())
+            || !version.events.is_disjoint(&self.members)
     }
 }
 

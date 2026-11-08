@@ -202,7 +202,8 @@ fn members<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
     members
 }
 
-fn listed<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
+/// The events a catalogue lists, trashed ones included.
+pub(crate) fn listed<T: ReadTxn>(txn: &T, catalogue: &str) -> BTreeSet<String> {
     let listed = txn
         .get_map(CATALOGUES)
         .and_then(|catalogues| catalogues.get(txn, catalogue));

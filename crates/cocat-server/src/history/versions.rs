@@ -33,6 +33,10 @@ pub struct Version {
     pub events_removed: u32,
     pub catalogues: Vec<String>,
     pub rules_changed: Vec<String>,
+    /// Every event the version added, changed or removed: what a catalogue's filter
+    /// crosses with its members. Left out of the JSON, where an import makes it huge.
+    #[serde(skip)]
+    pub events: BTreeSet<String>,
 }
 
 /// What one record changed.
@@ -298,6 +302,14 @@ fn version(first: usize, run: &[Option<Stamp>], touched: Touched) -> Version {
         events_removed: count(&touched.events_removed),
         catalogues: touched.catalogues.into_iter().collect(),
         rules_changed: touched.rules.into_iter().collect(),
+        events: [
+            touched.events_added,
+            touched.events_changed,
+            touched.events_removed,
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
     }
 }
 

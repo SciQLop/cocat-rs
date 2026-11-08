@@ -391,3 +391,28 @@ async fn an_unknown_version_is_404() {
         StatusCode::NO_CONTENT
     );
 }
+
+#[tokio::test]
+async fn a_static_catalogue_filter_keeps_its_members_event_edits() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, |txn| {
+        model::create_event(txn, &event("a")).unwrap();
+        model::create_event(txn, &event("gone")).unwrap();
+        model::create_catalogue(txn, &catalogue("plain")).unwrap();
+        let members = ["a".to_owned(), "gone".to_owned()];
+        assert!(model::add_catalogue_events(txn, "plain", &members));
+    });
+    fixture.write(fixture.bob, MINUTE, |txn| {
+        model::set_event_field(txn, "a", &EventField::Confidence(Some(0.5))).unwrap();
+    });
+    fixture.write(fixture.alice, 2 * MINUTE, create("other"));
+    fixture.write(fixture.bob, 3 * MINUTE, |txn| {
+        assert!(model::delete_event(txn, "gone"));
+    });
+
+    let path = format!("/api/rooms/{ROOM}/history?catalogue=plain");
+    let (status, body) = fixture.get(&path, fixture.carol).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(ids(body["versions"].as_array().unwrap()), [3, 1, 0]);
+}
