@@ -157,3 +157,14 @@ async fn the_history_help_explains_copies_in_plain_words() {
         assert!(!history.to_lowercase().contains(word), "{word}: {history}");
     }
 }
+
+#[tokio::test]
+async fn the_smart_catalogue_help_names_the_freeze_button() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let smart = section_text(&help, "smart-catalogues");
+    assert!(smart.contains("More → Freeze…"), "{smart}");
+    assert!(!smart.to_lowercase().contains("materializ"), "{smart}");
+}

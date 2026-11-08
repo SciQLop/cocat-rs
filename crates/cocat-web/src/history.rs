@@ -185,7 +185,7 @@ pub fn summary(version: &Version, offset: impl Fn(i64) -> i32) -> String {
     {
         match kind {
             "import" => return format!("Imported from {origin}"),
-            "rule" => return format!("Materialized from {origin}"),
+            "rule" => return format!("Frozen from {origin}"),
             _ => {}
         }
     }
@@ -670,16 +670,13 @@ mod tests {
     }
 
     #[test]
-    fn an_import_or_a_materialization_says_where_from() {
+    fn an_import_or_a_frozen_catalogue_says_where_from() {
         let mut import = version(1, Some(NOW));
         import.events_added = 120;
         import.auto_name = Some("import: tscat".to_owned());
         assert_eq!(summary(&import, |_| PARIS), "Imported from tscat");
         import.auto_name = Some("rule: Strong waves".to_owned());
-        assert_eq!(
-            summary(&import, |_| PARIS),
-            "Materialized from Strong waves"
-        );
+        assert_eq!(summary(&import, |_| PARIS), "Frozen from Strong waves");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::help::{Shown, empty_text};
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
-use crate::views::actions::{Actions, Form, Materialize};
+use crate::views::actions::{Actions, Form, Freeze};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
@@ -90,7 +90,7 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
         </div>
         {move || match (form.get(), shown.get()) {
             (Form::Rule, Route::Catalogue(uuid)) => Some(view! { <RuleEditor uuid form/> }.into_any()),
-            (Form::Materialize, Route::Catalogue(uuid)) => Some(view! { <Materialize uuid form/> }.into_any()),
+            (Form::Freeze, Route::Catalogue(uuid)) => Some(view! { <Freeze uuid form/> }.into_any()),
             _ => None,
         }}
         {move || (shown.get() == Route::Trash).then(|| view! {

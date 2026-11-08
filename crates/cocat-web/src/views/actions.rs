@@ -1,5 +1,5 @@
 //! What an editor can do to the catalogue on screen: add an event, edit the rule,
-//! materialize, move it to the trash.
+//! freeze it, move it to the trash.
 
 use cocat_core::model;
 use cocat_core::time::Timestamp;
@@ -16,7 +16,7 @@ use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
 pub enum Form {
     Closed,
     Rule,
-    Materialize,
+    Freeze,
 }
 
 #[component]
@@ -59,7 +59,7 @@ pub fn Actions(
                 <summary aria-label="More actions">"More"</summary>
                 <div class="menu">
                     <Show when=move || smart.get() == Some(true)>
-                        <button type="button" on:click=move |_| toggle(Form::Materialize)>"Materialize…"</button>
+                        <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
                     </Show>
                     <button type="button" class="danger" on:click=trash>"Move catalogue to trash…"</button>
                 </div>
@@ -104,13 +104,13 @@ fn trash_catalogue(room: &Room, uuid: &str, error: Error) {
     }
 }
 
-/// Asks the name of the static catalogue to make from the one on screen, then shows it.
+/// Asks the name of the normal catalogue to freeze the smart one on screen into, then shows it.
 #[component]
-pub fn Materialize(uuid: String, form: RwSignal<Form>) -> impl IntoView {
+pub fn Freeze(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     let room = expect_context::<Room>();
     let name = room
         .read_untracked(|txn| model::catalogue(txn, &uuid))
-        .map(|found| format!("{} (materialized)", found.name))
+        .map(|found| format!("{} (frozen)", found.name))
         .unwrap_or_default();
     let open = RwSignal::new(true);
     Effect::new(move |_| {
@@ -126,8 +126,8 @@ pub fn Materialize(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     };
     view! {
         <div class="inline-form">
-            <p class="quiet">"A static catalogue listing what this one holds now. Derived intervals become events."</p>
-            <NameForm label="Name of the new catalogue" action="Materialize" initial=name open submit/>
+            <p class="quiet">"A normal catalogue holding the events this one picks now. Joined intervals become events you can edit. This smart catalogue stays as it is."</p>
+            <NameForm label="Name of the new catalogue" action="Freeze" initial=name open submit/>
         </div>
     }
 }
