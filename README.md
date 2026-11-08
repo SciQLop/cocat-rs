@@ -472,6 +472,10 @@ the server has, with an optional `name` and `message` (a note, up to 2000 charac
 returns its id. Call `room.save()` first so your pending edits reached the server. The next
 change starts a new version, and the list marks the saved one with `committed` and its
 `message`. Saving again with nothing new raises `ValueError` (the server answers 409).
+`cocat_rs.copy_version(url, cookie, room_id, version, name)` makes a new project, owned by
+you, that starts as the version: same catalogues, events (with their uuids), rules and trash.
+It returns the new project's id. Any member may copy, a viewer too; the copy counts against
+your storage quota. The original and its history stay as they were.
 
 ```python
 versions = cocat_rs.history(url, cookie, "my-room")
@@ -482,6 +486,7 @@ cocat_rs.name_version(url, cookie, "my-room", first, "before the import")
 room.save()
 cocat_rs.commit(url, cookie, "my-room", name="paper v1", message="as submitted")
 cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
+trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
 ```
 
 `credentials` is what lets the client recover a session the server ended (a password change,

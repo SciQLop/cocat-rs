@@ -1758,6 +1758,24 @@ fn commit(
     .map_err(value_error)
 }
 
+/// Makes a new project, owned by the caller, holding the version; returns its id.
+#[pyfunction]
+fn copy_version(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    room_id: String,
+    version: u64,
+    name: String,
+) -> Result<String> {
+    py.detach(|| {
+        block_on(cocat_client::copy_version(
+            &url, &cookie, &room_id, version, &name,
+        ))
+    })?
+    .map_err(value_error)
+}
+
 /// The compiled part of `cocat_rs`; `cocat_rs/__init__.py` re-exports it.
 /// The sync thread's warnings (a server out of reach, a refused handshake) go to Python's
 /// `logging` under `cocat_client.*`. Levels are read from Python on each record so that
@@ -1790,6 +1808,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(restore, module)?)?;
     module.add_function(wrap_pyfunction!(name_version, module)?)?;
     module.add_function(wrap_pyfunction!(commit, module)?)?;
+    module.add_function(wrap_pyfunction!(copy_version, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;

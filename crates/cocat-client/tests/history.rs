@@ -1,7 +1,8 @@
 mod support;
 
 use cocat_client::{
-    LoginError, Room, RoomError, commit, history, name_version, restore, version_state,
+    LoginError, Room, RoomError, commit, copy_version, history, name_version, restore,
+    version_state,
 };
 use serde_json::Value;
 use support::*;
@@ -96,4 +97,25 @@ async fn saving_the_newest_version_returns_its_id_and_its_note() {
     assert_eq!(versions[0]["message"], "all good");
     assert_eq!(versions[0]["name"], "checked");
     assert!(matches!(again, Err(LoginError::Refused(409))), "{again:?}");
+}
+
+#[tokio::test]
+async fn a_copied_version_is_a_new_room_holding_it() {
+    let (server, cookie, id) = one_version().await;
+    let url = server.url();
+
+    let copy = copy_version(&url, &cookie, ROOM, id, "try").await.unwrap();
+
+    assert_ne!(copy, ROOM);
+    let versions = history(&url, &cookie, &copy, None).await.unwrap();
+    let state = version_state(&url, &cookie, &copy, versions[0]["id"].as_u64().unwrap())
+        .await
+        .unwrap();
+    let copied = Room::past(&copy, &state).unwrap();
+    assert!(cocat_core::model::event(&copied.doc().transact(), "a").is_some());
+    let unknown = copy_version(&url, &cookie, ROOM, 99, "try").await;
+    assert!(
+        matches!(unknown, Err(LoginError::Refused(404))),
+        "{unknown:?}"
+    );
 }

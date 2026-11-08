@@ -1,5 +1,5 @@
 //! A room's version history, as the server keeps it: the versions, the room at one of them,
-//! restoring one, naming one, and saving the newest.
+//! restoring one, naming one, copying one into a new room, and saving the newest.
 
 use reqwest::{Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
@@ -104,6 +104,25 @@ pub async fn commit(
         request(Method::POST, url, cookie, room_id, &["commit"])?.json(&Body { name, message });
     let committed: Committed = send(request).await?.json().await?;
     Ok(committed.version)
+}
+
+/// Makes a new project, owned by the caller, holding the version; its id comes back.
+pub async fn copy_version(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    version: u64,
+    name: &str,
+) -> Result<String, LoginError> {
+    #[derive(Deserialize)]
+    struct Copied {
+        room: String,
+    }
+    let version = version.to_string();
+    let request = request(Method::POST, url, cookie, room_id, &[&version, "copy"])?
+        .json(&serde_json::json!({ "name": name }));
+    let copied: Copied = send(request).await?.json().await?;
+    Ok(copied.room)
 }
 
 /// A request under `api/rooms/{room_id}/history`, each part its own path segment so a room

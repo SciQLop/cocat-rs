@@ -163,3 +163,21 @@ def test_saving_twice_without_changes_is_refused(server, room):
 
     with pytest.raises(ValueError, match="409"):
         cc.commit(server.url, server.cookie, server.room_id)
+
+
+def test_copying_a_version_makes_a_new_project_holding_it(server, room, colleague):
+    a, b, first, _ = two_versions(server, room, colleague)
+    before = history(server)
+
+    copy = cc.copy_version(server.url, server.cookie, server.room_id, first, "try")
+
+    assert copy != server.room_id
+    assert "try" in [info.name for info in cc.rooms(server.url, server.cookie)]
+    (version,) = cc.history(server.url, server.cookie, copy)
+    copied = cc.Room.at(server.url, server.cookie, copy, version["id"])
+    assert copied.event(a.uuid).confidence is None
+    with pytest.raises(cc.NotFound):
+        copied.event(b.uuid)
+    assert version["name"].startswith("Copied from ")
+    assert history(server) == before
+    assert room.event(a.uuid).confidence == 0.9
