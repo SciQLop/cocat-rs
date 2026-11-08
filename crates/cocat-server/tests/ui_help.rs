@@ -151,6 +151,31 @@ async fn the_history_help_explains_copies_in_plain_words() {
 }
 
 #[tokio::test]
+async fn the_public_help_says_how_to_submit_and_what_curators_do() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let public = section_text(&help, "public");
+    for words in [
+        "More → Submit to Public catalogues…",
+        "Propose a change…",
+        "Submit as an update to",
+        "My submissions",
+        "Submissions",
+        "What changed",
+        "Accept",
+        "Decline",
+        "Withdraw",
+    ] {
+        assert!(public.contains(words), "{words}: {public}");
+    }
+    for word in ["snapshot", "merge", "commit", "diff", "soon"] {
+        assert!(!public.to_lowercase().contains(word), "{word}: {public}");
+    }
+}
+
+#[tokio::test]
 async fn the_smart_catalogue_help_names_the_freeze_button() {
     let fixture = Fixture::start().await;
 

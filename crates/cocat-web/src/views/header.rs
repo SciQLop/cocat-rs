@@ -21,6 +21,8 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
         Route::History { .. } => Some("History"),
         Route::Groups | Route::Group(_) => Some("Groups"),
         Route::Public => Some("Public catalogues"),
+        Route::Submissions | Route::Submission(_) => Some("Submissions"),
+        Route::MySubmissions => Some("My submissions"),
         _ => None,
     };
     let history = move || shown.get().history().href(&page);

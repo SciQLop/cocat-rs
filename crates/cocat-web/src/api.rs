@@ -10,6 +10,7 @@ use crate::history::{Diff, History, Version, endpoint, refusal_text, save_body};
 use crate::projects::{Project, api_url};
 use crate::session::RoomConfig;
 use crate::sharing::Created;
+use crate::submissions::Submission;
 
 #[derive(Debug, Error)]
 pub enum ApiError {
@@ -135,6 +136,23 @@ pub async fn delete_project(api: &str, id: &str) -> Result<(), ApiError> {
 pub async fn leave_project(api: &str, id: &str) -> Result<(), ApiError> {
     let me = me(api).await?;
     send(Request::delete(&at(api, &["rooms", id, "members", &me])?)).await
+}
+
+/// Whether the visitor is a curator of the public catalogues.
+pub async fn is_curator(api: &str) -> Result<bool, ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Me {
+        #[serde(default)]
+        is_curator: bool,
+    }
+    let me: Me = json(Request::get(&at(api, &["me"])?)).await?;
+    Ok(me.is_curator)
+}
+
+/// The visitor's own submissions to the public catalogues.
+pub async fn my_submissions(api: &str) -> Result<Vec<Submission>, ApiError> {
+    let url = format!("{}?mine=true", at(api, &["public", "submissions"])?);
+    json(Request::get(&url)).await
 }
 
 async fn me(api: &str) -> Result<String, ApiError> {

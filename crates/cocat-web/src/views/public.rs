@@ -9,6 +9,7 @@ use crate::public::{PublicCatalogue, Shelf, shelves};
 use crate::route::Route;
 use crate::views::controls::{Error, Hint, error_line};
 use crate::views::projects::Projects;
+use crate::views::submissions::SubmissionLinks;
 
 #[component]
 pub fn PublicPage() -> impl IntoView {
@@ -41,6 +42,7 @@ pub fn PublicPage() -> impl IntoView {
                 <a class="button" href=Route::Default.href(&page)>"Back to catalogues"</a>
             </div>
             <Hint text="Catalogues everyone signed in can read. Curators keep them." anchor="public" topic="public catalogues"/>
+            <SubmissionLinks/>
             <input type="search" class="public-search" placeholder="Search names and descriptions"
                 aria-label="Search the public catalogues"
                 prop:value=move || search.get() on:input=move |event| search.set(event_target_value(&event))/>

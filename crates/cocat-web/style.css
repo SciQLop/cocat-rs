@@ -1055,3 +1055,40 @@ a.button { text-decoration: none; }
 }
 .public-row .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
 .public-row .source { color: var(--accent); font-weight: 500; }
+
+/* Submissions to the public catalogues: the forms, the lists and one submission. */
+.public-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.count-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px;
+  margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--accent); color: var(--accent-ink);
+}
+.submit-form { margin: 0 0 12px; max-width: 640px; }
+.submit-form textarea, .review-form textarea, .submit-form select {
+  width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); font: inherit; font-size: 14px;
+}
+.submit-form textarea, .review-form textarea { resize: vertical; }
+.submit-form select { height: 34px; }
+.submit-form :is(textarea, select):focus-visible, .review-form textarea:focus-visible { outline: 0; box-shadow: var(--focus); }
+.submission-row { text-decoration: none; }
+.submission-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+.submission-top .name { min-width: 0; }
+.chip.status-pending { background: var(--accent-soft); color: var(--accent); }
+.chip.status-accepted { background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); }
+.chip.status-declined { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.chip.status-withdrawn { color: var(--muted); }
+.chip[class*="status-"] { flex: none; white-space: nowrap; }
+.review-said { color: var(--ink); }
+.groups-page.submission-page { max-width: 1040px; }
+.submission-page .groups-head h1 { flex: 1 1 240px; }
+.submission-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.submission-note { display: flex; flex-direction: column; gap: 4px; }
+.submission-note .version-note { margin: 0; }
+.stale-banner {
+  margin: 0; padding: 10px 14px; border-radius: 8px; color: var(--ink);
+  background: var(--notice-bg); border: 1px solid var(--notice-rule);
+}
+.section-title { margin: 8px 0 0; font-size: 17px; }
+.submission-page .diff-scroll { max-height: none; }
+.review-form { max-width: 640px; }

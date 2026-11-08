@@ -7,13 +7,17 @@ use crate::period::Period;
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
-use crate::views::actions::{Actions, Form, Freeze};
+use crate::submissions::{Proposal, proposal_for};
+use crate::views::actions::{Actions, Form, Freeze, ProposeButton};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
+use crate::views::submissions::{ProposeForm, SubmitForm, UpdateForm};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
 use crate::views::trash::TrashedCatalogues;
+use cocat_core::room_id::is_public_id;
+use leptos::task::spawn_local;
 
 /// The rows of what is on screen, or the rule's error.
 pub type Members = Memo<Result<Vec<Row>, String>>;
@@ -51,11 +55,7 @@ pub fn CataloguePage(
             .read(|txn| rows(txn, &uuid))
             .map_err(|error| error.to_string()),
         Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
-        Route::Default
-        | Route::History { .. }
-        | Route::Groups
-        | Route::Group(_)
-        | Route::Public => Ok(Vec::new()),
+        _ => Ok(Vec::new()),
     });
     let query = RwSignal::new(String::new());
     let period = RwSignal::new(None::<Period>);
@@ -99,6 +99,8 @@ pub fn CataloguePage(
             .unwrap_or_else(|| preferred_columns(&reader, &shown.get()))
     });
     let form = RwSignal::new(Form::Closed);
+    let public = is_public_id(&room.config.room_id);
+    let proposals = copies_of(&room, public);
     Effect::new(move |_| {
         shown.track();
         form.set(Form::Closed);
@@ -136,12 +138,18 @@ pub fn CataloguePage(
                     />
                 </label>
                 <ColumnPicker keys columns picked/>
-                {room.can_write().then(|| view! { <Actions shown selected form/> })}
+                {public.then(|| view! { <ProposeButton shown form/> })}
+                {room.can_write().then(|| view! { <Actions shown selected form proposals/> })}
             </div>
         </div>
         {move || match (form.get(), shown.get()) {
             (Form::Rule, Route::Catalogue(uuid)) => Some(view! { <RuleEditor uuid form/> }.into_any()),
             (Form::Freeze, Route::Catalogue(uuid)) => Some(view! { <Freeze uuid form/> }.into_any()),
+            (Form::Submit, Route::Catalogue(uuid)) => Some(view! { <SubmitForm uuid form/> }.into_any()),
+            (Form::Update, Route::Catalogue(uuid)) => proposals
+                .with(|listed| proposal_for(listed, &uuid).cloned())
+                .map(|proposal| view! { <UpdateForm uuid proposal form/> }.into_any()),
+            (Form::Propose, Route::Catalogue(_)) => Some(view! { <ProposeForm form/> }.into_any()),
             _ => None,
         }}
         {move || (shown.get() == Route::Trash).then(|| view! {
@@ -155,6 +163,23 @@ pub fn CataloguePage(
     }
 }
 
+/// The catalogues of this project copied out of public catalogues, read once: an editor's
+/// More menu offers to submit each as an update. A public project holds none.
+fn copies_of(room: &Room, public: bool) -> RwSignal<Vec<Proposal>> {
+    let proposals = RwSignal::new(Vec::new());
+    if public || !room.can_write() {
+        return proposals;
+    }
+    let (api, id) = (room.config.api_url.clone(), room.config.room_id.clone());
+    spawn_local(async move {
+        let path = ["rooms", id.as_str(), "proposals"];
+        if let Ok(listed) = crate::api::read::<Vec<Proposal>>(&api, &path).await {
+            proposals.try_set(listed);
+        }
+    });
+    proposals
+}
+
 fn showing(room: &Room, shown: &Route) -> Shown {
     match shown {
         Route::Catalogue(uuid) => Shown::Catalogue {
@@ -163,11 +188,7 @@ fn showing(room: &Room, shown: &Route) -> Shown {
                 .is_some_and(|catalogue| catalogue.rule.is_some()),
         },
         Route::Trash => Shown::Trash,
-        Route::Default
-        | Route::History { .. }
-        | Route::Groups
-        | Route::Group(_)
-        | Route::Public => Shown::NoCatalogue,
+        _ => Shown::NoCatalogue,
     }
 }
 

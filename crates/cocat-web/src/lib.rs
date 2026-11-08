@@ -20,6 +20,7 @@ pub mod rule_text;
 pub mod session;
 pub mod sharing;
 pub mod stats;
+pub mod submissions;
 pub mod sync;
 
 #[cfg(test)]

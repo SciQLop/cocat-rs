@@ -9,7 +9,9 @@ use crate::edit;
 use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
+use crate::submissions::{Proposal, proposal_for};
 use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
+use cocat_core::room_id::is_public_id;
 
 /// Which form under the heading is open.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -17,6 +19,9 @@ pub enum Form {
     Closed,
     Rule,
     Freeze,
+    Submit,
+    Update,
+    Propose,
 }
 
 #[component]
@@ -24,7 +29,9 @@ pub fn Actions(
     shown: Memo<Route>,
     selected: RwSignal<Option<Row>>,
     form: RwSignal<Form>,
+    proposals: RwSignal<Vec<Proposal>>,
 ) -> impl IntoView {
+    let public = is_public_id(&expect_context::<Room>().config.room_id);
     let room = StoredValue::new_local(expect_context::<Room>());
     let error: Error = RwSignal::new(None);
     let catalogue = Memo::new(move |_| match shown.get() {
@@ -46,6 +53,10 @@ pub fn Actions(
             room.with_value(|room| trash_catalogue(room, &uuid, error));
         }
     };
+    let linked = move || {
+        let uuid = catalogue.get()?;
+        proposals.with(|listed| proposal_for(listed, &uuid).map(|proposal| proposal.name.clone()))
+    };
     let menu = NodeRef::<leptos::html::Details>::new();
     let toggle = move |which: Form| {
         form.update(|open| *open = if *open == which { Form::Closed } else { which });
@@ -66,12 +77,38 @@ pub fn Actions(
                         fallback=move || view! { <button type="button" on:click=move |_| toggle(Form::Rule)>"Add a rule…"</button> }>
                         <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
                     </Show>
+                    {(!public).then(|| view! {
+                        <button type="button" on:click=move |_| toggle(Form::Submit)>"Submit to Public catalogues…"</button>
+                    })}
+                    {move || linked().map(|name| view! {
+                        <button type="button" on:click=move |_| toggle(Form::Update)>{format!("Submit as an update to “{name}”…")}</button>
+                    })}
                     <button type="button" class="danger" on:click=trash>"Move catalogue to trash…"</button>
                 </div>
             </details>
             <button type="button" class="button primary" on:click=new_event>"New event"</button>
         </Show>
         {error_line(error)}
+    }
+}
+
+/// In a public catalogue, for everyone: copy it to change it, then submit the change.
+#[component]
+pub fn ProposeButton(shown: Memo<Route>, form: RwSignal<Form>) -> impl IntoView {
+    let on_catalogue = move || matches!(shown.get(), Route::Catalogue(_));
+    let toggle = move |_| {
+        form.update(|open| {
+            *open = match *open {
+                Form::Propose => Form::Closed,
+                _ => Form::Propose,
+            }
+        })
+    };
+    view! {
+        <Show when=on_catalogue>
+            <button type="button" class="button" aria-pressed=move || (form.get() == Form::Propose).to_string()
+                on:click=toggle>"Propose a change…"</button>
+        </Show>
     }
 }
 

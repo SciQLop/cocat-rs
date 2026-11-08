@@ -12,6 +12,10 @@ pub enum Route {
     Group(String),
     /// The index of the public catalogues.
     Public,
+    /// The curators' queue of submissions, the visitor's own, and one submission.
+    Submissions,
+    MySubmissions,
+    Submission(i64),
     /// The versions of a catalogue, or of the room when `None`, and the one picked.
     History {
         catalogue: Option<String>,
@@ -29,9 +33,12 @@ impl Route {
         match hash.split_once('=') {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
+            Some(("submission", id)) => id.parse().map_or(Route::Default, Route::Submission),
             None if hash == "trash" => Route::Trash,
             None if hash == "groups" => Route::Groups,
             None if hash == "public" => Route::Public,
+            None if hash == "submissions" => Route::Submissions,
+            None if hash == "my-submissions" => Route::MySubmissions,
             _ => Route::Default,
         }
     }
@@ -44,12 +51,20 @@ impl Route {
         }
     }
 
+    /// The pages of the public catalogues: the index and the submissions.
+    pub fn is_public_index(&self) -> bool {
+        matches!(
+            self,
+            Route::Public | Route::Submissions | Route::MySubmissions | Route::Submission(_)
+        )
+    }
+
     /// The history of what this view shows: its catalogue, else the whole room.
     pub fn history(&self) -> Self {
         let catalogue = match self {
             Route::Catalogue(uuid) => Some(uuid.clone()),
             Route::History { catalogue, .. } => catalogue.clone(),
-            Route::Default | Route::Trash | Route::Groups | Route::Group(_) | Route::Public => None,
+            _ => None,
         };
         Route::History {
             catalogue,
@@ -84,6 +99,9 @@ impl Route {
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
             Route::Public => "#public".to_owned(),
+            Route::Submissions => "#submissions".to_owned(),
+            Route::MySubmissions => "#my-submissions".to_owned(),
+            Route::Submission(id) => format!("#submission={id}"),
             Route::Group(id) => format!("#group={id}"),
             Route::History { catalogue, version } => {
                 let version = version.map(|version| format!("={version}"));
@@ -145,6 +163,18 @@ mod tests {
         assert_eq!(Route::parse("#public"), Route::Public);
         assert_eq!(Route::Public.hash(), "#public");
         assert_eq!(Route::Public.history(), history(None, None));
+    }
+
+    #[test]
+    fn the_submissions_have_routes() {
+        assert_eq!(Route::parse("#submissions"), Route::Submissions);
+        assert_eq!(Route::parse("#my-submissions"), Route::MySubmissions);
+        assert_eq!(Route::parse("#submission=12"), Route::Submission(12));
+        assert_eq!(Route::parse("#submission=x"), Route::Default);
+        assert!(Route::Submission(12).is_public_index());
+        assert!(Route::Public.is_public_index());
+        assert!(!Route::Trash.is_public_index());
+        assert_eq!(Route::Submissions.history(), history(None, None));
     }
 
     #[test]
@@ -220,6 +250,9 @@ mod tests {
             Route::Groups,
             Route::Group("g1".into()),
             Route::Public,
+            Route::Submissions,
+            Route::MySubmissions,
+            Route::Submission(7),
             history(None, None),
             history(Some("abc"), Some(12)),
             history(None, Some(12)),

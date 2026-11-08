@@ -448,7 +448,7 @@ fn Changes(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
 }
 
 /// The counts with the colours of their rows.
-fn legend(added: u32, changed: u32, removed: u32) -> impl IntoView {
+pub(crate) fn legend(added: u32, changed: u32, removed: u32) -> impl IntoView {
     if counts_text(added, changed, removed).is_none() {
         return view! { <span>"No event changed"</span> }.into_any();
     }
@@ -461,7 +461,7 @@ fn legend(added: u32, changed: u32, removed: u32) -> impl IntoView {
 }
 
 #[component]
-fn DiffTable(rows: Vec<DiffRow>) -> impl IntoView {
+pub(crate) fn DiffTable(rows: Vec<DiffRow>) -> impl IntoView {
     view! {
         <div class="table-scroll diff-scroll">
             <table class="events diff">

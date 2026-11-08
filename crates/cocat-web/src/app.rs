@@ -16,6 +16,7 @@ use crate::views::notice::{Notice, NoticeBar};
 use crate::views::projects::Projects;
 use crate::views::public::PublicPage;
 use crate::views::sidebar::Sidebar;
+use crate::views::submissions::{MySubmissionsPage, SubmissionPage, SubmissionsPage};
 use cocat_core::model;
 
 pub fn start() {
@@ -102,7 +103,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
     let in_groups = Memo::new(move |_| matches!(shown.get(), Route::Groups | Route::Group(_)));
-    let in_public = Memo::new(move |_| shown.get() == Route::Public);
+    let in_public = Memo::new(move |_| shown.get().is_public_index());
     // Both keep their value once the page leaves the history: see `HistoryPage`.
     let scope = Memo::new(move |kept: Option<&Option<String>>| match shown.get() {
         Route::History { catalogue, .. } => catalogue,
@@ -125,7 +126,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         } else if in_groups.get() {
             view! { <GroupsPage shown/> }.into_any()
         } else if in_public.get() {
-            view! { <PublicPage/> }.into_any()
+            public_page(shown.get())
         } else {
             view! {
                 <div class="browser">
@@ -140,6 +141,16 @@ fn App(config: RoomConfig) -> impl IntoView {
         }}
     }
     .into_any()
+}
+
+/// The page of the public catalogues the route names: the index or a submissions page.
+fn public_page(route: Route) -> AnyView {
+    match route {
+        Route::Submissions => view! { <SubmissionsPage/> }.into_any(),
+        Route::MySubmissions => view! { <MySubmissionsPage/> }.into_any(),
+        Route::Submission(id) => view! { <SubmissionPage id/> }.into_any(),
+        _ => view! { <PublicPage/> }.into_any(),
+    }
 }
 
 fn current_route() -> Route {

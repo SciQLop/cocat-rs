@@ -18,6 +18,7 @@ pub mod rule_editor;
 pub mod share;
 pub mod sidebar;
 pub mod stats;
+pub mod submissions;
 pub mod table;
 pub mod timeline;
 pub mod trash;

@@ -68,10 +68,6 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
             None => titled("No such catalogue"),
         },
         Route::Trash => titled("Trash"),
-        Route::Default
-        | Route::History { .. }
-        | Route::Groups
-        | Route::Group(_)
-        | Route::Public => titled("No catalogue yet"),
+        _ => titled("No catalogue yet"),
     }
 }
