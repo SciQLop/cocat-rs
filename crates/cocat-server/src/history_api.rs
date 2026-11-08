@@ -20,6 +20,7 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{self, ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::db::RoomRow;
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Saved, Version, span, spans, versions};
 use crate::openapi::Detail;
@@ -267,18 +268,48 @@ async fn copy(
     let original = db::room_name(&state.pool, &room_id)
         .await?
         .unwrap_or_default();
-    let room = lifecycle::create_room(&state, user.id, &body.name.0).await?;
-    if let Err(error) = write_first_version(&state, &room.id, user.id, update).await {
-        lifecycle::delete_room(&state, &room.id, user.id).await?;
-        return Err(error);
-    }
     let first = copy_name(&original, started_ms);
-    db::name_version(&state.pool, &room.id, 0..=0, &first, user.id).await?;
+    let making = make_copy(state, user.id, body.name.0, update, first);
+    let room = tokio::spawn(making).await.map_err(|error| {
+        tracing::warn!(%error, "a copy stopped half way");
+        ApiError::Internal
+    })??;
     let copied = Copied {
         room: room.id,
         name: room.name,
     };
     Ok((StatusCode::CREATED, Json(copied)))
+}
+
+/// Runs in its own task: a client that hangs up cannot cut it between the new project and
+/// its content. Any failure after the project exists removes it.
+async fn make_copy(
+    state: AppState,
+    user: Uuid,
+    name: String,
+    update: Vec<u8>,
+    first: String,
+) -> Result<RoomRow, ApiError> {
+    let room = lifecycle::create_room(&state, user, &name).await?;
+    let Err(error) = fill_copy(&state, &room.id, user, update, &first).await else {
+        return Ok(room);
+    };
+    if let Err(cleanup) = lifecycle::delete_room(&state, &room.id, user).await {
+        tracing::warn!(error = %cleanup, room = %room.id, "cannot remove a failed copy");
+    }
+    Err(error)
+}
+
+async fn fill_copy(
+    state: &AppState,
+    room_id: &str,
+    user: Uuid,
+    update: Vec<u8>,
+    first: &str,
+) -> Result<(), ApiError> {
+    write_first_version(state, room_id, user, update).await?;
+    db::name_version(&state.pool, room_id, 0..=0, first, user).await?;
+    Ok(())
 }
 
 async fn write_first_version(

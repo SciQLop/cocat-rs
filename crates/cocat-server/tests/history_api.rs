@@ -1028,3 +1028,24 @@ async fn a_copy_over_the_owners_quota_is_refused_and_leaves_no_project() {
     ids.sort();
     assert_eq!(ids, ["carols-big", ROOM]);
 }
+
+#[tokio::test]
+async fn a_copy_whose_first_version_cannot_be_named_leaves_no_project() {
+    let fixture = a_project_worth_copying().await;
+    sqlx::query(
+        "CREATE TRIGGER refuse_names BEFORE INSERT ON version_name \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    )
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+
+    let (status, body) = fixture.copy(0, fixture.carol, "try").await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let rooms = db::list_user_rooms(&fixture.state.pool, fixture.carol)
+        .await
+        .unwrap();
+    let ids: Vec<_> = rooms.into_iter().map(|(room, _)| room.id).collect();
+    assert_eq!(ids, [ROOM]);
+}
