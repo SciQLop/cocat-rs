@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::groups::{self, GroupRole};
 use crate::ui::frame::{self, Flash, Frame, MaybeUser, RequireUser, ShareLink};
 use crate::ui::{answer, query_value, redirect, redirect_to, token_from_text};
-use crate::{AppState, db, lifecycle, mail};
+use crate::{AppState, db, invitations, lifecycle, mail};
 
 /// Python's `INVITATION_LIFETIME`: every invitation this page makes lasts two weeks.
 const INVITATION_DAYS: u32 = 14;
@@ -253,7 +253,7 @@ async fn detail_page(
     let panel = match role {
         GroupRole::Owner => {
             let emails: Vec<&str> = members.iter().map(|member| member.email.as_str()).collect();
-            let suggestions = super::invite_suggestions(state, user.id, &emails).await?;
+            let suggestions = invitations::suggestions(state, user.id, &emails).await?;
             Some(panel_rows(state, &group.id, user.id, share_link, suggestions).await?)
         }
         GroupRole::Member => None,

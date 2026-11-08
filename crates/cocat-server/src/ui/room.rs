@@ -162,7 +162,7 @@ async fn build_page(
     let panel = match role {
         Role::Owner => {
             let emails: Vec<&str> = members.iter().map(|member| member.email.as_str()).collect();
-            let suggestions = super::invite_suggestions(state, user.id, &emails).await?;
+            let suggestions = invitations::suggestions(state, user.id, &emails).await?;
             Some(panel(state, user.id, &room.id, share_link, suggestions).await?)
         }
         _ => None,

@@ -10,9 +10,11 @@ use utoipa_axum::routes;
 
 use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, RoomOut};
 use crate::lifecycle::LifecycleError;
+use crate::lifecycle::require_role;
 use crate::mail::{Address, is_placeholder};
 use crate::openapi::Detail;
-use crate::{AppState, invitations};
+use crate::{AppState, db, invitations};
+use cocat_core::role::Role;
 
 const INVITATION_LIFETIME_DAYS: u32 = 14;
 
@@ -20,6 +22,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_invitations, create_invitation))
         .routes(routes!(revoke_invitation))
+        .routes(routes!(suggestions))
         .routes(routes!(preview_invitation))
         .routes(routes!(accept_invitation))
 }
@@ -221,6 +224,35 @@ async fn revoke_invitation(
 ) -> Result<StatusCode, ApiError> {
     invitations::revoke(&state, &room_id, user.id, invitation_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// What the owner's invitation form suggests: the people they work with who are not members.
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/suggestions",
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "Addresses to suggest, by address", body = [String]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller may not invite", body = Detail),
+        (status = 404, description = "No such room", body = Detail),
+    )
+)]
+async fn suggestions(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    require_role(&state, &room_id, user.id, Role::Owner).await?;
+    let members = db::list_members(&state.pool, &room_id).await?;
+    let emails: Vec<&str> = members
+        .iter()
+        .map(|(member, _)| member.email.as_str())
+        .collect();
+    Ok(Json(
+        invitations::suggestions(&state, user.id, &emails).await?,
+    ))
 }
 
 /// No cookie: the guest has to see what the link offers before signing in.

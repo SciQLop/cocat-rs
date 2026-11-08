@@ -1048,3 +1048,112 @@ async fn non_owner_cannot_invite_403() {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
+
+#[tokio::test]
+async fn the_owner_is_offered_the_people_they_work_with_who_are_not_in_yet() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    let dave = fixture.user("dave@example.org").await;
+    fixture.room("lab", alice).await;
+    fixture.room("other", alice).await;
+    db::add_member(&fixture.pool, "lab", bob, Role::Editor)
+        .await
+        .unwrap();
+    db::add_member(&fixture.pool, "other", carol, Role::Viewer)
+        .await
+        .unwrap();
+    db::add_member(&fixture.pool, "lab", dave, Role::Viewer)
+        .await
+        .unwrap();
+    let team = create(&fixture, alice, "Team").await;
+    let erin = fixture.user("erin@example.org").await;
+    join(&fixture.pool, &team, erin, "member").await;
+    fixture.user("stranger@example.org").await;
+
+    let (status, body) = fixture.get("/api/rooms/lab/suggestions", Some(alice)).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!(["carol@example.org", "erin@example.org"]));
+}
+
+#[tokio::test]
+async fn only_the_owner_sees_the_suggestions_and_strangers_see_no_project() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let stranger = fixture.user("stranger@example.org").await;
+    fixture.room("lab", alice).await;
+    db::add_member(&fixture.pool, "lab", bob, Role::Editor)
+        .await
+        .unwrap();
+
+    let (editor, _) = fixture.get("/api/rooms/lab/suggestions", Some(bob)).await;
+    let (outsider, body) = fixture
+        .get("/api/rooms/lab/suggestions", Some(stranger))
+        .await;
+    let (anonymous, _) = fixture.get("/api/rooms/lab/suggestions", None).await;
+
+    assert_eq!(editor, StatusCode::FORBIDDEN);
+    assert_eq!(outsider, StatusCode::NOT_FOUND);
+    assert_eq!(body["detail"], "Project lab not found");
+    assert_eq!(anonymous, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_group_owner_is_offered_the_people_they_work_with_outside_the_group() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let carol = fixture.user("carol@example.org").await;
+    let stranger = fixture.user("stranger@example.org").await;
+    fixture.room("lab", alice).await;
+    db::add_member(&fixture.pool, "lab", bob, Role::Editor)
+        .await
+        .unwrap();
+    db::add_member(&fixture.pool, "lab", carol, Role::Viewer)
+        .await
+        .unwrap();
+    let team = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &team, bob, "member").await;
+    let path = format!("/api/groups/{team}/suggestions");
+
+    let (status, body) = fixture.get(&path, Some(alice)).await;
+    let (member, _) = fixture.get(&path, Some(bob)).await;
+    let (outsider, _) = fixture.get(&path, Some(stranger)).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!(["carol@example.org"]));
+    assert_eq!(member, StatusCode::FORBIDDEN);
+    assert_eq!(outsider, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn every_member_sees_the_projects_shared_with_the_group() {
+    let fixture = Fixture::start().await;
+    let alice = fixture.user("alice@example.org").await;
+    let bob = fixture.user("bob@example.org").await;
+    let stranger = fixture.user("stranger@example.org").await;
+    fixture.room("lab", alice).await;
+    fixture.room("archive", alice).await;
+    fixture.room("private", alice).await;
+    let team = create(&fixture, alice, "Team").await;
+    join(&fixture.pool, &team, bob, "member").await;
+    grant(&fixture.pool, "lab", &team, "editor").await;
+    grant(&fixture.pool, "archive", &team, "viewer").await;
+    let path = format!("/api/groups/{team}/rooms");
+
+    let (status, body) = fixture.get(&path, Some(bob)).await;
+    let (outsider, _) = fixture.get(&path, Some(stranger)).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!([
+            { "id": "archive", "name": "archive", "role": "viewer" },
+            { "id": "lab", "name": "lab", "role": "editor" },
+        ])
+    );
+    assert_eq!(outsider, StatusCode::NOT_FOUND);
+}

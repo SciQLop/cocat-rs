@@ -134,6 +134,17 @@ async fn mail_invitation(
     Ok(())
 }
 
+/// The addresses an invitation may suggest: the people `user` works with, minus `members`.
+pub(crate) async fn suggestions(
+    state: &AppState,
+    user: Uuid,
+    members: &[&str],
+) -> Result<Vec<String>, LifecycleError> {
+    let mut people = db::known_people(&state.pool, user).await?;
+    people.retain(|email| !members.contains(&email.as_str()));
+    Ok(people)
+}
+
 pub async fn preview(state: &AppState, token: &str) -> Result<Preview, LifecycleError> {
     let predicate = usable("invitation");
     let row = sqlx::query(AssertSqlSafe(format!(

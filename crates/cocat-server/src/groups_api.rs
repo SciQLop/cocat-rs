@@ -9,8 +9,8 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
-use crate::AppState;
-use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, Name};
+use crate::api::{ApiError, ApiPath, AssignableRole, CurrentUser, JsonBody, Name, RoomOut};
+use crate::{AppState, invitations};
 use cocat_core::role::Role;
 
 use crate::groups::{self, GroupMember, GroupRole, GroupRow};
@@ -23,6 +23,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list, create))
         .routes(routes!(rename, remove))
         .routes(routes!(members))
+        .routes(routes!(suggestions))
+        .routes(routes!(shared_rooms))
         .routes(routes!(remove_member))
         .routes(routes!(list_invitations, create_invitation))
         .routes(routes!(revoke_invitation))
@@ -240,6 +242,56 @@ async fn members(
         .map(MemberOut::from)
         .collect();
     Ok(Json(MembersOut { members }))
+}
+
+/// What the owner's invitation form suggests: the people they work with outside the group.
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/suggestions",
+    params(("group_id" = String, Path, description = "Group id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "Addresses to suggest, by address", body = [String]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is not the owner", body = Detail),
+        (status = 404, description = "No such group, or the caller is not a member", body = Detail),
+    )
+)]
+async fn suggestions(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(group_id): ApiPath<String>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    groups::require_owner(&state, &group_id, user.id).await?;
+    let members = groups::members(&state, &group_id, user.id).await?;
+    let emails: Vec<&str> = members.iter().map(|member| member.email.as_str()).collect();
+    Ok(Json(
+        invitations::suggestions(&state, user.id, &emails).await?,
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/groups/{group_id}/rooms",
+    params(("group_id" = String, Path, description = "Group id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The rooms shared with the group, with the role it grants", body = [RoomOut]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such group, or the caller is not a member", body = Detail),
+    )
+)]
+async fn shared_rooms(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(group_id): ApiPath<String>,
+) -> Result<Json<Vec<RoomOut>>, ApiError> {
+    let rooms = groups::shared_rooms(&state, &group_id, user.id)
+        .await?
+        .into_iter()
+        .map(|(room, role)| RoomOut::new(room, role))
+        .collect();
+    Ok(Json(rooms))
 }
 
 #[utoipa::path(

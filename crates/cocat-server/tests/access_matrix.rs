@@ -278,6 +278,20 @@ const ROWS: &[Row] = &[
     )
     .group_scope(),
     row(
+        "GET",
+        "/api/groups/{group}/suggestions",
+        Guard::GroupOwner,
+        Style::Api,
+    )
+    .group_scope(),
+    row(
+        "GET",
+        "/api/groups/{group}/rooms",
+        Guard::GroupMember,
+        Style::Api,
+    )
+    .group_scope(),
+    row(
         "DELETE",
         "/api/groups/{group}/members/{member}",
         Guard::GroupOwner,
@@ -350,6 +364,13 @@ const ROWS: &[Row] = &[
     row(
         "POST",
         "/api/rooms/{room}/invitations",
+        Guard::RoomOwner,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "GET",
+        "/api/rooms/{room}/suggestions",
         Guard::RoomOwner,
         Style::Api,
     )
