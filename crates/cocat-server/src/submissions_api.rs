@@ -50,6 +50,12 @@ const MAX_NOTE: usize = 2000;
 const MAX_VERSION_NAME: usize = 100;
 /// A slug this long leaves room for "-<n>" within a key's 64 characters.
 const MAX_SLUG: usize = 56;
+/// Snapshots stay in the database, so one submission may not take a project's room.
+const MAX_SNAPSHOT: u64 = 50 * 1_048_576;
+/// How many submissions one author may have waiting for a curator.
+const MAX_PENDING: i64 = 20;
+const TOO_MANY_PENDING: &str = "You have 20 submissions waiting for a curator: withdraw one, \
+    or wait for a decision, before submitting another";
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -212,7 +218,8 @@ async fn list(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the project", body = Detail),
         (status = 404, description = "No such project, membership or catalogue", body = Detail),
-        (status = 413, description = "The catalogue is bigger than a project may be", body = Detail),
+        (status = 409, description = "The caller has 20 submissions waiting already", body = Detail),
+        (status = 413, description = "The catalogue is over 50 MB or over what the caller's storage has left", body = Detail),
         (status = 422, description = "The body is not a submission", body = Detail),
     )
 )]
@@ -222,7 +229,7 @@ async fn submit(
     JsonBody(body): JsonBody<NewBody>,
 ) -> Result<(StatusCode, Json<SubmissionOut>), ApiError> {
     lifecycle::require_role(&state, &body.room, user.id, Role::Editor).await?;
-    let (name, snapshot) = snapshot_of(&state, &body.room, &body.catalogue).await?;
+    let (name, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id).await?;
     let title = title(body.title.unwrap_or(name))?;
     let folder = folder_or_source(body.folder)?;
     let description = description(body.description)?;
@@ -255,7 +262,8 @@ async fn submit(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the project", body = Detail),
         (status = 404, description = "No such project, membership or catalogue, or it is no copy of a public one", body = Detail),
-        (status = 413, description = "The catalogue is bigger than a project may be", body = Detail),
+        (status = 409, description = "The caller has 20 submissions waiting already", body = Detail),
+        (status = 413, description = "The catalogue is over 50 MB or over what the caller's storage has left", body = Detail),
         (status = 422, description = "The body is not a submission", body = Detail),
     )
 )]
@@ -271,7 +279,7 @@ async fn submit_update(
         .find(|proposal| proposal.catalogue == body.catalogue)
         .ok_or_else(|| ApiError::NotFound(NOT_A_COPY.to_owned()))?;
     let note = note(body.note)?;
-    let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue).await?;
+    let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id).await?;
     let new = NewSubmission {
         author: user.id,
         room: &body.room,
@@ -491,19 +499,26 @@ async fn stored(state: &AppState, id: i64) -> Result<SubmissionOut, ApiError> {
     Ok(submission.into())
 }
 
-/// The catalogue's name and the catalogue alone as one update, once it fits in a project.
+/// The catalogue's name and the catalogue alone as one update, once `author` may store it.
 async fn snapshot_of(
     state: &AppState,
     room_id: &str,
     catalogue: &str,
+    author: Uuid,
 ) -> Result<(String, Vec<u8>), ApiError> {
+    if submissions::pending(&state.pool, author).await? >= MAX_PENDING {
+        return Err(ApiError::Conflict(TOO_MANY_PENDING.to_owned()));
+    }
     let uuid = catalogue.to_owned();
     let (name, snapshot) = state
         .rooms
         .read(room_id, move |doc| extracted(doc, &uuid))
         .await?
         .ok_or_else(|| ApiError::NotFound(NO_SUCH_CATALOGUE.to_owned()))?;
-    fits(state, &snapshot)?;
+    let size = u64::try_from(snapshot.len()).unwrap_or(u64::MAX);
+    fits(size, state.rooms.limits().room)?;
+    let left = state.rooms.owner_left(&state.pool, author, None).await?;
+    within_quota(size, left)?;
     Ok((name, snapshot))
 }
 
@@ -517,16 +532,26 @@ fn extracted(doc: &Doc, catalogue: &str) -> Option<(String, Vec<u8>)> {
     Some((found.name, update))
 }
 
-fn fits(state: &AppState, snapshot: &[u8]) -> Result<(), ApiError> {
-    let limit = state.rooms.limits().room;
-    let size = u64::try_from(snapshot.len()).unwrap_or(u64::MAX);
+fn fits(size: u64, room_limit: u64) -> Result<(), ApiError> {
+    let limit = room_limit.min(MAX_SNAPSHOT);
     if size <= limit {
         return Ok(());
     }
     Err(ApiError::TooLarge(format!(
-        "This catalogue is too big to submit: it takes {}, and a public catalogue holds at most {}",
+        "This catalogue is too big to submit: it takes {}, and a submission holds at most {}",
         bytes(size),
         bytes(limit)
+    )))
+}
+
+fn within_quota(size: u64, left: u64) -> Result<(), ApiError> {
+    if size <= left {
+        return Ok(());
+    }
+    Err(ApiError::TooLarge(format!(
+        "Your storage is full: this submission takes {}, and you have {} left",
+        bytes(size),
+        bytes(left)
     )))
 }
 
@@ -776,7 +801,20 @@ fn note(note: Option<String>) -> Result<Option<String>, ApiError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes, key};
+    use super::{MAX_SNAPSHOT, bytes, fits, key};
+    use crate::api::ApiError;
+
+    #[test]
+    fn a_snapshot_over_fifty_megabytes_is_refused_whatever_the_project_limit() {
+        assert!(fits(MAX_SNAPSHOT, u64::MAX).is_ok());
+        let Err(ApiError::TooLarge(detail)) = fits(50 * 1_048_576 + 1, u64::MAX) else {
+            panic!("a snapshot over 50 MB was taken");
+        };
+        assert_eq!(
+            detail,
+            "This catalogue is too big to submit: it takes 50.0 MB, and a submission holds at most 50.0 MB"
+        );
+    }
 
     #[test]
     fn a_key_is_the_title_in_plain_lower_case() {

@@ -107,6 +107,27 @@ pub async fn snapshot(pool: &SqlitePool, id: i64) -> Result<Vec<u8>, DbError> {
     )
 }
 
+/// How many of `author`'s submissions wait for a curator.
+pub async fn pending(pool: &SqlitePool, author: Uuid) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT COUNT(*) FROM submission WHERE author = ? AND status = 'pending'",
+    )
+    .bind(author.to_string())
+    .fetch_one(pool)
+    .await?)
+}
+
+/// The bytes `author`'s stored snapshots take, decided ones included: they stay on disk.
+pub async fn stored_bytes(pool: &SqlitePool, author: Uuid) -> Result<u64, DbError> {
+    let bytes: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(length(snapshot)), 0) FROM submission WHERE author = ?",
+    )
+    .bind(author.to_string())
+    .fetch_one(pool)
+    .await?;
+    Ok(u64::try_from(bytes).unwrap_or(0))
+}
+
 /// Every submission, or only `author`'s: pending ones first, then the newest.
 pub async fn list(pool: &SqlitePool, author: Option<Uuid>) -> Result<Vec<Submission>, DbError> {
     Ok(sqlx::query_as(AssertSqlSafe(format!(

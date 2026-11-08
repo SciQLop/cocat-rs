@@ -269,7 +269,7 @@ impl RoomManager {
     }
 
     /// The bytes a room's file may reach: the room limit, or what its owner's quota leaves
-    /// once the owner's other room files are counted.
+    /// once the owner's other room files and stored submissions are counted.
     ///
     /// simplify: the allowance is measured when the room opens, so two of one owner's rooms
     /// opening together can each spend the remaining quota (overshoot ≤ remaining × open
@@ -282,17 +282,29 @@ impl RoomManager {
         let Some(owner) = crate::db::room_owner(pool, room_id).await? else {
             return Ok(room_limit);
         };
+        let left = self.owner_left(pool, owner, Some(room_id)).await?;
+        Ok(room_limit.min(left))
+    }
+
+    /// What the owner's quota leaves once their room files and stored submissions are
+    /// counted, `except` one room.
+    pub async fn owner_left(
+        &self,
+        pool: &SqlitePool,
+        owner: Uuid,
+        except: Option<&str>,
+    ) -> Result<u64, RoomError> {
         let owner_limit = match crate::db::user_quota(pool, owner).await? {
             Some(mb) => megabytes(mb),
             None => self.storage.owner,
         };
-        let mut used = 0u64;
+        let mut used = crate::submissions::stored_bytes(pool, owner).await?;
         for owned in crate::db::owned_rooms(pool, owner).await? {
-            if owned != room_id {
+            if Some(owned.as_str()) != except {
                 used = used.saturating_add(self.room_size(&owned));
             }
         }
-        Ok(room_limit.min(owner_limit.saturating_sub(used)))
+        Ok(owner_limit.saturating_sub(used))
     }
 
     /// Closes every socket this user has in the room, whatever their client ids. A room

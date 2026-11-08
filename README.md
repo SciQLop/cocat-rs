@@ -231,9 +231,13 @@ Everyone else submits. A submission holds the catalogue and its events as they w
 was submitted (a Yjs update); later edits do not change it. Only its author and the curators
 see it: anyone else gets 404.
 
+Snapshots stay on the server, so they count against the author's storage quota, like their
+projects, whatever became of them. One snapshot holds at most 50 MB, and an author has at most
+20 submissions waiting for a curator (409 beyond).
+
 | Route | Who | What |
 |---|---|---|
-| `POST /api/public/submissions` | editors of the project | `{"room", "catalogue", "title"?, "folder"?, "description"?, "note"?}` → 201, a new catalogue (the title defaults to its name); 413 when it is bigger than a project may be |
+| `POST /api/public/submissions` | editors of the project | `{"room", "catalogue", "title"?, "folder"?, "description"?, "note"?}` → 201, a new catalogue (the title defaults to its name); 413 when it is over 50 MB or over what your storage has left |
 | `POST /api/public/{id}/proposals` | any user | `{"room"?, "name"?}` → 201 `{room, name, catalogue}`: a copy of the public catalogue (same uuids) in one of your projects or a new one; the server remembers where it came from |
 | `GET /api/rooms/{id}/proposals` | members | the project's catalogues copied that way: `catalogue`, `target`, `name` |
 | `POST /api/public/submissions/updates` | editors of the project | `{"room", "catalogue", "note"?}` → 201, the copy as the public catalogue's next version |

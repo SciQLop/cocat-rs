@@ -7,7 +7,9 @@ use cocat_core::model::{self, EventField, EventRecord, NewCatalogue, Status};
 use cocat_core::role::Role;
 use cocat_core::time::Timestamp;
 use cocat_server::room::{Author, RoomManager, StorageLimits};
-use cocat_server::{AppState, auth, db, lifecycle, links::Links, ratelimit::LoginLimit, ws};
+use cocat_server::{
+    AppState, auth, db, lifecycle, links::Links, ratelimit::LoginLimit, submissions, ws,
+};
 use serde_json::{Value, json};
 use std::fs;
 use tempfile::TempDir;
@@ -735,4 +737,101 @@ async fn two_curators_accepting_the_same_title_at_once_get_two_public_catalogues
         let key = format!("public.twins-{round}");
         assert_eq!(targets, [key.clone(), format!("{key}-2")]);
     }
+}
+
+#[tokio::test]
+async fn an_author_waits_on_at_most_twenty_submissions() {
+    let world = World::start().await;
+    world
+        .edit(&world.project, world.author, |txn| {
+            catalogue(txn, "mine", &["a"])
+        })
+        .await;
+    let body = json!({"room": world.project, "catalogue": "mine"});
+    let mut first = None;
+    for _ in 0..20 {
+        let (status, made) = world.submit(body.clone()).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+        first.get_or_insert(made["id"].as_i64().unwrap());
+    }
+
+    let (status, said) = world.submit(body.clone()).await;
+    let withdraw = format!("/api/public/submissions/{}/withdraw", first.unwrap());
+    world
+        .call(world.author, Method::POST, &withdraw, None)
+        .await;
+    let (again, _) = world.submit(body).await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        said["detail"],
+        "You have 20 submissions waiting for a curator: withdraw one, or wait for a decision, \
+         before submitting another"
+    );
+    assert_eq!(
+        again,
+        StatusCode::CREATED,
+        "a withdrawn one no longer waits"
+    );
+}
+
+#[tokio::test]
+async fn submissions_count_against_the_authors_storage() {
+    let world = World::with_limits(StorageLimits {
+        room: 1 << 30,
+        owner: 1 << 20,
+    })
+    .await;
+    world
+        .edit(&world.project, world.author, |txn| {
+            catalogue(txn, "mine", &["a", "b"])
+        })
+        .await;
+    let rooms = &world.state.rooms;
+    let before = rooms
+        .allowance(&world.state.pool, &world.project)
+        .await
+        .unwrap();
+
+    let (_, made) = world
+        .submit(json!({"room": world.project, "catalogue": "mine"}))
+        .await;
+    let id = made["id"].as_i64().unwrap();
+    let withdraw = format!("/api/public/submissions/{id}/withdraw");
+    world
+        .call(world.author, Method::POST, &withdraw, None)
+        .await;
+
+    let stored = submissions::snapshot(&world.state.pool, id).await.unwrap();
+    let after = rooms
+        .allowance(&world.state.pool, &world.project)
+        .await
+        .unwrap();
+    assert_eq!(
+        before - after,
+        u64::try_from(stored.len()).unwrap(),
+        "a withdrawn submission still takes its author's space"
+    );
+}
+
+#[tokio::test]
+async fn a_submission_over_the_authors_storage_is_refused() {
+    let world = World::with_limits(StorageLimits {
+        room: 1 << 30,
+        owner: 10,
+    })
+    .await;
+    world
+        .edit(&world.project, world.author, |txn| {
+            catalogue(txn, "mine", &["a"])
+        })
+        .await;
+
+    let (status, said) = world
+        .submit(json!({"room": world.project, "catalogue": "mine"}))
+        .await;
+
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    let detail = said["detail"].as_str().unwrap();
+    assert!(detail.starts_with("Your storage is full"), "{detail}");
 }
