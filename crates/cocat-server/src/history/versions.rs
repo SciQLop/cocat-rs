@@ -247,6 +247,7 @@ fn collect_events(txn: &TransactionMut, event: &MapEvent, collected: &mut Collec
                 }
             }
         }
+        Some(PathSegment::Key(_)) if keys.values().all(rewrote_same_value) => {}
         Some(PathSegment::Key(uuid)) => {
             let set = if became_deleted(keys.get("status")) {
                 &mut touched.events_removed
@@ -299,6 +300,11 @@ fn origin_id(txn: &TransactionMut, event: &Out) -> Option<String> {
         Some(Out::Any(Any::String(id))) => Some(id.to_string()),
         _ => None,
     }
+}
+
+/// Writers set every field they are given, so an edit can rewrite a value unchanged.
+fn rewrote_same_value(change: &EntryChange) -> bool {
+    matches!(change, EntryChange::Updated(old, new) if old == new)
 }
 
 fn became_deleted(status: Option<&EntryChange>) -> bool {
@@ -540,6 +546,19 @@ mod tests {
             .collect();
 
         assert_eq!(counts, [(0, 1, 0), (2, 0, 1), (1, 0, 0)]);
+    }
+
+    #[test]
+    fn writing_a_field_its_own_value_changes_nothing() {
+        let mut room = Room::default();
+        room.write(Some((user(1), 0)), create("a"));
+        room.write(Some((user(2), 1)), set_confidence("a"));
+        room.write(Some((user(1), 2)), set_confidence("a"));
+
+        let version = &room.versions()[0];
+
+        assert_eq!(version.events_changed, 0);
+        assert!(version.events.is_empty());
     }
 
     #[test]
