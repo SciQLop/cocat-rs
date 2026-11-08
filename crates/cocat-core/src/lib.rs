@@ -6,6 +6,7 @@ pub mod room_id;
 pub mod rules;
 pub mod store;
 pub mod time;
+pub mod tscat_json;
 pub mod votable;
 
 /// The websocket subprotocol of the v2 room layout. A client that does not offer it would

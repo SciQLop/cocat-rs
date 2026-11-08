@@ -32,6 +32,15 @@ pub fn event<T: ReadTxn>(txn: &T, uuid: &str) -> Option<EventRecord> {
     record(txn, uuid, &object(txn, EVENTS, uuid)?)
 }
 
+/// The uuids of the events a catalogue lists (its rule aside), trashed or not, sorted.
+pub fn listed_events<T: ReadTxn>(txn: &T, uuid: &str) -> Vec<String> {
+    let mut listed = object(txn, CATALOGUES, uuid)
+        .map(|catalogue| members(txn, &catalogue))
+        .unwrap_or_default();
+    listed.sort_unstable();
+    listed
+}
+
 /// How many events the room holds outside the trash.
 pub fn live_event_count<T: ReadTxn>(txn: &T) -> usize {
     entries(txn, EVENTS)

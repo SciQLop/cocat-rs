@@ -9,7 +9,11 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesRef, BytesStart, BytesText, Ev
 use quick_xml::{Reader, Writer, XmlVersion};
 use serde_json::Value;
 
-use crate::model::{CatalogueSummary, EventRecord, Status};
+use yrs::TransactionMut;
+
+use crate::model::{
+    self, CatalogueSummary, EventRecord, NewCatalogue, Status, WriteError, Written,
+};
 use crate::time::Timestamp;
 
 #[derive(Debug, thiserror::Error)]
@@ -386,6 +390,53 @@ pub fn import(xml: &str) -> Result<Imported, VotableError> {
     })
 }
 
+/// Writes each table as a new catalogue holding its events, in the caller's transaction. An
+/// event whose uuid the project holds is replaced.
+pub fn write(
+    txn: &mut TransactionMut<'_>,
+    imported: &Imported,
+    name: Option<&str>,
+) -> Result<Written, WriteError> {
+    let author = imported.author.as_deref().unwrap_or(DEFAULT_AUTHOR);
+    let mut written = Written::default();
+    for (index, table) in imported.tables.iter().enumerate() {
+        for event in &table.events {
+            written.warnings.extend(model::create_event(txn, event)?);
+        }
+        let catalogue = NewCatalogue {
+            uuid: uuid::Uuid::new_v4().to_string(),
+            name: catalogue_name(imported, name, index),
+            author: Some(author.to_owned()),
+            ..NewCatalogue::default()
+        };
+        model::create_catalogue(txn, &catalogue)?;
+        let uuids: Vec<String> = table
+            .events
+            .iter()
+            .map(|event| event.uuid.clone())
+            .collect();
+        model::add_catalogue_events(txn, &catalogue.uuid, &uuids);
+        written.catalogues.push(catalogue.uuid);
+    }
+    Ok(written)
+}
+
+/// The name asked for (with `_0`, `_1`… when there are several tables), else the file's
+/// name for its one table, else the table's own name.
+fn catalogue_name(imported: &Imported, name: Option<&str>, index: usize) -> String {
+    let single = imported.tables.len() == 1;
+    let table = imported.tables[index].name.as_str();
+    let named = |base: &str| match single {
+        true => base.to_owned(),
+        false => format!("{base}_{index}"),
+    };
+    match (name, imported.name.as_deref().filter(|_| single)) {
+        (Some(name), _) | (None, Some(name)) => named(name),
+        (None, None) if !table.is_empty() => table.to_owned(),
+        (None, None) => named("Imported Catalogue"),
+    }
+}
+
 struct Table {
     name: String,
     fields: Vec<Field>,
@@ -667,7 +718,7 @@ impl Kind {
 mod tests {
     use serde_json::{Map, Value, json};
 
-    use super::{export, export_many, import};
+    use super::{export, export_many, import, write};
     use crate::model::{CatalogueSummary, EventRecord, Status};
     use crate::time::Timestamp;
     use crate::votable::VotableError;
@@ -1110,5 +1161,38 @@ mod tests {
         );
         assert!(xml.contains("<TD>2</TD></TR>"), "{xml}");
         assert!(xml.contains("<TD>2.5</TD></TR>"), "{xml}");
+    }
+
+    #[test]
+    fn each_table_is_written_as_a_new_catalogue() {
+        let mut second = event("2025-01-31 11:00:00", None);
+        second.uuid = "00000000-0000-4000-8000-000000000002".to_owned();
+        let one = export(&catalogue("alpha"), &[event("2025-01-31 10:00:00", None)]).unwrap();
+        let two = export_many(&[
+            (&catalogue("alpha"), &[event("2025-01-31 10:00:00", None)]),
+            (&catalogue("beta"), &[second]),
+        ])
+        .unwrap();
+        let doc = yrs::Doc::new();
+        let mut txn = yrs::Transact::transact_mut(&doc);
+
+        let named = write(&mut txn, &import(&one).unwrap(), None).unwrap();
+        let renamed = write(&mut txn, &import(&one).unwrap(), Some("mine")).unwrap();
+        let many = write(&mut txn, &import(&two).unwrap(), None).unwrap();
+        let mine = write(&mut txn, &import(&two).unwrap(), Some("mine")).unwrap();
+
+        let name = |uuid: &str| crate::model::catalogue(&txn, uuid).unwrap().name;
+        assert_eq!(name(&named.catalogues[0]), "alpha");
+        assert_eq!(name(&renamed.catalogues[0]), "mine");
+        assert_eq!(name(&many.catalogues[0]), "alpha");
+        assert_eq!(name(&many.catalogues[1]), "beta");
+        assert_eq!(name(&mine.catalogues[1]), "mine_1");
+        assert_ne!(named.catalogues, renamed.catalogues);
+        let listed = crate::model::listed_events(&txn, &many.catalogues[1]);
+        assert_eq!(listed, ["00000000-0000-4000-8000-000000000002"]);
+        let author = crate::model::catalogue(&txn, &named.catalogues[0])
+            .unwrap()
+            .author;
+        assert_eq!(author.as_deref(), Some("a@x.org"));
     }
 }

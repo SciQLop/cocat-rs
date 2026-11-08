@@ -20,7 +20,7 @@ use cocat_core::model::{
     Used, Vertex,
 };
 use cocat_core::time::Timestamp;
-use cocat_core::votable;
+use cocat_core::{tscat_json, votable};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -1485,59 +1485,30 @@ impl Project {
         path: String,
         table_name: Option<String>,
     ) -> Result<usize> {
-        let xml = std::fs::read_to_string(&path)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let imported =
-            votable::import(&xml).map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let base = table_name
-            .or(imported.name)
-            .unwrap_or_else(|| "Imported Catalogue".to_owned());
-        let author = imported
-            .author
-            .unwrap_or_else(|| "VOTable Import".to_owned());
-        let single = imported.tables.len() == 1;
-        let warnings = write(
-            &self.room,
-            |txn| -> std::result::Result<_, model::WriteError> {
-                let mut warnings = Vec::new();
-                for (index, table) in imported.tables.iter().enumerate() {
-                    let name = if single {
-                        base.clone()
-                    } else {
-                        format!("{base}_{index}")
-                    };
-                    warnings.extend(import_table(txn, name, &author, &table.events)?);
-                }
-                Ok(warnings)
-            },
-        )?
+        let xml = std::fs::read_to_string(&path).map_err(value_error)?;
+        let imported = votable::import(&xml).map_err(value_error)?;
+        let written = write(&self.room, |txn| {
+            votable::write(txn, &imported, table_name.as_deref())
+        })?
         .map_err(value_error)?;
-        warn(py, &warnings)?;
-        Ok(imported.tables.len())
+        warn(py, &written.warnings)?;
+        Ok(written.catalogues.len())
     }
-}
 
-/// Writes one imported table as a catalogue holding its events.
-fn import_table(
-    txn: &mut yrs::TransactionMut<'_>,
-    name: String,
-    author: &str,
-    events: &[EventRecord],
-) -> std::result::Result<Vec<model::TypeWarning>, model::WriteError> {
-    let mut warnings = Vec::new();
-    for event in events {
-        warnings.extend(model::create_event(txn, event)?);
+    /// Imports a file in tscat's JSON format and returns the uuids of its catalogues, in the
+    /// file's order. What could not come across as it was is said as warnings.
+    fn import_tscat_json(&self, py: Python<'_>, text: &str) -> Result<Vec<String>> {
+        let import = tscat_json::parse(text).map_err(value_error)?;
+        let now = now()?;
+        let written =
+            write(&self.room, |txn| tscat_json::write(txn, &import, now))?.map_err(value_error)?;
+        let module = py.import("warnings")?;
+        for warning in &import.warnings {
+            module.call_method1("warn", (warning,))?;
+        }
+        warn(py, &written.warnings)?;
+        Ok(written.catalogues)
     }
-    let catalogue = NewCatalogue {
-        uuid: uuid::Uuid::new_v4().to_string(),
-        name,
-        author: Some(author.to_owned()),
-        ..NewCatalogue::default()
-    };
-    model::create_catalogue(txn, &catalogue)?;
-    let uuids: Vec<String> = events.iter().map(|event| event.uuid.clone()).collect();
-    model::add_catalogue_events(txn, &catalogue.uuid, &uuids);
-    Ok(warnings)
 }
 
 /// The VOTable a set of catalogues exports to, the file Python cocat's exporter writes.
@@ -1549,19 +1520,42 @@ fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
     let (room, uuids) = catalogues_of(catalogues)?;
     let doc = room.doc();
     let txn = doc.transact();
-    let mut exported = Vec::new();
-    for uuid in &uuids {
-        let catalogue = model::catalogue(&txn, uuid).ok_or_else(|| unknown("catalogue"))?;
-        let events = model::catalogue_events(&txn, uuid)
-            .unwrap_or_else(|| Ok(Vec::new()))
-            .map_err(value_error)?;
-        exported.push((catalogue, events));
-    }
+    let exported = catalogues_with_events(&txn, &uuids)?;
     let pairs: Vec<(&model::CatalogueSummary, &[EventRecord])> = exported
         .iter()
         .map(|(catalogue, events)| (catalogue, events.as_slice()))
         .collect();
     votable::export_many(&pairs).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+/// Each catalogue with its member events, for an export.
+fn catalogues_with_events<T: yrs::ReadTxn>(
+    txn: &T,
+    uuids: &[String],
+) -> Result<Vec<(model::CatalogueSummary, Vec<EventRecord>)>> {
+    let mut exported = Vec::new();
+    for uuid in uuids {
+        let catalogue = model::catalogue(txn, uuid).ok_or_else(|| unknown("catalogue"))?;
+        let events = model::catalogue_events(txn, uuid)
+            .unwrap_or_else(|| Ok(Vec::new()))
+            .map_err(value_error)?;
+        exported.push((catalogue, events));
+    }
+    Ok(exported)
+}
+
+/// The catalogues and their member events in tscat's JSON format.
+#[pyfunction]
+fn export_tscat_json(catalogues: &Bound<'_, PyAny>) -> Result<String> {
+    let (room, uuids) = catalogues_of(catalogues)?;
+    let doc = room.doc();
+    let txn = doc.transact();
+    let exported = catalogues_with_events(&txn, &uuids)?;
+    let pairs: Vec<(&model::CatalogueSummary, &[EventRecord])> = exported
+        .iter()
+        .map(|(catalogue, events)| (catalogue, events.as_slice()))
+        .collect();
+    tscat_json::export(&txn, &pairs).map_err(value_error)
 }
 
 /// The uuids of the catalogues an argument names (one catalogue or an iterable of them),
@@ -1867,6 +1861,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(commit, module)?)?;
     module.add_function(wrap_pyfunction!(copy_version, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
+    module.add_function(wrap_pyfunction!(export_tscat_json, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;
     server_errors::register(module)?;
