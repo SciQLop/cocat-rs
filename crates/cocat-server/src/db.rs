@@ -762,6 +762,10 @@ pub const MARK_PERSONAL_ROOMS: &str = r#"UPDATE "user" SET personal_room = (
 )
 WHERE personal_room IS NULL"#;
 
+/// Migration 0011, for accounts imported after it ran: an unmarked account's own room is the
+/// one it owns named by its email's local part. Run after [`MARK_PERSONAL_ROOMS`].
+pub const MARK_EMAIL_ROOMS: &str = include_str!("../migrations/0011_email_personal_room.sql");
+
 /// The account's own project, while the account still owns it.
 pub async fn personal_room(
     executor: impl Executor<'_, Database = Sqlite>,

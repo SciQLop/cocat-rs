@@ -256,14 +256,13 @@ async fn an_immediate_transaction_waits_for_the_writer() {
     );
 }
 
-/// A database as the server left it before migration 10, holding what an import of Python
-/// cocat wrote: its own projects are uuid-hex rooms named "Personal".
-async fn before_personal_rooms(path: &std::path::Path) -> SqlitePool {
+/// A database as the server left it before migration `version`.
+async fn before_migration(path: &std::path::Path, version: i64) -> SqlitePool {
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.migrations = migrator
         .migrations
         .iter()
-        .filter(|migration| migration.version < 10)
+        .filter(|migration| migration.version < version)
         .cloned()
         .collect::<Vec<_>>()
         .into();
@@ -297,7 +296,7 @@ async fn python_room(pool: &SqlitePool, id: &str, name: &str, created: &str, own
 async fn migration_10_marks_the_own_project_of_imported_accounts() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("test.db");
-    let old = before_personal_rooms(&path).await;
+    let old = before_migration(&path, 10).await;
     let mut people = Vec::new();
     for email in ["alice@example.org", "bob@example.org", "carol@example.org"] {
         people.push(user(&old, email).await.to_string());
@@ -323,6 +322,51 @@ async fn migration_10_marks_the_own_project_of_imported_accounts() {
         "not a uuid: not the own project"
     );
     assert_eq!(own(carol).await.unwrap().as_deref(), Some(carols));
+}
+
+/// Python production's own room is the one named by the email's local part, owned by
+/// that account.
+#[tokio::test]
+async fn migration_11_marks_the_room_named_by_the_email_as_the_own_project() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("test.db");
+    let old = before_migration(&path, 11).await;
+    let mut people = Vec::new();
+    for email in [
+        "alice.smith@example.org",
+        "bob@example.org",
+        "carol@example.org",
+    ] {
+        people.push(user(&old, email).await.to_string());
+    }
+    let (alice, bob, carol) = (&people[0], &people[1], &people[2]);
+    python_room(&old, "alice.smith", "Alice", "2025-01-01 00:00:00", alice).await;
+    python_room(&old, "bob", "Bob", "2025-01-01 00:00:00", alice).await;
+    let carols = "cccccccccccccccccccccccccccccccc";
+    python_room(&old, carols, "Personal", "2026-01-01 00:00:00", carol).await;
+    python_room(&old, "carol", "Carol", "2025-01-01 00:00:00", carol).await;
+    sqlx::query(r#"UPDATE "user" SET personal_room = ? WHERE id = ?"#)
+        .bind(carols)
+        .bind(carol)
+        .execute(&old)
+        .await
+        .unwrap();
+    old.close().await;
+
+    let pool = db::open(&path).await.unwrap();
+
+    let own = |id: &str| db::personal_room(&pool, id.parse().unwrap());
+    assert_eq!(own(alice).await.unwrap().as_deref(), Some("alice.smith"));
+    assert_eq!(
+        own(bob).await.unwrap(),
+        None,
+        "the room named like bob belongs to alice"
+    );
+    assert_eq!(
+        own(carol).await.unwrap().as_deref(),
+        Some(carols),
+        "an account already marked keeps its own project"
+    );
 }
 
 #[tokio::test]

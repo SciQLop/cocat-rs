@@ -285,6 +285,7 @@ async fn import_users(
     sqlx::query(db::MARK_PERSONAL_ROOMS)
         .execute(&mut *tx)
         .await?;
+    sqlx::query(db::MARK_EMAIL_ROOMS).execute(&mut *tx).await?;
 
     if dry_run {
         tx.rollback().await.map_err(db::DbError::from)?;

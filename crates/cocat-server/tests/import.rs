@@ -653,3 +653,47 @@ async fn an_imported_account_keeps_its_own_project() {
     );
     assert_eq!(db::personal_room(&fixture.pool, bob).await.unwrap(), None);
 }
+
+/// Python production gave no account a "Personal" room: its own room is the one named by the
+/// email's local part, owned by that account.
+#[tokio::test]
+async fn an_imported_account_owning_the_room_named_by_its_email_gets_it_as_its_own() {
+    let fixture = Fixture::start().await;
+    let python = fixture.dir.path().join("production.db");
+    std::fs::copy(Fixture::released(), &python).unwrap();
+    let pool = SqlitePool::connect(&format!("sqlite://{}", python.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"UPDATE user SET rooms = '["lab", "alice", "bob"]' WHERE email = 'alice@example.org'"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        Some(&python),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let alice = fixture.user("alice@example.org").await.id;
+    let bob = fixture.user("bob@example.org").await.id;
+    assert_eq!(
+        db::personal_room(&fixture.pool, alice)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("alice")
+    );
+    assert_eq!(
+        db::personal_room(&fixture.pool, bob).await.unwrap(),
+        None,
+        "the room named like bob belongs to alice"
+    );
+}
