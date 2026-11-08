@@ -8,8 +8,8 @@ wire format and the `.y` project files are shared with it.
 
 A project holds catalogues and their events. Everyone in a project sees all of it, with the
 role they were given; an event can belong to several catalogues of one project; history
-covers the whole project. The API, the websocket path, the CLI and the Python package call a
-project a *room*.
+covers the whole project. The API, the websocket path and the CLI call a project a
+*room*. The Python package says project.
 
 ## Build
 
@@ -382,18 +382,21 @@ maturin develop -m crates/cocat-py/Cargo.toml
 pip install target/wheels/cocat_rs-*.whl
 ```
 
+Before 0.3.0 the package said room: `Room`, `RoomInfo`, `rooms()` and `room_id=`. Those
+names still work in 0.3 with a `DeprecationWarning` naming the new one, and go in 0.4.
+
 **Script mode** works on the cached copy, as cocat's own API does:
 
 ```python
 from cocat_rs import api
 
-api.set_config(host="http://localhost:8000", file_path="/tmp/cocat", room_id="my-room")
+api.set_config(host="http://localhost:8000", file_path="/tmp/cocat", project_id="my-room")
 api.log_in("you@example.org", "secret")
 catalogue = api.create_catalogue(name="events", author="you@example.org")
 api.save()
 ```
 
-**Client mode** keeps the same `Room` in step with a server through the websocket.
+**Client mode** keeps the same `Project` in step with a server through the websocket.
 `connect` takes the server's address, the one you log in to (with its path prefix behind a
 proxy), and adds `/room/<id>` itself:
 
@@ -402,29 +405,29 @@ import cocat_rs
 
 url = "http://localhost:8000"
 cookie = cocat_rs.login(url, "you@example.org", "secret")
-room = cocat_rs.Room.open("/tmp/cocat", "my-room")
-room.connect(url, cookie, credentials=("you@example.org", "secret"))
-room.wait_synced(10)
+project = cocat_rs.Project.open("/tmp/cocat", "my-room")
+project.connect(url, cookie, credentials=("you@example.org", "secret"))
+project.wait_synced(10)
 
-print(room.status)                      # offline, connecting, synced, unauthorized
+print(project.status)                   # offline, connecting, synced, unauthorized
 
-event = room.event("<a uuid>")
+event = project.event("<a uuid>")
 print(event.catalogues)                 # the uuids of the catalogues listing it
-print(room.event_arrays([event], attributes=True))
+print(project.event_arrays([event], attributes=True))
 ```
 
 Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
-the event, from `room.create_origin(...)`), `source_id`, `created`, `comment` and a TFCat
+the event, from `project.create_origin(...)`), `source_id`, `created`, `comment` and a TFCat
 `shape`. All are settable and all are keyword arguments of `create_event`. Attributes register
-their type in the project (`room.attribute_types()`); writing another type warns but is kept.
+their type in the project (`project.attribute_types()`); writing another type warns but is kept.
 
 ```python
-event = room.create_event(start, stop, author="you@example.org", confidence=0.8,
-                          tags=["shock"], attributes={"density": 12.5})
+event = project.create_event(start, stop, author="you@example.org", confidence=0.8,
+                             tags=["shock"], attributes={"density": 12.5})
 event.status = "reviewed"
 event.delete()                          # to the trash: hidden from every list
-room.trash()                            # [event]
+project.trash()                         # [event]
 event.restore()                         # or event.purge(), for good
 ```
 
@@ -432,7 +435,7 @@ A **smart catalogue** has a `rule`: its members are its listed events plus what 
 yields, computed on every read, so it follows the project as people edit it.
 
 ```python
-smart = room.create_catalogue(name="strong shocks")
+smart = project.create_catalogue(name="strong shocks")
 smart.rule = {"filter": {"all": True},
               "where": {"and": [{"contains": ["tags", "shock"]},
                                 {"cmp": ["confidence", ">=", 0.7]}]}}
@@ -453,9 +456,9 @@ to the trash and dynamic catalogues become smart ones.
 ```python
 from cocat_rs import tscat
 
-tscat.import_database(room)             # the local tscat database: pip install 'cocat-rs[tscat]'
-tscat.import_json(room, "export.json")  # tscat's JSON, no tscat needed
-tscat.export_json(room, [smart], "out.json")
+tscat.import_database(project)          # the local tscat database: pip install 'cocat-rs[tscat]'
+tscat.import_json(project, "export.json") # tscat's JSON, no tscat needed
+tscat.export_json(project, [smart], "out.json")
 ```
 
 tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `import_json`
@@ -464,8 +467,8 @@ keeps such a catalogue's members without a rule, and warns.
 **History.** The server keeps every version of a project: a run of changes by one person with
 no gap over five minutes, and no longer than an hour. Each version says who made it, when, and how many events it added,
 changed or removed. `cocat_rs.history` lists them, newest first, as dicts; `catalogue=` keeps
-the versions that touched one catalogue or its events. `Room.at` fetches the project as it was
-at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
+the versions that touched one catalogue or its events. `Project.at` fetches the project as it
+was at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
 fetched. `cocat_rs.restore` makes the project, or one catalogue, equal to a version again, as one
 new change by you, so a restore can itself be undone; events created since go to the trash.
 A restore is always a version of its own, with `restored_from` set to the version it brought
@@ -473,10 +476,10 @@ back. A version's `id` is its first change, so it stays the same, and keeps its 
 its author goes on editing.
 `cocat_rs.commit` saves the newest version on purpose: it ends at the project's last change
 the server has, with an optional `name` and `message` (a note, up to 2000 characters), and
-returns its id. Call `room.save()` first so your pending edits reached the server. The next
+returns its id. Call `project.save()` first so your pending edits reached the server. The next
 change starts a new version, and the list marks the saved one with `committed` and its
 `message`. Saving again with nothing new raises `cocat_rs.Conflict`.
-`cocat_rs.copy_version(url, cookie, room_id, version, name)` makes a new project, owned by
+`cocat_rs.copy_version(url, cookie, project_id, version, name)` makes a new project, owned by
 you, that starts as the version: same catalogues, events (with their uuids), rules and trash.
 It returns the new project's id. Any member may copy, a viewer too; the copy counts against
 your storage quota. The original and its history stay as they were.
@@ -484,17 +487,17 @@ your storage quota. The original and its history stay as they were.
 ```python
 versions = cocat_rs.history(url, cookie, "my-room")
 first = versions[-1]["id"]
-past = cocat_rs.Room.at(url, cookie, "my-room", first)
+past = cocat_rs.Project.at(url, cookie, "my-room", first)
 past.catalogues()                       # as they were
 cocat_rs.name_version(url, cookie, "my-room", first, "before the import")
-room.save()
+project.save()
 cocat_rs.commit(url, cookie, "my-room", name="paper v1", message="as submitted")
 cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
 trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
 ```
 
-**Errors.** When the server refuses a call (`login`, `rooms`, `history`, `Room.at`, `restore`,
-`name_version`, `commit`, `copy_version`), the error says why. `cocat_rs.Unauthorized` (401)
+**Errors.** When the server refuses a call (`login`, `projects`, `history`, `Project.at`,
+`restore`, `name_version`, `commit`, `copy_version`), the error says why. `cocat_rs.Unauthorized` (401)
 means the session expired or there is none: log in again. `cocat_rs.Forbidden` (403) means
 your role does not allow it, `cocat_rs.ServerNotFound` (404) that the project or version does
 not exist, and `cocat_rs.Conflict` (409) that the call clashes with the project, e.g. nothing
@@ -516,14 +519,14 @@ except cocat_rs.Conflict as error:
 a deactivation, a restart with a new database): the sync task logs in again once, swaps the
 cookie and retries, and only a refusal right after a fresh login, or a login that fails, ends
 in `unauthorized`. Without `credentials` a refused session is final, as before.
-`room.set_cookie(...)` replaces the cookie of a running connection.
+`project.set_cookie(...)` replaces the cookie of a running connection.
 
 A listener hears the project's changes on the loop it was registered from:
 
 ```python
 class Listener:
     def status(self, value):
-        print("the room is now", value)
+        print("the project is now", value)
 
     def catalogue_added(self, uuid):
         print("new catalogue", uuid)
@@ -531,7 +534,7 @@ class Listener:
     def changes_done(self):
         pass
 
-handle = room.listen(Listener())
+handle = project.listen(Listener())
 handle.close()
 ```
 

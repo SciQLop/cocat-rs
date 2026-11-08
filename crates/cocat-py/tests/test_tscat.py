@@ -33,8 +33,8 @@ def database(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def room(cache):
-    return cc.Room.open(cache, "75ca7000-0000-4000-8000-000000000000")
+def project(cache):
+    return cc.Project.open(cache, "75ca7000-0000-4000-8000-000000000000")
 
 
 @pytest.fixture
@@ -108,8 +108,8 @@ def expected_attribute(value):
     return value
 
 
-def assert_event_matches(room, event):
-    ours = room.event(event.uuid)
+def assert_event_matches(project, event):
+    ours = project.event(event.uuid)
     assert (ours.start, ours.stop) == (utc(event.start), utc(event.stop))
     assert ours.author == (event.author or None)
     assert ours.tags == set(event.tags)
@@ -129,24 +129,24 @@ def tscat_member_uuids(catalogue):
     return {event.uuid for event in tscat.get_events(catalogue)[0]}
 
 
-def test_every_event_field_imports(filled, room):
-    cc_tscat.import_database(room)
+def test_every_event_field_imports(filled, project):
+    cc_tscat.import_database(project)
     events = tscat_events()
     assert len(events) == 4
     for event in events:
-        assert_event_matches(room, event)
-        assert room.event(event.uuid).origin == "tscat"
-    assert room.origin("tscat")["kind"] == "import"
-    assert room.attribute_types()["when"]["type"] == "date"
-    assert len(room.trash()) == 1
+        assert_event_matches(project, event)
+        assert project.event(event.uuid).origin == "tscat"
+    assert project.origin("tscat")["kind"] == "import"
+    assert project.attribute_types()["when"]["type"] == "date"
+    assert len(project.trash()) == 1
 
 
-def test_every_catalogue_imports_with_tscats_members(filled, room):
-    imported = cc_tscat.import_database(room)
+def test_every_catalogue_imports_with_tscats_members(filled, project):
+    imported = cc_tscat.import_database(project)
     catalogues = tscat_catalogues()
     assert {catalogue.uuid for catalogue in imported} == {c.uuid for c in catalogues}
     for catalogue in catalogues:
-        ours = room.catalogue(catalogue.uuid)
+        ours = project.catalogue(catalogue.uuid)
         assert ours.name == catalogue.name
         assert ours.author == catalogue.author
         assert ours.tags == set(catalogue.tags)
@@ -156,17 +156,17 @@ def test_every_catalogue_imports_with_tscats_members(filled, room):
         assert member_uuids(ours) == tscat_member_uuids(catalogue), catalogue.name
 
 
-def test_the_smart_catalogues_match_tscats_filter(filled, room):
-    cc_tscat.import_database(room)
+def test_the_smart_catalogues_match_tscats_filter(filled, project):
+    cc_tscat.import_database(project)
     expected = {"smart": 3, "late": 1, "rated": 2}
     for name, count in expected.items():
         catalogue = tscat_catalogue(name=name)
         assert len(tscat_member_uuids(catalogue)) == count, name
-        assert member_uuids(room.catalogue(catalogue.uuid)) == tscat_member_uuids(catalogue)
+        assert member_uuids(project.catalogue(catalogue.uuid)) == tscat_member_uuids(catalogue)
 
 
-def test_importing_again_updates_instead_of_duplicating(filled, room):
-    cc_tscat.import_database(room)
+def test_importing_again_updates_instead_of_duplicating(filled, project):
+    cc_tscat.import_database(project)
     listed = tscat_catalogue(name="listed")
     alice = next(e for e in tscat.get_events() if e.author == "alice")
     gone = tscat.get_events(removed_items=True)[0]
@@ -178,19 +178,19 @@ def test_importing_again_updates_instead_of_duplicating(filled, room):
     tscat.remove_events_from_catalogue(listed, [alice])
     tscat.save()
 
-    cc_tscat.import_database(room)
+    cc_tscat.import_database(project)
 
-    assert len(room.catalogues()) == len(tscat.get_catalogues())
+    assert len(project.catalogues()) == len(tscat.get_catalogues())
     for event in tscat_events():
-        assert_event_matches(room, event)
-    ours = room.catalogue(listed.uuid)
+        assert_event_matches(project, event)
+    ours = project.catalogue(listed.uuid)
     assert ours.name == "renamed"
     assert member_uuids(ours) == tscat_member_uuids(listed)
     for catalogue in tscat_catalogues():
-        assert member_uuids(room.catalogue(catalogue.uuid)) == tscat_member_uuids(catalogue)
+        assert member_uuids(project.catalogue(catalogue.uuid)) == tscat_member_uuids(catalogue)
 
 
-def test_a_missing_tscat_is_a_clear_import_error(room, monkeypatch):
+def test_a_missing_tscat_is_a_clear_import_error(project, monkeypatch):
     import builtins
 
     real_import = builtins.__import__
@@ -202,25 +202,25 @@ def test_a_missing_tscat_is_a_clear_import_error(room, monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", without_tscat)
     with pytest.raises(ImportError, match=r"cocat-rs\[tscat\]"):
-        cc_tscat.import_database(room)
+        cc_tscat.import_database(project)
 
 
-def test_tscats_json_export_imports(filled, room, tmp_path):
+def test_tscats_json_export_imports(filled, project, tmp_path):
     path = tmp_path / "tscat.json"
     catalogues = [tscat_catalogue(name=name) for name in ("listed", "smart")]
     path.write_text(tscat_export_json(catalogues))
     with pytest.warns(UserWarning, match="smart"):
-        cc_tscat.import_json(room, path)
+        cc_tscat.import_json(project, path)
     for catalogue in catalogues:
-        ours = room.catalogue(catalogue.uuid)
+        ours = project.catalogue(catalogue.uuid)
         assert ours.rule is None
         assert member_uuids(ours) == tscat_member_uuids(catalogue)
         for event in tscat.get_events(catalogue)[0]:
-            assert_event_matches(room, event)
+            assert_event_matches(project, event)
 
 
-def test_our_json_export_imports_into_tscat(database, room, tmp_path):
-    event = room.create_event(
+def test_our_json_export_imports_into_tscat(database, project, tmp_path):
+    event = project.create_event(
         start=datetime.datetime(2021, 3, 1, 12, tzinfo=UTC),
         stop=datetime.datetime(2021, 3, 1, 13, 30, 0, 250000, tzinfo=UTC),
         author="dana",
@@ -229,18 +229,18 @@ def test_our_json_export_imports_into_tscat(database, room, tmp_path):
         confidence=0.4,
         attributes={"n": 2, "seen": datetime.datetime(2021, 3, 2, tzinfo=UTC), "ok": True},
     )
-    plain = room.create_event(
+    plain = project.create_event(
         start=datetime.datetime(2021, 3, 2, tzinfo=UTC),
         stop=datetime.datetime(2021, 3, 2, 1, tzinfo=UTC),
         author="erin",
     )
-    catalogue = room.create_catalogue(
+    catalogue = project.create_catalogue(
         name="ours", author="dana", tags=["x"], attributes={"mission": "MMS"}, events=[event]
     )
-    smart = room.create_catalogue(name="by erin")
+    smart = project.create_catalogue(name="by erin")
     smart.rule = {"filter": {"all": True}, "where": {"cmp": ["author", "==", "erin"]}}
     path = tmp_path / "ours.json"
-    cc_tscat.export_json(room, [catalogue, "by erin"], path)
+    cc_tscat.export_json(project, [catalogue, "by erin"], path)
 
     imported = tscat_import_json_file(str(path))
 
@@ -254,11 +254,11 @@ def test_our_json_export_imports_into_tscat(database, room, tmp_path):
     assert exported[event.uuid].rating == 4
     assert exported[plain.uuid].rating is None
     for uuid in (event.uuid, plain.uuid):
-        assert_event_matches(room, exported[uuid])
+        assert_event_matches(project, exported[uuid])
     assert json.loads(path.read_text())["catalogues"][1]["predicate"] is None
 
 
-def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, room):
+def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, project):
     """tscat 0.5.1 resolves InCatalogue through a lookup that returns its first catalogue;
     the import reads the stored predicate, so the rule names the catalogue it was made for."""
     tscat.create_catalogue("first", author="a")
@@ -267,7 +267,7 @@ def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, ro
     tscat.save()
     target_uuid = target.uuid
 
-    cc_tscat.import_database(room)
+    cc_tscat.import_database(project)
 
-    smart = next(c for c in room.catalogues() if c.name == "smart")
+    smart = next(c for c in project.catalogues() if c.name == "smart")
     assert json.dumps(smart.rule).count(target_uuid) == 1

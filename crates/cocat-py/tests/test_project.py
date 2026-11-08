@@ -13,8 +13,8 @@ PRECISE_START = datetime.datetime(2025, 1, 31, 11, 0, 0, 123456, tzinfo=UTC)
 PRECISE_STOP = datetime.datetime(2025, 1, 31, 11, 1, 0, 654321, tzinfo=UTC)
 
 
-def a_catalogue(room, name="alpha"):
-    return room.create_catalogue(
+def a_catalogue(project, name="alpha"):
+    return project.create_catalogue(
         name=name,
         author="a@x.org",
         tags=["t1", "t2"],
@@ -22,8 +22,8 @@ def a_catalogue(room, name="alpha"):
     )
 
 
-def an_event(room, start=START, stop=STOP, confidence=0.3):
-    return room.create_event(
+def an_event(project, start=START, stop=STOP, confidence=0.3):
+    return project.create_event(
         start=start,
         stop=stop,
         author="a@x.org",
@@ -34,25 +34,25 @@ def an_event(room, start=START, stop=STOP, confidence=0.3):
     )
 
 
-def test_an_offline_room_is_empty(cache):
-    offline = cc.Room.open(str(cache), "aaaaaaaa-1111-4111-8111-111111111111")
+def test_an_offline_project_is_empty(cache):
+    offline = cc.Project.open(str(cache), "aaaaaaaa-1111-4111-8111-111111111111")
     assert offline.status == "offline"
     assert offline.catalogues() == []
     offline.close()
 
 
-def test_a_catalogue_and_an_event_read_back(room):
-    catalogue = a_catalogue(room)
-    event = an_event(room)
+def test_a_catalogue_and_an_event_read_back(project):
+    catalogue = a_catalogue(project)
+    event = an_event(project)
     catalogue.add_events([event])
 
-    read = room.catalogue("alpha")
+    read = project.catalogue("alpha")
     assert read.uuid == catalogue.uuid
     assert read.author == "a@x.org"
     assert read.tags == {"t1", "t2"}
     assert read.attributes == {"mission": "MMS", "level": 2.0}
 
-    read_event = room.event(event.uuid)
+    read_event = project.event(event.uuid)
     assert read_event.start == START
     assert read_event.stop == STOP
     assert read_event.author == "a@x.org"
@@ -64,64 +64,64 @@ def test_a_catalogue_and_an_event_read_back(room):
     assert read_event.range == (START, STOP)
 
 
-def test_times_come_back_as_aware_utc(room):
-    catalogue = a_catalogue(room)
-    event = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
+def test_times_come_back_as_aware_utc(project):
+    catalogue = a_catalogue(project)
+    event = an_event(project, start=PRECISE_START, stop=PRECISE_STOP)
     catalogue.add_events([event])
 
-    read = room.event(event.uuid)
+    read = project.event(event.uuid)
     assert read.start == PRECISE_START
     assert read.start.tzinfo is UTC
     assert read.start.microsecond == 123456
     assert read.stop.microsecond == 654321
 
 
-def test_a_naive_datetime_is_taken_as_utc(room):
-    event = room.create_event(
+def test_a_naive_datetime_is_taken_as_utc(project):
+    event = project.create_event(
         start=datetime.datetime(2025, 1, 31, 10, 0),
         stop=datetime.datetime(2025, 1, 31, 10, 1),
         author="a@x.org",
     )
-    read = room.event(event.uuid)
+    read = project.event(event.uuid)
     assert read.start == START
     assert read.start.tzinfo is UTC
 
 
-def test_an_unknown_object_raises_runtime_error(room):
+def test_an_unknown_object_raises_runtime_error(project):
     with pytest.raises(RuntimeError):
-        room.catalogue("nope")
+        project.catalogue("nope")
     with pytest.raises(RuntimeError):
-        room.event("bbbbbbbb-2222-4222-8222-222222222222")
+        project.event("bbbbbbbb-2222-4222-8222-222222222222")
 
 
-def test_an_unknown_object_is_not_found(room):
+def test_an_unknown_object_is_not_found(project):
     assert issubclass(cc.NotFound, LookupError)
     assert issubclass(cc.NotFound, RuntimeError)
     with pytest.raises(cc.NotFound) as missing:
-        room.catalogue("nope")
+        project.catalogue("nope")
     assert isinstance(missing.value, LookupError)
     assert isinstance(missing.value, RuntimeError)
     with pytest.raises(cc.NotFound):
-        room.event("bbbbbbbb-2222-4222-8222-222222222222")
+        project.event("bbbbbbbb-2222-4222-8222-222222222222")
 
 
-def test_invalid_input_raises_value_error(room, tmp_path):
+def test_invalid_input_raises_value_error(project, tmp_path):
     with pytest.raises(ValueError):
-        room.create_event(start="not a time", stop=STOP, author="a@x.org")
+        project.create_event(start="not a time", stop=STOP, author="a@x.org")
     with pytest.raises(ValueError):
-        cc.Room.open(tmp_path, "")
+        cc.Project.open(tmp_path, "")
 
 
-def test_a_listed_room_id_opens_whatever_its_characters(tmp_path):
-    for room_id in ["Bepi MSA", "../escape", "a/b", ".."]:
-        cc.Room.open(tmp_path, room_id).close()
+def test_a_listed_project_id_opens_whatever_its_characters(tmp_path):
+    for project_id in ["Bepi MSA", "../escape", "a/b", ".."]:
+        cc.Project.open(tmp_path, project_id).close()
     assert len(list(tmp_path.iterdir())) == 4
 
 
-def test_the_name_and_the_attributes_change(room):
-    catalogue = a_catalogue(room)
+def test_the_name_and_the_attributes_change(project):
+    catalogue = a_catalogue(project)
     catalogue.name = "beta"
-    assert room.catalogue(catalogue.uuid).name == "beta"
+    assert project.catalogue(catalogue.uuid).name == "beta"
 
     catalogue.set_attributes(level=3, platform="MMS4")
     assert catalogue.attributes == {
@@ -134,10 +134,10 @@ def test_the_name_and_the_attributes_change(room):
     assert catalogue.attributes == {"platform": "MMS4"}
 
 
-def test_the_events_of_a_catalogue_change(room):
-    catalogue = a_catalogue(room)
-    first = an_event(room)
-    second = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
+def test_the_events_of_a_catalogue_change(project):
+    catalogue = a_catalogue(project)
+    first = an_event(project)
+    second = an_event(project, start=PRECISE_START, stop=PRECISE_STOP)
 
     catalogue.add_events([first, second])
     assert {event.uuid for event in catalogue.events} == {first.uuid, second.uuid}
@@ -146,68 +146,68 @@ def test_the_events_of_a_catalogue_change(room):
     assert {event.uuid for event in catalogue.events} == {second.uuid}
 
 
-def test_an_event_range_changes(room):
-    event = an_event(room)
+def test_an_event_range_changes(project):
+    event = an_event(project)
     new_start = datetime.datetime(2025, 2, 1, 0, 0, tzinfo=UTC)
     new_stop = datetime.datetime(2025, 2, 1, 0, 1, tzinfo=UTC)
 
     event.range = (new_start, new_stop)
-    assert room.event(event.uuid).range == (new_start, new_stop)
+    assert project.event(event.uuid).range == (new_start, new_stop)
 
     event.set_attributes(level=4)
-    assert room.event(event.uuid).attributes == {"q": 1.5, "flag": True, "level": 4}
+    assert project.event(event.uuid).attributes == {"q": 1.5, "flag": True, "level": 4}
 
     event.remove_attributes(["q"])
-    assert room.event(event.uuid).attributes == {"flag": True, "level": 4}
+    assert project.event(event.uuid).attributes == {"flag": True, "level": 4}
 
 
-def test_a_deleted_event_goes_to_the_trash_and_comes_back(room):
-    catalogue = a_catalogue(room)
-    event = an_event(room)
+def test_a_deleted_event_goes_to_the_trash_and_comes_back(project):
+    catalogue = a_catalogue(project)
+    event = an_event(project)
     catalogue.add_events([event])
 
     event.delete()
     assert catalogue.events == set()
-    assert room.event(event.uuid).status == "deleted"
-    assert room.trash() == [event]
+    assert project.event(event.uuid).status == "deleted"
+    assert project.trash() == [event]
 
     event.restore()
     assert {e.uuid for e in catalogue.events} == {event.uuid}
-    assert room.trash() == []
+    assert project.trash() == []
 
 
-def test_purging_an_event_removes_it_for_good(room):
-    catalogue = a_catalogue(room)
-    event = an_event(room)
+def test_purging_an_event_removes_it_for_good(project):
+    catalogue = a_catalogue(project)
+    event = an_event(project)
     catalogue.add_events([event])
 
     event.purge()
     assert catalogue.events == set()
     with pytest.raises(cc.NotFound):
-        room.event(event.uuid)
+        project.event(event.uuid)
 
 
-def test_deleting_a_catalogue_keeps_its_events(room):
-    catalogue = a_catalogue(room)
-    event = an_event(room)
+def test_deleting_a_catalogue_keeps_its_events(project):
+    catalogue = a_catalogue(project)
+    event = an_event(project)
     catalogue.add_events([event])
 
     catalogue.delete()
-    assert room.catalogues() == []
-    assert room.catalogue(catalogue.uuid).deleted
-    assert room.event(event.uuid).uuid == event.uuid
+    assert project.catalogues() == []
+    assert project.catalogue(catalogue.uuid).deleted
+    assert project.event(event.uuid).uuid == event.uuid
 
     catalogue.restore()
-    assert room.catalogues() == [catalogue]
+    assert project.catalogues() == [catalogue]
     catalogue.purge()
     with pytest.raises(cc.NotFound):
-        room.catalogue(catalogue.uuid)
+        project.catalogue(catalogue.uuid)
 
 
-def test_event_arrays_are_numpy_timestamps_in_time_order(room):
-    catalogue = a_catalogue(room)
-    later = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
-    earlier = an_event(room)
+def test_event_arrays_are_numpy_timestamps_in_time_order(project):
+    catalogue = a_catalogue(project)
+    later = an_event(project, start=PRECISE_START, stop=PRECISE_STOP)
+    earlier = an_event(project)
     catalogue.add_events([later, earlier])
 
     arrays = catalogue.event_arrays()
@@ -227,11 +227,11 @@ def test_event_arrays_are_numpy_timestamps_in_time_order(room):
     ]
 
 
-def test_event_arrays_can_carry_the_attributes_from_the_same_read(room):
+def test_event_arrays_can_carry_the_attributes_from_the_same_read(project):
     """Two reads could straddle a remote change and misalign the lists; one read cannot."""
-    catalogue = a_catalogue(room)
-    later = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
-    earlier = room.create_event(
+    catalogue = a_catalogue(project)
+    later = an_event(project, start=PRECISE_START, stop=PRECISE_STOP)
+    earlier = project.create_event(
         start=START, stop=STOP, author="a@x.org", attributes={"q": 0.5}
     )
     catalogue.add_events([later, earlier])
@@ -243,17 +243,17 @@ def test_event_arrays_can_carry_the_attributes_from_the_same_read(room):
     assert "attributes" not in catalogue.event_arrays()
 
 
-def test_room_event_arrays_follow_the_uuid_order_and_skip_unknown(room):
+def test_project_event_arrays_follow_the_uuid_order_and_skip_unknown(project):
     """One read for a set of events named by uuid, in the caller's order."""
-    catalogue = a_catalogue(room)
-    later = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
-    earlier = room.create_event(
+    catalogue = a_catalogue(project)
+    later = an_event(project, start=PRECISE_START, stop=PRECISE_STOP)
+    earlier = project.create_event(
         start=START, stop=STOP, author="a@x.org", attributes={"q": 0.5}
     )
     catalogue.add_events([later, earlier])
     missing = "bbbbbbbb-2222-4222-8222-222222222222"
 
-    arrays = room.event_arrays(
+    arrays = project.event_arrays(
         [later.uuid, missing, earlier.uuid], attributes=True
     )
 
@@ -268,11 +268,11 @@ def test_room_event_arrays_follow_the_uuid_order_and_skip_unknown(room):
         np.datetime64("2025-01-31T10:01:00.000000", "us"),
     ]
     assert arrays["attributes"] == [{"q": 1.5, "flag": True}, {"q": 0.5}]
-    assert "attributes" not in room.event_arrays([earlier.uuid])
+    assert "attributes" not in project.event_arrays([earlier.uuid])
 
 
-def test_room_event_arrays_of_nothing_are_empty(room):
-    arrays = room.event_arrays(
+def test_project_event_arrays_of_nothing_are_empty(project):
+    arrays = project.event_arrays(
         ["bbbbbbbb-2222-4222-8222-222222222222"], attributes=True
     )
     assert arrays["uuid"] == []
@@ -280,31 +280,31 @@ def test_room_event_arrays_of_nothing_are_empty(room):
     assert arrays["attributes"] == []
 
 
-def test_an_event_names_the_catalogues_that_list_it(room):
-    first = a_catalogue(room, "zeta")
-    second = a_catalogue(room, "alpha")
-    event = an_event(room)
-    unwatched = an_event(room, start=PRECISE_START, stop=PRECISE_STOP)
+def test_an_event_names_the_catalogues_that_list_it(project):
+    first = a_catalogue(project, "zeta")
+    second = a_catalogue(project, "alpha")
+    event = an_event(project)
+    unwatched = an_event(project, start=PRECISE_START, stop=PRECISE_STOP)
 
     first.add_events([event])
     second.add_events([event, unwatched])
 
     assert event.catalogues == sorted([first.uuid, second.uuid])
-    assert room.event(event.uuid).catalogues == sorted([first.uuid, second.uuid])
+    assert project.event(event.uuid).catalogues == sorted([first.uuid, second.uuid])
     assert unwatched.catalogues == [second.uuid]
 
     first.remove_events([event])
     assert event.catalogues == [second.uuid]
 
 
-def test_an_event_no_catalogue_lists_has_no_catalogues(room):
-    event = an_event(room)
+def test_an_event_no_catalogue_lists_has_no_catalogues(project):
+    event = an_event(project)
     assert event.catalogues == []
 
 
-def test_the_v2_fields_read_back_and_change(room):
+def test_the_v2_fields_read_back_and_change(project):
     shape = [(START, 1e3), (STOP, 2e3)]
-    event = room.create_event(
+    event = project.create_event(
         start=START,
         stop=STOP,
         author="a@x.org",
@@ -338,38 +338,38 @@ def test_the_v2_fields_read_back_and_change(room):
         event.confidence = 3.0
 
 
-def test_a_hand_made_event_records_when_it_was_created(room):
+def test_a_hand_made_event_records_when_it_was_created(project):
     before = datetime.datetime.now(UTC)
-    event = an_event(room)
+    event = an_event(project)
     assert before <= event.created <= datetime.datetime.now(UTC)
     assert event.created.tzinfo is UTC
 
 
-def test_a_model_event_names_its_origin(room):
-    origin = room.create_origin(
+def test_a_model_event_names_its_origin(project):
+    origin = project.create_origin(
         kind="model",
         name="shock finder",
         version="1.2",
         used=[{"product": "amda/mms1_fgm", "retrieved": "2025-01-01"}],
         parameters={"threshold": 3},
     )
-    event = room.create_event(start=START, stop=STOP, origin=origin, confidence=0.9)
+    event = project.create_event(start=START, stop=STOP, origin=origin, confidence=0.9)
 
     assert event.origin == origin
     assert event.author is None
     assert event.created is None
-    read = room.origin(origin)
+    read = project.origin(origin)
     assert read["kind"] == "model"
     assert read["name"] == "shock finder"
     assert read["used"] == [{"product": "amda/mms1_fgm", "retrieved": "2025-01-01"}]
     assert read["parameters"] == {"threshold": 3}
     with pytest.raises(cc.NotFound):
-        room.origin("nope")
+        project.origin("nope")
 
 
-def test_attributes_register_their_type_and_warn_on_a_mismatch(room):
-    event = an_event(room)
-    assert room.attribute_types()["q"] == {
+def test_attributes_register_their_type_and_warn_on_a_mismatch(project):
+    event = an_event(project)
+    assert project.attribute_types()["q"] == {
         "type": "number",
         "unit": None,
         "description": None,
@@ -379,28 +379,28 @@ def test_attributes_register_their_type_and_warn_on_a_mismatch(room):
         event.set_attributes(q="high")
     assert event.attributes["q"] == "high"
 
-    room.set_attribute_info("q", unit="nT", description="quality")
-    assert room.attribute_types()["q"]["unit"] == "nT"
+    project.set_attribute_info("q", unit="nT", description="quality")
+    assert project.attribute_types()["q"]["unit"] == "nT"
     with pytest.raises(LookupError):
-        room.set_attribute_info("nope", unit="s")
+        project.set_attribute_info("nope", unit="s")
 
 
-def test_a_datetime_attribute_is_a_date(room):
-    event = an_event(room)
+def test_a_datetime_attribute_is_a_date(project):
+    event = an_event(project)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         event.set_attributes(seen=START)
 
-    assert room.attribute_types()["seen"]["type"] == "date"
+    assert project.attribute_types()["seen"]["type"] == "date"
     assert event.attributes["seen"] == START
 
 
-def test_columns_and_existing_tags(room):
-    catalogue = a_catalogue(room)
+def test_columns_and_existing_tags(project):
+    catalogue = a_catalogue(project)
     catalogue.columns = ["q", "flag"]
-    assert room.catalogue(catalogue.uuid).columns == ["q", "flag"]
+    assert project.catalogue(catalogue.uuid).columns == ["q", "flag"]
 
-    an_event(room)
-    hidden = room.create_event(start=START, stop=STOP, tags=["hidden"])
+    an_event(project)
+    hidden = project.create_event(start=START, stop=STOP, tags=["hidden"])
     hidden.delete()
-    assert room.existing_tags() == ["t1", "t2"]
+    assert project.existing_tags() == ["t1", "t2"]

@@ -1,4 +1,4 @@
-"""Bringing a tscat database or tscat's JSON files into a room, and writing that JSON back.
+"""Bringing a tscat database or tscat's JSON files into a project, and writing that JSON back.
 
 Uuids are kept, so importing again updates what an earlier import wrote. A tscat rating
 (1 to 10) becomes a confidence (0 to 1), a removed item goes to the trash, and a dynamic
@@ -12,17 +12,19 @@ import warnings
 from pathlib import Path
 
 from ._native import NotFound, rule_from_tscat
+from ._old_names import renamed_keywords
 
 UTC = datetime.timezone.utc
 ORIGIN = "tscat"
 EVENT_FIELDS = ("start", "stop", "author", "uuid", "tags", "products", "rating")
 CATALOGUE_FIELDS = ("name", "author", "uuid", "tags", "predicate", "events")
 # tscat stores a datetime attribute as orjson's text of it, so its type is lost; a value of
-# exactly that form is taken back as a datetime, which the room registers as a date.
+# exactly that form is taken back as a datetime, which the project registers as a date.
 TSCAT_DATETIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(\+00:00)?")
 
 
-def import_database(room):
+@renamed_keywords(room="project")
+def import_database(project):
     """Imports the local tscat database, read through tscat so it runs its own migrations.
     Returns the imported catalogues."""
     tscat = _tscat()
@@ -37,7 +39,7 @@ def import_database(room):
         for removed in (False, True)
         for catalogue in tscat.get_catalogues(removed_items=removed)
     ]
-    return _write(room, events, catalogues)
+    return _write(project, events, catalogues)
 
 
 def _stored_predicates(tscat):
@@ -53,19 +55,21 @@ def _stored_predicates(tscat):
     return {uuid: predicate for uuid, predicate in rows if predicate}
 
 
-def import_json(room, path):
+@renamed_keywords(room="project")
+def import_json(project, path):
     """Imports a file tscat's `export_json` wrote. Returns the imported catalogues."""
     data = json.loads(Path(path).read_text())
     events = [_event_of_json(event) for event in data["events"]]
     catalogues = [_catalogue_of_json(catalogue) for catalogue in data["catalogues"]]
-    return _write(room, events, catalogues)
+    return _write(project, events, catalogues)
 
 
-def export_json(room, catalogues, path):
+@renamed_keywords(room="project")
+def export_json(project, catalogues, path):
     """Writes catalogues (objects, uuids or names) in tscat's JSON format. A smart
     catalogue is written with its current members as events and no predicate; derived
     intervals are left out, having no uuid."""
-    catalogues = [_catalogue(room, catalogue) for catalogue in _listify(catalogues)]
+    catalogues = [_catalogue(project, catalogue) for catalogue in _listify(catalogues)]
     events = {
         event.uuid: _event_to_json(event)
         for catalogue in catalogues
@@ -139,27 +143,27 @@ def _catalogue_of_json(catalogue):
     }
 
 
-def _write(room, events, catalogues):
-    with room.transaction():
-        _ensure_origin(room)
+def _write(project, events, catalogues):
+    with project.transaction():
+        _ensure_origin(project)
         for event in events:
-            _put_event(room, event)
-        return [_put_catalogue(room, catalogue) for catalogue in catalogues]
+            _put_event(project, event)
+        return [_put_catalogue(project, catalogue) for catalogue in catalogues]
 
 
-def _ensure_origin(room):
+def _ensure_origin(project):
     try:
-        room.origin(ORIGIN)
+        project.origin(ORIGIN)
     except NotFound:
-        room.create_origin("import", "tscat", id=ORIGIN)
+        project.create_origin("import", "tscat", id=ORIGIN)
 
 
-def _put_event(room, event):
+def _put_event(project, event):
     fields = _event_fields(event)
     try:
-        existing = room.event(event["uuid"])
+        existing = project.event(event["uuid"])
     except NotFound:
-        created = room.create_event(uuid=event["uuid"], origin=ORIGIN, **fields)
+        created = project.create_event(uuid=event["uuid"], origin=ORIGIN, **fields)
         _set_trash(created, event["removed"], in_trash=False)
         return
     existing.range = (fields["start"], fields["stop"])
@@ -182,13 +186,13 @@ def _event_fields(event):
     }
 
 
-def _put_catalogue(room, catalogue):
+def _put_catalogue(project, catalogue):
     rule, listed = _rule_and_listed(catalogue)
     attributes = {key: _value(value) for key, value in catalogue["attributes"].items()}
     try:
-        existing = room.catalogue(catalogue["uuid"])
+        existing = project.catalogue(catalogue["uuid"])
     except NotFound:
-        existing = room.create_catalogue(
+        existing = project.create_catalogue(
             name=catalogue["name"],
             author=catalogue["author"] or None,
             uuid=catalogue["uuid"],
@@ -234,7 +238,7 @@ def _replace_attributes(target, attributes):
 
 
 def _set_trash(target, removed, in_trash):
-    """Restores only what is in the trash, so a status set in the room stays."""
+    """Restores only what is in the trash, so a status set in the project stays."""
     if removed:
         target.delete()
     elif in_trash:
@@ -255,8 +259,8 @@ def _value(value):
     return value
 
 
-def _catalogue(room, catalogue):
-    return room.catalogue(catalogue) if isinstance(catalogue, str) else catalogue
+def _catalogue(project, catalogue):
+    return project.catalogue(catalogue) if isinstance(catalogue, str) else catalogue
 
 
 def _listify(items):

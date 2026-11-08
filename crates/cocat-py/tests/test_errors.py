@@ -15,7 +15,7 @@ def viewer_cookie(server):
         "--email",
         email,
         "--room_id",
-        server.room_id,
+        server.project_id,
         "--role",
         "viewer",
         "--db_path",
@@ -33,7 +33,7 @@ def test_server_errors_stay_value_errors():
 
 def test_an_absent_session_is_unauthorized(server):
     with pytest.raises(cc.Unauthorized) as refused:
-        cc.rooms(server.url, "not-a-session")
+        cc.projects(server.url, "not-a-session")
 
     assert refused.value.status == 401
     assert refused.value.detail
@@ -43,13 +43,13 @@ def test_an_absent_session_is_unauthorized(server):
 
 def test_a_viewer_saving_a_version_is_forbidden(server):
     with pytest.raises(cc.Forbidden) as refused:
-        cc.commit(server.url, viewer_cookie(server), server.room_id)
+        cc.commit(server.url, viewer_cookie(server), server.project_id)
 
     assert refused.value.status == 403
     assert refused.value.detail
 
 
-def test_an_unknown_room_is_not_found(server):
+def test_an_unknown_project_is_not_found(server):
     with pytest.raises(cc.ServerNotFound) as refused:
         cc.history(server.url, server.cookie, "no-such-room")
 
@@ -60,7 +60,7 @@ def test_an_unknown_room_is_not_found(server):
 
 def test_saving_without_changes_is_a_conflict(server):
     with pytest.raises(cc.Conflict) as refused:
-        cc.commit(server.url, server.cookie, server.room_id)
+        cc.commit(server.url, server.cookie, server.project_id)
 
     assert refused.value.status == 409
     assert refused.value.detail == "Nothing changed since the last saved version."

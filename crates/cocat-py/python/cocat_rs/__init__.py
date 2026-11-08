@@ -4,26 +4,28 @@ import asyncio
 import logging
 import threading
 
-from . import _native
+from . import _native, _old_names
 from ._native import (
     Catalogue,
     Conflict,
     Event,
     Forbidden,
     NotFound,
-    RoomInfo,
+    ProjectInfo,
     ServerError,
     ServerNotFound,
     Unauthorized,
-    commit,
-    copy_version,
-    history,
     login,
-    name_version,
-    restore,
-    rooms,
+    projects,
     rule_from_tscat,
 )
+
+_accepts_room_id = _old_names.renamed_keywords(room_id="project_id")
+commit = _accepts_room_id(_native.commit)
+copy_version = _accepts_room_id(_native.copy_version)
+history = _accepts_room_id(_native.history)
+name_version = _accepts_room_id(_native.name_version)
+restore = _accepts_room_id(_native.restore)
 
 __all__ = [
     "Catalogue",
@@ -31,8 +33,8 @@ __all__ = [
     "Event",
     "Forbidden",
     "NotFound",
-    "Room",
-    "RoomInfo",
+    "Project",
+    "ProjectInfo",
     "ServerError",
     "ServerNotFound",
     "Unauthorized",
@@ -41,8 +43,8 @@ __all__ = [
     "history",
     "login",
     "name_version",
+    "projects",
     "restore",
-    "rooms",
     "rule_from_tscat",
 ]
 
@@ -95,76 +97,78 @@ class _Registration:
 
 
 class ListenHandle:
-    """What `Room.listen` returns; closing it stops the calls to that listener."""
+    """What `Project.listen` returns; closing it stops the calls to that listener."""
 
-    def __init__(self, room, registration):
-        self._room = room
+    def __init__(self, project, registration):
+        self._project = project
         self._registration = registration
 
     def close(self):
-        self._room._remove(self._registration)
+        self._project._remove(self._registration)
 
 
 class _Transaction:
-    def __init__(self, room):
-        self._room = room
+    def __init__(self, project):
+        self._project = project
 
     def __enter__(self):
-        self._room._room.begin_batch()
-        return self._room
+        self._project._native.begin_batch()
+        return self._project
 
     def __exit__(self, kind, value, traceback):
-        self._room._room.end_batch()
+        self._project._native.end_batch()
         return False
 
 
-class Room:
-    """One room, held on disk and synchronised in the background."""
+class Project:
+    """One project, held on disk and synchronised in the background."""
 
     def __init__(self, native):
-        self._room = native
+        self._native = native
         self._registrations = []
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
 
     @classmethod
-    def open(cls, cache_dir, room_id):
-        return cls(_native.Room.open(str(cache_dir), str(room_id)))
+    @_old_names.renamed_keywords(room_id="project_id")
+    def open(cls, cache_dir, project_id):
+        return cls(_native.Project.open(str(cache_dir), str(project_id)))
 
     @classmethod
-    def at(cls, url, cookie, room_id, version):
-        """The room as of a version: read-only, and offline once fetched."""
-        return cls(_native.Room.at(url, cookie, str(room_id), version))
+    @_old_names.renamed_keywords(room_id="project_id")
+    def at(cls, url, cookie, project_id, version):
+        """The project as of a version: read-only, and offline once fetched."""
+        return cls(_native.Project.at(url, cookie, str(project_id), version))
 
     @property
     def status(self):
-        return self._room.status
+        return self._native.status
 
     def __getattr__(self, name):
-        return getattr(self._room, name)
+        return getattr(self._native, name)
 
     def connect(
         self, url: str, cookie: str, credentials: tuple[str, str] | None = None
     ) -> None:
-        self._room.connect(url, cookie, credentials)
+        self._native.connect(url, cookie, credentials)
 
     def set_cookie(self, cookie):
-        self._room.set_cookie(cookie)
+        self._native.set_cookie(cookie)
 
     def wait_synced(self, timeout=None):
-        self._room.wait_synced(timeout)
+        self._native.wait_synced(timeout)
 
     async def synced(self):
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._room.wait_synced, None)
+        await loop.run_in_executor(None, self._native.wait_synced, None)
 
     def transaction(self):
         return _Transaction(self)
 
     def close(self):
         self._running = False
-        self._room.close()
+        self._native.close()
 
     def listen(self, listener):
         """Calls `listener` for every remote change, on the loop running right now."""
@@ -174,7 +178,7 @@ class Room:
             self._registrations.append(registration)
             if (status := registration.methods.get("status")) is not None:
                 loop.call_soon_threadsafe(
-                    self._call, registration, "status", status, (self._room.status,)
+                    self._call, registration, "status", status, (self._native.status,)
                 )
             if self._thread is None:
                 self._running = True
@@ -191,10 +195,10 @@ class Room:
 
     def _dispatch(self):
         # Only later status changes are broadcast from here; listen() sends the current one.
-        status = self._room.status
+        status = self._native.status
         while self._running:
-            batch = self._room.next_batch(_POLL)
-            current = self._room.status
+            batch = self._native.next_batch(_POLL)
+            current = self._native.status
             if current != status:
                 status = current
                 self._broadcast("status", (current,))
@@ -225,6 +229,10 @@ class Room:
                 method,
                 registration.listener,
             )
+
+
+def __getattr__(name):
+    return _old_names.attribute(globals(), name)
 
 
 # The script mode re-exports Python cocat's names, so `import cocat_rs as cocat`

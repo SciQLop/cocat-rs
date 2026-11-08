@@ -42,11 +42,11 @@ def wallet(monkeypatch):
     api._reset()
 
 
-def configure(server, tmp_path, room_id=None) -> None:
+def configure(server, tmp_path, project_id=None) -> None:
     api.set_config(
         host=server.url,
         file_path=str(tmp_path / "cache"),
-        room_id=room_id,
+        project_id=project_id,
     )
 
 
@@ -67,18 +67,18 @@ def until(predicate, timeout: float = 15.0) -> None:
         time.sleep(0.05)
 
 
-def test_user_room(server, tmp_path) -> None:
+def test_user_project(server, tmp_path) -> None:
     configure(server, tmp_path)
     api.log_in(server.email, "hunter2")
 
-    listed = cocat_rs.rooms(api.SESSION.base_url(), api.SESSION.cookie)
-    assert api.SESSION.room_id in [room.id for room in listed]
-    assert api.SESSION.room_id != server.room_id
-    assert len(api.SESSION.room_id) == 32
+    listed = cocat_rs.projects(api.SESSION.base_url(), api.SESSION.cookie)
+    assert api.SESSION.project_id in [project.id for project in listed]
+    assert api.SESSION.project_id != server.project_id
+    assert len(api.SESSION.project_id) == 32
 
 
 def test_api(server, tmp_path) -> None:
-    configure(server, tmp_path, room_id=server.room_id)
+    configure(server, tmp_path, project_id=server.project_id)
     api.log_in(server.email, "hunter2")
 
     catalogue = api.create_catalogue(name="cat0", author="Paul")
@@ -92,7 +92,7 @@ def test_api(server, tmp_path) -> None:
 
     api.save()
 
-    other = cocat_rs.Room.open(str(tmp_path / "other"), server.room_id)
+    other = cocat_rs.Project.open(str(tmp_path / "other"), server.project_id)
     other.connect(server.url, server.cookie)
     other.wait_synced(15)
     try:
@@ -115,7 +115,7 @@ def test_api(server, tmp_path) -> None:
 
 
 def test_login(server, tmp_path) -> None:
-    configure(server, tmp_path, room_id=server.room_id)
+    configure(server, tmp_path, project_id=server.project_id)
 
     with pytest.raises(RuntimeError, match="Not logged in"):
         api.refresh()
@@ -139,55 +139,55 @@ def test_login_with_port_in_host(server, tmp_path) -> None:
 
 def test_atexit(server, tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda _: "yes")
-    configure(server, tmp_path, room_id=server.room_id)
+    configure(server, tmp_path, project_id=server.project_id)
     api.log_in(server.email, "hunter2")
     api.create_catalogue(name="cat0", author="Paul Newton")
     api.save_on_exit()
     assert capsys.readouterr().out == "Changes have been saved.\n"
 
 
-def test_default_room(monkeypatch) -> None:
+def test_default_project(monkeypatch) -> None:
     def unavailable(base_url, cookie):
-        raise RuntimeError("Cannot list rooms: HTTP 500")
+        raise RuntimeError("Cannot list projects: HTTP 500")
 
-    monkeypatch.setattr(api, "_list_rooms", unavailable)
+    monkeypatch.setattr(api, "_list_projects", unavailable)
     with pytest.raises(RuntimeError, match="HTTP 500"):
-        api._default_room("http://localhost:8000/", "cookie")
+        api._default_project("http://localhost:8000/", "cookie")
 
-    monkeypatch.setattr(api, "_list_rooms", lambda base_url, cookie: [])
-    with pytest.raises(RuntimeError, match="No room available"):
-        api._default_room("http://localhost:8000/", "cookie")
+    monkeypatch.setattr(api, "_list_projects", lambda base_url, cookie: [])
+    with pytest.raises(RuntimeError, match="No project available"):
+        api._default_project("http://localhost:8000/", "cookie")
 
     monkeypatch.setattr(
         api,
-        "_list_rooms",
+        "_list_projects",
         lambda base_url, cookie: [
-            cocat_rs.RoomInfo(id="room1", name="Lab", role="editor")
+            cocat_rs.ProjectInfo(id="room1", name="Lab", role="editor")
         ],
     )
-    assert api._default_room("http://localhost:8000/", "cookie") == "room1"
+    assert api._default_project("http://localhost:8000/", "cookie") == "room1"
 
 
-def test_default_room_is_the_own_one_whatever_its_name(monkeypatch) -> None:
+def test_default_project_is_the_own_one_whatever_its_name(monkeypatch) -> None:
     monkeypatch.setattr(
         api,
-        "_list_rooms",
+        "_list_projects",
         lambda base_url, cookie: [
-            cocat_rs.RoomInfo(id="shared", name="Personal", role="owner"),
-            cocat_rs.RoomInfo(id="mine", name="Renamed", role="owner", personal=True),
+            cocat_rs.ProjectInfo(id="shared", name="Personal", role="owner"),
+            cocat_rs.ProjectInfo(id="mine", name="Renamed", role="owner", personal=True),
         ],
     )
-    assert api._default_room("http://localhost:8000/", "cookie") == "mine"
+    assert api._default_project("http://localhost:8000/", "cookie") == "mine"
 
 
 def test_save_waits_for_the_server(server, tmp_path) -> None:
-    configure(server, tmp_path, room_id=server.room_id)
+    configure(server, tmp_path, project_id=server.project_id)
     api.log_in(server.email, "hunter2")
     api.create_catalogue(name="ack", author="Paul")
 
     api.save()
 
-    other = cocat_rs.Room.open(str(tmp_path / "other"), server.room_id)
+    other = cocat_rs.Project.open(str(tmp_path / "other"), server.project_id)
     other.connect(server.url, server.cookie)
     other.wait_synced(15)
     try:
@@ -197,7 +197,7 @@ def test_save_waits_for_the_server(server, tmp_path) -> None:
 
 
 def test_a_save_after_a_relogin_keeps_the_cache(server, tmp_path) -> None:
-    configure(server, tmp_path, room_id=server.room_id)
+    configure(server, tmp_path, project_id=server.project_id)
     api.log_in(server.email, "hunter2")
     api.create_catalogue(name="kept", author="Paul")
     api.save()
@@ -209,7 +209,7 @@ def test_a_save_after_a_relogin_keeps_the_cache(server, tmp_path) -> None:
 
 
 def test_create_event_takes_naive_datetimes_as_utc(server, tmp_path) -> None:
-    configure(server, tmp_path, room_id=server.room_id)
+    configure(server, tmp_path, project_id=server.project_id)
     api.log_in(server.email, "hunter2")
 
     event = api.create_event(

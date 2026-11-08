@@ -2,7 +2,7 @@
 
 `log_in`, `get_catalogue`, `save` and the rest keep Python cocat's names,
 arguments and errors, so a scientist's script runs against a Rust server by
-changing the import. The session holds one `cocat_rs.Room`; every call is a
+changing the import. The session holds one `cocat_rs.Project`; every call is a
 local write the sync task sends, and `save()` is the only one that waits for the
 server to acknowledge it.
 """
@@ -17,10 +17,11 @@ from urllib.parse import urlparse
 
 import keyring
 
-from . import Room
-from ._native import RoomInfo, export_votable as _export_votable
+from . import Project
+from ._old_names import renamed_keywords
+from ._native import ProjectInfo, export_votable as _export_votable
 from ._native import login as _login
-from ._native import rooms as _rooms
+from ._native import projects as _projects
 
 
 CONNECT_TIMEOUT = 30.0
@@ -28,16 +29,16 @@ REFRESH_TIMEOUT = 30.0
 
 
 class Session:
-    """The room and the connection a script's module-level calls act on."""
+    """The project and the connection a script's module-level calls act on."""
 
     def __init__(self) -> None:
         self.host = "http://localhost"
         self.port = 8000
         self.prefix = ""
-        self.room_id: str | None = None
+        self.project_id: str | None = None
         self.file_path = "updates"
         self.cookie: str | None = None
-        self.room: Room | None = None
+        self.project: Project | None = None
 
     def base_url(self) -> str:
         return f"{self.host}:{self.port}/{self.prefix}"
@@ -47,7 +48,7 @@ class Session:
         host: str | None = None,
         port: int | None = None,
         file_path: str | None = None,
-        room_id: str | None = None,
+        project_id: str | None = None,
     ) -> None:
         if host is not None:
             parsed = urlparse(host)
@@ -60,46 +61,47 @@ class Session:
             self.port = port
         if file_path is not None:
             self.file_path = file_path
-        if room_id is not None:
-            self.room_id = room_id
+        if project_id is not None:
+            self.project_id = project_id
 
 
 SESSION = Session()
 
 
 def _reset() -> None:
-    """Forgets the session, room and credentials of the previous script."""
+    """Forgets the session, project and credentials of the previous script."""
     global SESSION
     SESSION = Session()
 
 
+@renamed_keywords(room_id="project_id")
 def set_config(
     *,
     host: str | None = None,
     port: int | None = None,
     file_path: str | None = None,
-    room_id: str | None = None,
+    project_id: str | None = None,
 ) -> None:
-    """Points the session at a server, a cache directory and maybe a room."""
-    SESSION.set_config(host=host, port=port, file_path=file_path, room_id=room_id)
+    """Points the session at a server, a cache directory and maybe a project."""
+    SESSION.set_config(host=host, port=port, file_path=file_path, project_id=project_id)
 
 
-def check_connected() -> Room:
-    """The room every script call needs, or the error Python cocat raises."""
-    if SESSION.room is None:
+def check_connected() -> Project:
+    """The project every script call needs, or the error Python cocat raises."""
+    if SESSION.project is None:
         raise RuntimeError("Not logged in")
-    return SESSION.room
+    return SESSION.project
 
 
 def _connect() -> None:
     if SESSION.cookie is None:
         raise RuntimeError("Username or password not provided")
-    if SESSION.room_id is None:
-        SESSION.room_id = _default_room(SESSION.base_url(), SESSION.cookie)
-    room = Room.open(str(Path(SESSION.file_path)), SESSION.room_id)
-    room.connect(SESSION.base_url(), SESSION.cookie)
-    room.wait_synced(CONNECT_TIMEOUT)
-    SESSION.room = room
+    if SESSION.project_id is None:
+        SESSION.project_id = _default_project(SESSION.base_url(), SESSION.cookie)
+    project = Project.open(str(Path(SESSION.file_path)), SESSION.project_id)
+    project.connect(SESSION.base_url(), SESSION.cookie)
+    project.wait_synced(CONNECT_TIMEOUT)
+    SESSION.project = project
     atexit.register(save_on_exit)
 
 
@@ -132,7 +134,7 @@ def log_in(
 
 
 def log_out() -> None:
-    """Forgets the cookie and closes the room; the cache stays for the next run."""
+    """Forgets the cookie and closes the project; the cache stays for the next run."""
     cookie = SESSION.cookie
     if cookie is not None:
         with contextlib.suppress(Exception):
@@ -141,10 +143,10 @@ def log_out() -> None:
             )
             request.add_header("cookie", f"fastapiusersauth={cookie}")
             urllib.request.urlopen(request, timeout=5.0).close()
-    if SESSION.room is not None:
-        SESSION.room.close()
+    if SESSION.project is not None:
+        SESSION.project.close()
     SESSION.cookie = None
-    SESSION.room = None
+    SESSION.project = None
 
 
 def create_catalogue(
@@ -177,7 +179,7 @@ def create_event(
     attributes: dict | None = None,
     **fields,
 ):
-    """Creates an event; `fields` are the other keyword arguments of `Room.create_event`."""
+    """Creates an event; `fields` are the other keyword arguments of `Project.create_event`."""
     return check_connected().create_event(
         start=start,
         stop=stop,
@@ -199,7 +201,7 @@ def get_event(uuid: str):
 
 
 def refresh() -> None:
-    """Waits for the room to catch up with the server."""
+    """Waits for the project to catch up with the server."""
     # Already synced, so waiting for sync returns at once: a round trip with the server
     # is what brings back what changed since.
     check_connected().save(REFRESH_TIMEOUT)
@@ -211,10 +213,10 @@ def save(timeout: float | None = None) -> None:
 
 
 def import_votable(file_path: str | Path, table_name: str | None = None) -> set:
-    """Adds the catalogues of a VOTable file to the room, as Python cocat does."""
-    room = check_connected()
-    room.import_votable(str(file_path), table_name)
-    return set(room.catalogues())
+    """Adds the catalogues of a VOTable file to the project, as Python cocat does."""
+    project = check_connected()
+    project.import_votable(str(file_path), table_name)
+    return set(project.catalogues())
 
 
 def export_votable(catalogues, file_path: str | Path) -> None:
@@ -224,7 +226,7 @@ def export_votable(catalogues, file_path: str | Path) -> None:
 
 def save_on_exit() -> None:
     """Asks before saving, as Python cocat does when the interpreter exits."""
-    if SESSION.room is None:
+    if SESSION.project is None:
         return
     answer = input("Save changes (Y/n)? ")
     reply = answer.strip().lower()
@@ -233,16 +235,16 @@ def save_on_exit() -> None:
         print("Changes have been saved.")
 
 
-def _list_rooms(base_url: str, cookie: str) -> list[RoomInfo]:
+def _list_projects(base_url: str, cookie: str) -> list[ProjectInfo]:
     try:
-        return _rooms(base_url, cookie)
+        return _projects(base_url, cookie)
     except ValueError as error:
-        raise RuntimeError(f"Cannot list rooms: {error}") from error
+        raise RuntimeError(f"Cannot list projects: {error}") from error
 
 
-def _default_room(base_url: str, cookie: str) -> str:
-    """The user's own room, else the first room the user belongs to."""
-    rooms = _list_rooms(base_url, cookie)
-    if not rooms:
-        raise RuntimeError("No room available; create one or accept an invitation")
-    return next((room.id for room in rooms if room.personal), rooms[0].id)
+def _default_project(base_url: str, cookie: str) -> str:
+    """The user's own project, else the first project the user belongs to."""
+    projects = _list_projects(base_url, cookie)
+    if not projects:
+        raise RuntimeError("No project available; create one or accept an invitation")
+    return next((project.id for project in projects if project.personal), projects[0].id)

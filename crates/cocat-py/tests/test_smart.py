@@ -14,15 +14,15 @@ def at(seconds):
 
 
 @pytest.fixture
-def room(cache):
-    return cc.Room.open(cache, "5a5a5a5a-0000-4000-8000-000000000000")
+def project(cache):
+    return cc.Project.open(cache, "5a5a5a5a-0000-4000-8000-000000000000")
 
 
 @pytest.fixture
-def events(room):
+def events(project):
     """Three one-second events, ten seconds apart; the second is by bob."""
     return [
-        room.create_event(
+        project.create_event(
             start=at(10 * n),
             stop=at(10 * n + 1),
             author="bob" if n == 2 else "alice",
@@ -32,8 +32,8 @@ def events(room):
     ]
 
 
-def test_a_catalogue_has_no_rule_until_given_one(room):
-    catalogue = room.create_catalogue(name="plain")
+def test_a_catalogue_has_no_rule_until_given_one(project):
+    catalogue = project.create_catalogue(name="plain")
     assert catalogue.rule is None
     rule = {"filter": {"all": True}, "where": {"cmp": ["author", "==", "bob"]}}
     catalogue.rule = rule
@@ -42,8 +42,8 @@ def test_a_catalogue_has_no_rule_until_given_one(room):
     assert catalogue.rule is None
 
 
-def test_a_rule_yields_members_besides_the_listed_events(room, events):
-    smart = room.create_catalogue(name="smart", events=[events[0]])
+def test_a_rule_yields_members_besides_the_listed_events(project, events):
+    smart = project.create_catalogue(name="smart", events=[events[0]])
     smart.rule = {"filter": {"all": True}, "where": {"cmp": ["author", "==", "bob"]}}
     assert smart.events == {events[0], events[1]}
     arrays = smart.event_arrays()
@@ -68,22 +68,22 @@ def test_a_rule_yields_members_besides_the_listed_events(room, events):
         ),
     ],
 )
-def test_a_malformed_rule_says_what_is_wrong_and_where(room, rule, message):
-    catalogue = room.create_catalogue(name="smart")
+def test_a_malformed_rule_says_what_is_wrong_and_where(project, rule, message):
+    catalogue = project.create_catalogue(name="smart")
     with pytest.raises(ValueError) as raised:
         catalogue.rule = rule
     assert str(raised.value) == message
     assert catalogue.rule is None
 
 
-def test_a_rule_that_is_not_json_is_refused(room):
-    catalogue = room.create_catalogue(name="smart")
+def test_a_rule_that_is_not_json_is_refused(project):
+    catalogue = project.create_catalogue(name="smart")
     with pytest.raises(ValueError):
         catalogue.rule = {"all": object()}
 
 
-def test_derived_intervals_have_no_uuid_and_name_their_sources(room, events):
-    smart = room.create_catalogue(name="merged")
+def test_derived_intervals_have_no_uuid_and_name_their_sources(project, events):
+    smart = project.create_catalogue(name="merged")
     smart.rule = {"merge": {"all": True}, "gap": 10}
     arrays = smart.event_arrays(attributes=True)
     assert arrays["uuid"] == [None]
@@ -95,8 +95,8 @@ def test_derived_intervals_have_no_uuid_and_name_their_sources(room, events):
     assert smart.events == set()
 
 
-def test_materialize_makes_a_static_catalogue_of_the_current_members(room, events):
-    smart = room.create_catalogue(name="smart", events=[events[0]])
+def test_materialize_makes_a_static_catalogue_of_the_current_members(project, events):
+    smart = project.create_catalogue(name="smart", events=[events[0]])
     smart.rule = {
         "union": [
             {"filter": {"all": True}, "where": {"cmp": ["author", "==", "bob"]}},
@@ -113,13 +113,13 @@ def test_materialize_makes_a_static_catalogue_of_the_current_members(room, event
     made = [event for event in copy.events if event not in (events[0], events[1])]
     assert len(made) == 1
     assert (made[0].start, made[0].stop) == (at(30), at(31))
-    origin = room.origin(made[0].origin)
+    origin = project.origin(made[0].origin)
     assert origin["kind"] == "rule"
     assert origin["derived_from"] == smart.uuid
 
 
-def test_a_rule_evaluation_error_is_a_value_error(room):
-    smart = room.create_catalogue(name="loop")
+def test_a_rule_evaluation_error_is_a_value_error(project):
+    smart = project.create_catalogue(name="loop")
     smart.rule = {"catalogue": smart.uuid}
     with pytest.raises(ValueError, match="again through itself"):
         smart.event_arrays()
@@ -143,7 +143,7 @@ def test_a_tscat_predicate_that_does_not_convert_is_a_value_error():
         cc.rule_from_tscat({"type": "Xor"})
 
 
-def test_tags_products_and_author_of_an_event_change(room, events):
+def test_tags_products_and_author_of_an_event_change(project, events):
     event = events[0]
     event.author = "carol"
     event.tags = ["b", "a"]
@@ -153,7 +153,7 @@ def test_tags_products_and_author_of_an_event_change(room, events):
     assert event.author is None
 
 
-def test_the_tags_of_a_catalogue_change(room):
-    catalogue = room.create_catalogue(name="tagged", tags=["x"])
+def test_the_tags_of_a_catalogue_change(project):
+    catalogue = project.create_catalogue(name="tagged", tags=["x"])
     catalogue.tags = ["y", "z"]
     assert catalogue.tags == {"y", "z"}

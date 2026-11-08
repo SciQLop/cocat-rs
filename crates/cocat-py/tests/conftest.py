@@ -40,7 +40,7 @@ def run(*arguments: str) -> None:
 @dataclass
 class Server:
     url: str
-    room_id: str
+    project_id: str
     email: str
     cookie: str
     directory: Path
@@ -53,7 +53,7 @@ def server(tmp_path):
     updates = tmp_path / "updates"
     updates.mkdir()
     email = "scientist@example.org"
-    room_id = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
     run(
         "create-user",
         "--email",
@@ -68,7 +68,7 @@ def server(tmp_path):
         "--owner",
         email,
         "--room-id",
-        room_id,
+        project_id,
         "--name",
         "bench",
         "--db_path",
@@ -93,7 +93,7 @@ def server(tmp_path):
     try:
         wait_for_port(port)
         url = f"http://127.0.0.1:{port}"
-        yield Server(url, room_id, email, login(url, email), tmp_path)
+        yield Server(url, project_id, email, login(url, email), tmp_path)
     finally:
         process.terminate()
         process.wait(timeout=15)
@@ -115,33 +115,33 @@ def cache(tmp_path):
 
 
 @pytest.fixture
-def room(server, cache):
-    room = cc.Room.open(str(cache), server.room_id)
-    room.connect(server.url, server.cookie)
-    room.wait_synced(15)
+def project(server, cache):
+    project = cc.Project.open(str(cache), server.project_id)
+    project.connect(server.url, server.cookie)
+    project.wait_synced(15)
     try:
-        yield room
+        yield project
     finally:
-        room.close()
+        project.close()
 
 
 @pytest.fixture
 def other(server, tmp_path):
-    """A second client in the same room, for changes made by someone else."""
+    """A second client in the same project, for changes made by someone else."""
     directory = tmp_path / "other"
     directory.mkdir()
-    room = cc.Room.open(str(directory), server.room_id)
-    room.connect(server.url, server.cookie)
-    room.wait_synced(15)
+    project = cc.Project.open(str(directory), server.project_id)
+    project.connect(server.url, server.cookie)
+    project.wait_synced(15)
     try:
-        yield room
+        yield project
     finally:
-        room.close()
+        project.close()
 
 
 @pytest.fixture
 def colleague(server, tmp_path):
-    """A second account, an editor of the room, connected from its own cache."""
+    """A second account, an editor of the project, connected from its own cache."""
     email = "colleague@example.org"
     database = str(server.directory / "cocat.db")
     run("create-user", "--email", email, "--password", PASSWORD, "--db_path", database)
@@ -150,16 +150,16 @@ def colleague(server, tmp_path):
         "--email",
         email,
         "--room_id",
-        server.room_id,
+        server.project_id,
         "--db_path",
         database,
     )
     directory = tmp_path / "colleague"
     directory.mkdir()
-    room = cc.Room.open(str(directory), server.room_id)
-    room.connect(server.url, login(server.url, email))
-    room.wait_synced(15)
+    project = cc.Project.open(str(directory), server.project_id)
+    project.connect(server.url, login(server.url, email))
+    project.wait_synced(15)
     try:
-        yield room
+        yield project
     finally:
-        room.close()
+        project.close()

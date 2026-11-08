@@ -19,22 +19,22 @@ def wait_until(predicate, timeout=15.0):
     raise AssertionError("the condition did not hold in time")
 
 
-def holds(room, uuid):
+def holds(project, uuid):
     try:
-        room.event(uuid)
+        project.event(uuid)
     except cc.NotFound:
         return False
     return True
 
 
 def history(server):
-    return cc.history(server.url, server.cookie, server.room_id)
+    return cc.history(server.url, server.cookie, server.project_id)
 
 
-def two_versions(server, room, colleague):
+def two_versions(server, project, colleague):
     """The owner adds `a`, then the colleague changes it and adds `b`."""
-    a = room.create_event(start=START, stop=STOP)
-    room.save(15)
+    a = project.create_event(start=START, stop=STOP)
+    project.save(15)
     wait_until(lambda: holds(colleague, a.uuid))
     colleague.event(a.uuid).confidence = 0.9
     b = colleague.create_event(start=START, stop=STOP)
@@ -43,9 +43,9 @@ def two_versions(server, room, colleague):
     return a, b, first, second
 
 
-def test_history_lists_a_version_by_the_writer(server, room):
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
+def test_history_lists_a_version_by_the_writer(server, project):
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
 
     versions = history(server)
 
@@ -55,10 +55,10 @@ def test_history_lists_a_version_by_the_writer(server, room):
     assert versions[0]["name"] is None
 
 
-def test_room_at_a_version_shows_the_past(server, room, colleague):
-    a, b, first, _ = two_versions(server, room, colleague)
+def test_project_at_a_version_shows_the_past(server, project, colleague):
+    a, b, first, _ = two_versions(server, project, colleague)
 
-    past = cc.Room.at(server.url, server.cookie, server.room_id, first)
+    past = cc.Project.at(server.url, server.cookie, server.project_id, first)
 
     assert past.status == "offline"
     assert past.event(a.uuid).confidence is None
@@ -66,13 +66,13 @@ def test_room_at_a_version_shows_the_past(server, room, colleague):
         past.event(b.uuid)
 
 
-def test_a_past_room_is_read_only(server, room):
-    a = room.create_event(start=START, stop=STOP)
-    catalogue = room.create_catalogue(name="alpha")
-    room.save(15)
+def test_a_past_project_is_read_only(server, project):
+    a = project.create_event(start=START, stop=STOP)
+    catalogue = project.create_catalogue(name="alpha")
+    project.save(15)
     (version,) = [version["id"] for version in history(server)]
 
-    past = cc.Room.at(server.url, server.cookie, server.room_id, version)
+    past = cc.Project.at(server.url, server.cookie, server.project_id, version)
 
     read_only = "a past version is read-only"
     with pytest.raises(RuntimeError, match=read_only):
@@ -86,38 +86,38 @@ def test_a_past_room_is_read_only(server, room):
     assert past.event(a.uuid).confidence is None
 
 
-def test_restore_from_python_undoes_an_edit(server, room, colleague):
-    a, b, first, _ = two_versions(server, room, colleague)
+def test_restore_from_python_undoes_an_edit(server, project, colleague):
+    a, b, first, _ = two_versions(server, project, colleague)
 
-    assert cc.restore(server.url, server.cookie, server.room_id, first)
+    assert cc.restore(server.url, server.cookie, server.project_id, first)
 
-    wait_until(lambda: room.event(a.uuid).confidence is None)
-    wait_until(lambda: room.event(b.uuid).status == "deleted")
+    wait_until(lambda: project.event(a.uuid).confidence is None)
+    wait_until(lambda: project.event(b.uuid).status == "deleted")
     assert history(server)[0]["author_email"] == server.email
     assert history(server)[0]["restored_from"] == first
-    assert not cc.restore(server.url, server.cookie, server.room_id, first)
+    assert not cc.restore(server.url, server.cookie, server.project_id, first)
 
 
-def test_a_named_version_comes_back_named(server, room):
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
+def test_a_named_version_comes_back_named(server, project):
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
     (version,) = [version["id"] for version in history(server)]
 
-    cc.name_version(server.url, server.cookie, server.room_id, version, "paper v1")
+    cc.name_version(server.url, server.cookie, server.project_id, version, "paper v1")
     assert history(server)[0]["name"] == "paper v1"
 
-    cc.name_version(server.url, server.cookie, server.room_id, version, None)
+    cc.name_version(server.url, server.cookie, server.project_id, version, None)
     assert history(server)[0]["name"] is None
 
 
-def test_a_version_keeps_its_id_and_name_while_its_author_keeps_editing(server, room):
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
+def test_a_version_keeps_its_id_and_name_while_its_author_keeps_editing(server, project):
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
     (version,) = [version["id"] for version in history(server)]
-    cc.name_version(server.url, server.cookie, server.room_id, version, "paper v1")
+    cc.name_version(server.url, server.cookie, server.project_id, version, "paper v1")
 
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
 
     versions = history(server)
     assert [version["id"] for version in versions] == [version]
@@ -125,28 +125,28 @@ def test_a_version_keeps_its_id_and_name_while_its_author_keeps_editing(server, 
     assert versions[0]["events_added"] == 2
 
 
-def test_a_catalogue_filter_narrows_the_history(server, room, colleague):
-    _, b, first, second = two_versions(server, room, colleague)
-    catalogue = room.create_catalogue(name="alpha", events=[b])
-    room.save(15)
+def test_a_catalogue_filter_narrows_the_history(server, project, colleague):
+    _, b, first, second = two_versions(server, project, colleague)
+    catalogue = project.create_catalogue(name="alpha", events=[b])
+    project.save(15)
 
     versions = cc.history(
-        server.url, server.cookie, server.room_id, catalogue=catalogue.uuid
+        server.url, server.cookie, server.project_id, catalogue=catalogue.uuid
     )
 
     assert first not in [version["id"] for version in versions]
     assert second in [version["id"] for version in versions]
 
 
-def test_saving_a_version_names_it_and_ends_it(server, room):
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
+def test_saving_a_version_names_it_and_ends_it(server, project):
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
 
     version = cc.commit(
-        server.url, server.cookie, server.room_id, name="checked", message="all good"
+        server.url, server.cookie, server.project_id, name="checked", message="all good"
     )
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
 
     versions = history(server)
     assert [v["id"] for v in versions][1] == version
@@ -156,28 +156,28 @@ def test_saving_a_version_names_it_and_ends_it(server, room):
     assert versions[0]["committed"] is False
 
 
-def test_saving_twice_without_changes_is_refused(server, room):
-    room.create_event(start=START, stop=STOP)
-    room.save(15)
-    cc.commit(server.url, server.cookie, server.room_id)
+def test_saving_twice_without_changes_is_refused(server, project):
+    project.create_event(start=START, stop=STOP)
+    project.save(15)
+    cc.commit(server.url, server.cookie, server.project_id)
 
     with pytest.raises(cc.Conflict, match="Nothing changed"):
-        cc.commit(server.url, server.cookie, server.room_id)
+        cc.commit(server.url, server.cookie, server.project_id)
 
 
-def test_copying_a_version_makes_a_new_project_holding_it(server, room, colleague):
-    a, b, first, _ = two_versions(server, room, colleague)
+def test_copying_a_version_makes_a_new_project_holding_it(server, project, colleague):
+    a, b, first, _ = two_versions(server, project, colleague)
     before = history(server)
 
-    copy = cc.copy_version(server.url, server.cookie, server.room_id, first, "try")
+    copy = cc.copy_version(server.url, server.cookie, server.project_id, first, "try")
 
-    assert copy != server.room_id
-    assert "try" in [info.name for info in cc.rooms(server.url, server.cookie)]
+    assert copy != server.project_id
+    assert "try" in [info.name for info in cc.projects(server.url, server.cookie)]
     (version,) = cc.history(server.url, server.cookie, copy)
-    copied = cc.Room.at(server.url, server.cookie, copy, version["id"])
+    copied = cc.Project.at(server.url, server.cookie, copy, version["id"])
     assert copied.event(a.uuid).confidence is None
     with pytest.raises(cc.NotFound):
         copied.event(b.uuid)
     assert version["name"].startswith("Copied from ")
     assert history(server) == before
-    assert room.event(a.uuid).confidence == 0.9
+    assert project.event(a.uuid).confidence == 0.9

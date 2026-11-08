@@ -65,9 +65,9 @@ async def until(predicate, timeout=15.0):
     raise AssertionError("the listener did not see the change in time")
 
 
-async def test_one_transaction_is_one_merged_batch(room, other):
+async def test_one_transaction_is_one_merged_batch(project, other):
     recorder = Recorder()
-    handle = room.listen(recorder)
+    handle = project.listen(recorder)
     try:
         with other.transaction():
             catalogue = other.create_catalogue(name="alpha", author="a@x.org")
@@ -93,9 +93,9 @@ async def test_one_transaction_is_one_merged_batch(room, other):
     assert recorder.calls[-1] == ("changes_done",)
 
 
-async def test_a_listener_hears_the_status_it_registers_under(room, other):
+async def test_a_listener_hears_the_status_it_registers_under(project, other):
     recorder = Recorder()
-    handle = room.listen(recorder)
+    handle = project.listen(recorder)
     try:
         await until(lambda: recorder.calls)
         assert recorder.calls[0] == ("status", "synced")
@@ -112,14 +112,14 @@ async def test_a_listener_hears_the_status_it_registers_under(room, other):
         handle.close()
 
 
-async def test_an_unrelated_listener_hears_no_opening_status(room, other):
+async def test_an_unrelated_listener_hears_no_opening_status(project, other):
     class OnlyDone:
         batches = 0
 
         def changes_done(self):
             OnlyDone.batches += 1
 
-    handle = room.listen(OnlyDone())
+    handle = project.listen(OnlyDone())
     try:
         other.create_catalogue(name="alpha", author="a@x.org")
         await until(lambda: OnlyDone.batches == 1)
@@ -129,9 +129,9 @@ async def test_an_unrelated_listener_hears_no_opening_status(room, other):
     assert OnlyDone.batches == 1
 
 
-async def test_the_listener_runs_on_the_loop_thread(room, other):
+async def test_the_listener_runs_on_the_loop_thread(project, other):
     recorder = Recorder()
-    handle = room.listen(recorder)
+    handle = project.listen(recorder)
     try:
         other.create_catalogue(name="alpha", author="a@x.org")
         await until(lambda: recorder.batches == 1)
@@ -141,14 +141,14 @@ async def test_the_listener_runs_on_the_loop_thread(room, other):
     assert recorder.threads == {threading.get_ident()}
 
 
-async def test_missing_methods_are_skipped(room, other):
+async def test_missing_methods_are_skipped(project, other):
     class OnlyDone:
         batches = 0
 
         def changes_done(self):
             OnlyDone.batches += 1
 
-    handle = room.listen(OnlyDone())
+    handle = project.listen(OnlyDone())
     try:
         other.create_catalogue(name="alpha", author="a@x.org")
         await until(lambda: OnlyDone.batches == 1)
@@ -156,7 +156,7 @@ async def test_missing_methods_are_skipped(room, other):
         handle.close()
 
 
-async def test_a_raising_method_is_logged_and_the_batch_goes_on(room, other, caplog):
+async def test_a_raising_method_is_logged_and_the_batch_goes_on(project, other, caplog):
     class Broken:
         def __init__(self):
             self.batches = 0
@@ -173,7 +173,7 @@ async def test_a_raising_method_is_logged_and_the_batch_goes_on(room, other, cap
 
     listener = Broken()
     caplog.set_level(logging.ERROR, logger="cocat_rs")
-    handle = room.listen(listener)
+    handle = project.listen(listener)
     try:
         catalogue = other.create_catalogue(name="alpha", author="a@x.org")
         await until(lambda: listener.batches == 1)
@@ -191,11 +191,11 @@ async def test_a_raising_method_is_logged_and_the_batch_goes_on(room, other, cap
         handle.close()
 
 
-async def test_a_local_write_is_not_reported_to_its_own_listener(room):
+async def test_a_local_write_is_not_reported_to_its_own_listener(project):
     recorder = Recorder()
-    handle = room.listen(recorder)
+    handle = project.listen(recorder)
     try:
-        room.create_catalogue(name="alpha", author="a@x.org")
+        project.create_catalogue(name="alpha", author="a@x.org")
         await asyncio.sleep(0.5)
     finally:
         handle.close()
@@ -203,9 +203,9 @@ async def test_a_local_write_is_not_reported_to_its_own_listener(room):
     assert recorder.calls == [("status", "synced")]
 
 
-async def test_closing_the_handle_stops_the_calls(room, other):
+async def test_closing_the_handle_stops_the_calls(project, other):
     recorder = Recorder()
-    handle = room.listen(recorder)
+    handle = project.listen(recorder)
     other.create_catalogue(name="alpha", author="a@x.org")
     await until(lambda: recorder.batches == 1)
 
@@ -215,14 +215,14 @@ async def test_closing_the_handle_stops_the_calls(room, other):
     assert recorder.batches == 1
 
 
-async def test_a_fixed_field_change_is_an_event_fields_call(room, other):
+async def test_a_fixed_field_change_is_an_event_fields_call(project, other):
     event = other.create_event(
         start="2025-01-31 10:00:00", stop="2025-01-31 10:01:00", author="a@x.org"
     )
-    await until(lambda: _has_event(room, event.uuid))
+    await until(lambda: _has_event(project, event.uuid))
 
     recorder = Recorder()
-    handle = room.listen(recorder)
+    handle = project.listen(recorder)
     try:
         with other.transaction():
             event.status = "reviewed"
@@ -241,9 +241,9 @@ async def test_a_fixed_field_change_is_an_event_fields_call(room, other):
     ]
 
 
-def _has_event(room, uuid):
+def _has_event(project, uuid):
     try:
-        room.event(uuid)
+        project.event(uuid)
     except LookupError:
         return False
     return True

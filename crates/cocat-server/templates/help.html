@@ -168,23 +168,23 @@ once. <strong>Live</strong>, at the top right, says your changes are reaching th
 <p><strong>SciQLop</strong>: in the cocat plugin's settings, enter that address, then sign in
 with your email and password. Your projects appear there. Edits show up here live, and the
 other way round.</p>
-<p><strong>Python</strong>, with the <code>cocat_rs</code> package. Python calls a project a
-room, and Save version <code>commit</code>.</p>
+<p><strong>Python</strong>, with the <code>cocat_rs</code> package. Python calls Save version
+<code>commit</code>.</p>
 <pre><code>import cocat_rs
 
 url = "{{ server_url }}"
 cookie = cocat_rs.login(url, "you@example.org", "your password")
-for project in cocat_rs.rooms(url, cookie):
-    print(project.id, project.name, project.role)
+for info in cocat_rs.projects(url, cookie):
+    print(info.id, info.name, info.role)
 
-room = cocat_rs.Room.open("cocat-cache", project.id)
-room.connect(url, cookie)
-room.wait_synced(10)
-for catalogue in room.catalogues():
+project = cocat_rs.Project.open("cocat-cache", info.id)
+project.connect(url, cookie)
+project.wait_synced(10)
+for catalogue in project.catalogues():
     print(catalogue.name, len(catalogue.events))
 
-room.save()
-cocat_rs.commit(url, cookie, project.id, name="paper v1", message="as submitted")</code></pre>
+project.save()
+cocat_rs.commit(url, cookie, info.id, name="paper v1", message="as submitted")</code></pre>
 </section>
 
 <section>

@@ -1,4 +1,4 @@
-//! The compiled part of `cocat_rs`: a room, its catalogues and its events.
+//! The compiled part of `cocat_rs`: a project, its catalogues and its events.
 //!
 //! Everything that can be done without Python types happens in Rust; the Python wrapper
 //! (`cocat_rs/__init__.py`) adds the asyncio and listener plumbing that needs a loop.
@@ -971,7 +971,7 @@ impl Event {
         Ok(())
     }
 
-    /// Removes the event for good, from the room and from every catalogue.
+    /// Removes the event for good, from the project and from every catalogue.
     fn purge(&self) -> Result<()> {
         write(&self.room, |txn| model::purge_event(txn, &self.uuid))?;
         Ok(())
@@ -1040,21 +1040,21 @@ fn datetime_array(py: Python<'_>, micros: Vec<i64>) -> Result<Py<PyAny>> {
 }
 
 #[pyclass(module = "cocat_rs")]
-pub struct Room {
+pub struct Project {
     room: Arc<ClientRoom>,
     batches: Mutex<Receiver<Vec<Change>>>,
     url: Mutex<Option<String>>,
     credentials: Mutex<Option<(String, String)>>,
 }
 
-impl Room {
-    fn of(room: ClientRoom) -> Room {
+impl Project {
+    fn of(room: ClientRoom) -> Project {
         let room = Arc::new(room);
         let (sender, batches) = mpsc::channel();
         room.subscribe(move |batch| {
             let _ = sender.send(batch);
         });
-        Room {
+        Project {
             room,
             batches: Mutex::new(batches),
             url: Mutex::new(None),
@@ -1064,36 +1064,39 @@ impl Room {
 }
 
 #[pymethods]
-impl Room {
+impl Project {
     #[staticmethod]
-    fn open(cache_dir: String, room_id: String) -> Result<Room> {
+    fn open(cache_dir: String, project_id: String) -> Result<Project> {
         std::fs::create_dir_all(Path::new(&cache_dir))
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let room = ClientRoom::open(Path::new(&cache_dir), &room_id)
+        let room = ClientRoom::open(Path::new(&cache_dir), &project_id)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Ok(Room::of(room))
+        Ok(Project::of(room))
     }
 
-    /// The room as of a version, read-only and never connected: once the state is fetched,
+    /// The project as of a version, read-only and never connected: once the state is fetched,
     /// the server is not needed.
     #[staticmethod]
     fn at(
         py: Python<'_>,
         url: String,
         cookie: String,
-        room_id: String,
+        project_id: String,
         version: u64,
-    ) -> Result<Room> {
+    ) -> Result<Project> {
         let state = py
             .detach(|| {
                 block_on(cocat_client::version_state(
-                    &url, &cookie, &room_id, version,
+                    &url,
+                    &cookie,
+                    &project_id,
+                    version,
                 ))
             })?
             .map_err(http_error)?;
-        let room = ClientRoom::past(&room_id, &state)
+        let room = ClientRoom::past(&project_id, &state)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Ok(Room::of(room))
+        Ok(Project::of(room))
     }
 
     /// Connects, and keeps `(username, password)` so a session the server refuses can log in
@@ -1118,7 +1121,7 @@ impl Room {
 
     fn set_cookie(&self, cookie: String) -> Result<()> {
         let Some(url) = lock(&self.url).clone() else {
-            return Err(PyRuntimeError::new_err("this room never connected"));
+            return Err(PyRuntimeError::new_err("this project never connected"));
         };
         let login = lock(&self.credentials)
             .clone()
@@ -1209,7 +1212,7 @@ impl Room {
     }
 
     /// The arrays of the events named (uuids or `Event`s), in the order given and from one
-    /// read of the document. A uuid the room does not hold is left out, and the returned
+    /// read of the document. A uuid the project does not hold is left out, and the returned
     /// `uuid` list says which came back.
     #[pyo3(signature = (events, attributes=false))]
     fn event_arrays(
@@ -1449,7 +1452,7 @@ impl Room {
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
-    /// Imports the VOTable's tables into this room and returns how many catalogues it added.
+    /// Imports the VOTable's tables into this project and returns how many catalogues it added.
     #[pyo3(signature = (path, table_name=None))]
     fn import_votable(
         &self,
@@ -1514,7 +1517,7 @@ fn import_table(
 
 /// The VOTable a set of catalogues exports to, the file Python cocat's exporter writes.
 ///
-/// The catalogues carry their room, so the script mode can export a room it never
+/// The catalogues carry their project, so the script mode can export a project it never
 /// logged into.
 #[pyfunction]
 fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
@@ -1536,7 +1539,7 @@ fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
 }
 
 /// The uuids of the catalogues an argument names (one catalogue or an iterable of them),
-/// with the room they belong to.
+/// with the project they belong to.
 fn catalogues_of(value: &Bound<'_, PyAny>) -> Result<(Arc<ClientRoom>, Vec<String>)> {
     if let Ok(catalogue) = value.extract::<PyRef<Catalogue>>() {
         return Ok((Arc::clone(&catalogue.room), vec![catalogue.uuid.clone()]));
@@ -1620,7 +1623,7 @@ fn change_to_python(py: Python<'_>, change: &Change) -> Result<Py<PyAny>> {
 
 #[pyclass(module = "cocat_rs", frozen)]
 #[derive(Clone, PartialEq, Eq)]
-pub struct RoomInfo {
+pub struct ProjectInfo {
     #[pyo3(get)]
     pub id: String,
     #[pyo3(get)]
@@ -1633,11 +1636,11 @@ pub struct RoomInfo {
 }
 
 #[pymethods]
-impl RoomInfo {
+impl ProjectInfo {
     #[new]
     #[pyo3(signature = (id, name, role, personal = false))]
-    fn new(id: String, name: String, role: String, personal: bool) -> RoomInfo {
-        RoomInfo {
+    fn new(id: String, name: String, role: String, personal: bool) -> ProjectInfo {
+        ProjectInfo {
             id,
             name,
             role,
@@ -1646,9 +1649,9 @@ impl RoomInfo {
     }
 }
 
-impl From<ClientRoomInfo> for RoomInfo {
-    fn from(info: ClientRoomInfo) -> RoomInfo {
-        RoomInfo {
+impl From<ClientRoomInfo> for ProjectInfo {
+    fn from(info: ClientRoomInfo) -> ProjectInfo {
+        ProjectInfo {
             id: info.id,
             name: info.name,
             role: info.role.as_str().to_owned(),
@@ -1672,21 +1675,21 @@ fn login(py: Python<'_>, url: String, username: String, password: String) -> Res
 }
 
 #[pyfunction]
-fn rooms(py: Python<'_>, url: String, cookie: String) -> Result<Vec<RoomInfo>> {
-    let rooms = py
+fn projects(py: Python<'_>, url: String, cookie: String) -> Result<Vec<ProjectInfo>> {
+    let projects = py
         .detach(|| block_on(cocat_client::rooms(&url, &cookie)))?
         .map_err(http_error)?;
-    Ok(rooms.into_iter().map(RoomInfo::from).collect())
+    Ok(projects.into_iter().map(ProjectInfo::from).collect())
 }
 
-/// The room's versions, newest first, as dicts; with `catalogue`, only those that touched it.
+/// The project's versions, newest first, as dicts; with `catalogue`, only those that touched it.
 #[pyfunction]
-#[pyo3(signature = (url, cookie, room_id, catalogue=None))]
+#[pyo3(signature = (url, cookie, project_id, catalogue=None))]
 fn history(
     py: Python<'_>,
     url: String,
     cookie: String,
-    room_id: String,
+    project_id: String,
     catalogue: Option<String>,
 ) -> Result<Vec<Py<PyAny>>> {
     let versions = py
@@ -1694,7 +1697,7 @@ fn history(
             block_on(cocat_client::history(
                 &url,
                 &cookie,
-                &room_id,
+                &project_id,
                 catalogue.as_deref(),
             ))
         })?
@@ -1706,12 +1709,12 @@ fn history(
 }
 
 #[pyfunction]
-#[pyo3(signature = (url, cookie, room_id, version, catalogue=None))]
+#[pyo3(signature = (url, cookie, project_id, version, catalogue=None))]
 fn restore(
     py: Python<'_>,
     url: String,
     cookie: String,
-    room_id: String,
+    project_id: String,
     version: u64,
     catalogue: Option<String>,
 ) -> Result<bool> {
@@ -1719,7 +1722,7 @@ fn restore(
         block_on(cocat_client::restore(
             &url,
             &cookie,
-            &room_id,
+            &project_id,
             version,
             catalogue.as_deref(),
         ))
@@ -1732,7 +1735,7 @@ fn name_version(
     py: Python<'_>,
     url: String,
     cookie: String,
-    room_id: String,
+    project_id: String,
     version: u64,
     name: Option<String>,
 ) -> Result<()> {
@@ -1740,7 +1743,7 @@ fn name_version(
         block_on(cocat_client::name_version(
             &url,
             &cookie,
-            &room_id,
+            &project_id,
             version,
             name.as_deref(),
         ))
@@ -1748,14 +1751,14 @@ fn name_version(
     .map_err(http_error)
 }
 
-/// Saves the room's newest version, with an optional name and note; returns its id.
+/// Saves the project's newest version, with an optional name and note; returns its id.
 #[pyfunction]
-#[pyo3(signature = (url, cookie, room_id, name=None, message=None))]
+#[pyo3(signature = (url, cookie, project_id, name=None, message=None))]
 fn commit(
     py: Python<'_>,
     url: String,
     cookie: String,
-    room_id: String,
+    project_id: String,
     name: Option<String>,
     message: Option<String>,
 ) -> Result<u64> {
@@ -1763,7 +1766,7 @@ fn commit(
         block_on(cocat_client::commit(
             &url,
             &cookie,
-            &room_id,
+            &project_id,
             name.as_deref(),
             message.as_deref(),
         ))
@@ -1777,13 +1780,17 @@ fn copy_version(
     py: Python<'_>,
     url: String,
     cookie: String,
-    room_id: String,
+    project_id: String,
     version: u64,
     name: String,
 ) -> Result<String> {
     py.detach(|| {
         block_on(cocat_client::copy_version(
-            &url, &cookie, &room_id, version, &name,
+            &url,
+            &cookie,
+            &project_id,
+            version,
+            &name,
         ))
     })?
     .map_err(http_error)
@@ -1811,12 +1818,12 @@ fn rule_from_tscat(py: Python<'_>, predicate: &Bound<'_, PyAny>) -> Result<Py<Py
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     forward_logs_to_python(module.py())?;
-    module.add_class::<Room>()?;
+    module.add_class::<Project>()?;
     module.add_class::<Catalogue>()?;
     module.add_class::<Event>()?;
-    module.add_class::<RoomInfo>()?;
+    module.add_class::<ProjectInfo>()?;
     module.add_function(wrap_pyfunction!(login, module)?)?;
-    module.add_function(wrap_pyfunction!(rooms, module)?)?;
+    module.add_function(wrap_pyfunction!(projects, module)?)?;
     module.add_function(wrap_pyfunction!(history, module)?)?;
     module.add_function(wrap_pyfunction!(restore, module)?)?;
     module.add_function(wrap_pyfunction!(name_version, module)?)?;

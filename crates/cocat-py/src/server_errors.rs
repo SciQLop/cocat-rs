@@ -30,13 +30,13 @@ create_exception!(
     cocat_rs,
     Conflict,
     ServerError,
-    "409: the call clashes with the room's state, e.g. nothing to save."
+    "409: the call clashes with the project's state, e.g. nothing to save."
 );
 
 static SERVER_NOT_FOUND: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 /// The class for a 404, also a [`crate::not_found`] class so one `except NotFound` covers a
-/// missing room and a missing event; `create_exception!` takes a single base, hence `type()`.
+/// missing project and a missing event; `create_exception!` takes a single base, hence `type()`.
 fn server_not_found(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     SERVER_NOT_FOUND
         .get_or_try_init(py, || {
@@ -45,7 +45,7 @@ fn server_not_found(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
                 [py.get_type::<ServerError>(), crate::not_found(py)?.clone()],
             )?;
             let namespace = PyDict::new(py);
-            namespace.set_item("__doc__", "404: no such room or version on the server.")?;
+            namespace.set_item("__doc__", "404: no such project or version on the server.")?;
             namespace.set_item("__module__", "cocat_rs")?;
             let class = py.import("builtins")?.getattr("type")?.call1((
                 "ServerNotFound",

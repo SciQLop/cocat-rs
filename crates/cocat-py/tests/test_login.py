@@ -25,51 +25,51 @@ def test_a_bad_password_is_refused(server):
         cc.login(server.url, server.email, "wrong")
 
 
-def test_rooms_lists_the_callers_rooms_with_their_roles(server):
-    rooms = cc.rooms(server.url, server.cookie)
-    assert (server.room_id, "bench", "owner") in [
-        (room.id, room.name, room.role) for room in rooms
+def test_projects_lists_the_callers_projects_with_their_roles(server):
+    projects = cc.projects(server.url, server.cookie)
+    assert (server.project_id, "bench", "owner") in [
+        (project.id, project.name, project.role) for project in projects
     ]
 
 
-def test_rooms_flag_the_own_project(server):
-    rooms = cc.rooms(server.url, server.cookie)
-    own = [room for room in rooms if room.personal]
-    assert [room.role for room in own] == ["owner"]
-    assert own[0].id != server.room_id
-    assert not next(room for room in rooms if room.id == server.room_id).personal
+def test_projects_flag_the_own_project(server):
+    projects = cc.projects(server.url, server.cookie)
+    own = [project for project in projects if project.personal]
+    assert [project.role for project in own] == ["owner"]
+    assert own[0].id != server.project_id
+    assert not next(project for project in projects if project.id == server.project_id).personal
 
 
 def test_a_refused_handshake_is_unauthorized_and_set_cookie_recovers(server, cache):
-    room = cc.Room.open(str(cache), server.room_id)
+    project = cc.Project.open(str(cache), server.project_id)
     try:
-        room.connect(server.url, "not-a-session")
-        wait_until(lambda: room.status == "unauthorized")
-        assert room.status == "unauthorized"
+        project.connect(server.url, "not-a-session")
+        wait_until(lambda: project.status == "unauthorized")
+        assert project.status == "unauthorized"
 
-        room.set_cookie(server.cookie)
-        room.wait_synced(15)
-        assert room.status == "synced"
+        project.set_cookie(server.cookie)
+        project.wait_synced(15)
+        assert project.status == "synced"
     finally:
-        room.close()
+        project.close()
 
 
 def test_credentials_log_in_again_when_the_cookie_is_stale(server, cache):
-    room = cc.Room.open(str(cache), server.room_id)
+    project = cc.Project.open(str(cache), server.project_id)
     try:
-        room.connect(server.url, "not-a-session", (server.email, "hunter2"))
-        room.wait_synced(15)
-        assert room.status == "synced"
+        project.connect(server.url, "not-a-session", (server.email, "hunter2"))
+        project.wait_synced(15)
+        assert project.status == "synced"
     finally:
-        room.close()
+        project.close()
 
 
 @pytest.mark.asyncio
 async def test_synced_awaits_the_first_sync(server, cache):
-    room = cc.Room.open(str(cache), server.room_id)
+    project = cc.Project.open(str(cache), server.project_id)
     try:
-        room.connect(server.url, server.cookie)
-        await room.synced()
-        assert room.status == "synced"
+        project.connect(server.url, server.cookie)
+        await project.synced()
+        assert project.status == "synced"
     finally:
-        room.close()
+        project.close()

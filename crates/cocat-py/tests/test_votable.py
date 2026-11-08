@@ -18,8 +18,8 @@ def wallet(monkeypatch):
     api._reset()
 
 
-def catalogue_with_events(room) -> None:
-    catalogue = room.create_catalogue(
+def catalogue_with_events(project) -> None:
+    catalogue = project.create_catalogue(
         name="gamma",
         author="rust@x.org",
         uuid=ALPHA,
@@ -27,7 +27,7 @@ def catalogue_with_events(room) -> None:
         attributes={"mission": "MMS"},
     )
     events = [
-        room.create_event(
+        project.create_event(
             start="2025-01-31 10:00:00+00:00",
             stop="2025-01-31 10:01:00+00:00",
             author="rust@x.org",
@@ -40,7 +40,7 @@ def catalogue_with_events(room) -> None:
             source_id="list-1",
             attributes={"q": 0.25, "flag": False, "mission": "MMS"},
         ),
-        room.create_event(
+        project.create_event(
             start="2025-01-31 11:00:00.123456+00:00",
             stop="2025-01-31 11:01:00.654321+00:00",
             author="rust@x.org",
@@ -52,13 +52,13 @@ def catalogue_with_events(room) -> None:
 
 
 def test_a_votable_round_trips_through_our_own_import(tmp_path) -> None:
-    source = cocat_rs.Room.open(str(tmp_path / "source"), "source-room")
+    source = cocat_rs.Project.open(str(tmp_path / "source"), "source-room")
     catalogue_with_events(source)
 
     path = tmp_path / "gamma.xml"
     api.export_votable([source.catalogue("gamma")], path)
 
-    target = cocat_rs.Room.open(str(tmp_path / "target"), "target-room")
+    target = cocat_rs.Project.open(str(tmp_path / "target"), "target-room")
     target.import_votable(str(path))
 
     imported = target.catalogue("gamma")
