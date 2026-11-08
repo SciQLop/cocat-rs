@@ -43,7 +43,6 @@ struct Help {
     frame: Frame,
     server_url: String,
     rules: [(&'static str, &'static str); 4],
-    rooms_href: String,
     groups_href: String,
     account_href: String,
 }
@@ -56,7 +55,6 @@ pub(crate) async fn page(State(state): State<AppState>, MaybeUser(user): MaybeUs
             .public_base()
             .unwrap_or_else(|| UNKNOWN_SERVER.to_owned()),
         rules: RULE_EXAMPLES,
-        rooms_href: links.path("/rooms"),
         groups_href: links.path("/groups"),
         account_href: links.path("/account"),
     })

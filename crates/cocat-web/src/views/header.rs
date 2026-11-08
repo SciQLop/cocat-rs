@@ -6,6 +6,7 @@ use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
 use crate::views::projects::ProjectMenu;
+use crate::views::share::ShareButton;
 
 #[component]
 pub fn Header(shown: Memo<Route>) -> impl IntoView {
@@ -15,22 +16,28 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let read_only = !config.role.can_write();
     let page = window().location().pathname().unwrap_or_default();
     let in_history = move || matches!(shown.get(), Route::History { .. });
+    let here = move || match shown.get() {
+        Route::History { .. } => Some("History"),
+        Route::Groups | Route::Group(_) => Some("Groups"),
+        _ => None,
+    };
     let history = move || shown.get().history().href(&page);
     view! {
         <header class="app-header">
-            <a class="brand" href="../rooms">
+            <a class="brand" href="../app">
                 <img src="mark.png" alt="" width="24" height="28"/>
                 "cocat"
             </a>
             <nav class="crumbs" aria-label="Breadcrumb">
                 <ProjectMenu/>
-                <Show when=in_history>
+                {move || here().map(|here| view! {
                     <span aria-hidden="true">"/"</span>
-                    <span class="here" aria-current="page">"History"</span>
-                </Show>
+                    <span class="here" aria-current="page">{here}</span>
+                })}
             </nav>
             <div class="header-end">
                 <Avatars/>
+                <ShareButton/>
                 <Show when=move || !in_history()>
                     <a class="button history-button" href=history.clone()>"History"</a>
                 </Show>

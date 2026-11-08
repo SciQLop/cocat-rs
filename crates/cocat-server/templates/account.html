@@ -4,7 +4,7 @@
 <article class="card">
 <h1>Account</h1>
 <p class="email muted">{{ email }}</p>
-{% call help::hint(frame.help_href, "account", "your account", "Your sign-in details. Your projects are under My projects, your groups under My groups.") %}{% endcall %}
+{% call help::hint(frame.help_href, "account", "your account", "Your sign-in details. Your projects and your groups are in the project menu, at the top of your catalogues.") %}{% endcall %}
 {% match confirm_href %}
 {% when Some with (href) %}
 <p><a href="{{ href }}" role="button" class="quiet">Confirm your email</a></p>

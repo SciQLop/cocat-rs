@@ -33,12 +33,14 @@ async fn member_of(fixture: &Fixture, room_id: &str, email: &str, role: Role) ->
     id
 }
 
-/// The page the POST redirects to, carrying the notice (and share link) the POST left.
-async fn page_after(fixture: &Fixture, response: &Response, token: &str, path: &str) -> String {
-    let mut jar = vec![flash_cookie(response).expect("the action flashes a message")];
-    jar.extend(share_link_cookie(response));
-    let cookies: Vec<&str> = jar.iter().map(String::as_str).collect();
-    body_text(fixture.get_with_cookies(path, token, &cookies).await).await
+/// What the visitor sees after the POST: the old page sends them into the app, whose head
+/// (or, without the app installed, its stand-in page) carries the notice the POST left.
+async fn page_after(fixture: &Fixture, response: &Response, token: &str) -> String {
+    assert!(
+        flash_cookie(response).is_some(),
+        "the action flashes a message"
+    );
+    fixture.follow(response, token).await.1
 }
 
 #[tokio::test]
@@ -81,77 +83,25 @@ async fn not_found_for_strangers() {
 }
 
 #[tokio::test]
-async fn owner_view() {
+async fn every_member_is_sent_to_the_share_dialog() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
-    let member = member_of(&fixture, &id, OTHER, Role::Editor).await;
+    for (email, role) in [(OTHER, Role::Editor), (GUEST, Role::Viewer)] {
+        member_of(&fixture, &id, email, role).await;
+    }
 
-    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
+    for email in [MEMBER, OTHER, GUEST] {
+        let member = db::user_by_email(&fixture.state.pool, email)
+            .await
+            .unwrap()
+            .unwrap();
+        let token = fixture.token(member.id).await;
+        let response = fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await;
 
-    assert!(page.contains("lab"), "{page}");
-    assert!(page.contains("Your role: owner"), "{page}");
-    assert!(page.contains("Members"), "{page}");
-    assert!(page.contains(MEMBER), "{page}");
-    assert!(page.contains(OTHER), "{page}");
-    assert!(!page.contains(&format!("/ui/rooms/{id}/leave")), "{page}");
-    assert!(page.contains("Create share link"), "{page}");
-    assert!(page.contains(r#"name="email""#), "{page}");
-    assert!(page.contains(&format!(r#"data-role="{member}""#)), "{page}");
-    assert!(
-        page.contains(&format!(r#"data-confirm="Remove {OTHER}?""#)),
-        "{page}"
-    );
-    assert!(
-        page.contains(&format!(r#"data-confirm="Make {OTHER} the owner?""#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"data-role="{user}""#)),
-        "the owner has no role picker: {page}"
-    );
-}
-
-#[tokio::test]
-async fn editor_view_has_no_role_picker() {
-    let fixture = Fixture::start().await;
-    let user = fixture.verified(MEMBER).await;
-    let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user).await;
-    let id = room_owned_by(&fixture, other, "theirs").await;
-    member_of(&fixture, &id, MEMBER, Role::Editor).await;
-
-    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
-
-    assert!(page.contains("Your role: editor"), "{page}");
-    assert!(page.contains(&format!("/ui/rooms/{id}/leave")), "{page}");
-    assert!(
-        page.contains("Only the owner can manage invitations."),
-        "{page}"
-    );
-    assert!(!page.contains("Create share link"), "{page}");
-    assert!(!page.contains(r#"name="role""#), "{page}");
-    assert!(
-        !page.contains(&format!("/ui/rooms/{id}/members/{other}/remove")),
-        "{page}"
-    );
-}
-
-#[tokio::test]
-async fn viewer_view() {
-    let fixture = Fixture::start().await;
-    let user = fixture.verified(MEMBER).await;
-    let other = fixture.verified(OTHER).await;
-    let token = fixture.token(user).await;
-    let id = room_owned_by(&fixture, other, "theirs").await;
-    member_of(&fixture, &id, MEMBER, Role::Viewer).await;
-
-    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
-
-    assert!(page.contains("Your role: viewer"), "{page}");
-    assert!(!page.contains(&format!(r#"data-role="{other}""#)), "{page}");
-    assert!(page.contains(OTHER), "{page}");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{email}");
+        assert_eq!(location(&response), format!("/ui/rooms/{id}/browse#share"));
+    }
 }
 
 #[tokio::test]
@@ -175,7 +125,7 @@ async fn change_role_closes_their_socket() {
         .await;
 
     assert_eq!(location(&response), format!("/ui/rooms/{id}"));
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(page.contains(&format!("{GUEST} is now a viewer")), "{page}");
     let closed = tokio::time::timeout(Duration::from_secs(5), &mut inbox.close)
         .await
@@ -204,7 +154,7 @@ async fn remove() {
         .await;
 
     assert_eq!(location(&response), format!("/ui/rooms/{id}"));
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(page.contains(&format!("Removed {GUEST}")), "{page}");
     assert_eq!(
         db::role_in(&fixture.state.pool, &id, member).await.unwrap(),
@@ -229,13 +179,11 @@ async fn transfer() {
         .await;
 
     assert_eq!(location(&response), format!("/ui/rooms/{id}"));
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(
         page.contains(&format!("{OTHER} now owns the project")),
         "{page}"
     );
-    assert!(page.contains("Your role: editor"), "{page}");
-    assert!(!page.contains("Create share link"), "{page}");
     assert_eq!(
         db::role_in(&fixture.state.pool, &id, member).await.unwrap(),
         Some(Role::Owner)
@@ -260,12 +208,7 @@ async fn leave() {
         .await;
 
     assert_eq!(location(&response), "/ui/rooms");
-    let page = body_text(
-        fixture
-            .get_with("/ui/rooms", &token, &flash_cookie(&response).unwrap())
-            .await,
-    )
-    .await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(page.contains("You left the project"), "{page}");
     assert_eq!(
         db::role_in(&fixture.state.pool, &id, user).await.unwrap(),
@@ -275,23 +218,23 @@ async fn leave() {
 
 #[tokio::test]
 async fn share_link_uses_public_url() {
-    let fixture = Fixture::start_with_mail().await;
+    let fixture = Fixture::start_with_mail().await.with_app();
 
     let page = share_link_page(&fixture, Role::Editor).await;
 
-    assert!(page.contains("Share link created"), "{page}");
-    let link = format!(r#"value="{PUBLIC_URL}/ui/invitation#"#);
+    assert!(
+        page.contains(r#"<meta name="cocat-flash" content="Share link created">"#),
+        "{page}"
+    );
+    let link = format!(r#"<meta name="cocat-share-link" content="{PUBLIC_URL}/ui/invitation#"#);
     assert!(page.contains(&link), "{page}");
-    assert!(page.contains("readonly"), "{page}");
-    assert!(page.contains(">Copy<"), "{page}");
-    assert!(page.contains("Share link"), "{page}");
 }
 
 /// A share link rides in a cookie of its own: whatever a notice says, the field it fills
 /// holds only the link the create action handed back.
 #[tokio::test]
 async fn share_link_survives_a_newline_free_flash() {
-    let fixture = Fixture::start_with_mail().await;
+    let fixture = Fixture::start_with_mail().await.with_app();
     let user = fixture.verified(MEMBER).await;
     let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
@@ -326,15 +269,21 @@ async fn share_link_survives_a_newline_free_flash() {
     );
 
     let forged = "cocat_flash=Shared%20with%20a%0Ab";
+    let app = format!("{path}/browse");
     let page = body_text(
         fixture
-            .get_with_cookies(&path, &token, &[forged, &link])
+            .get_with_cookies(&app, &token, &[forged, &link])
             .await,
     )
     .await;
 
     assert!(page.contains("Shared with a"), "{page}");
-    assert!(page.contains(&format!(r#"value="{decoded}""#)), "{page}");
+    assert!(
+        page.contains(&format!(
+            r#"<meta name="cocat-share-link" content="{decoded}">"#
+        )),
+        "{page}"
+    );
 }
 
 /// Create a share link as the owner and read the page the flash redirects to.
@@ -351,7 +300,7 @@ async fn share_link_page(fixture: &Fixture, role: Role) -> String {
         )
         .await;
     assert_eq!(location(&response), path, "{:?}", response.status());
-    page_after(fixture, &response, &token, &path).await
+    page_after(fixture, &response, &token).await
 }
 
 #[tokio::test]
@@ -374,11 +323,13 @@ async fn revoke() {
         .await;
 
     assert_eq!(location(&response), format!("/ui/rooms/{id}"));
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(page.contains("Invitation revoked"), "{page}");
     assert!(
-        !page.contains(&format!("data-invitation=\"{invitation}\"")),
-        "{page}"
+        invitations::list(&fixture.state, &id, user)
+            .await
+            .unwrap()
+            .is_empty()
     );
 }
 
@@ -397,7 +348,7 @@ async fn invite_by_email_with_mailer() {
         )
         .await;
 
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(
         page.contains(&format!("Invitation sent to {GUEST}")),
         "{page}"
@@ -409,7 +360,7 @@ async fn invite_by_email_with_mailer() {
 
 #[tokio::test]
 async fn invite_by_email_without_mailer_shows_link() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(MEMBER).await;
     let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
@@ -422,14 +373,17 @@ async fn invite_by_email_without_mailer_shows_link() {
         )
         .await;
 
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(page.contains("Invitation created"), "{page}");
     let base = fixture.state.links.ui("");
     assert!(
-        page.contains(&format!(r#"value="{base}/invitation#"#)),
+        page.contains(&format!(
+            r#"<meta name="cocat-share-link" content="{base}/invitation#"#
+        )),
         "{page}"
     );
-    assert!(page.contains(GUEST), "{page}");
+    let pending = invitations::list(&fixture.state, &id, user).await.unwrap();
+    assert_eq!(pending[0].email.as_deref(), Some(GUEST));
 }
 
 #[tokio::test]
@@ -449,12 +403,7 @@ async fn refused_after_losing_access() {
         .await;
 
     assert_eq!(location(&response), "/ui/rooms");
-    let page = body_text(
-        fixture
-            .get_with("/ui/rooms", &token, &flash_cookie(&response).unwrap())
-            .await,
-    )
-    .await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(page.contains(&format!("Project {id} not found")), "{page}");
 }
 
@@ -506,7 +455,7 @@ async fn revoke_foreign_invitation_is_refused() {
         .await;
 
     assert_eq!(location(&response), format!("/ui/rooms/{mine}"));
-    let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{mine}")).await;
+    let page = page_after(&fixture, &response, &token).await;
     assert!(
         page.contains(&format!("Invitation {invitation} not found")),
         "{page}"
@@ -521,124 +470,11 @@ async fn revoke_foreign_invitation_is_refused() {
     );
 }
 
-#[tokio::test]
-async fn an_invitation_row_shows_usage() {
-    let fixture = Fixture::start().await;
-    let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user).await;
-    let id = room_owned_by(&fixture, user, "lab").await;
-    let guest = fixture.verified(GUEST).await;
-    invitations::create(
-        &fixture.state,
-        &id,
-        user,
-        Role::Editor,
-        Some(GUEST),
-        14,
-        None,
-    )
-    .await
-    .unwrap();
-    let (_, spent) =
-        invitations::create(&fixture.state, &id, user, Role::Editor, None, 14, Some(2))
-            .await
-            .unwrap();
-    let guest_user = db::user_by_id(&fixture.state.pool, guest)
-        .await
-        .unwrap()
-        .unwrap();
-    let (room, _) = invitations::accept(&fixture.state, &spent, &guest_user)
-        .await
-        .unwrap();
-    assert_eq!(room.id, id);
-
-    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
-
-    assert!(page.contains(GUEST), "{page}");
-    assert!(page.contains("Share link"), "{page}");
-    assert!(page.contains("1/2"), "{page}");
-    assert!(page.contains("0/1"), "{page}");
-    let expires = invitations::list(&fixture.state, &id, user)
-        .await
-        .unwrap()
-        .first()
-        .map(|invitation| invitation.expires_at[..10].to_owned())
-        .unwrap();
-    assert!(page.contains(&expires), "{page}");
-}
-
 async fn group_owned_by(fixture: &Fixture, owner: Uuid, name: &str) -> String {
     groups::create(&fixture.state, owner, name)
         .await
         .unwrap()
         .id
-}
-
-#[tokio::test]
-async fn grants_are_listed_for_viewers() {
-    let fixture = Fixture::start().await;
-    let owner = fixture.verified(MEMBER).await;
-    let room = room_owned_by(&fixture, owner, "lab").await;
-    let viewer = member_of(&fixture, &room, OTHER, Role::Viewer).await;
-    let group = group_owned_by(&fixture, owner, "friends").await;
-    groups::grant(&fixture.state, &room, &group, owner, Role::Editor)
-        .await
-        .unwrap();
-    let token = fixture.token(viewer).await;
-
-    let page = body_text(
-        fixture
-            .get(&format!("/ui/rooms/{room}"), Some(&token))
-            .await,
-    )
-    .await;
-
-    assert!(page.contains("friends"), "{page}");
-    assert!(
-        page.contains(r#"<span class="role">editor</span>"#),
-        "{page}"
-    );
-    assert!(!page.contains(">Share with group<"), "{page}");
-    assert!(
-        !page.contains(&format!("data-group-role=\"{group}\"")),
-        "{page}"
-    );
-}
-
-#[tokio::test]
-async fn the_owner_picker_lists_only_their_ungranted_groups() {
-    let fixture = Fixture::start().await;
-    let owner = fixture.verified(MEMBER).await;
-    let other = fixture.verified(OTHER).await;
-    let room = room_owned_by(&fixture, owner, "lab").await;
-    let granted = group_owned_by(&fixture, owner, "granted").await;
-    let spare = group_owned_by(&fixture, owner, "spare").await;
-    let foreign = group_owned_by(&fixture, other, "foreign").await;
-    groups::grant(&fixture.state, &room, &granted, owner, Role::Editor)
-        .await
-        .unwrap();
-    let token = fixture.token(owner).await;
-
-    let page = body_text(
-        fixture
-            .get(&format!("/ui/rooms/{room}"), Some(&token))
-            .await,
-    )
-    .await;
-
-    assert!(page.contains(">Share with group<"), "{page}");
-    assert!(
-        page.contains(&format!(r#"<option value="{spare}""#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{granted}""#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{foreign}""#)),
-        "{page}"
-    );
 }
 
 #[tokio::test]
@@ -707,17 +543,6 @@ async fn stop_sharing_with_a_group() {
         .unwrap();
     let token = fixture.token(owner).await;
 
-    let page = body_text(
-        fixture
-            .get(&format!("/ui/rooms/{room}"), Some(&token))
-            .await,
-    )
-    .await;
-    assert!(
-        page.contains(r#"data-confirm="Stop sharing with friends?""#),
-        "{page}"
-    );
-
     let response = fixture
         .post(
             &format!("/ui/rooms/{room}/groups/{group}/remove"),
@@ -766,57 +591,5 @@ async fn a_foreign_group_is_refused() {
             .await
             .unwrap()
             .is_empty()
-    );
-}
-
-/// The email field suggests the people the owner already works with: members of their other
-/// rooms and of their groups, never strangers, the owner, or members of this room.
-#[tokio::test]
-async fn the_email_field_suggests_people_the_owner_works_with() {
-    let fixture = Fixture::start().await;
-    let owner = fixture.verified(MEMBER).await;
-    let room = room_owned_by(&fixture, owner, "lab").await;
-    let other_room = room_owned_by(&fixture, owner, "elsewhere").await;
-    member_of(&fixture, &room, OTHER, Role::Editor).await;
-    member_of(&fixture, &other_room, OTHER, Role::Viewer).await;
-    member_of(&fixture, &other_room, "colleague@example.org", Role::Viewer).await;
-    let group = group_owned_by(&fixture, owner, "friends").await;
-    let friend = fixture.verified("friend@example.org").await;
-    sqlx::query("INSERT INTO group_member (group_id, user_id, role) VALUES (?, ?, 'member')")
-        .bind(&group)
-        .bind(friend.to_string())
-        .execute(&fixture.state.pool)
-        .await
-        .unwrap();
-    fixture.verified("stranger@example.org").await;
-    let token = fixture.token(owner).await;
-
-    let page = body_text(
-        fixture
-            .get(&format!("/ui/rooms/{room}"), Some(&token))
-            .await,
-    )
-    .await;
-
-    assert!(page.contains(r#"list="known-people""#), "{page}");
-    assert!(
-        page.contains(r#"<option value="colleague@example.org">"#),
-        "{page}"
-    );
-    assert!(
-        page.contains(r#"<option value="friend@example.org">"#),
-        "{page}"
-    );
-    assert!(
-        !page.contains(r#"<option value="stranger@example.org">"#),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{OTHER}">"#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{MEMBER}">"#)),
-        "{page}"
     );
 }

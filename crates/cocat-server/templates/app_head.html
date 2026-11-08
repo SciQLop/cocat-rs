@@ -5,3 +5,6 @@
 <meta name="cocat-ws" content="{{ socket }}">
 <meta name="cocat-api" content="{{ api }}">
 <meta name="cocat-user" content="{{ email }}">
+{% match flash %}{% when Some with (text) %}<meta name="cocat-flash" content="{{ text }}">
+{% when None %}{% endmatch %}{% match share_link %}{% when Some with (link) %}<meta name="cocat-share-link" content="{{ link }}">
+{% when None %}{% endmatch %}

@@ -65,8 +65,9 @@ async fn sign_up_without_a_mailer_lands_in_the_app() {
     assert_eq!(location(&response), "/ui/app");
     let cookie = set_cookie(&response).expect("a session cookie");
     let token = cookie_token(&cookie);
-    let rooms = fixture.get("/ui/rooms", Some(&token)).await;
-    assert_eq!(rooms.status(), StatusCode::OK);
+    let app = fixture.get("/ui/app", Some(&token)).await;
+    assert_eq!(app.status(), StatusCode::SEE_OTHER);
+    assert!(location(&app).ends_with("/browse"), "{}", location(&app));
 }
 
 #[tokio::test]

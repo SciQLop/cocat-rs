@@ -51,11 +51,18 @@ struct RoomsPage {
     rooms: Vec<RoomLine>,
 }
 
+/// The list moved into the app's project menu; it stays for someone with no project, whose
+/// way into the app is to make one.
 pub(crate) async fn page(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
     Flash(flash): Flash,
 ) -> Response {
+    match super::app::entry(&state, &user).await {
+        Ok(Some(target)) => return super::redirect_to(&state, &target),
+        Ok(None) => {}
+        Err(response) => return *response,
+    }
     match db::list_user_rooms(&state.pool, user.id).await {
         Ok(rooms) => frame::page(RoomsPage {
             frame: Frame::new(&state.links, Some(&user), "My projects").flashing(flash),

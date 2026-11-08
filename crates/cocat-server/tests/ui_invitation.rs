@@ -123,7 +123,8 @@ async fn accept_joins_the_room() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         location(&response),
-        format!("/ui/rooms/{}", invited.room_id)
+        format!("/ui/rooms/{}/browse", invited.room_id),
+        "the app opens on the project joined"
     );
     assert_eq!(
         db::role_in(&fixture.state.pool, &invited.room_id, user)

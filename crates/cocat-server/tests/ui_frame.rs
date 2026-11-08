@@ -229,7 +229,7 @@ async fn prefix_applies_to_links_and_redirects() {
     let rooms = fixture.get("/ui/rooms", Some(&token)).await;
     assert_eq!(rooms.status(), StatusCode::OK);
     let page = body_text(rooms).await;
-    assert!(page.contains(r#"href="/cocat/ui/rooms""#), "{page}");
+    assert!(page.contains(r#"href="/cocat/ui/app""#), "{page}");
     assert!(page.contains(r#"href="/cocat/ui/account""#), "{page}");
     assert!(page.contains(r#"action="/cocat/ui/logout""#), "{page}");
     assert!(

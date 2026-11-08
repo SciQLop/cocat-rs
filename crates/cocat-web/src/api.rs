@@ -3,12 +3,13 @@
 
 use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
-use serde_json::json;
+use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::history::{Diff, History, Version, endpoint, refusal_text, save_body};
-use crate::projects::{Project, rooms_url};
+use crate::projects::{Project, api_url};
 use crate::session::RoomConfig;
+use crate::sharing::Created;
 
 #[derive(Debug, Error)]
 pub enum ApiError {
@@ -112,39 +113,114 @@ pub async fn copy_version(
 
 /// The visitor's projects, by name.
 pub async fn projects(api: &str) -> Result<Vec<Project>, ApiError> {
-    json(Request::get(&rooms(api, &[])?)).await
+    json(Request::get(&at(api, &["rooms"])?)).await
 }
 
 /// A new project, owned by the visitor.
 pub async fn create_project(api: &str, name: &str) -> Result<Project, ApiError> {
     let body = json!({ "name": name }).to_string();
-    json_body(Request::post(&rooms(api, &[])?), body).await
+    json_body(Request::post(&at(api, &["rooms"])?), body).await
 }
 
 pub async fn rename_project(api: &str, id: &str, name: &str) -> Result<Project, ApiError> {
     let body = json!({ "name": name }).to_string();
-    json_body(Request::patch(&rooms(api, &[id])?), body).await
+    json_body(Request::patch(&at(api, &["rooms", id])?), body).await
 }
 
 pub async fn delete_project(api: &str, id: &str) -> Result<(), ApiError> {
-    checked(Request::delete(&rooms(api, &[id])?).send().await?).await?;
-    Ok(())
+    send(Request::delete(&at(api, &["rooms", id])?)).await
 }
 
 /// Leaving is removing one's own membership, which takes the visitor's account id.
 pub async fn leave_project(api: &str, id: &str) -> Result<(), ApiError> {
+    let me = me(api).await?;
+    send(Request::delete(&at(api, &["rooms", id, "members", &me])?)).await
+}
+
+async fn me(api: &str) -> Result<String, ApiError> {
     #[derive(serde::Deserialize)]
     struct Me {
         id: String,
     }
-    let me: Me = json(Request::get(&format!("{api}/me"))).await?;
-    let url = rooms(api, &[id, "members", &me.id])?;
-    checked(Request::delete(&url).send().await?).await?;
+    let me: Me = json(Request::get(&at(api, &["me"])?)).await?;
+    Ok(me.id)
+}
+
+/// A GET of `<api>/<segments…>`.
+pub async fn read<T: DeserializeOwned>(api: &str, segments: &[&str]) -> Result<T, ApiError> {
+    json(Request::get(&at(api, segments)?)).await
+}
+
+/// A DELETE of `<api>/<segments…>`.
+pub async fn remove(api: &str, segments: &[&str]) -> Result<(), ApiError> {
+    send(Request::delete(&at(api, segments)?)).await
+}
+
+pub async fn patch(api: &str, segments: &[&str], body: Value) -> Result<(), ApiError> {
+    write(Request::patch, api, segments, body).await
+}
+
+pub async fn put(api: &str, segments: &[&str], body: Value) -> Result<(), ApiError> {
+    write(Request::put, api, segments, body).await
+}
+
+/// A POST whose answer is not needed.
+pub async fn post(api: &str, segments: &[&str], body: Value) -> Result<(), ApiError> {
+    write(Request::post, api, segments, body).await
+}
+
+/// A POST that makes something, and what it made.
+pub async fn create<T: DeserializeOwned>(
+    api: &str,
+    segments: &[&str],
+    body: Value,
+) -> Result<T, ApiError> {
+    json_body(Request::post(&at(api, segments)?), body.to_string()).await
+}
+
+/// A request with a JSON body whose answer is not needed.
+async fn write(
+    request: fn(&str) -> RequestBuilder,
+    api: &str,
+    segments: &[&str],
+    body: Value,
+) -> Result<(), ApiError> {
+    let request = request(&at(api, segments)?)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())?;
+    checked(request.send().await?).await?;
     Ok(())
 }
 
-fn rooms(api: &str, segments: &[&str]) -> Result<String, ApiError> {
-    rooms_url(api, segments).ok_or(ApiError::Url)
+/// Invites to a project (`role` given) or a group (none): an address, or anyone with the
+/// link when `email` is blank.
+pub async fn invite(
+    api: &str,
+    segments: &[&str],
+    email: &str,
+    role: Option<&str>,
+) -> Result<Created, ApiError> {
+    let email = Some(email.trim()).filter(|email| !email.is_empty());
+    let body = match role {
+        Some(role) => json!({ "email": email, "role": role }),
+        None => json!({ "email": email }),
+    };
+    create(api, segments, body).await
+}
+
+/// Removes the visitor from a group.
+pub async fn leave_group(api: &str, id: &str) -> Result<(), ApiError> {
+    let me = me(api).await?;
+    remove(api, &["groups", id, "members", &me]).await
+}
+
+fn at(api: &str, segments: &[&str]) -> Result<String, ApiError> {
+    api_url(api, segments).ok_or(ApiError::Url)
+}
+
+async fn send(request: RequestBuilder) -> Result<(), ApiError> {
+    checked(request.send().await?).await?;
+    Ok(())
 }
 
 fn url(config: &RoomConfig, path: &[&str], query: &[(&str, &str)]) -> Result<String, ApiError> {

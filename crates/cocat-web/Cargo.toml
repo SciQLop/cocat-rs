@@ -22,8 +22,10 @@ gloo-net = { version = "0.6", default-features = false, features = ["http"] }
 js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
     "BinaryType",
+    "Clipboard",
     "Document",
     "Element",
     "History",
@@ -33,6 +35,7 @@ web-sys = { version = "0.3", features = [
     "HtmlSelectElement",
     "Location",
     "MessageEvent",
+    "Navigator",
     "Node",
     "WebSocket",
     "Window",

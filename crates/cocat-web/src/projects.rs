@@ -117,13 +117,12 @@ pub fn delete_confirmed(typed: &str, name: &str) -> bool {
     typed.trim() == name.trim()
 }
 
-/// `<api>/rooms/<segments…>`, each segment escaped.
-pub fn rooms_url(api: &str, segments: &[&str]) -> Option<String> {
+/// `<api>/<segments…>`, each segment escaped.
+pub fn api_url(api: &str, segments: &[&str]) -> Option<String> {
     let mut url = Url::parse(api).ok()?;
     url.path_segments_mut()
         .ok()?
         .pop_if_empty()
-        .push("rooms")
         .extend(segments);
     Some(url.into())
 }
@@ -272,14 +271,18 @@ mod tests {
     }
 
     #[test]
-    fn room_routes_escape_each_segment() {
+    fn api_routes_escape_each_segment() {
         assert_eq!(
-            rooms_url("https://cocat.example.org/cocat-dev/api", &[]).unwrap(),
+            api_url("https://cocat.example.org/cocat-dev/api", &["rooms"]).unwrap(),
             "https://cocat.example.org/cocat-dev/api/rooms"
         );
         assert_eq!(
-            rooms_url("http://127.0.0.1:9/api/", &["old lab", "members", "u1"]).unwrap(),
-            "http://127.0.0.1:9/api/rooms/old%20lab/members/u1"
+            api_url(
+                "http://127.0.0.1:9/api/",
+                &["rooms", "Bepi MSA?#%", "members"]
+            )
+            .unwrap(),
+            "http://127.0.0.1:9/api/rooms/Bepi%20MSA%3F%23%25/members"
         );
     }
 }

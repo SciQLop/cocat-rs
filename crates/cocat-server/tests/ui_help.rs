@@ -1,7 +1,7 @@
 mod ui_support;
 
 use axum::http::StatusCode;
-use cocat_server::{groups, lifecycle};
+use cocat_server::groups;
 use ui_support::{Fixture, PUBLIC_URL, body_text};
 
 const MEMBER: &str = "member@example.org";
@@ -81,18 +81,8 @@ async fn project_pages_link_to_their_help() {
     let token = fixture.token(user).await;
 
     let empty = page(&fixture, "/ui/rooms", Some(&token)).await;
-    let room = lifecycle::create_room(&fixture.state, user, "lab")
-        .await
-        .unwrap();
-    let listed = page(&fixture, "/ui/rooms", Some(&token)).await;
-    let project = page(&fixture, &format!("/ui/rooms/{}", room.id), Some(&token)).await;
 
     links_to(&empty, "projects");
-    links_to(&listed, "projects");
-    for anchor in ["catalogues", "roles", "groups", "sharing"] {
-        links_to(&project, anchor);
-    }
-    assert!(project.contains(r#"aria-label="Help: roles""#), "{project}");
 }
 
 #[tokio::test]

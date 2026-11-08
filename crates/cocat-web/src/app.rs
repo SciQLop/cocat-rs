@@ -9,8 +9,10 @@ use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
+use crate::views::groups::GroupsPage;
 use crate::views::header::Header;
 use crate::views::history::HistoryPage;
+use crate::views::notice::{Notice, NoticeBar};
 use crate::views::projects::Projects;
 use crate::views::sidebar::Sidebar;
 use cocat_core::model;
@@ -24,16 +26,24 @@ pub fn start() {
 }
 
 fn read_config() -> Result<RoomConfig, ConfigError> {
-    let document = document();
-    let base = document.base_uri().ok().flatten().unwrap_or_default();
-    let meta = |name: &str| {
-        document
-            .query_selector(&format!("meta[name=\"{name}\"]"))
-            .ok()
-            .flatten()?
-            .get_attribute("content")
-    };
+    let base = document().base_uri().ok().flatten().unwrap_or_default();
     RoomConfig::from_meta(meta, &base)
+}
+
+fn meta(name: &str) -> Option<String> {
+    document()
+        .query_selector(&format!("meta[name=\"{name}\"]"))
+        .ok()
+        .flatten()?
+        .get_attribute("content")
+}
+
+/// What the server's last action said, when a form of the old pages sent the visitor here.
+fn read_notice() -> Option<Notice> {
+    Some(Notice {
+        text: meta("cocat-flash")?,
+        link: meta("cocat-share-link"),
+    })
 }
 
 fn failure(message: String) -> impl IntoView {
@@ -50,6 +60,7 @@ fn failure(message: String) -> impl IntoView {
 fn Shell(config: RoomConfig) -> impl IntoView {
     let projects = Projects::new(config);
     provide_context(projects);
+    provide_context(RwSignal::new(read_notice()));
     projects.reload();
     // The shell lives as long as the page: nothing to remove the listener for.
     let _ = window_event_listener(leptos::ev::popstate, move |_| projects.arrived());
@@ -89,6 +100,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         published.set(editing.filter(|_| editor));
     });
     let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
+    let in_groups = Memo::new(move |_| matches!(shown.get(), Route::Groups | Route::Group(_)));
     // Both keep their value once the page leaves the history: see `HistoryPage`.
     let scope = Memo::new(move |kept: Option<&Option<String>>| match shown.get() {
         Route::History { catalogue, .. } => catalogue,
@@ -99,14 +111,17 @@ fn App(config: RoomConfig) -> impl IntoView {
         _ => kept.copied().flatten(),
     });
     Effect::new(move |_| {
-        if in_history.get() {
+        if in_history.get() || in_groups.get() {
             selected.set(None);
         }
     });
     view! {
         <Header shown/>
+        <NoticeBar/>
         {move || if in_history.get() {
             view! { <HistoryPage scope picked/> }.into_any()
+        } else if in_groups.get() {
+            view! { <GroupsPage shown/> }.into_any()
         } else {
             view! {
                 <div class="browser">

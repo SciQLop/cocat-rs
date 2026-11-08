@@ -12,7 +12,7 @@ use axum::response::{Html, IntoResponse, Response};
 use cocat_core::role::Role;
 use tower_http::services::ServeDir;
 
-use crate::ui::frame::{self, Frame, RequireUser};
+use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
 use crate::{AppState, db};
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
@@ -28,19 +28,22 @@ struct Head<'a> {
     socket: String,
     api: String,
     email: &'a str,
+    flash: Option<String>,
+    share_link: Option<String>,
 }
 
 #[derive(Template)]
 #[template(path = "app_missing.html")]
 struct MissingPage {
     frame: Frame,
-    room_href: String,
 }
 
 pub(crate) async fn browse(
     Path(room_id): Path<String>,
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
+    Flash(flash): Flash,
+    ShareLink(share_link): ShareLink,
 ) -> Response {
     let room = match db::list_user_rooms(&state.pool, user.id).await {
         Ok(rooms) => rooms.into_iter().find(|(room, _)| room.id == room_id),
@@ -53,7 +56,7 @@ pub(crate) async fn browse(
         return super::room::not_found(&state, &user);
     };
     let Some(index) = index(&state).await else {
-        return missing(&state, &user, &room_id);
+        return missing(&state, &user, flash);
     };
     let head = Head {
         base: state.links.path("/app/"),
@@ -63,6 +66,8 @@ pub(crate) async fn browse(
         socket: state.links.socket(&format!("/room/{}", room.id)),
         api: state.links.app("/api"),
         email: &user.email,
+        flash,
+        share_link,
     };
     match head.render() {
         Ok(head) => page(&index, &head),
@@ -79,18 +84,24 @@ pub(crate) async fn open(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
 ) -> Response {
-    let rooms = match db::list_user_rooms(&state.pool, user.id).await {
-        Ok(rooms) => rooms,
+    match entry(&state, &user).await {
+        Ok(target) => super::redirect_to(&state, target.as_deref().unwrap_or("/rooms")),
+        Err(response) => *response,
+    }
+}
+
+/// The app's page for the visitor, or `None` when they have no project it could open.
+pub(crate) async fn entry(
+    state: &AppState,
+    user: &db::User,
+) -> Result<Option<String>, Box<Response>> {
+    match db::list_user_rooms(&state.pool, user.id).await {
+        Ok(rooms) => Ok(opening(&rooms).map(|room| format!("/rooms/{}/browse", room.id))),
         Err(error) => {
             tracing::warn!(%error, "cannot read the rooms of a visitor");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()))
         }
-    };
-    let target = match opening(&rooms) {
-        Some(room) => format!("/rooms/{}/browse", room.id),
-        None => "/rooms".to_owned(),
-    };
-    super::redirect_to(&state, &target)
+    }
 }
 
 fn opening(rooms: &[(db::RoomRow, Role)]) -> Option<&db::RoomRow> {
@@ -123,10 +134,9 @@ fn page(index: &str, head: &str) -> Response {
     ([(header::CACHE_CONTROL, "no-store")], Html(body)).into_response()
 }
 
-fn missing(state: &AppState, user: &db::User, room_id: &str) -> Response {
+fn missing(state: &AppState, user: &db::User, flash: Option<String>) -> Response {
     let page = MissingPage {
-        frame: Frame::new(&state.links, Some(user), "Catalogues unavailable"),
-        room_href: state.links.path(&format!("/rooms/{room_id}")),
+        frame: Frame::new(&state.links, Some(user), "Catalogues unavailable").flashing(flash),
     };
     (StatusCode::SERVICE_UNAVAILABLE, frame::page(page)).into_response()
 }

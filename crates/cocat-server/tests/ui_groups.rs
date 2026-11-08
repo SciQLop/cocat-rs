@@ -407,8 +407,9 @@ async fn remove_from_foreign_group_refused() {
     assert!(members.iter().any(|entry| entry.user_id == member));
 }
 
+/// The group pages are the app's groups view now; they stay for someone with no project.
 #[tokio::test]
-async fn rooms_shared_with_group_listed() {
+async fn with_a_project_the_group_pages_open_the_app() {
     let fixture = Fixture::start().await;
     let owner = fixture.verified(OWNER).await;
     let token = fixture.token(owner).await;
@@ -417,20 +418,15 @@ async fn rooms_shared_with_group_listed() {
         .await
         .unwrap()
         .id;
-    groups::grant(&fixture.state, &room, &id, owner, Role::Editor)
-        .await
-        .unwrap();
 
-    let page = body_text(fixture.get(&format!("/ui/groups/{id}"), Some(&token)).await).await;
+    let list = fixture.get("/ui/groups", Some(&token)).await;
+    let detail = fixture.get(&format!("/ui/groups/{id}"), Some(&token)).await;
 
-    assert!(page.contains("Projects shared with this group"), "{page}");
-    assert!(
-        page.contains(&format!(r#"<a href="/ui/rooms/{room}">lab</a>"#)),
-        "{page}"
-    );
-    assert!(
-        page.contains(r#"<span class="role">editor</span>"#),
-        "{page}"
+    assert_eq!(list.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&list), format!("/ui/rooms/{room}/browse#groups"));
+    assert_eq!(
+        location(&detail),
+        format!("/ui/rooms/{room}/browse#group={id}")
     );
 }
 
@@ -506,54 +502,4 @@ async fn removal_answer(
         location(&response),
         flash_cookie(&response),
     )
-}
-
-/// The group's email field suggests the people the owner shares a room with, not its members.
-#[tokio::test]
-async fn the_email_field_suggests_people_the_owner_works_with() {
-    let fixture = Fixture::start().await;
-    let owner = fixture.verified(OWNER).await;
-    let group = group_owned_by(&fixture, owner, "friends").await;
-    member_of(&fixture, &group, MEMBER).await;
-    let room = lifecycle::create_room(&fixture.state, owner, "lab")
-        .await
-        .unwrap()
-        .id;
-    for email in [MEMBER, OTHER] {
-        let id = db::user_by_email(&fixture.state.pool, email).await.unwrap();
-        let id = match id {
-            Some(user) => user.id,
-            None => fixture.verified(email).await,
-        };
-        db::add_member(&fixture.state.pool, &room, id, Role::Editor)
-            .await
-            .unwrap();
-    }
-    fixture.verified(GUEST).await;
-    let token = fixture.token(owner).await;
-
-    let page = body_text(
-        fixture
-            .get(&format!("/ui/groups/{group}"), Some(&token))
-            .await,
-    )
-    .await;
-
-    assert!(page.contains(r#"list="known-people""#), "{page}");
-    assert!(
-        page.contains(&format!(r#"<option value="{OTHER}">"#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{MEMBER}">"#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{GUEST}">"#)),
-        "{page}"
-    );
-    assert!(
-        !page.contains(&format!(r#"<option value="{OWNER}">"#)),
-        "{page}"
-    );
 }

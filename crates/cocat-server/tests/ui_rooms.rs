@@ -34,16 +34,26 @@ async fn the_list_calls_rooms_projects() {
     let user = fixture.verified(MEMBER).await;
     let token = fixture.token(user).await;
 
-    let empty = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
-    room_owned_by(&fixture, user, "lab").await;
-    let listed = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
+    let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
 
-    for page in [empty, listed] {
-        let text = visible_text(&page);
-        assert!(text.contains("My projects"), "{text}");
-        assert!(!text.to_lowercase().contains("room"), "{text}");
-        assert!(page.contains(r#"placeholder="New project name""#), "{page}");
-    }
+    let text = visible_text(&page);
+    assert!(text.contains("My projects"), "{text}");
+    assert!(!text.to_lowercase().contains("room"), "{text}");
+    assert!(page.contains(r#"placeholder="New project name""#), "{page}");
+}
+
+/// The list is the app's project menu now: it stays only for someone with no project.
+#[tokio::test]
+async fn with_a_project_the_list_opens_the_app() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+    let id = room_owned_by(&fixture, user, "lab").await;
+
+    let response = fixture.get("/ui/rooms", Some(&token)).await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), format!("/ui/rooms/{id}/browse"));
 }
 
 #[tokio::test]
@@ -57,29 +67,7 @@ async fn login_required() {
 }
 
 #[tokio::test]
-async fn lists_rooms_with_roles() {
-    let fixture = Fixture::start().await;
-    let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user).await;
-    let id = room_owned_by(&fixture, user, "lab").await;
-
-    let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
-
-    assert!(
-        page.contains(&format!(r#"href="/ui/rooms/{id}""#)),
-        "{page}"
-    );
-    assert!(page.contains("lab"), "{page}");
-    assert!(
-        page.contains(r#"<span class="role">owner</span>"#),
-        "{page}"
-    );
-    assert!(page.contains(">Rename<"), "{page}");
-    assert!(page.contains(r#"data-confirm="Delete lab?""#), "{page}");
-}
-
-#[tokio::test]
-async fn lists_rooms_reached_through_a_group() {
+async fn the_app_opens_a_project_reached_through_a_group() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
@@ -96,13 +84,9 @@ async fn lists_rooms_reached_through_a_group() {
         .await
         .unwrap();
 
-    let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
+    let response = fixture.get("/ui/rooms", Some(&token)).await;
 
-    assert!(page.contains("shared-lab"), "{page}");
-    assert!(
-        page.contains(r#"<span class="role">editor</span>"#),
-        "{page}"
-    );
+    assert_eq!(location(&response), format!("/ui/rooms/{id}/browse"));
 }
 
 #[tokio::test]
@@ -262,19 +246,6 @@ async fn leave() {
 }
 
 #[tokio::test]
-async fn owner_has_no_leave() {
-    let fixture = Fixture::start().await;
-    let user = fixture.verified(MEMBER).await;
-    let token = fixture.token(user).await;
-    let id = room_owned_by(&fixture, user, "lab").await;
-
-    let page = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
-
-    assert!(!page.contains(&format!("/ui/rooms/{id}/leave")), "{page}");
-    assert!(!page.contains(">Leave<"), "{page}");
-}
-
-#[tokio::test]
 async fn action_refused_after_deactivation() {
     let fixture = Fixture::start().await;
     let user = fixture.verified(MEMBER).await;
@@ -297,21 +268,21 @@ async fn action_refused_after_deactivation() {
 
 #[tokio::test]
 async fn flash_shown_once() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(MEMBER).await;
     let token = fixture.token(user).await;
     let response = fixture
         .post("/ui/rooms", Some(&token), &form(&[("name", "lab")]))
         .await;
     let cookie = flashed(&response);
-
-    let page = fixture.get_with("/ui/rooms", &token, &cookie).await;
-
-    assert!(flash_cleared(&page), "the page clears the flash cookie");
-    let body = body_text(page).await;
+    let (app, body) = fixture.follow(&response, &token).await;
+    assert!(app.ends_with("/browse"), "{app}");
     assert!(body.contains("Project created"), "{body}");
 
-    let again = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
+    let page = fixture.get_with(&app, &token, &cookie).await;
+
+    assert!(flash_cleared(&page), "the page clears the flash cookie");
+    let again = body_text(fixture.get(&app, Some(&token)).await).await;
     assert!(!again.contains("Project created"), "{again}");
 }
 

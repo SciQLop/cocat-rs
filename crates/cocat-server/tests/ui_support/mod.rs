@@ -102,6 +102,39 @@ impl Fixture {
         }
     }
 
+    /// A catalogue-browser bundle with a bare index, so the app's page renders its head.
+    pub fn with_app(mut self) -> Self {
+        let web = self.dir().join("web");
+        fs::create_dir_all(&web).unwrap();
+        fs::write(
+            web.join("index.html"),
+            "<!doctype html>\n<html>\n<head>\n</head>\n<body></body>\n</html>\n",
+        )
+        .unwrap();
+        self.state.web_dir = Some(web);
+        self
+    }
+
+    /// Where a form's answer leads: its redirects are followed with the session and the
+    /// notices it set, and none of them may spend the notice on the way. Answers the path
+    /// of the page the visitor lands on and that page.
+    pub async fn follow(&self, response: &Response, token: &str) -> (String, String) {
+        let mut jar: Vec<String> = flash_cookie(response).into_iter().collect();
+        jar.extend(share_link_cookie(response));
+        let cookies: Vec<&str> = jar.iter().map(String::as_str).collect();
+        let mut path = location(response);
+        for _ in 0..4 {
+            let path_only = path.split('#').next().unwrap_or_default().to_owned();
+            let next = self.get_with_cookies(&path_only, token, &cookies).await;
+            if !next.status().is_redirection() {
+                return (path, body_text(next).await);
+            }
+            assert!(!flash_cleared(&next), "{path} spent the notice");
+            path = location(&next);
+        }
+        panic!("{path} redirects too often");
+    }
+
     pub async fn verified(&self, email: &str) -> Uuid {
         db::create_user(&self.state.pool, email, PASSWORD, false, true)
             .await

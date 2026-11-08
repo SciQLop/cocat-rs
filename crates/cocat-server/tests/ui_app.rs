@@ -8,7 +8,7 @@ use axum::response::Response;
 use cocat_core::role::Role;
 use cocat_server::links::Links;
 use cocat_server::{db, lifecycle};
-use ui_support::{Fixture, body_text, location};
+use ui_support::{Fixture, body_text, flash_cleared, location};
 use uuid::Uuid;
 
 const OWNER: &str = "owner@example.org";
@@ -193,10 +193,6 @@ async fn without_a_web_dir_browse_says_not_installed() {
             body.contains("The catalogue browser is not installed on this server"),
             "{body}"
         );
-        assert!(
-            body.contains(&format!(r#"href="/ui/rooms/{room}""#)),
-            "{body}"
-        );
     }
     assert_eq!(
         fixture.get("/ui/app/mark.png", None).await.status(),
@@ -205,24 +201,33 @@ async fn without_a_web_dir_browse_says_not_installed() {
 }
 
 #[tokio::test]
-async fn the_room_page_opens_the_catalogues() {
-    let fixture = Fixture::start().await;
+async fn the_project_page_passes_its_notice_into_the_app() {
+    let mut fixture = Fixture::start().await;
+    fixture.state.web_dir = Some(bundle(&fixture));
     let (room, viewer) = room_with_viewer(&fixture).await;
     let token = fixture.token(viewer).await;
+    let notice = "cocat_flash=Removed%20b%40example.org";
 
-    let page = body_text(
-        fixture
-            .get(&format!("/ui/rooms/{room}"), Some(&token))
-            .await,
-    )
-    .await;
+    let moved = fixture
+        .get_with(&format!("/ui/rooms/{room}"), &token, notice)
+        .await;
 
+    assert_eq!(moved.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&moved), format!("/ui/rooms/{room}/browse#share"));
     assert!(
-        page.contains(&format!(
-            r#"href="/ui/rooms/{room}/browse">Open catalogues</a>"#
-        )),
-        "{page}"
+        !flash_cleared(&moved),
+        "a redirect shows nothing, so it keeps the notice"
     );
+    let app = fixture
+        .get_with(&format!("/ui/rooms/{room}/browse"), &token, notice)
+        .await;
+    assert!(flash_cleared(&app), "the app showed it");
+    let body = body_text(app).await;
+    assert!(
+        body.contains(r#"<meta name="cocat-flash" content="Removed b@example.org">"#),
+        "{body}"
+    );
+    assert!(!body.contains("cocat-share-link"), "{body}");
 }
 
 #[tokio::test]

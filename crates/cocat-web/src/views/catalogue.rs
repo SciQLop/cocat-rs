@@ -26,7 +26,7 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
             .read(|txn| rows(txn, &uuid))
             .map_err(|error| error.to_string()),
         Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
-        Route::Default | Route::History { .. } => Ok(Vec::new()),
+        Route::Default | Route::History { .. } | Route::Groups | Route::Group(_) => Ok(Vec::new()),
     });
     let query = RwSignal::new(String::new());
     let sorting = RwSignal::new((SortKey::Start, false));
@@ -111,7 +111,9 @@ fn showing(room: &Room, shown: &Route) -> Shown {
                 .is_some_and(|catalogue| catalogue.rule.is_some()),
         },
         Route::Trash => Shown::Trash,
-        Route::Default | Route::History { .. } => Shown::NoCatalogue,
+        Route::Default | Route::History { .. } | Route::Groups | Route::Group(_) => {
+            Shown::NoCatalogue
+        }
     }
 }
 

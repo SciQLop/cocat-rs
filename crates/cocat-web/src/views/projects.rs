@@ -8,8 +8,9 @@ use wasm_bindgen::JsValue;
 use crate::api;
 use crate::history::browse_href;
 use crate::projects::{Actions, Arrival, Project, arrival, title};
+use crate::route::Route;
 use crate::session::RoomConfig;
-use crate::views::controls::Hint;
+use crate::views::controls::{Hint, go_to};
 use crate::views::project_dialogs::{Dialog, ProjectDialog};
 
 /// The visitor's projects and the one the page holds. The page shows the open one; changing
@@ -181,8 +182,7 @@ pub fn ProjectMenu() -> impl IntoView {
                     <button type="button" role="menuitem" class="danger" on:click=move |_| pick(Dialog::Delete)>"Delete project…"</button>
                 </Show>
                 <hr/>
-                <a role="menuitem" href="../groups">"Groups…"</a>
-                <a role="menuitem" href=move || format!("../rooms/{}", open_id())>"Project settings…"</a>
+                <button type="button" role="menuitem" on:click=move |_| { close(); go_to(&Route::Groups.hash()); }>"Groups…"</button>
                 <Hint text="A project is a set of catalogues shared with the same people." anchor="projects" topic="projects"/>
             </div>
         </details>

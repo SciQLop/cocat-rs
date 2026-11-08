@@ -108,7 +108,7 @@ pub(crate) async fn accept(
     match invitations::accept(&state, &wanted, &user).await {
         Ok((room, _)) => frame::flash(
             &state.links,
-            Redirect::to(&state.links.path(&format!("/rooms/{}", room.id))).into_response(),
+            Redirect::to(&state.links.path(&format!("/rooms/{}/browse", room.id))).into_response(),
             &format!("You joined {}", room.name),
         ),
         Err(error) => refuse(&state, error),

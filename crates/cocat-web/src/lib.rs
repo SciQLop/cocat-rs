@@ -16,6 +16,7 @@ pub mod route;
 pub mod rows;
 pub mod rule_text;
 pub mod session;
+pub mod sharing;
 pub mod sync;
 
 #[cfg(test)]

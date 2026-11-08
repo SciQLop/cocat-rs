@@ -77,6 +77,9 @@ enum Style {
     /// A form post: a redirect or a re-rendered page when admitted, a login redirect or a
     /// refusing redirect when refused.
     UiAction,
+    /// A page that moved into the app: a redirect there (or the page, for someone with no
+    /// project to open) when admitted, 404 or a login redirect when refused.
+    UiMoved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,9 +424,9 @@ const ROWS: &[Row] = &[
         Guard::SignedIn,
         Style::UiAction,
     ),
-    row("GET", "/ui/rooms", Guard::SignedIn, Style::UiPage),
+    row("GET", "/ui/rooms", Guard::SignedIn, Style::UiAction),
     row("POST", "/ui/rooms", Guard::SignedIn, Style::UiAction),
-    row("GET", "/ui/rooms/{room}", Guard::RoomViewer, Style::UiPage).room_any(),
+    row("GET", "/ui/rooms/{room}", Guard::RoomViewer, Style::UiMoved).room_any(),
     row(
         "GET",
         "/ui/rooms/{room}/browse",
@@ -503,7 +506,7 @@ const ROWS: &[Row] = &[
         Style::UiAction,
     )
     .room_any(),
-    row("GET", "/ui/groups", Guard::SignedIn, Style::UiPage),
+    row("GET", "/ui/groups", Guard::SignedIn, Style::UiAction),
     row("POST", "/ui/groups", Guard::SignedIn, Style::UiAction),
     row("GET", "/ui/groups/join", Guard::Public, Style::UiPage),
     row("POST", "/ui/groups/join", Guard::Public, Style::UiAction),
@@ -517,7 +520,7 @@ const ROWS: &[Row] = &[
         "GET",
         "/ui/groups/{group}",
         Guard::GroupMember,
-        Style::UiPage,
+        Style::UiMoved,
     )
     .room_any(),
     row(
@@ -1172,7 +1175,7 @@ fn check(
                 "the row's refusal",
             ),
             Style::Ws => expect(status == StatusCode::FORBIDDEN, "403"),
-            Style::UiPage | Style::UiAction if !caps.signed_in => expect(
+            Style::UiPage | Style::UiAction | Style::UiMoved if !caps.signed_in => expect(
                 matches!(
                     status,
                     StatusCode::TEMPORARY_REDIRECT | StatusCode::SEE_OTHER
@@ -1180,7 +1183,7 @@ fn check(
                 "a redirect to the login page",
             ),
             Style::UiAction => expect(status.is_redirection(), "a refusing redirect"),
-            Style::UiPage => expect(status == StatusCode::NOT_FOUND, "404"),
+            Style::UiPage | Style::UiMoved => expect(status == StatusCode::NOT_FOUND, "404"),
         };
     }
     match row.style {
@@ -1197,7 +1200,7 @@ fn check(
         ),
         Style::Ws => expect(status != StatusCode::FORBIDDEN, "an accepted handshake"),
         Style::UiPage => expect(status == StatusCode::OK, "200"),
-        Style::UiAction => expect(
+        Style::UiAction | Style::UiMoved => expect(
             status.is_success() || status.is_redirection(),
             "a page or a redirect",
         ),

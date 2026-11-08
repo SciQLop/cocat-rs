@@ -28,8 +28,8 @@ the same project. The project's history covers all of it.</p>
 <p>Your account starts with a project called “My catalogues”. It is private until you share
 it. Signing in opens it.</p>
 <p>The project's name at the top of the catalogues is a menu. It lists your projects: pick one
-to switch to it. It also creates, renames, leaves and deletes projects. All your projects are
-also on <a href="{{ rooms_href }}">My projects</a>.</p>
+to switch to it. It also creates, renames, leaves and deletes projects, and opens your
+groups.</p>
 <p>To share only some catalogues, create a project for them with <strong>New project</strong>,
 and share that one.</p>
 <p>SciQLop and Python call a project a “room”.</p>
@@ -37,8 +37,8 @@ and share that one.</p>
 
 <section>
 <h2 id="catalogues">Catalogues and events</h2>
-<p>A catalogue is a named list of events. On a project's page, press
-<strong>Open catalogues</strong> to see them on a timeline and in a table.</p>
+<p>A catalogue is a named list of events. A project's catalogues are listed on the left; pick
+one to see its events on a timeline and in a table.</p>
 <p>An event is a time interval. It has:</p>
 <ul>
   <li><strong>Start</strong> and <strong>stop</strong>, in UTC.</li>
@@ -110,24 +110,27 @@ when you opened the history from one catalogue, and it counts in your own storag
 
 <section>
 <h2 id="sharing">Sharing</h2>
-<p>The owner shares a project from its page, in three ways:</p>
+<p>The <strong>Share</strong> button at the top shows who is in the project. Its owner shares
+the project from there, in three ways:</p>
 <ul>
   <li><strong>Share link</strong>: anyone with the link can join, with the role you pick. It
-  works for 14 days, as many times as needed. The Uses column counts who joined.</li>
+  works for 14 days, as many times as needed. The pending invitations say how many joined.</li>
   <li><strong>Email invitation</strong>: we send a link to one address. It works once, for
   that address only, for 14 days.</li>
   <li><strong>Group</strong>: everyone in a group gets the project at once.</li>
 </ul>
 <p><strong>Revoke</strong> stops a link or an invitation at once.</p>
-<p>Any member can <strong>Leave</strong> a project, from its page or from My projects. The
-owner cannot leave: they transfer ownership first. <strong>Transfer ownership</strong> hands
-the project to another member, and the old owner stays as an editor.</p>
+<p>The owner also changes each member's role and removes members there. Editors and viewers
+see the same lists, without the controls.</p>
+<p>Any member can <strong>Leave</strong> a project from the project menu. The owner cannot
+leave: they transfer ownership first. <strong>Transfer ownership…</strong>, at the bottom of
+Share, hands the project to another member, and the old owner stays as an editor.</p>
 
 <h3 id="groups">Groups</h3>
-<p>A group is a set of people you share many projects with. Create one on
-<a href="{{ groups_href }}">My groups</a>, then invite people with a share link or by
-email.</p>
-<p>On a project's page, its owner shares it with a group they belong to, as editor or viewer.
+<p>A group is a set of people you share many projects with. Open
+<a href="{{ groups_href }}">Groups…</a> in the project menu, create one there, then invite
+people with a share link or by email.</p>
+<p>In Share, a project's owner adds a group they belong to, as editor or viewer.
 Everyone in the group gets the project, including people who join the group later. Someone
 who reaches a project both directly and through a group gets the higher of the two
 roles.</p>
@@ -191,7 +194,7 @@ cocat_rs.commit(url, cookie, project.id, name="paper v1", message="as submitted"
   through your institution, your password lives there.</li>
   <li>If your institution gave no email address, the Account page asks you for one.</li>
   <li>Forgot your password? Use the link on the sign-in page.</li>
-  <li><a href="{{ groups_href }}">My groups</a>: the groups you belong to, and the projects
+  <li><a href="{{ groups_href }}">Groups</a>: the groups you belong to, and the projects
   they share.</li>
 </ul>
 </section>

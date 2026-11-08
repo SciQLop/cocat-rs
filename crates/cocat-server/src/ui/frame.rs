@@ -141,7 +141,7 @@ impl Frame {
                 .collect(),
             header: user.map(|user| Header {
                 email: user.email.clone(),
-                rooms_href: links.path("/rooms"),
+                rooms_href: links.path("/app"),
                 groups_href: links.path("/groups"),
                 account_href: links.path("/account"),
                 admin_href: user.is_superuser.then(|| links.path("/admin")),
@@ -227,7 +227,8 @@ impl FromRequestParts<AppState> for ShareLink {
 }
 
 /// Clear a notice cookie on the answer to the request that showed it. A request arriving
-/// without the cookie — the POST that set it, or a second visit — is left alone.
+/// without the cookie — the POST that set it, or a second visit — is left alone, and so is
+/// a redirect, which shows nothing: an old page sends its notice on into the app.
 pub(crate) async fn clear_notices(
     State(state): State<AppState>,
     request: Request,
@@ -238,6 +239,9 @@ pub(crate) async fn clear_notices(
         .filter(|name| cookie_value(request.headers(), name).is_some())
         .collect();
     let response = next.run(request).await;
+    if response.status().is_redirection() {
+        return response;
+    }
     carried.into_iter().fold(response, |response, name| {
         with_notice(
             &state.links,

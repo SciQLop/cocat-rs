@@ -156,17 +156,30 @@ struct JoinPage {
     offer: Option<Offer>,
 }
 
+/// The list moved into the app; it stays for someone with no project the app could open.
 pub(crate) async fn page(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
     Flash(flash): Flash,
 ) -> Response {
+    if let Some(moved) = in_the_app(&state, &user, "groups").await {
+        return moved;
+    }
     match list_page(&state, &user, flash).await {
         Ok(page) => frame::page(page),
         Err(error) => {
             tracing::warn!(%error, "cannot read the group list");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
+    }
+}
+
+/// Where a group page sends its visitor: the app at `fragment`, when it has a project to open.
+async fn in_the_app(state: &AppState, user: &db::User, fragment: &str) -> Option<Response> {
+    match super::app::entry(state, user).await {
+        Ok(Some(target)) => Some(redirect_to(state, &format!("{target}#{fragment}"))),
+        Ok(None) => None,
+        Err(response) => Some(*response),
     }
 }
 
@@ -216,6 +229,13 @@ pub(crate) async fn detail(
     Flash(flash): Flash,
     ShareLink(link): ShareLink,
 ) -> Response {
+    if groups::require_member(&state, &group_id, user.id)
+        .await
+        .is_ok()
+        && let Some(moved) = in_the_app(&state, &user, &format!("group={group_id}")).await
+    {
+        return moved;
+    }
     match detail_page(&state, &user, &group_id, flash, link).await {
         Ok(Some(page)) => frame::page(page),
         Ok(None) => not_found(&state, &user),

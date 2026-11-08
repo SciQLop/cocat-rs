@@ -120,7 +120,7 @@ a { color: var(--accent); text-underline-offset: 2px; }
 
 .crumbs .here { color: var(--ink); font-weight: 600; }
 
-.header-end { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.header-end { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px 10px; margin-left: auto; min-width: 0; }
 
 .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
 .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
@@ -844,4 +844,87 @@ a.button { text-decoration: none; }
     border: 0;
     border-radius: 0;
   }
+}
+
+/* Share dialog, groups view and the notices they share. */
+
+.grow { flex: 1 1 auto; min-width: 0; }
+.small { font-size: 12px; }
+.plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.link-button {
+  border: 0;
+  background: none;
+  padding: 2px 4px;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.link-button:hover { text-decoration: underline; }
+.link-button.danger { color: var(--danger); }
+:is(.share-dialog, .groups-page) :is(input[type="text"], input[type="email"], select) {
+  height: 34px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.share-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); }
+.share-dialog[open] { display: flex; flex-direction: column; gap: 14px; }
+.share-head { display: flex; align-items: center; gap: 8px; }
+.share-head h2 { flex: 1; min-width: 0; }
+.share-section { display: flex; flex-direction: column; gap: 8px; }
+.share-section .eyebrow { padding: 0; font-size: 11px; }
+.invite-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.invite-row input { flex: 1 1 200px; }
+.invite-row .button { height: 34px; }
+.person { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+.person .avatar { flex: none; width: 28px; height: 28px; font-size: 11px; border: 0; }
+.person .avatar.absent { background: var(--chip); color: var(--muted); }
+.person .avatar.group { background: var(--accent-soft); color: var(--accent); border-radius: var(--radius); }
+.person .who { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+.person .email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person .tag, .person .role, .group-row .role, .groups-head .role { color: var(--muted); font-size: 12px; }
+.pending { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.share-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+.copy-link { display: flex; gap: 8px; }
+.copy-link input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.copy-link .button { height: 34px; }
+.share-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--rule); }
+
+.notice-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 24px;
+  background: var(--notice-bg);
+  border-bottom: 1px solid var(--notice-rule);
+}
+.notice-bar p { margin: 0; }
+
+.groups-page { display: flex; flex-direction: column; gap: 16px; max-width: 760px; width: 100%; margin: 0 auto; padding: 24px; }
+.groups-page .crumbs { margin: 0; }
+.groups-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.groups-head h1 { margin: 0; font-size: 22px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.group-list { gap: 4px; }
+.group-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; }
+.group-row > a { font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.group-rename { flex-basis: 100%; }
+
+@media (max-width: 480px) {
+  .share-dialog { width: 100vw; max-height: none; }
+  .notice-bar, .groups-page { padding-left: 16px; padding-right: 16px; }
 }

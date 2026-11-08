@@ -7,6 +7,9 @@ pub enum Route {
     Default,
     Catalogue(String),
     Trash,
+    /// The visitor's groups, and one of them.
+    Groups,
+    Group(String),
     /// The versions of a catalogue, or of the room when `None`, and the one picked.
     History {
         catalogue: Option<String>,
@@ -23,7 +26,9 @@ impl Route {
         }
         match hash.split_once('=') {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
+            Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
             None if hash == "trash" => Route::Trash,
+            None if hash == "groups" => Route::Groups,
             _ => Route::Default,
         }
     }
@@ -41,7 +46,7 @@ impl Route {
         let catalogue = match self {
             Route::Catalogue(uuid) => Some(uuid.clone()),
             Route::History { catalogue, .. } => catalogue.clone(),
-            Route::Default | Route::Trash => None,
+            Route::Default | Route::Trash | Route::Groups | Route::Group(_) => None,
         };
         Route::History {
             catalogue,
@@ -74,6 +79,8 @@ impl Route {
             Route::Default => "#".to_owned(),
             Route::Catalogue(uuid) => format!("#c={uuid}"),
             Route::Trash => "#trash".to_owned(),
+            Route::Groups => "#groups".to_owned(),
+            Route::Group(id) => format!("#group={id}"),
             Route::History { catalogue, version } => {
                 let version = version.map(|version| format!("={version}"));
                 let catalogue = catalogue.as_ref().map(|uuid| format!("&c={uuid}"));
@@ -85,6 +92,11 @@ impl Route {
             }
         }
     }
+}
+
+/// The old project page sends here with `#share`: the page opens with its Share dialog.
+pub fn opens_share(hash: &str) -> bool {
+    hash.strip_prefix('#').unwrap_or(hash) == "share"
 }
 
 /// `h`, `h=<version>`, each with an optional `&c=<catalogue>`.
@@ -114,6 +126,22 @@ mod tests {
     #[test]
     fn the_trash_has_its_own_route() {
         assert_eq!(Route::parse("trash"), Route::Trash);
+    }
+
+    #[test]
+    fn the_groups_have_routes_of_their_own() {
+        assert_eq!(Route::parse("#groups"), Route::Groups);
+        assert_eq!(Route::parse("#group=g1"), Route::Group("g1".into()));
+        assert_eq!(Route::parse("#group="), Route::Default);
+        assert_eq!(Route::Groups.history(), history(None, None));
+    }
+
+    #[test]
+    fn share_opens_the_dialog_over_the_default_view() {
+        assert!(opens_share("#share"));
+        assert!(opens_share("share"));
+        assert!(!opens_share("#c=share"));
+        assert_eq!(Route::parse("#share"), Route::Default);
     }
 
     #[test]
@@ -178,6 +206,8 @@ mod tests {
         for route in [
             Route::Catalogue("abc".into()),
             Route::Trash,
+            Route::Groups,
+            Route::Group("g1".into()),
             history(None, None),
             history(Some("abc"), Some(12)),
             history(None, Some(12)),
