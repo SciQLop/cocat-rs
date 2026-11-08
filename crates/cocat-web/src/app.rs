@@ -4,8 +4,11 @@ use leptos::prelude::*;
 
 use crate::connection;
 use crate::route::Route;
+use crate::rows::Row;
 use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
+use crate::views::catalogue::CataloguePage;
+use crate::views::event_panel::EventPanel;
 use crate::views::header::Header;
 use crate::views::sidebar::Sidebar;
 use cocat_core::model;
@@ -53,13 +56,15 @@ fn App(config: RoomConfig) -> impl IntoView {
         let first = room.read(|txn| model::catalogues(txn).into_iter().next().map(|c| c.uuid));
         route.get().or_first(first.as_deref())
     });
+    let selected = RwSignal::new(None::<Row>);
     view! {
         <Header/>
         <div class="browser">
             <Sidebar shown/>
             <main class="content">
-                <Shown shown/>
+                <CataloguePage shown selected/>
             </main>
+            <EventPanel selected/>
         </div>
     }
     .into_any()
@@ -67,18 +72,4 @@ fn App(config: RoomConfig) -> impl IntoView {
 
 fn current_route() -> Route {
     Route::parse(&location_hash().unwrap_or_default())
-}
-
-#[component]
-fn Shown(shown: Memo<Route>) -> impl IntoView {
-    let room = expect_context::<Room>();
-    let title = move || match shown.get() {
-        Route::Catalogue(uuid) => room
-            .read(|txn| model::catalogue(txn, &uuid))
-            .map(|catalogue| catalogue.name)
-            .unwrap_or_else(|| "No such catalogue".to_owned()),
-        Route::Trash => "Trash".to_owned(),
-        Route::Default => "No catalogue yet".to_owned(),
-    };
-    view! { <h1>{title}</h1> }
 }

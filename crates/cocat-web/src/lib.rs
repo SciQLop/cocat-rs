@@ -4,9 +4,17 @@
 //! browser.
 
 pub mod catalogues;
+pub mod detail;
+pub mod format;
+pub mod layout;
 pub mod route;
+pub mod rows;
+pub mod rule_text;
 pub mod session;
 pub mod sync;
+
+#[cfg(test)]
+mod fixture;
 
 #[cfg(target_arch = "wasm32")]
 pub mod app;

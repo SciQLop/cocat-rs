@@ -1,0 +1,145 @@
+//! The page for one catalogue or the trash: heading, filter, timeline and table.
+
+use leptos::prelude::*;
+
+use crate::route::Route;
+use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
+use crate::state::Room;
+use crate::views::rule::Heading;
+use crate::views::table::Table;
+use crate::views::timeline::Timeline;
+
+/// The rows of what is on screen, or the rule's error.
+pub type Members = Memo<Result<Vec<Row>, String>>;
+
+#[component]
+pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let reader = room.clone();
+    let members: Members = Memo::new(move |_| match shown.get() {
+        Route::Catalogue(uuid) => reader
+            .read(|txn| rows(txn, &uuid))
+            .map_err(|error| error.to_string()),
+        Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
+        Route::Default => Ok(Vec::new()),
+    });
+    let query = RwSignal::new(String::new());
+    let sorting = RwSignal::new((SortKey::Start, false));
+    let order = Memo::new(move |_| {
+        members.with(|members| {
+            let Ok(rows) = members else {
+                return Vec::new();
+            };
+            let mut order = query.with(|query| filter(rows, query));
+            sorting.with(|(key, descending)| sort(rows, &mut order, key, *descending));
+            order
+        })
+    });
+    // The columns the visitor picked here, else the ones the catalogue asks for.
+    let picked = RwSignal::new(None::<Vec<String>>);
+    let reader = room.clone();
+    let columns = Memo::new(move |_| {
+        picked
+            .get()
+            .unwrap_or_else(|| preferred_columns(&reader, &shown.get()))
+    });
+    Effect::new(move |_| {
+        shown.track();
+        picked.set(None);
+        query.set(String::new());
+        selected.set(None);
+    });
+    let keys = Memo::new(move |_| {
+        members.with(|members| {
+            members
+                .as_ref()
+                .map(|rows| attribute_keys(rows))
+                .unwrap_or_default()
+        })
+    });
+    view! {
+        <div class="page-head">
+            <Heading shown members order/>
+            <div class="tools">
+                <label class="search">
+                    <SearchIcon/>
+                    <input
+                        type="search"
+                        placeholder="Filter events"
+                        aria-label="Filter events"
+                        prop:value=move || query.get()
+                        on:input=move |event| query.set(event_target_value(&event))
+                    />
+                </label>
+                <ColumnPicker keys columns picked/>
+            </div>
+        </div>
+        <Timeline members order/>
+        <Table members order sorting columns selected/>
+    }
+}
+
+/// The attribute columns a catalogue asks to show.
+fn preferred_columns(room: &Room, shown: &Route) -> Vec<String> {
+    match shown {
+        Route::Catalogue(uuid) => room
+            .read(|txn| cocat_core::model::catalogue(txn, uuid))
+            .map(|catalogue| catalogue.columns)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+#[component]
+fn ColumnPicker(
+    keys: Memo<Vec<String>>,
+    columns: Memo<Vec<String>>,
+    picked: RwSignal<Option<Vec<String>>>,
+) -> impl IntoView {
+    let toggle = move |key: String| {
+        let mut shown = columns.get_untracked();
+        match shown.iter().position(|column| *column == key) {
+            Some(index) => {
+                shown.remove(index);
+            }
+            None => shown.push(key),
+        }
+        picked.set(Some(shown));
+    };
+    view! {
+        <Show when=move || keys.with(|keys| !keys.is_empty())>
+            <details class="columns">
+                <summary>"Columns"</summary>
+                <div class="menu">
+                    <For each=move || keys.get() key=Clone::clone let:key>
+                        <label>
+                            <input
+                                type="checkbox"
+                                prop:checked={
+                                    let key = key.clone();
+                                    move || columns.with(|columns| columns.contains(&key))
+                                }
+                                on:change={
+                                    let key = key.clone();
+                                    move |_| toggle(key.clone())
+                                }
+                            />
+                            {key.clone()}
+                        </label>
+                    </For>
+                </div>
+            </details>
+        </Show>
+    }
+}
+
+#[component]
+fn SearchIcon() -> impl IntoView {
+    view! {
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="M20 20l-3.5-3.5"></path>
+        </svg>
+    }
+}

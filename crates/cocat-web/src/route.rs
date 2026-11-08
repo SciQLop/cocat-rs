@@ -28,6 +28,12 @@ impl Route {
         }
     }
 
+    /// A link to this view of `page`. A bare `#…` would not do: the page's `<base>` is the
+    /// app bundle's directory, which a fragment-only link resolves against.
+    pub fn href(&self, page: &str) -> String {
+        format!("{page}{}", self.hash())
+    }
+
     pub fn hash(&self) -> String {
         match self {
             Route::Default => "#".to_owned(),
@@ -67,6 +73,15 @@ mod tests {
         );
         assert_eq!(Route::Default.or_first(None), Route::Default);
         assert_eq!(Route::Trash.or_first(Some("abc")), Route::Trash);
+    }
+
+    #[test]
+    fn a_link_names_the_page_because_the_base_is_elsewhere() {
+        let page = "/cocat-dev/ui/rooms/lab/browse";
+        assert_eq!(
+            Route::Trash.href(page),
+            "/cocat-dev/ui/rooms/lab/browse#trash"
+        );
     }
 
     #[test]

@@ -8,12 +8,14 @@ use crate::state::Room;
 pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let room = expect_context::<Room>();
     let list = Memo::new(move |_| room.read(|txn| catalogue_list(txn)));
+    let page = window().location().pathname().unwrap_or_default();
+    let trash = Route::Trash.href(&page);
     view! {
         <aside class="sidebar" aria-label="Catalogues">
             <h2 class="eyebrow">"Catalogues"</h2>
             <nav class="catalogue-list">
                 <For each=move || list.get().catalogues key=Clone::clone let:item>
-                    <Entry item shown/>
+                    <Entry item shown page=page.clone()/>
                 </For>
                 <Show when=move || list.with(|list| list.catalogues.is_empty())>
                     <p class="quiet">"No catalogues in this room yet."</p>
@@ -21,7 +23,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
             </nav>
             <a
                 class="catalogue trash"
-                href=Route::Trash.hash()
+                href=trash
                 aria-current=move || current(shown.get() == Route::Trash)
             >
                 <span class="name">
@@ -35,9 +37,9 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
 }
 
 #[component]
-fn Entry(item: CatalogueItem, shown: Memo<Route>) -> impl IntoView {
+fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView {
     let route = Route::Catalogue(item.uuid.clone());
-    let href = route.hash();
+    let href = route.href(&page);
     let count = item
         .count
         .map_or_else(|| "!".to_owned(), |count| count.to_string());
