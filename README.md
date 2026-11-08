@@ -459,6 +459,9 @@ the versions that touched one catalogue or its events. `Room.at` fetches the roo
 at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
 fetched. `cocat_rs.restore` makes the room, or one catalogue, equal to a version again, as one
 new change by you, so a restore can itself be undone; events created since go to the trash.
+A restore is always a version of its own, with `restored_from` set to the version it brought
+back. A version's `id` is its first change, so it stays the same, and keeps its name, while
+its author goes on editing.
 
 ```python
 versions = cocat_rs.history(url, cookie, "my-room")

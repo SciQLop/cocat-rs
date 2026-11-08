@@ -394,6 +394,50 @@ async fn an_editor_names_a_version_and_the_list_shows_it() {
 }
 
 #[tokio::test]
+async fn a_name_and_the_id_follow_a_version_its_author_keeps_editing() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    assert_eq!(
+        fixture.name(0, fixture.alice, "paper v1").await.0,
+        StatusCode::NO_CONTENT
+    );
+
+    fixture.write(fixture.alice, MINUTE, create("b"));
+
+    let versions = fixture.history(fixture.carol).await;
+    assert_eq!(ids(&versions), [0]);
+    assert_eq!(versions[0]["name"], "paper v1");
+    let path = format!("/api/rooms/{ROOM}/history/0/state");
+    let (status, _, bytes) = fixture.call(Method::GET, &path, fixture.carol, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(model::event(&doc_of(&bytes).transact(), "b").is_some());
+}
+
+#[tokio::test]
+async fn a_name_stored_under_a_versions_last_record_still_shows() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    fixture.write(fixture.alice, MINUTE, create("b"));
+    db::name_version(&fixture.state.pool, ROOM, 1..=1, "old row", fixture.alice)
+        .await
+        .unwrap();
+    assert_eq!(fixture.history(fixture.carol).await[0]["name"], "old row");
+
+    assert_eq!(
+        fixture.name(0, fixture.alice, "renamed").await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(fixture.history(fixture.carol).await[0]["name"], "renamed");
+
+    let path = format!("/api/rooms/{ROOM}/history/0/name");
+    let (status, _, _) = fixture
+        .call(Method::DELETE, &path, fixture.alice, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fixture.history(fixture.carol).await[0]["name"], Value::Null);
+}
+
+#[tokio::test]
 async fn a_blank_or_long_name_is_refused() {
     let fixture = two_versions().await;
 
@@ -444,7 +488,7 @@ async fn an_unknown_version_is_404() {
     fixture.write(fixture.alice, 0, create("a"));
     fixture.write(fixture.alice, 1, create("b"));
 
-    for path in ["history/0", "history/2", "history/2/state"] {
+    for path in ["history/1", "history/2", "history/1/state"] {
         let (status, body) = fixture
             .get(&format!("/api/rooms/{ROOM}/{path}"), fixture.carol)
             .await;
@@ -452,11 +496,11 @@ async fn an_unknown_version_is_404() {
         assert_eq!(body["detail"], "No such version");
     }
     assert_eq!(
-        fixture.name(0, fixture.bob, "x").await.0,
+        fixture.name(1, fixture.bob, "x").await.0,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        fixture.name(1, fixture.bob, "x").await.0,
+        fixture.name(0, fixture.bob, "x").await.0,
         StatusCode::NO_CONTENT
     );
 }

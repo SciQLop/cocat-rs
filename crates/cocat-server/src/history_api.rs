@@ -2,6 +2,7 @@
 //! was, and the names people give versions.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ops::RangeInclusive;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -130,7 +131,7 @@ async fn list(
     path = "/api/rooms/{room_id}/history/{version}",
     params(
         ("room_id" = String, Path, description = "Room id"),
-        ("version" = u64, Path, description = "Version id: its last record"),
+        ("version" = u64, Path, description = "Version id: its first record"),
         ("catalogue" = Option<String>, Query, description = "Only this catalogue and its members"),
     ),
     security(("cookie" = [])),
@@ -165,7 +166,7 @@ async fn changes(
     path = "/api/rooms/{room_id}/history/{version}/state",
     params(
         ("room_id" = String, Path, description = "Room id"),
-        ("version" = u64, Path, description = "Version id: its last record"),
+        ("version" = u64, Path, description = "Version id: its first record"),
     ),
     security(("cookie" = [])),
     responses(
@@ -183,8 +184,7 @@ async fn state_at(
     let update = state
         .rooms
         .read_log(&room_id, move |records, slots| {
-            span(slots, version)?;
-            let past = replay_until(records, version);
+            let past = replay_until(&records[..span(slots, version)?.end], u64::MAX);
             let update = past
                 .transact()
                 .encode_state_as_update_v1(&StateVector::default());
@@ -200,7 +200,7 @@ async fn state_at(
     path = "/api/rooms/{room_id}/history/{version}/name",
     params(
         ("room_id" = String, Path, description = "Room id"),
-        ("version" = u64, Path, description = "Version id: its last record"),
+        ("version" = u64, Path, description = "Version id: its first record"),
     ),
     request_body = NameBody,
     security(("cookie" = [])),
@@ -218,8 +218,8 @@ async fn name(
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
     JsonBody(body): JsonBody<NameBody>,
 ) -> Result<StatusCode, ApiError> {
-    let version = writable_version(&state, &room_id, user.id, version).await?;
-    db::name_version(&state.pool, &room_id, version, &body.name.0, user.id).await?;
+    let records = writable_version(&state, &room_id, user.id, version).await?;
+    db::name_version(&state.pool, &room_id, records, &body.name.0, user.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -228,7 +228,7 @@ async fn name(
     path = "/api/rooms/{room_id}/history/{version}/name",
     params(
         ("room_id" = String, Path, description = "Room id"),
-        ("version" = u64, Path, description = "Version id: its last record"),
+        ("version" = u64, Path, description = "Version id: its first record"),
     ),
     security(("cookie" = [])),
     responses(
@@ -243,8 +243,8 @@ async fn unname(
     CurrentUser(user): CurrentUser,
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
 ) -> Result<StatusCode, ApiError> {
-    let version = writable_version(&state, &room_id, user.id, version).await?;
-    db::unname_version(&state.pool, &room_id, version).await?;
+    let records = writable_version(&state, &room_id, user.id, version).await?;
+    db::unname_version(&state.pool, &room_id, records).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -266,7 +266,7 @@ struct Restored {
     path = "/api/rooms/{room_id}/history/{version}/restore",
     params(
         ("room_id" = String, Path, description = "Room id"),
-        ("version" = u64, Path, description = "Version id: its last record"),
+        ("version" = u64, Path, description = "Version id: its first record"),
     ),
     request_body = RestoreBody,
     security(("cookie" = [])),
@@ -288,8 +288,8 @@ async fn restore(
     let update = state
         .rooms
         .read_log(&room_id, move |records, slots| {
-            span(slots, version)?;
-            Some(restore_update(records, version, body.catalogue.as_deref()))
+            let end = span(slots, version)?.end;
+            Some(restore_update(records, end, body.catalogue.as_deref()))
         })
         .await?
         .ok_or_else(no_such_version)?;
@@ -301,33 +301,36 @@ async fn restore(
     Ok(Json(Restored { restored }))
 }
 
-/// The update that makes the room as written so far equal to the version again. It is
-/// built on a replay, the way a client edits its replica: edits the room takes meanwhile
-/// merge with it as any concurrent edit does.
-fn restore_update(records: &[Bytes], version: u64, catalogue: Option<&str>) -> Vec<u8> {
-    let past = replay_until(records, version);
+/// The update that makes the room as written so far equal to the version ending before
+/// record `end` again. It is built on a replay, the way a client edits its replica: edits
+/// the room takes meanwhile merge with it as any concurrent edit does.
+fn restore_update(records: &[Bytes], end: usize, catalogue: Option<&str>) -> Vec<u8> {
+    let past = replay_until(&records[..end], u64::MAX);
     let present = replay_until(records, u64::MAX);
     let mut txn = present.transact_mut();
     model::restore(&mut txn, &past, catalogue);
     txn.encode_update_v1()
 }
 
-/// The version as the database stores it, once the caller may write and the version exists.
+/// The version's first and last records as the database stores them, once the caller may
+/// write and the version exists.
 async fn writable_version(
     state: &AppState,
     room_id: &str,
     user: Uuid,
     version: u64,
-) -> Result<i64, ApiError> {
+) -> Result<RangeInclusive<i64>, ApiError> {
     lifecycle::require_role(state, room_id, user, Role::Editor).await?;
-    let exists = state
+    state
         .rooms
-        .read_log(room_id, move |_, slots| span(slots, version).is_some())
-        .await?;
-    match i64::try_from(version) {
-        Ok(version) if exists => Ok(version),
-        _ => Err(no_such_version()),
-    }
+        .read_log(room_id, move |_, slots| span(slots, version))
+        .await?
+        .and_then(|span| Some(row(span.start)?..=row(span.end - 1)?))
+        .ok_or_else(no_such_version)
+}
+
+fn row(record: impl TryInto<i64>) -> Option<i64> {
+    record.try_into().ok()
 }
 
 /// Which versions a catalogue's history shows: those that touched the catalogue or one of
@@ -390,10 +393,10 @@ fn view(
     names: &BTreeMap<i64, String>,
     emails: &HashMap<Uuid, String>,
 ) -> VersionView {
-    let stored = i64::try_from(version.id)
-        .ok()
-        .and_then(|id| names.get(&id))
-        .cloned();
+    let stored = row(version.id)
+        .zip(row(version.last))
+        .and_then(|(first, last)| names.range(first..=last).next())
+        .map(|(_, name)| name.clone());
     let author_email = version
         .author
         .and_then(|author| emails.get(&author).cloned());

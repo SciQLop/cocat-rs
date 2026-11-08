@@ -94,6 +94,7 @@ def test_restore_from_python_undoes_an_edit(server, room, colleague):
     wait_until(lambda: room.event(a.uuid).confidence is None)
     wait_until(lambda: room.event(b.uuid).status == "deleted")
     assert history(server)[0]["author_email"] == server.email
+    assert history(server)[0]["restored_from"] == first
     assert not cc.restore(server.url, server.cookie, server.room_id, first)
 
 
@@ -107,6 +108,21 @@ def test_a_named_version_comes_back_named(server, room):
 
     cc.name_version(server.url, server.cookie, server.room_id, version, None)
     assert history(server)[0]["name"] is None
+
+
+def test_a_version_keeps_its_id_and_name_while_its_author_keeps_editing(server, room):
+    room.create_event(start=START, stop=STOP)
+    room.save(15)
+    (version,) = [version["id"] for version in history(server)]
+    cc.name_version(server.url, server.cookie, server.room_id, version, "paper v1")
+
+    room.create_event(start=START, stop=STOP)
+    room.save(15)
+
+    versions = history(server)
+    assert [version["id"] for version in versions] == [version]
+    assert versions[0]["name"] == "paper v1"
+    assert versions[0]["events_added"] == 2
 
 
 def test_a_catalogue_filter_narrows_the_history(server, room, colleague):

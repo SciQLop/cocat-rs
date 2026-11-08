@@ -1,6 +1,7 @@
 //! The server's SQLite schema, applied by sqlx migrations, and the queries on it.
 
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -827,39 +828,57 @@ pub async fn set_owner(pool: &SqlitePool, room_id: &str, user_id: Uuid) -> Resul
     Ok(())
 }
 
-/// Names a version of the room's history, replacing the name it had.
+/// Names the version whose records are `records`, replacing the name it had. The name is
+/// stored under its first record; a row under any other of its records (rows written when a
+/// version was keyed by its last record) goes.
 pub async fn name_version(
     pool: &SqlitePool,
     room_id: &str,
-    version: i64,
+    records: RangeInclusive<i64>,
     name: &str,
     by: Uuid,
 ) -> Result<(), DbError> {
+    let mut tx = begin_immediate(pool).await?;
+    delete_version_names(&mut tx, room_id, &records).await?;
     sqlx::query(
-        "INSERT INTO version_name (room_id, version, name, created_by) VALUES (?, ?, ?, ?)
-         ON CONFLICT (room_id, version) DO UPDATE
-         SET name = excluded.name, created_by = excluded.created_by,
-             created_at = CURRENT_TIMESTAMP",
+        "INSERT INTO version_name (room_id, version, name, created_by) VALUES (?, ?, ?, ?)",
     )
     .bind(room_id)
-    .bind(version)
+    .bind(records.start())
     .bind(name)
     .bind(by.to_string())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
-pub async fn unname_version(pool: &SqlitePool, room_id: &str, version: i64) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM version_name WHERE room_id = ? AND version = ?")
+pub async fn unname_version(
+    pool: &SqlitePool,
+    room_id: &str,
+    records: RangeInclusive<i64>,
+) -> Result<(), DbError> {
+    let mut tx = begin_immediate(pool).await?;
+    delete_version_names(&mut tx, room_id, &records).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn delete_version_names(
+    tx: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    records: &RangeInclusive<i64>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM version_name WHERE room_id = ? AND version BETWEEN ? AND ?")
         .bind(room_id)
-        .bind(version)
-        .execute(pool)
+        .bind(records.start())
+        .bind(records.end())
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }
 
-/// The named versions of a room, by version.
+/// The names of a room's versions, by the record each is stored under.
 pub async fn version_names(
     pool: &SqlitePool,
     room_id: &str,

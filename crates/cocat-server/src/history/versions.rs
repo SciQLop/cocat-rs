@@ -20,9 +20,9 @@ pub const VERSION_GAP_MS: i64 = 300_000;
 
 #[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct Version {
-    /// The version's last record.
+    /// The version's first record: it stays the id while the author's later edits join it.
     pub id: u64,
-    pub first: u64,
+    pub last: u64,
     pub author: Option<Uuid>,
     pub started_ms: Option<i64>,
     pub ended_ms: Option<i64>,
@@ -142,11 +142,11 @@ pub fn spans(slots: &[Option<Stamp>]) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// The records of the version whose last record is `id`.
+/// The records of the version whose first record is `id`.
 pub fn span(slots: &[Option<Stamp>], id: u64) -> Option<Range<usize>> {
     spans(slots)
         .into_iter()
-        .find(|span| index(span.end - 1) == id)
+        .find(|span| index(span.start) == id)
 }
 
 fn observe(
@@ -309,8 +309,8 @@ fn version(first: usize, run: &[Option<Stamp>], touched: Touched) -> Version {
         .or_else(|| touched.origins_added.first().map(|origin| &origin.name))
         .cloned();
     Version {
-        id: index(first + run.len().saturating_sub(1)),
-        first: index(first),
+        id: index(first),
+        last: index(first + run.len().saturating_sub(1)),
         author: first_stamp.and_then(|stamp| stamp.user),
         started_ms: first_stamp.map(|stamp| stamp.at_ms),
         ended_ms: last_stamp.map(|stamp| stamp.at_ms),
@@ -420,7 +420,7 @@ mod tests {
     }
 
     fn ranges(versions: &[Version]) -> Vec<(u64, u64)> {
-        versions.iter().map(|v| (v.first, v.id)).collect()
+        versions.iter().map(|v| (v.id, v.last)).collect()
     }
 
     #[test]
@@ -601,16 +601,27 @@ mod tests {
     }
 
     #[test]
-    fn a_span_is_found_by_its_last_record_only() {
+    fn a_span_is_found_by_its_first_record_only() {
         let mut room = Room::default();
         room.write(Some((user(1), 0)), create("a"));
         room.write(Some((user(1), 1)), create("b"));
         room.write(Some((user(2), 2)), create("c"));
 
-        assert_eq!(span(&room.stamps, 1), Some(0..2));
+        assert_eq!(span(&room.stamps, 0), Some(0..2));
         assert_eq!(span(&room.stamps, 2), Some(2..3));
-        assert_eq!(span(&room.stamps, 0), None);
+        assert_eq!(span(&room.stamps, 1), None);
         assert_eq!(span(&room.stamps, 3), None);
+    }
+
+    #[test]
+    fn a_version_keeps_its_id_while_its_author_keeps_editing() {
+        let mut room = Room::default();
+        room.write(Some((user(1), 0)), create("a"));
+        let before = room.versions()[0].id;
+        room.write(Some((user(1), MINUTE)), create("b"));
+
+        assert_eq!(room.versions()[0].id, before);
+        assert_eq!(room.versions()[0].last, 1);
     }
 
     #[test]
