@@ -690,3 +690,147 @@ async fn restoring_an_unknown_version_is_404() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["detail"], "No such version");
 }
+
+impl Fixture {
+    async fn save(&self, user: Uuid, body: Value) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{ROOM}/history/commit");
+        let (status, _, bytes) = self.call(Method::POST, &path, user, Some(body)).await;
+        (status, json_of(&bytes))
+    }
+}
+
+#[tokio::test]
+async fn an_editor_saves_a_version_with_a_name_and_a_note() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    fixture.write(fixture.alice, MINUTE, create("b"));
+
+    let (status, body) = fixture
+        .save(
+            fixture.bob,
+            json!({ "name": "checkpoint", "message": "  looked at a and b  " }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "version": 0 }));
+    let versions = fixture.history(fixture.carol).await;
+    assert_eq!(versions[0]["committed"], true);
+    assert_eq!(versions[0]["name"], "checkpoint");
+    assert_eq!(versions[0]["message"], "looked at a and b");
+}
+
+#[tokio::test]
+async fn a_saved_version_ends_where_it_was_saved() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    assert_eq!(
+        fixture.save(fixture.alice, json!({})).await.0,
+        StatusCode::OK
+    );
+    fixture.write(fixture.alice, MINUTE, create("b"));
+
+    let versions = fixture.history(fixture.alice).await;
+
+    assert_eq!(ids(&versions), [1, 0]);
+    assert_eq!(versions[0]["committed"], false);
+    assert_eq!(versions[0]["message"], Value::Null);
+    assert_eq!(versions[1]["committed"], true);
+    assert_eq!(versions[1]["message"], Value::Null);
+    assert_eq!(versions[1]["name"], Value::Null);
+}
+
+#[tokio::test]
+async fn saving_with_nothing_new_is_409() {
+    let fixture = Fixture::start().await;
+    let nothing = |(status, body): (StatusCode, Value)| {
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(
+            body["detail"],
+            "Nothing changed since the last saved version."
+        );
+    };
+
+    nothing(fixture.save(fixture.alice, json!({})).await);
+    fixture.write(fixture.alice, 0, create("a"));
+    assert_eq!(
+        fixture.save(fixture.alice, json!({})).await.0,
+        StatusCode::OK
+    );
+    nothing(
+        fixture
+            .save(fixture.bob, json!({ "message": "again" }))
+            .await,
+    );
+}
+
+#[tokio::test]
+async fn saving_needs_the_editor_role() {
+    let fixture = two_versions().await;
+    let dave = db::create_user(&fixture.state.pool, "dave@x.org", "hunter2", false, true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture.save(fixture.carol, json!({})).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(fixture.save(dave, json!({})).await.0, StatusCode::NOT_FOUND);
+    let versions = fixture.history(fixture.alice).await;
+    assert!(versions.iter().all(|version| version["committed"] == false));
+}
+
+#[tokio::test]
+async fn a_long_note_or_a_blank_name_is_refused() {
+    let fixture = two_versions().await;
+    let long = "x".repeat(2001);
+
+    for body in [json!({ "message": long }), json!({ "name": "  " })] {
+        let (status, _) = fixture.save(fixture.bob, body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let fits = json!({ "message": "x".repeat(2000) });
+    assert_eq!(fixture.save(fixture.bob, fits).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_blank_note_is_no_note() {
+    let fixture = two_versions().await;
+
+    assert_eq!(
+        fixture
+            .save(fixture.bob, json!({ "message": " \n " }))
+            .await
+            .0,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        fixture.history(fixture.bob).await[0]["message"],
+        Value::Null
+    );
+}
+
+#[tokio::test]
+async fn saving_an_open_room_covers_what_it_just_took() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    let room = fixture.state.rooms.get_or_open(ROOM).unwrap();
+    let (out, _inbox) = outbox();
+    room.attach(1, fixture.bob, "bob@x.org".to_owned(), Role::Editor, out)
+        .unwrap();
+    let update = fixture.record(create("b"));
+    room.frame(
+        1,
+        Bytes::from(Message::Sync(SyncMessage::Update(update.to_vec())).encode_v1()),
+    );
+
+    let (status, body) = fixture.save(fixture.bob, json!({})).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "version": 1 }));
+    let versions = fixture.history(fixture.alice).await;
+    assert_eq!(ids(&versions), [1, 0]);
+    assert_eq!(versions[0]["committed"], true);
+    assert_eq!(versions[0]["last"], 1);
+}

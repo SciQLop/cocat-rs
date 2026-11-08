@@ -136,3 +136,30 @@ def test_a_catalogue_filter_narrows_the_history(server, room, colleague):
 
     assert first not in [version["id"] for version in versions]
     assert second in [version["id"] for version in versions]
+
+
+def test_saving_a_version_names_it_and_ends_it(server, room):
+    room.create_event(start=START, stop=STOP)
+    room.save(15)
+
+    version = cc.commit(
+        server.url, server.cookie, server.room_id, name="checked", message="all good"
+    )
+    room.create_event(start=START, stop=STOP)
+    room.save(15)
+
+    versions = history(server)
+    assert [v["id"] for v in versions][1] == version
+    assert versions[1]["committed"] is True
+    assert versions[1]["name"] == "checked"
+    assert versions[1]["message"] == "all good"
+    assert versions[0]["committed"] is False
+
+
+def test_saving_twice_without_changes_is_refused(server, room):
+    room.create_event(start=START, stop=STOP)
+    room.save(15)
+    cc.commit(server.url, server.cookie, server.room_id)
+
+    with pytest.raises(ValueError, match="409"):
+        cc.commit(server.url, server.cookie, server.room_id)

@@ -19,6 +19,9 @@ use super::stamps::Stamp;
 pub const VERSION_GAP_MS: i64 = 300_000;
 pub const VERSION_SPAN_MS: i64 = 3_600_000;
 
+/// The records people saved a version at.
+pub type Saved = BTreeSet<u64>;
+
 #[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct Version {
     /// The version's first record: it stays the id while the author's later edits join it.
@@ -145,13 +148,14 @@ pub fn touched_by_records(records: &[Bytes]) -> Vec<Touched> {
         .collect()
 }
 
-/// Newest first. `stamps` holds one slot per record, as `valid_stamps` gives them.
-pub fn versions(records: &[Bytes], stamps: &[Option<Stamp>]) -> Vec<Version> {
+/// Newest first. `stamps` holds one slot per record, as `valid_stamps` gives them; a version
+/// ends at each record in `saved`.
+pub fn versions(records: &[Bytes], stamps: &[Option<Stamp>], saved: &Saved) -> Vec<Version> {
     let slots: Vec<Option<Stamp>> = (0..records.len())
         .map(|index| stamps.get(index).copied().flatten())
         .collect();
     let mut touched = touched_by_records(records).into_iter();
-    let mut versions: Vec<Version> = spans(&slots)
+    let mut versions: Vec<Version> = spans(&slots, saved)
         .into_iter()
         .map(|span| {
             let run = &slots[span.clone()];
@@ -178,10 +182,12 @@ fn date_restores(versions: &mut [Version]) {
 /// The records of each version, oldest first: the grouping alone, without a replay.
 /// Each record is judged against the records before it only, so ids never move as the log
 /// grows.
-pub fn spans(slots: &[Option<Stamp>]) -> Vec<Range<usize>> {
+pub fn spans(slots: &[Option<Stamp>], saved: &Saved) -> Vec<Range<usize>> {
     (0..slots.len()).fold(Vec::new(), |mut spans: Vec<Range<usize>>, next| {
         match spans.last_mut() {
-            Some(span) if joins(slots, span.start, next) => span.end = next + 1,
+            Some(span) if !saved.contains(&index(next - 1)) && joins(slots, span.start, next) => {
+                span.end = next + 1
+            }
             _ => spans.push(next..next + 1),
         }
         spans
@@ -194,8 +200,8 @@ fn joins(slots: &[Option<Stamp>], first: usize, next: usize) -> bool {
 }
 
 /// The records of the version whose first record is `id`.
-pub fn span(slots: &[Option<Stamp>], id: u64) -> Option<Range<usize>> {
-    spans(slots)
+pub fn span(slots: &[Option<Stamp>], saved: &Saved, id: u64) -> Option<Range<usize>> {
+    spans(slots, saved)
         .into_iter()
         .find(|span| index(span.start) == id)
 }
@@ -434,6 +440,7 @@ mod tests {
         doc: Doc,
         records: Vec<Bytes>,
         stamps: Vec<Option<Stamp>>,
+        saved: Saved,
     }
 
     impl Room {
@@ -457,7 +464,7 @@ mod tests {
         }
 
         fn versions(&self) -> Vec<Version> {
-            versions(&self.records, &self.stamps)
+            versions(&self.records, &self.stamps, &self.saved)
         }
     }
 
@@ -684,10 +691,10 @@ mod tests {
         room.write(Some((user(1), 1)), create("b"));
         room.write(Some((user(2), 2)), create("c"));
 
-        assert_eq!(span(&room.stamps, 0), Some(0..2));
-        assert_eq!(span(&room.stamps, 2), Some(2..3));
-        assert_eq!(span(&room.stamps, 1), None);
-        assert_eq!(span(&room.stamps, 3), None);
+        assert_eq!(span(&room.stamps, &room.saved, 0), Some(0..2));
+        assert_eq!(span(&room.stamps, &room.saved, 2), Some(2..3));
+        assert_eq!(span(&room.stamps, &room.saved, 1), None);
+        assert_eq!(span(&room.stamps, &room.saved, 3), None);
     }
 
     #[test]
@@ -728,6 +735,18 @@ mod tests {
 
         assert!(after.ends_with(&before), "{before:?} lost from {after:?}");
         assert!(after.len() > before.len() + 1);
+    }
+
+    #[test]
+    fn a_version_ends_at_a_saved_record() {
+        let mut room = Room::default();
+        room.write(Some((user(1), 0)), create("a"));
+        room.write(Some((user(1), 1)), create("b"));
+        room.saved.insert(0);
+        room.write(Some((user(1), 2)), create("c"));
+        room.saved.insert(2);
+
+        assert_eq!(ranges(&room.versions()), [(1, 2), (0, 0)]);
     }
 
     #[test]

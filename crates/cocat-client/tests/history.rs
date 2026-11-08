@@ -1,6 +1,8 @@
 mod support;
 
-use cocat_client::{LoginError, Room, RoomError, history, name_version, restore, version_state};
+use cocat_client::{
+    LoginError, Room, RoomError, commit, history, name_version, restore, version_state,
+};
 use serde_json::Value;
 use support::*;
 use yrs::Transact;
@@ -77,4 +79,21 @@ async fn a_refused_call_carries_the_status() {
         matches!(refused, Err(LoginError::Refused(404))),
         "{refused:?}"
     );
+}
+
+#[tokio::test]
+async fn saving_the_newest_version_returns_its_id_and_its_note() {
+    let (server, cookie, id) = one_version().await;
+    let url = server.url();
+
+    let saved = commit(&url, &cookie, ROOM, Some("checked"), Some("all good"))
+        .await
+        .unwrap();
+    let again = commit(&url, &cookie, ROOM, None, None).await;
+
+    assert_eq!(saved, id);
+    let versions = history(&url, &cookie, ROOM, None).await.unwrap();
+    assert_eq!(versions[0]["message"], "all good");
+    assert_eq!(versions[0]["name"], "checked");
+    assert!(matches!(again, Err(LoginError::Refused(409))), "{again:?}");
 }

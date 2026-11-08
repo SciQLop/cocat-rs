@@ -1735,6 +1735,29 @@ fn name_version(
     .map_err(value_error)
 }
 
+/// Saves the room's newest version, with an optional name and note; returns its id.
+#[pyfunction]
+#[pyo3(signature = (url, cookie, room_id, name=None, message=None))]
+fn commit(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    room_id: String,
+    name: Option<String>,
+    message: Option<String>,
+) -> Result<u64> {
+    py.detach(|| {
+        block_on(cocat_client::commit(
+            &url,
+            &cookie,
+            &room_id,
+            name.as_deref(),
+            message.as_deref(),
+        ))
+    })?
+    .map_err(value_error)
+}
+
 /// The compiled part of `cocat_rs`; `cocat_rs/__init__.py` re-exports it.
 /// The sync thread's warnings (a server out of reach, a refused handshake) go to Python's
 /// `logging` under `cocat_client.*`. Levels are read from Python on each record so that
@@ -1766,6 +1789,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(history, module)?)?;
     module.add_function(wrap_pyfunction!(restore, module)?)?;
     module.add_function(wrap_pyfunction!(name_version, module)?)?;
+    module.add_function(wrap_pyfunction!(commit, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;

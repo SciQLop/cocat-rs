@@ -2,7 +2,7 @@
 //! was, and the names people give versions.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -19,7 +19,7 @@ use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
-use crate::history::versions::{Version, span, versions};
+use crate::history::versions::{Saved, Version, span, spans, versions};
 use crate::openapi::Detail;
 use crate::{AppState, db, lifecycle, presence};
 
@@ -30,6 +30,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(state_at))
         .routes(routes!(name, unname))
         .routes(routes!(restore))
+        .routes(routes!(commit))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -52,6 +53,10 @@ struct VersionView {
     author_color: Option<&'static str>,
     /// The name someone gave the version, else the one its import or materialization gave it.
     name: Option<String>,
+    /// Someone saved the version on purpose: it ends where they saved it.
+    committed: bool,
+    /// The note they saved it with.
+    message: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -108,9 +113,16 @@ async fn list(
         Some(uuid) => Some(Filter::new(&state, &room_id, uuid).await?),
         None => None,
     };
+    let commits = db::version_commits(&state.pool, &room_id).await?;
+    let saved = marks(&commits);
     // simplify: every request replays the whole log (0.7 s on the largest production
     // room); cache the versions per room keyed by its record count when that hurts.
-    let mut versions = state.rooms.read_log(&room_id, 1, versions).await?;
+    let mut versions = state
+        .rooms
+        .read_log(&room_id, 1, move |records, slots| {
+            versions(records, slots, &saved)
+        })
+        .await?;
     if let Some(filter) = filter {
         versions.retain(|version| filter.keeps(version));
         for version in &mut versions {
@@ -124,7 +136,7 @@ async fn list(
     let emails = author_emails(&state, &versions).await?;
     let versions = versions
         .into_iter()
-        .map(|version| view(version, &names, &emails))
+        .map(|version| view(version, &names, &commits, &emails))
         .collect();
     Ok(Json(History { versions }))
 }
@@ -151,10 +163,11 @@ async fn changes(
     Query(query): Query<CatalogueQuery>,
 ) -> Result<Json<Diff>, ApiError> {
     membership(&state, &room_id, user.id).await?;
+    let saved = saved(&state, &room_id).await?;
     let changes = state
         .rooms
         .read_log(&room_id, 2, move |records, slots| {
-            let span = span(slots, version)?;
+            let span = span(slots, &saved, version)?;
             let (before, after) = before_and_after(records, span.start, span.end);
             Some(diff(&before, &after, query.catalogue.as_deref()))
         })
@@ -183,10 +196,11 @@ async fn state_at(
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
     membership(&state, &room_id, user.id).await?;
+    let saved = saved(&state, &room_id).await?;
     let update = state
         .rooms
         .read_log(&room_id, 1, move |records, slots| {
-            let past = replay_until(&records[..span(slots, version)?.end], u64::MAX);
+            let past = replay_until(&records[..span(slots, &saved, version)?.end], u64::MAX);
             let update = past
                 .transact()
                 .encode_state_as_update_v1(&StateVector::default());
@@ -250,6 +264,89 @@ async fn unname(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Up to 2000 characters once trimmed; blank is no note.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+struct Note(Option<String>);
+
+impl TryFrom<String> for Note {
+    type Error = &'static str;
+
+    fn try_from(note: String) -> Result<Self, Self::Error> {
+        let note = note.trim();
+        match note.chars().count() {
+            0 => Ok(Self(None)),
+            1..=2000 => Ok(Self(Some(note.to_owned()))),
+            _ => Err("the note must be at most 2000 characters"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct CommitBody {
+    #[serde(default)]
+    #[schema(value_type = Option<String>, min_length = 1, max_length = 100)]
+    name: Option<VersionName>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>, max_length = 2000)]
+    message: Option<Note>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Committed {
+    /// The id of the version the save ended.
+    version: u64,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/history/commit",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+    ),
+    request_body = CommitBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The newest version is saved: it ends at the project's last change, with the name and note given", body = Committed),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller cannot write to the room", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+        (status = 409, description = "Nothing changed since the last saved version", body = Detail),
+        (status = 422, description = "The name is blank or over 100 characters, or the note over 2000", body = Detail),
+    )
+)]
+async fn commit(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<CommitBody>,
+) -> Result<Json<Committed>, ApiError> {
+    lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
+    let saved = saved(&state, &room_id).await?;
+    let after = saved.last().copied().and_then(row);
+    let records = state
+        .rooms
+        .read_log(&room_id, 1, move |_, slots| spans(slots, &saved).pop())
+        .await?
+        .and_then(rows)
+        .ok_or_else(nothing_changed)?;
+    let version = u64::try_from(*records.start()).map_err(|_| nothing_changed())?;
+    let saving = db::SavedVersion {
+        records,
+        name: body.name.as_ref().map(|name| name.0.as_str()),
+        message: body.message.as_ref().and_then(|note| note.0.as_deref()),
+        after,
+    };
+    if !db::save_version(&state.pool, &room_id, &saving, user.id).await? {
+        return Err(nothing_changed());
+    }
+    Ok(Json(Committed { version }))
+}
+
+fn nothing_changed() -> ApiError {
+    ApiError::Conflict("Nothing changed since the last saved version.".to_owned())
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct RestoreBody {
     /// Restore only this catalogue and its members' events; the whole room when absent.
@@ -287,10 +384,11 @@ async fn restore(
     JsonBody(body): JsonBody<RestoreBody>,
 ) -> Result<Json<Restored>, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
+    let saved = saved(&state, &room_id).await?;
     let update = state
         .rooms
         .read_log(&room_id, 2, move |records, slots| {
-            let end = span(slots, version)?.end;
+            let end = span(slots, &saved, version)?.end;
             Some(restore_update(records, end, body.catalogue.as_deref()))
         })
         .await?
@@ -322,12 +420,28 @@ async fn writable_version(
     version: u64,
 ) -> Result<RangeInclusive<i64>, ApiError> {
     lifecycle::require_role(state, room_id, user, Role::Editor).await?;
+    let saved = saved(state, room_id).await?;
     state
         .rooms
-        .read_log(room_id, 1, move |_, slots| span(slots, version))
+        .read_log(room_id, 1, move |_, slots| span(slots, &saved, version))
         .await?
-        .and_then(|span| Some(row(span.start)?..=row(span.end - 1)?))
+        .and_then(rows)
         .ok_or_else(no_such_version)
+}
+
+fn rows(span: Range<usize>) -> Option<RangeInclusive<i64>> {
+    Some(row(span.start)?..=row(span.end.checked_sub(1)?)?)
+}
+
+async fn saved(state: &AppState, room_id: &str) -> Result<Saved, ApiError> {
+    Ok(marks(&db::version_commits(&state.pool, room_id).await?))
+}
+
+fn marks(commits: &BTreeMap<i64, Option<String>>) -> Saved {
+    commits
+        .keys()
+        .filter_map(|&record| u64::try_from(record).ok())
+        .collect()
 }
 
 fn row(record: impl TryInto<i64>) -> Option<i64> {
@@ -393,8 +507,10 @@ async fn author_emails(
 fn view(
     version: Version,
     names: &BTreeMap<i64, String>,
+    commits: &BTreeMap<i64, Option<String>>,
     emails: &HashMap<Uuid, String>,
 ) -> VersionView {
+    let commit = row(version.last).and_then(|last| commits.get(&last));
     let stored = row(version.id)
         .zip(row(version.last))
         .and_then(|(first, last)| names.range(first..=last).next())
@@ -406,6 +522,8 @@ fn view(
         author_color: author_email.as_deref().map(presence::color),
         author_email,
         name: stored.or_else(|| version.auto_name.clone()),
+        committed: commit.is_some(),
+        message: commit.cloned().flatten(),
         version,
     }
 }

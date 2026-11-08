@@ -842,7 +842,19 @@ pub async fn name_version(
     by: Uuid,
 ) -> Result<(), DbError> {
     let mut tx = begin_immediate(pool).await?;
-    delete_version_names(&mut tx, room_id, &records).await?;
+    put_version_name(&mut tx, room_id, &records, name, by).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn put_version_name(
+    tx: &mut Transaction<'_, Sqlite>,
+    room_id: &str,
+    records: &RangeInclusive<i64>,
+    name: &str,
+    by: Uuid,
+) -> Result<(), sqlx::Error> {
+    delete_version_names(tx, room_id, records).await?;
     sqlx::query(
         "INSERT INTO version_name (room_id, version, name, created_by) VALUES (?, ?, ?, ?)",
     )
@@ -850,10 +862,65 @@ pub async fn name_version(
     .bind(records.start())
     .bind(name)
     .bind(by.to_string())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// A version someone saves: its records, the last one being the room's last record then.
+pub struct SavedVersion<'a> {
+    pub records: RangeInclusive<i64>,
+    pub name: Option<&'a str>,
+    pub message: Option<&'a str>,
+    /// The newest save the version's grouping knew of.
+    pub after: Option<i64>,
+}
+
+/// Marks the end of `saved` and names it. False, and nothing stored, when the room has a
+/// newer save than the one the grouping knew: then nothing was written since, or the
+/// version's first record moved under a concurrent save.
+pub async fn save_version(
+    pool: &SqlitePool,
+    room_id: &str,
+    saved: &SavedVersion<'_>,
+    by: Uuid,
+) -> Result<bool, DbError> {
+    let mut tx = begin_immediate(pool).await?;
+    let newest: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(record) FROM version_commit WHERE room_id = ?")
+            .bind(room_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if newest != saved.after || newest >= Some(*saved.records.end()) {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO version_commit (room_id, record, message, created_by) VALUES (?, ?, ?, ?)",
+    )
+    .bind(room_id)
+    .bind(saved.records.end())
+    .bind(saved.message)
+    .bind(by.to_string())
     .execute(&mut *tx)
     .await?;
+    if let Some(name) = saved.name {
+        put_version_name(&mut tx, room_id, &saved.records, name, by).await?;
+    }
     tx.commit().await?;
-    Ok(())
+    Ok(true)
+}
+
+/// The notes of a room's saved versions, by the record each ends at.
+pub async fn version_commits(
+    pool: &SqlitePool,
+    room_id: &str,
+) -> Result<BTreeMap<i64, Option<String>>, DbError> {
+    let rows: Vec<(i64, Option<String>)> =
+        sqlx::query_as("SELECT record, message FROM version_commit WHERE room_id = ?")
+            .bind(room_id)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().collect())
 }
 
 pub async fn unname_version(

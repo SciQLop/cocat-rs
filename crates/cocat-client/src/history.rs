@@ -1,5 +1,5 @@
 //! A room's version history, as the server keeps it: the versions, the room at one of them,
-//! restoring one, and naming one.
+//! restoring one, naming one, and saving the newest.
 
 use reqwest::{Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,30 @@ pub async fn name_version(
     };
     send(request).await?;
     Ok(())
+}
+
+/// Saves the room's newest version, ending it at the room's last change the server has; its
+/// id comes back.
+pub async fn commit(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    name: Option<&str>,
+    message: Option<&str>,
+) -> Result<u64, LoginError> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        name: Option<&'a str>,
+        message: Option<&'a str>,
+    }
+    #[derive(Deserialize)]
+    struct Committed {
+        version: u64,
+    }
+    let request =
+        request(Method::POST, url, cookie, room_id, &["commit"])?.json(&Body { name, message });
+    let committed: Committed = send(request).await?.json().await?;
+    Ok(committed.version)
 }
 
 /// A request under `api/rooms/{room_id}/history`, each part its own path segment so a room

@@ -12,6 +12,6 @@ mod room;
 mod sync;
 
 pub use changes::Change;
-pub use history::{history, name_version, restore, version_state};
+pub use history::{commit, history, name_version, restore, version_state};
 pub use login::{Credentials, LoginError, RoomInfo, login, rooms};
 pub use room::{Room, RoomError, Status};

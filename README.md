@@ -467,6 +467,11 @@ new change by you, so a restore can itself be undone; events created since go to
 A restore is always a version of its own, with `restored_from` set to the version it brought
 back. A version's `id` is its first change, so it stays the same, and keeps its name, while
 its author goes on editing.
+`cocat_rs.commit` saves the newest version on purpose: it ends at the project's last change
+the server has, with an optional `name` and `message` (a note, up to 2000 characters), and
+returns its id. Call `room.save()` first so your pending edits reached the server. The next
+change starts a new version, and the list marks the saved one with `committed` and its
+`message`. Saving again with nothing new raises `ValueError` (the server answers 409).
 
 ```python
 versions = cocat_rs.history(url, cookie, "my-room")
@@ -474,6 +479,8 @@ first = versions[-1]["id"]
 past = cocat_rs.Room.at(url, cookie, "my-room", first)
 past.catalogues()                       # as they were
 cocat_rs.name_version(url, cookie, "my-room", first, "before the import")
+room.save()
+cocat_rs.commit(url, cookie, "my-room", name="paper v1", message="as submitted")
 cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
 ```
 
