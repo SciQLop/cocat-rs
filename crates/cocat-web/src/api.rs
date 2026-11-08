@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use thiserror::Error;
 
-use crate::history::{Diff, History, Version, endpoint, refusal_text};
+use crate::history::{Diff, History, Version, endpoint, refusal_text, save_body};
 use crate::session::RoomConfig;
 
 #[derive(Debug, Error)]
@@ -80,6 +80,17 @@ pub async fn name(config: &RoomConfig, version: u64, name: &str) -> Result<(), A
     };
     checked(request.send().await?).await?;
     Ok(())
+}
+
+/// Saves the newest version with a name and a note, each optional; its id comes back.
+pub async fn save_version(config: &RoomConfig, name: &str, note: &str) -> Result<u64, ApiError> {
+    #[derive(serde::Deserialize)]
+    struct Saved {
+        version: u64,
+    }
+    let url = url(config, &["commit"], &[])?;
+    let saved: Saved = json_body(Request::post(&url), save_body(name, note).to_string()).await?;
+    Ok(saved.version)
 }
 
 fn url(config: &RoomConfig, path: &[&str], query: &[(&str, &str)]) -> Result<String, ApiError> {

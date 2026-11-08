@@ -58,6 +58,11 @@ impl Room {
         self.config.role.can_write()
     }
 
+    /// Runs the caller again whenever the replica changes.
+    pub fn track(&self) {
+        self.revision.track();
+    }
+
     pub fn changed(&self) {
         self.revision.update(|revision| *revision += 1);
     }

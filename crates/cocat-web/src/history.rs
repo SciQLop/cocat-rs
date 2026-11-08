@@ -36,6 +36,11 @@ pub struct Version {
     /// The version a restore brought back, and when that version ended.
     pub restored_from: Option<u64>,
     pub restored_from_ms: Option<i64>,
+    /// Someone saved it on purpose, with this note.
+    #[serde(default)]
+    pub committed: bool,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -292,6 +297,38 @@ pub fn catalogue_line(change: &CatalogueChange) -> String {
     }
 }
 
+/// What "Save version" sends: a blank name or note is none.
+pub fn save_body(name: &str, note: &str) -> Value {
+    let given = |text: &str| {
+        Some(text.trim())
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    serde_json::json!({ "name": given(name), "message": given(note) })
+}
+
+/// Reloads of the version list, one request at a time: a reload asked for while one runs
+/// waits for it, and several such asks make one more reload.
+#[derive(Debug, Default)]
+pub struct Reloads {
+    running: bool,
+    again: bool,
+}
+
+impl Reloads {
+    /// A reload is wanted; true when it should start now.
+    pub fn ask(&mut self) -> bool {
+        self.again = self.running;
+        !std::mem::replace(&mut self.running, true)
+    }
+
+    /// The running reload ended; true when another should start now.
+    pub fn done(&mut self) -> bool {
+        self.running = std::mem::take(&mut self.again);
+        self.running
+    }
+}
+
 /// The server's reason for refusing a request, from its `{"detail": "…"}` body.
 pub fn refusal_text(status: u16, body: &str) -> String {
     serde_json::from_str::<Value>(body)
@@ -469,7 +506,59 @@ mod tests {
             rules_changed: Vec::new(),
             restored_from: None,
             restored_from_ms: None,
+            committed: false,
+            message: None,
         }
+    }
+
+    #[test]
+    fn a_saved_version_reads_with_its_note() {
+        let listed = json!({
+            "id": 3, "author_email": null, "author_color": null, "started_ms": 1,
+            "ended_ms": 2, "via": null, "auto_name": null, "name": "paper v1",
+            "events_added": 1, "events_changed": 0, "events_removed": 0,
+            "catalogues": [], "rules_changed": [], "restored_from": null,
+            "restored_from_ms": null, "committed": true, "message": "as submitted"
+        });
+
+        let version: Version = serde_json::from_value(listed).unwrap();
+
+        assert!(version.committed);
+        assert_eq!(version.message.as_deref(), Some("as submitted"));
+    }
+
+    #[test]
+    fn saving_leaves_a_blank_name_or_note_out() {
+        assert_eq!(
+            save_body("  ", " looked at it \n"),
+            json!({ "name": null, "message": "looked at it" })
+        );
+        assert_eq!(
+            save_body("v1", ""),
+            json!({ "name": "v1", "message": null })
+        );
+    }
+
+    #[test]
+    fn a_reload_starts_when_none_runs() {
+        let mut reloads = Reloads::default();
+
+        assert!(reloads.ask());
+        assert!(!reloads.done());
+        assert!(reloads.ask());
+    }
+
+    #[test]
+    fn asks_during_a_reload_make_one_more() {
+        let mut reloads = Reloads::default();
+        assert!(reloads.ask());
+
+        assert!(!reloads.ask());
+        assert!(!reloads.ask());
+
+        assert!(reloads.done());
+        assert!(!reloads.done());
+        assert!(reloads.ask());
     }
 
     fn labels(days: &[Day]) -> Vec<(&str, Vec<u64>)> {

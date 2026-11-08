@@ -1,15 +1,17 @@
 //! The history: the versions of what was on screen, what one of them changed, and, for
 //! editors, naming and restoring it. Also the event panel's latest changes.
 
-use leptos::html::Input;
+use std::time::Duration;
+
+use leptos::html::{Input, Textarea};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsValue;
 
 use crate::api;
 use crate::history::{
-    Cell, Change, Day, DiffRow, Version, author, by_day, catalogue_line, clock, counts_text,
-    diff_counts, diff_rows, past_rows, summary, unchanged_rows, when_text,
+    Cell, Change, Day, DiffRow, Reloads, Version, author, by_day, catalogue_line, clock,
+    counts_text, diff_counts, diff_rows, past_rows, summary, unchanged_rows, when_text,
 };
 use crate::route::Route;
 use crate::state::Room;
@@ -22,7 +24,11 @@ const MOST_ROWS: usize = 2_000;
 /// The event panel's latest changes.
 const LAST_CHANGES: usize = 5;
 
+/// How long the list waits after the project's last change before it reloads.
+const LIVE_DELAY: Duration = Duration::from_secs(2);
+
 type Versions = LocalResource<Result<Vec<Version>, String>>;
+type Loaded = RwSignal<Option<Result<Vec<Version>, String>>>;
 
 /// `scope` (the catalogue, else the room) and `picked` (the version) belong to the page
 /// around this view and keep their values when it leaves the history, so nothing here
@@ -30,16 +36,13 @@ type Versions = LocalResource<Result<Vec<Version>, String>>;
 #[component]
 pub fn HistoryPage(scope: Memo<Option<String>>, picked: Memo<Option<u64>>) -> impl IntoView {
     let room = expect_context::<Room>();
-    let reload = RwSignal::new(0_u32);
-    let config = room.config.clone();
-    let versions: Versions = LocalResource::new(move || {
-        reload.track();
-        let (config, catalogue) = (config.clone(), scope.get());
-        async move {
-            api::history(&config, catalogue.as_deref(), None)
-                .await
-                .map_err(|error| error.to_string())
-        }
+    let versions: Loaded = RwSignal::new(None);
+    let reload = reloader(&room, scope, versions);
+    reload_when_the_project_changes(&room, reload);
+    Effect::new(move |_| {
+        scope.track();
+        versions.set(None);
+        reload.run(());
     });
     let version = Memo::new(move |_| {
         let id = picked.get()?;
@@ -60,9 +63,56 @@ pub fn HistoryPage(scope: Memo<Option<String>>, picked: Memo<Option<u64>>) -> im
                     }.into_any(),
                 }}
             </main>
-            <VersionList versions scope picked/>
+            <VersionList versions scope picked reload/>
         </div>
     }
+}
+
+/// Loads the versions of `scope` into `versions`, one request at a time. An answer for a
+/// scope left meanwhile is dropped: the reload that follows it brings the right one.
+fn reloader(room: &Room, scope: Memo<Option<String>>, versions: Loaded) -> Callback<()> {
+    let reloads = StoredValue::new(Reloads::default());
+    let config = room.config.clone();
+    Callback::new(move |()| {
+        if reloads.try_update_value(Reloads::ask) != Some(true) {
+            return;
+        }
+        let config = config.clone();
+        spawn_local(async move {
+            loop {
+                let Some(wanted) = scope.try_get_untracked() else {
+                    return;
+                };
+                let answer = api::history(&config, wanted.as_deref(), None)
+                    .await
+                    .map_err(|error| error.to_string());
+                if scope.try_get_untracked().as_ref() == Some(&wanted) {
+                    versions.try_set(Some(answer));
+                }
+                if reloads.try_update_value(Reloads::done) != Some(true) {
+                    return;
+                }
+            }
+        });
+    })
+}
+
+/// Anyone's edit, arriving or made here, reloads the list once the project is quiet.
+fn reload_when_the_project_changes(room: &Room, reload: Callback<()>) {
+    let timer = StoredValue::new(None::<TimeoutHandle>);
+    let stop = move || {
+        timer.try_update_value(|timer| timer.take().map(|handle| handle.clear()));
+    };
+    let room = room.clone();
+    Effect::new(move |seen: Option<()>| {
+        room.track();
+        if seen.is_some() {
+            stop();
+            let handle = set_timeout_with_handle(move || reload.run(()), LIVE_DELAY).ok();
+            timer.try_set_value(handle);
+        }
+    });
+    on_cleanup(stop);
 }
 
 /// What is on screen, and the read-only notice with "Back to now" and, for editors,
@@ -72,7 +122,7 @@ fn Banner(
     id: u64,
     version: Memo<Option<Version>>,
     scope: Memo<Option<String>>,
-    reload: RwSignal<u32>,
+    reload: Callback<()>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let page = page();
@@ -127,11 +177,14 @@ fn Banner(
     view! {
         <div class="history-banner">
             <HistoryIcon/>
-            <p>
-                "You are looking at " <strong>{move || subject.get()}</strong>
-                {move || when().map(|when| view! { " as it was on " <strong>{when}</strong> })}
-                ", " {after} ". It is read-only."
-            </p>
+            <div class="banner-text">
+                <p>
+                    "You are looking at " <strong>{move || subject.get()}</strong>
+                    {move || when().map(|when| view! { " as it was on " <strong>{when}</strong> })}
+                    ", " {after} ". It is read-only."
+                </p>
+                {move || note(version).map(|note| view! { <p class="version-note">{note}</p> })}
+            </div>
             <div class="banner-buttons">
                 <a class="button" href=live>"Back to now"</a>
                 {editor.then(|| view! {
@@ -154,7 +207,7 @@ fn NameVersion(
     id: u64,
     version: Memo<Option<Version>>,
     open: RwSignal<bool>,
-    reload: RwSignal<u32>,
+    reload: Callback<()>,
 ) -> impl IntoView {
     let config = expect_context::<Room>().config.clone();
     let input = NodeRef::<Input>::new();
@@ -173,7 +226,7 @@ fn NameVersion(
             match api::name(&config, id, &name).await {
                 Ok(()) => {
                     open.set(false);
-                    reload.update(|count| *count += 1);
+                    reload.run(());
                 }
                 Err(failure) => error.set(Some(failure.to_string())),
             }
@@ -188,6 +241,61 @@ fn NameVersion(
             {error_line(error)}
             <div class="row-buttons">
                 <button type="submit" class="button primary">"Save name"</button>
+                <button type="button" class="button" on:click=move |_| open.set(false)>"Cancel"</button>
+            </div>
+        </form>
+    }
+}
+
+fn note(version: Memo<Option<Version>>) -> Option<String> {
+    version.with(|version| version.as_ref()?.message.clone())
+}
+
+/// Saves the newest version with an optional name and note, then shows it.
+#[component]
+fn SaveVersion(
+    open: RwSignal<bool>,
+    scope: Memo<Option<String>>,
+    reload: Callback<()>,
+) -> impl IntoView {
+    let config = expect_context::<Room>().config.clone();
+    let name = NodeRef::<Input>::new();
+    let note = NodeRef::<Textarea>::new();
+    let error: Error = RwSignal::new(None);
+    Effect::new(move |_| {
+        if let Some(name) = name.get() {
+            let _ = name.focus();
+        }
+    });
+    let send = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        let typed = name.get().map(|input| input.value()).unwrap_or_default();
+        let noted = note.get().map(|input| input.value()).unwrap_or_default();
+        let config = config.clone();
+        spawn_local(async move {
+            match api::save_version(&config, &typed, &noted).await {
+                Ok(id) => {
+                    open.set(false);
+                    reload.run(());
+                    go_to(&history(scope.get_untracked(), Some(id)).hash());
+                }
+                Err(failure) => error.set(Some(failure.to_string())),
+            }
+        });
+    };
+    view! {
+        <form class="name-form save-form" on:submit=send>
+            <label>
+                <span class="field-label">"Name (optional)"</span>
+                <input type="text" maxlength="100" node_ref=name/>
+            </label>
+            <label>
+                <span class="field-label">"Note (optional)"</span>
+                <textarea rows="3" maxlength="2000" node_ref=note></textarea>
+            </label>
+            {error_line(error)}
+            <div class="row-buttons">
+                <button type="submit" class="button primary">"Save"</button>
                 <button type="button" class="button" on:click=move |_| open.set(false)>"Cancel"</button>
             </div>
         </form>
@@ -359,14 +467,19 @@ fn cell(cell: Cell, mono: bool) -> impl IntoView {
 
 #[component]
 fn VersionList(
-    versions: Versions,
+    versions: Loaded,
     scope: Memo<Option<String>>,
     picked: Memo<Option<u64>>,
+    reload: Callback<()>,
 ) -> impl IntoView {
     let named_only = RwSignal::new(false);
+    let saving = RwSignal::new(false);
+    let editor = expect_context::<Room>().can_write();
     let page = page();
     let days = move || {
-        let versions = versions.get()?;
+        let Some(versions) = versions.get() else {
+            return Some(view! { <p class="quiet pad">"Loading the history…"</p> }.into_any());
+        };
         Some(match versions {
             Err(error) => view! { <p class="field-error" role="alert">{error}</p> }.into_any(),
             Ok(versions) => {
@@ -400,9 +513,19 @@ fn VersionList(
                     "Named only"
                 </label>
             </div>
-            <Suspense fallback=|| view! { <p class="quiet pad">"Loading the history…"</p> }>
-                {days}
-            </Suspense>
+            {editor.then(|| view! {
+                <div class="save-version">
+                    <Show when=move || !saving.get()>
+                        <button type="button" class="button" on:click=move |_| saving.set(true)>
+                            "Save version"
+                        </button>
+                    </Show>
+                    <Show when=move || saving.get()>
+                        <SaveVersion open=saving scope reload/>
+                    </Show>
+                </div>
+            })}
+            {days}
         </aside>
     }
 }
@@ -447,7 +570,10 @@ fn version_item(
         <li>
             <a class="version" href=href aria-current=picked title=title>
                 <span class="version-top">
-                    <span class="time">{time}</span>
+                    <span class="time">
+                        {time}
+                        {version.committed.then(SavedMark)}
+                    </span>
                     {version.name.clone().map(|name| view! { <span class="chip named">{name}</span> })}
                 </span>
                 <span class="who" title=version.author_email.clone()>
@@ -524,6 +650,18 @@ pub fn LastChanges(uuid: String, shown: Memo<Route>) -> impl IntoView {
             <h3 class="section-label">"Last changes"</h3>
             <Suspense fallback=|| view! { <p class="quiet">"Loading…"</p> }>{list}</Suspense>
         </section>
+    }
+}
+
+/// Marks a version someone saved on purpose.
+#[component]
+fn SavedMark() -> impl IntoView {
+    view! {
+        <span class="saved-mark" role="img" aria-label="Saved version" title="Saved version">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1z"></path>
+            </svg>
+        </span>
     }
 }
 
