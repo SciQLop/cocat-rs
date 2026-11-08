@@ -43,11 +43,10 @@ podman exec cocat add-user-to-room them@example.org my-room
 podman exec cocat remove-user-from-room them@example.org my-room
 ```
 
-`docker/build_and_push.sh testing|release` builds and pushes `:devel` or `:stable` to
-`129.104.6.172:32219/sciqlop/cocat-server-rs`; it is not run by anything here, and `:devel`
-shares no tag with the Python image.
+Each release publishes the image as `ghcr.io/sciqlop/cocat-server:<version>` and `:latest`.
+`docker/build.sh <image>[:tag] [--push]` builds it from a checkout, with podman or docker.
 
-Running a development copy from production data, and the eventual switch-over, is
+Running a server (reverse proxy, mail, metrics, backups, moving from a Python server) is
 documented step by step in [docs/deploy.md](docs/deploy.md).
 
 ## Seeding

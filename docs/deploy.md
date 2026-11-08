@@ -1,90 +1,133 @@
-# Running a development copy
+# Running cocat-server
 
-On the `sciqlop` host the Python server runs as the `cocat-server` container (image
-`sciqlop/cocat-server:devel`, host network, port 6570, `COCAT_PROXY_PREFIX=cocat`), deployed by
-`/usr/bin/update-cocat-server` as the `sciqlop` user, with its data in `/DATA/cocat_server`
-(`storage/` for the project files, `db/users.db`). nginx serves it at `/cocat`.
+This guide takes you from nothing to a cocat server behind a reverse proxy, with mail, the
+catalogue web app, metrics and backups. The [README](../README.md) is the reference for every
+option; this page says which ones an operator needs and how they fit together.
 
-The Rust dev server runs beside it, on its own copy of that data, never on the production
-directories:
+## The image
 
-| | Python production | Rust dev |
-|---|---|---|
-| container, systemd user unit | `cocat-server` | `cocat-rs-dev` |
-| image | `sciqlop/cocat-server:devel` | `sciqlop/cocat-server-rs:devel` |
-| port (host network) | 6570 | 6575 |
-| URL | `/cocat` | `/cocat-dev` |
-| data | `/DATA/cocat_server` | `/DATA/cocat_rs_dev` |
-| mail | as configured | written as files to `/DATA/cocat_rs_dev/mail` |
+Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.3.1`) and
+`latest`. The release workflow (`.github/workflows/publish.yml`) builds it from
+`docker/Dockerfile` when a `v*` tag is pushed.
 
-## 0. Once: install the scripts and the nginx route
-
-As root:
+To build it yourself from a checkout:
 
 ```sh
-install -m 0755 docker/update-cocat-rs-dev.sh /usr/bin/update-cocat-rs-dev
-install -m 0755 docker/seed-cocat-rs-dev.sh /usr/bin/seed-cocat-rs-dev
-ss -ltn | grep -q ':6575 ' && echo "6575 is taken, pick another port in both scripts"
-mkdir -p /DATA/cocat_rs_dev && chown sciqlop: /DATA/cocat_rs_dev
+docker/build.sh my-registry.example.org/cocat-server:dev          # build only
+docker/build.sh my-registry.example.org/cocat-server:dev --push   # build and push
 ```
 
-In `/etc/nginx/conf.d/sciqlop.conf`, copy the whole `location /cocat{ ... }` block (it carries the
-websocket headers), and in the copy change the three lines:
+The script uses podman when it is installed, docker otherwise. Inside a toolbox or
+distrobox container it calls the host's podman with `--remote`. A name without a tag means
+`:latest`. The build compiles the server and the web app and takes a while. Let it print to
+the terminal or to a file: piping it into a filter that exits early (`| head`) stops the
+build silently.
+
+## Running it
+
+```sh
+podman run -d --name cocat -p 6570:6570 \
+    -v cocat-storage:/storage -v cocat-db:/db -v cocat-log:/log \
+    -e COCAT_PUBLIC_URL=https://cocat.example.org \
+    -e COCAT_PROXY_PREFIX=/cocat \
+    --env-file mail.env \
+    --stop-timeout 30 \
+    ghcr.io/sciqlop/cocat-server:latest
+```
+
+`docker run` takes the same arguments.
+
+| Mount | Holds |
+|---|---|
+| `/storage` | the project files: `<room_id>.y` and its history stamps `<room_id>.y.h` |
+| `/db` | `cocat-rs.db` (accounts, projects, memberships, sessions) and `cocat-rs.db.secret` |
+| `/log` | kept for the Python image's contract; the server prints to the container output (`podman logs cocat`) |
+
+The server listens on port 6570 inside the container (`PORT`). It runs as the `cocat` user
+(uid 1000), so a host directory used as a mount must be writable by that user (rootless
+podman: `podman unshare chown 1000:1000 <dir>`). With SELinux, add `:Z` to a bind mount.
+`podman stop` sends `SIGTERM`: the server flushes every open project before it exits, so give
+it time (`--stop-timeout 30`).
+
+## Configuration
+
+Everything is environment variables. The README's
+[Environment](../README.md#environment) table gives the exact rules: defaults, accepted
+values, and which mistakes stop the server at startup. The ones an operator sets:
+
+| Group | Variables | What for |
+|---|---|---|
+| Public address | `COCAT_PUBLIC_URL`, `COCAT_PROXY_PREFIX` | the scheme and host users reach; the path the proxy mounts the server under. Mailed links and provider redirects are built from both. |
+| Proxy | `COCAT_TRUSTED_PROXIES` | how many proxies stand in front, so rate limits see the real client. The image sets 1. |
+| Secret | `COCAT_SECRET` | signs mailed links and the provider sign-in cookie. Unset, the server keeps one in `/db/cocat-rs.db.secret`: back it up with the database. |
+| Mail | `COCAT_SMTP_HOST`, `COCAT_SMTP_PORT`, `COCAT_SMTP_STARTTLS`, `COCAT_SMTP_USERNAME`, `COCAT_SMTP_PASSWORD`, `COCAT_MAIL_FROM`, `COCAT_MAIL_DIR` | see [Mail](#mail) |
+| Web app | `COCAT_WEB_DIR` | the catalogue web app's bundle; the image sets it to `/usr/share/cocat/web` |
+| Quotas | `COCAT_ROOM_MEMORY_BUDGET`, `COCAT_ROOM_MAX_MB`, `COCAT_OWNER_MAX_MB` | memory ceiling for open projects; largest project file; total per owner |
+| Metrics | `COCAT_METRICS_BIND`, `COCAT_METRICS_TOKEN` | see [Metrics](#metrics) |
+| Sign-in providers | `COCAT_OAUTH_PROVIDERS` | OpenID Connect providers such as ORCID; see the README's [Provider sign-in](../README.md#provider-sign-in) |
+
+Keep secrets (the SMTP password, the metrics token, provider client secrets) in a file only
+you can read, passed with `--env-file`, rather than on the command line.
+
+## Behind a reverse proxy
+
+The server speaks plain HTTP; let the proxy terminate TLS. The proxy must:
+
+1. strip the prefix before forwarding (the server serves `/ui/...`, not `/cocat/ui/...`),
+   and the server must be told the prefix with `COCAT_PROXY_PREFIX`;
+2. pass the websocket upgrade, since projects sync over `/room/<id>`;
+3. pass the client's `Host` header unchanged: the server refuses a form POST whose `Origin`
+   does not match `Host`, so a proxy that rewrites `Host` breaks every form;
+4. append the client address to `X-Forwarded-For`, so rate limits apply per client.
+
+An nginx example for `https://cocat.example.org/cocat/`:
 
 ```nginx
-location /cocat-dev {
-    rewrite /cocat-dev(.*) $1  break;
-    proxy_pass http://localhost:6575;
+location /cocat/ {
+    proxy_pass http://127.0.0.1:6570/;          # the trailing slash strips /cocat
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 1h;                       # keep idle project sockets open
+}
 ```
 
-Put it before the `/cocat` block (nginx picks the longest prefix, but keeping them ordered
-avoids surprises), then `nginx -t && systemctl reload nginx`.
+To serve the server at the root of its own host, use `location /`,
+`proxy_pass http://127.0.0.1:6570;` and no `COCAT_PROXY_PREFIX`.
 
-## 1. Build and push the image
+Then check that `https://cocat.example.org/cocat/docs` shows the API documentation and
+`/cocat/ui/login` the sign-in page.
 
-From a checkout, on a machine that can push to the registry:
+### Protecting sign-up from bots
+
+Sign-in, sign-up, password reset and resend are rate-limited per client (README,
+[Login rate limit](../README.md#login-rate-limit)). On a public server you may also put a
+bot filter (a proof-of-work page, a captcha) in front of the account pages and their API:
+`/ui/{signup,login,forgot-password,reset-password,request-verify}` and
+`/auth/{register,forgot-password,reset-password,request-verify-token}`, under your prefix.
+Leave `/auth/jwt/login`, `/api`, `/users`, `/room` and the project pages open: SciQLop and
+scripts sign in and sync there and cannot solve a challenge.
+
+## The first administrator
+
+Create an account and make it an administrator with the wrappers the image ships:
 
 ```sh
-podman login registry.lpp.polytechnique.fr:5443   # pushes need a login, pulls do not
-docker/build_and_push.sh testing                  # sciqlop/cocat-server-rs:devel
+podman exec cocat create-user admin@example.org 'a long password'
+podman exec cocat set-superuser admin@example.org
+podman exec cocat set-superuser admin@example.org --revoke   # to take it back
 ```
 
-## 2. Seed the data, then deploy
+They run the server's CLI on `/db/cocat-rs.db`. An account created this way is already
+verified. The README's [Seeding](../README.md#seeding) lists the full commands;
+`add-user-to-room` and `remove-user-from-room` have wrappers too.
 
-As the `sciqlop` user (`su - sciqlop`):
+## The catalogue web app
 
-```sh
-seed-cocat-rs-dev [owner@example.org]   # copy production, import it
-update-cocat-rs-dev                     # pull the image, (re)start cocat-rs-dev
-```
-
-`seed-cocat-rs-dev` stops the dev server, deletes `/DATA/cocat_rs_dev`, copies the project files
-and the user database while production keeps running (SQLite's online backup for the
-database; a project file copied mid-append ends in a partial record the Rust server drops), then
-runs `cocat-server import`. The optional address takes the project files no Python account
-lists. Read the import summary it prints: users, projects, memberships and invitations.
-Production marks nobody as an administrator of the dev server, so the script notes the dev
-administrators before deleting and grants them the flag again after the import.
-
-`update-cocat-rs-dev` is the same procedure as `update-cocat-server`: pull, keep the previous
-container as `cocat-rs-dev_old`, run, regenerate the systemd unit and enable it with `--now`
-so systemd restarts it after a crash.
-
-## 3. Check the dev instance
-
-- `https://sciqlop.lpp.polytechnique.fr/cocat-dev/docs` answers and the document loads.
-- An imported account signs in at `/cocat-dev/ui/login`; its projects are listed with the same
-  roles as on Python.
-- SciQLop pointed at `https://sciqlop.lpp.polytechnique.fr/cocat-dev` opens one project through
-  the Python client and shows its catalogues and events; the event count matches production.
-- A project's page has an "Open catalogues" button; it opens `/cocat-dev/ui/rooms/<id>/browse`,
-  which shows the cocat header and loads the project.
-- `podman logs cocat-rs-dev` shows no error; `ls /DATA/cocat_rs_dev/mail` holds the mails a
-  sign-up or a reset would have sent.
-
-## The catalogue browser
-
-The browser app (`crates/cocat-web`) is a static bundle that trunk builds; the image builds it
+The web app (`crates/cocat-web`) is a static bundle that trunk builds; the image builds it
 and copies it to `/usr/share/cocat/web`, and `COCAT_WEB_DIR` points the server at it. Without
 that variable, or with a directory missing its `index.html`, a project's `/browse` page answers
 503 "The catalogue browser is not installed on this server". Signing in then lands on the
@@ -95,67 +138,112 @@ do the same work.
 
 The page tells the app where its project's websocket is. With `COCAT_PUBLIC_URL` set that is an
 absolute `wss://` (or `ws://`) URL under `COCAT_PROXY_PREFIX`; without, a path the browser
-resolves against the page, so it follows whatever scheme and host the visitor used. The nginx
-`location` block already carries the websocket headers the app needs.
+resolves against the page, so it follows whatever scheme and host the visitor used. Either
+way the proxy must pass the websocket upgrade (see above).
 
 To build the bundle by hand: `rustup target add wasm32-unknown-unknown`,
 `cargo install trunk --version 0.22.1 --locked`, then `trunk build --release` in
 `crates/cocat-web` (the bundle lands in `crates/cocat-web/dist`).
 
-The browser holds the whole project. Measured 2026-11-08 on a local copy of the largest cocat-dev
+The browser holds the whole project. Measured 2026-11-08 on a copy of a large production
 project (8.4 MB file, 11k events, 4 catalogues) with a debug server and headless Firefox: first
 rows 2.0 s after navigation, the tab's memory up by about 65 MB. A 10k-event generated project:
 first rows 1.0 s, scrolling at 60 frames per second, filtering in 30 ms.
 
-## Bot protection
+## Mail
 
-nginx sends the sign-up and account-recovery routes, pages and API alike
-(`/cocat-dev/ui/{signup,login,forgot-password,reset-password,request-verify}` and
-`/cocat-dev/auth/{register,forgot-password,reset-password,request-verify-token}`), through the
-Anubis instance that already guards `/cdaweb-data/` (`anubis@cdaweb`, a proof-of-work page for
-browsers). Unlike the mirror, these routes have no exemption for scripts. `/auth/jwt/login`,
-the projects, the API and the websocket stay open: SciQLop and scripts sign in and sync there. The
-block sits in `/etc/nginx/conf.d/sciqlop.conf` before the `/cocat-dev` location; a backup of
-the file before the change is in `/root/sciqlop.conf.before-cocat-dev-anubis-*`.
+Mail carries account verification, password resets and invitations. There are three modes:
+
+- **No mail** (neither `COCAT_SMTP_HOST` nor `COCAT_MAIL_DIR`). Sign-up and password reset
+  have nothing to deliver; an invitation returns its token in the response, for you to pass
+  on.
+- **An SMTP relay.** Copy `docker/mail.env.example`, fill it in, keep it private
+  (`chmod 600`), and pass it with `--env-file`. The port defaults to 587 with STARTTLS.
+- **Files.** `COCAT_MAIL_DIR=/mail`, with an existing directory mounted there, writes each
+  message as an `.eml` file. Handy for a test instance.
+
+Both mail modes need `COCAT_MAIL_FROM` and `COCAT_PUBLIC_URL`; the server refuses to start
+without them, because every mailed link is built from the public address.
 
 ## Metrics
 
-The app exports Prometheus metrics on `127.0.0.1:9188` (`COCAT_METRICS_BIND`), guarded by a
-bearer token (`COCAT_METRICS_TOKEN`, in `~sciqlop/.config/cocat-rs-dev/metrics.env`, mode
-600). nginx serves them to the cluster on `https://sciqlop.lpp.polytechnique.fr:9187/metrics`
-with the site certificate, and both nginx and firewalld admit only `129.104.6.0/24`, the
-cluster nodes: their VictoriaMetrics scrapes it every 60 s (job `cocat`, label `env: dev`),
-with the token from a Secret on the cluster side. `docker/cocat-metrics-host.sh` (as root)
-sets up the token, the nginx listener and the firewall rule; it is idempotent. The series
-end up in the public Grafana org: labels carry no user, project, email or address, by design.
+`COCAT_METRICS_BIND` starts a Prometheus endpoint on its own listener, never on the public
+port. Keep it where the outside cannot reach it, and set `COCAT_METRICS_TOKEN` (16 characters
+or more, e.g. `openssl rand -hex 32`) so a scrape must carry the token:
 
-## Sending real mail
+```sh
+podman run ... -p 127.0.0.1:9187:9187 \
+    -e COCAT_METRICS_BIND=0.0.0.0:9187 --env-file metrics.env ...
+```
 
-Without configuration the dev server writes each mail as a file in `/DATA/cocat_rs_dev/mail`.
-To send through the lab relay, put the whole mail configuration in
-`~sciqlop/.config/cocat-rs-dev/mail.env` (mode 600; `docker/mail.env.example` is the
-template: hermes, port 25 with STARTTLS, the account and the sender address), then run
-`update-cocat-rs-dev` again. The password never appears in the script or the unit file.
+Inside the container the listener binds `0.0.0.0` so the published port reaches it; the
+`-p 127.0.0.1:...` keeps it on the host's loopback. With host networking, bind
+`127.0.0.1:9187` directly.
 
-## 4. Refresh the dev data
+```yaml
+scrape_configs:
+  - job_name: cocat
+    authorization:
+      credentials: <the token>
+    static_configs:
+      - targets: ["127.0.0.1:9187"]
+```
 
-Run step 2 again. Starting over is quicker than importing on top, and keeps the dev
-instance honest. Anything written on the dev server since the last seed is lost.
+A scraper on another machine needs a route to the endpoint: put a TLS proxy in front of it
+that admits only the scraper's addresses and forwards the `Authorization` header. Labels
+never carry a user, a project, an address or a URL, so the series are safe on a shared
+dashboard. The README's [Metrics](../README.md#metrics) has the details.
 
-## Switching production
+## Moving from a Python cocat server
 
-Not done yet. When it is:
+The Rust server reads the Python server's project files and imports its user database
+(README, [Moving from the Python server](../README.md#moving-from-the-python-server)).
 
-1. Stop the Python container.
-2. Take the final copy and import it without `--dry-run`, exactly as in steps 1 and 2.
-3. Start `:stable` on the production port with the production volumes.
-4. Keep the Python volumes untouched until the Rust server has run for a while; verify logins,
-   projects and the daily use first.
+1. Try it on a copy first. Copy the Python project directory and its user database (the
+   database with SQLite's online backup, as in [Backups](#backups), so the Python server
+   keeps running), then import into a fresh database:
 
-The import moves every project to layout v2 (README, "Project layout v2"). From then on Python
-cocat clients and old SciQLop plugin versions are refused with HTTP 426: announce the plugin
-update with the switch.
+   ```sh
+   podman run --rm --entrypoint cocat-server \
+       -v "$PWD/copy/storage:/storage:Z" -v "$PWD/copy/db:/db:Z" \
+       -v "$PWD/copy/python:/python:Z" \
+       ghcr.io/sciqlop/cocat-server:latest \
+       import --update-dir /storage --db /db/cocat-rs.db --users /python/users.db \
+       [--owner you@example.org] [--dry-run]
+   ```
 
-Rollback is restarting the Python container on the untouched Python volumes. The migrated
-project files are not readable by Python clients, so edits made on the Rust server since the
-switch are lost, and so are accounts created there.
+   Read the summary it prints: users, projects, memberships and invitations. `--owner`
+   takes the project files no Python account lists. Run a server on the copy and check that
+   accounts sign in and see their projects with the same roles.
+2. To switch: stop the Python server, take the final copy, import it without `--dry-run`,
+   and start the Rust server on the copied volumes.
+3. Keep the Python volumes untouched until the Rust server has run for a while; verify
+   logins, projects and daily use first.
+
+The import moves every project to layout v2. From then on Python cocat clients and old
+SciQLop plugin versions are refused with HTTP 426: announce the plugin update with the
+switch. Session cookies do not carry over, so everyone signs in once more.
+
+Rollback is restarting the Python server on its untouched volumes. Python clients cannot
+read the migrated project files, so edits made on the Rust server since the switch are lost,
+and so are accounts created there.
+
+## Backups
+
+Copy, together:
+
+- the project directory (`/storage`): every `<room_id>.y` and `<room_id>.y.h`;
+- the database `/db/cocat-rs.db`, with SQLite's online backup, never a plain file copy
+  while the server runs:
+
+  ```sh
+  sqlite3 /path/to/db/cocat-rs.db ".backup '/backups/cocat-rs.db'"
+  ```
+
+- `/db/cocat-rs.db.secret`, unless you set `COCAT_SECRET`. Without it, a restored server
+  signs with a new secret and the links already mailed stop working.
+
+Project files are append-only and the server fsyncs them every second. A file copied while
+the server writes to it may end in a partial record; the server drops that record when it
+opens the project, so a live copy loses at most the last edits. For an exact snapshot, stop
+the server, or snapshot the filesystem, first.

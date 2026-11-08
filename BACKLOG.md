@@ -29,7 +29,7 @@ so a lab running its own server sees them without Grafana.
 The same numbers and more (request latency per route, websocket frames in/out, room open
 time, flush time, rate-limit refusals, quota refusals) exported for Grafana. A Prometheus
 `/metrics` endpoint (the `metrics` + `metrics-exporter-prometheus` crates) is the common
-choice; the LPP Grafana reads Graphite today, so decide at planning time between
+choice; some Grafana setups read Graphite, so decide at planning time between
 Prometheus, a Graphite push, or both. The endpoint must not be public (superuser, a
 token, or a separate listen address).
 
