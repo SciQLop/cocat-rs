@@ -4,17 +4,17 @@
 {% include "admin_tabs.html" %}
 
 {% if rooms.is_empty() %}
-<p class="empty">No room yet.</p>
+<p class="empty">No project yet.</p>
 {% else %}
 <div class="table-wrap">
 <table class="rooms" data-sortable>
   <thead>
-    <tr><th>Room</th><th>Owner</th><th>Size</th><th>Members</th><th>Live</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
+    <tr><th>Project</th><th>Owner</th><th>Size</th><th>Members</th><th>Live</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for room in rooms %}
     <tr>
-      <td class="name" title="Room id: {{ room.id }}">{{ room.name }}</td>
+      <td class="name" title="Project id: {{ room.id }}">{{ room.name }}</td>
       <td class="owner">{% if room.owner.is_empty() %}<span class="tag danger">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
       <td data-sort="{{ room.size_bytes }}">{% include "admin_usage_room.html" %}</td>
       <td class="nowrap" data-sort="{{ room.members }}">{{ room.members }} {% if room.members == 1 %}member{% else %}members{% endif %}</td>
@@ -36,7 +36,7 @@
               <button type="submit" class="small">Give</button>
             </form>
             <form method="post" action="{{ room.delete_action }}" data-confirm="{{ room.delete_confirm }}">
-              <button type="submit" class="danger">Delete room</button>
+              <button type="submit" class="danger">Delete project</button>
             </form>
           </div>
         </details>
@@ -46,7 +46,7 @@
   </tbody>
 </table>
 </div>
-<p class="muted note">A room's limit replaces the server default of {{ room_default }} for that
-room; the owner's quota still applies. A change applies the next time the room opens.</p>
+<p class="muted note">A project's limit replaces the server default of {{ room_default }} for that
+project; the owner's quota still applies. A change applies the next time the project opens.</p>
 {% endif %}
 {% endblock %}

@@ -161,7 +161,7 @@ fn build(
         _ => String::new(),
     };
     InvitationPage {
-        frame: Frame::new(&state.links, user, "Join a room"),
+        frame: Frame::new(&state.links, user, "Join a project"),
         action: state.links.path("/invitation"),
         accept_action: state.links.path("/invitation/accept"),
         paste,

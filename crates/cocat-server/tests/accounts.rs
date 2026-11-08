@@ -314,6 +314,17 @@ async fn register_creates_the_personal_room() {
 }
 
 #[tokio::test]
+async fn a_new_account_s_personal_project_is_named_my_catalogues() {
+    let fixture = Fixture::start().await;
+
+    let user = body(fixture.register("new@example.org").await).await;
+    let id = Uuid::parse_str(user["id"].as_str().unwrap()).unwrap();
+
+    let rooms = db::list_user_rooms(fixture.pool(), id).await.unwrap();
+    assert_eq!(rooms[0].0.name, "My catalogues");
+}
+
+#[tokio::test]
 async fn a_duplicate_email_any_case_is_refused() {
     let fixture = Fixture::start().await;
     let first = fixture.register("Dup@Example.org").await;
@@ -1050,7 +1061,7 @@ async fn an_emailed_invitation_returns_no_token_and_mails_the_link() {
     assert_eq!(mails.len(), 1, "{mails:?}");
     assert!(mails[0].contains("To: guest@example.org"), "{}", mails[0]);
     assert!(
-        mails[0].contains("Subject: owner@example.org invites you to the room Room A"),
+        mails[0].contains("Subject: owner@example.org invites you to the project Room A"),
         "{}",
         mails[0]
     );

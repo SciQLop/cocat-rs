@@ -266,7 +266,7 @@ fn Changes(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
             {table}
         </Suspense>
         <p class="quiet">
-            "Compared with the room just before this version."
+            "Compared with the project just before this version."
             {move || only_changed.get().then_some(" Unchanged events are hidden.")}
         </p>
     }

@@ -86,7 +86,7 @@ struct NameBody {
     get,
     path = "/api/rooms/{room_id}/history",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("catalogue" = Option<String>, Query, description = "Only the versions that touched this catalogue or its members' events; for a smart catalogue, any event"),
         ("event" = Option<String>, Query, description = "Only the versions that added, changed or removed this event"),
     ),
@@ -133,7 +133,7 @@ async fn list(
     get,
     path = "/api/rooms/{room_id}/history/{version}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
         ("catalogue" = Option<String>, Query, description = "Only this catalogue and its members"),
     ),
@@ -167,7 +167,7 @@ async fn changes(
     get,
     path = "/api/rooms/{room_id}/history/{version}/state",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
     ),
     security(("cookie" = [])),
@@ -201,7 +201,7 @@ async fn state_at(
     put,
     path = "/api/rooms/{room_id}/history/{version}/name",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
     ),
     request_body = NameBody,
@@ -229,7 +229,7 @@ async fn name(
     delete,
     path = "/api/rooms/{room_id}/history/{version}/name",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
     ),
     security(("cookie" = [])),
@@ -267,7 +267,7 @@ struct Restored {
     post,
     path = "/api/rooms/{room_id}/history/{version}/restore",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
     ),
     request_body = RestoreBody,

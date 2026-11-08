@@ -11,10 +11,10 @@ use serde::Deserialize;
 use crate::ui::frame::{self, Flash, Frame, RequireUser};
 use crate::{AppState, db, lifecycle};
 
-const CREATED: &str = "Room created";
-const RENAMED: &str = "Room renamed";
-const DELETED: &str = "Room deleted";
-const LEFT: &str = "You left the room";
+const CREATED: &str = "Project created";
+const RENAMED: &str = "Project renamed";
+const DELETED: &str = "Project deleted";
+const LEFT: &str = "You left the project";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NameForm {
@@ -58,7 +58,7 @@ pub(crate) async fn page(
 ) -> Response {
     match db::list_user_rooms(&state.pool, user.id).await {
         Ok(rooms) => frame::page(RoomsPage {
-            frame: Frame::new(&state.links, Some(&user), "My rooms").flashing(flash),
+            frame: Frame::new(&state.links, Some(&user), "My projects").flashing(flash),
             action: state.links.path("/rooms"),
             rooms: rooms
                 .into_iter()

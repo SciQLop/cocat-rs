@@ -265,9 +265,9 @@ pub fn signup_attempt_mail(login: &str) -> (&'static str, String) {
 
 pub fn invitation_mail(room_name: &str, inviter: &str, link: &str) -> (String, String) {
     (
-        format!("{inviter} invites you to the room {room_name}"),
+        format!("{inviter} invites you to the project {room_name}"),
         format!(
-            "{inviter} invites you to join the room \"{room_name}\":\n\n{link}\n\n\
+            "{inviter} invites you to join the project \"{room_name}\":\n\n{link}\n\n\
              The invitation is valid for 14 days.\n"
         ),
     )

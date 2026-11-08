@@ -77,6 +77,7 @@ async fn a_superuser_sees_the_three_pages_and_the_link() {
         assert_eq!(response.status(), StatusCode::OK, "{page}");
         let body = body_text(response).await;
         assert!(body.contains(r#"href="/ui/admin""#), "{page}: {body}");
+        assert!(body.contains(">Projects</a>"), "{page}: {body}");
     }
     let users = body_text(fixture.get("/ui/admin/users", Some(&token)).await).await;
     assert!(users.contains("owner@example.org"), "{users}");

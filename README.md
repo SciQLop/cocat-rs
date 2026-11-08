@@ -2,9 +2,14 @@
 
 <img src="docs/logo.png" alt="CoCat" height="160">
 
-The Rust server for cocat: rooms over the Yjs sync protocol, the room lifecycle, and the
+The Rust server for cocat: projects over the Yjs sync protocol, the project lifecycle, and the
 seeding CLI. The Python `cocat` keeps running until this server is feature-complete; the
-wire format and the `.y` room files are shared with it.
+wire format and the `.y` project files are shared with it.
+
+A project holds catalogues and their events. Everyone in a project sees all of it, with the
+role they were given; an event can belong to several catalogues of one project; history
+covers the whole project. The API, the websocket path, the CLI and the Python package call a
+project a *room*.
 
 ## Build
 
@@ -24,11 +29,11 @@ podman run -d --name cocat -p 6570:6570 \
 ```
 
 The image runs as the `cocat` user and keeps the Python image's contract:
-`STORAGE_PATH=/storage` for the room files, `DB_PATH=/db` for `cocat-rs.db`, `LOG_PATH=/log`,
+`STORAGE_PATH=/storage` for the project files, `DB_PATH=/db` for `cocat-rs.db`, `LOG_PATH=/log`,
 `PORT` (build argument, 6570 by default), and the `COCAT_PROXY_PREFIX` and
 `COCAT_TRUSTED_PROXIES=1` it sets for a deployment behind one proxy. Every mount is declared
 as a volume. The entry point `exec`s the server, so `podman stop` sends it `SIGTERM` and the
-open rooms are flushed before it exits.
+open projects are flushed before it exits.
 
 Three wrappers take the same positional arguments as the Python image:
 
@@ -56,7 +61,7 @@ cocat-server remove-user-from-room --email them@example.org --room_id my-room
 cocat-server set-room-owner --email them@example.org --room_id my-room
 ```
 
-Every command takes `--db_path` (default `./test.db`). Room ids match
+Every command takes `--db_path` (default `./test.db`). Project ids match
 `[A-Za-z0-9_-]{1,64}`. `add-user-to-room` takes `--role owner|editor|viewer` and never
 lowers an existing role; the owner role is not assignable that way, `set-room-owner` is.
 
@@ -67,7 +72,7 @@ cocat-server serve [--host localhost] [--port 8000] [--update_dir ./updates] [--
 ```
 
 It prints `listening on <addr>` (`--port 0` lets the kernel pick) and shuts down
-gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live in
+gracefully on SIGINT or SIGTERM, after flushing every open project. Project files live in
 `--update_dir` as `<room_id>.y`.
 
 ### Environment
@@ -75,9 +80,9 @@ gracefully on SIGINT or SIGTERM, after flushing every open room. Room files live
 | Variable | Meaning |
 |---|---|
 | `COCAT_SECRET` | Secret that signs the mailed links (verification, password reset) and the provider sign-in cookie. Session cookies carry an opaque token the server stores instead of a signature. When it is unset or empty, the server uses `<db_path>.secret`, creating it (mode 0600) on first start. |
-| `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded rooms. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A room is charged sixteen times its `.y` file size (a measured 37.8 MB room is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the room stays on disk. |
-| `COCAT_ROOM_MAX_MB` | Largest `.y` file one room may reach, 1024 by default. Unset or empty means the default; a value that is not a positive integer stops the server at startup and names the variable. An update that would take the file past the limit is refused: nothing is applied, appended or broadcast, and its sender is closed with 4507 while the other clients stay. |
-| `COCAT_OWNER_MAX_MB` | Total `.y` bytes the rooms one account owns may reach, 5120 by default, measured when a room opens. Editors' writes count against the owner. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
+| `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded projects. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A project is charged sixteen times its `.y` file size (a measured 37.8 MB project is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the project stays on disk. |
+| `COCAT_ROOM_MAX_MB` | Largest `.y` file one project may reach, 1024 by default. Unset or empty means the default; a value that is not a positive integer stops the server at startup and names the variable. An update that would take the file past the limit is refused: nothing is applied, appended or broadcast, and its sender is closed with 4507 while the other clients stay. |
+| `COCAT_OWNER_MAX_MB` | Total `.y` bytes the projects one account owns may reach, 5120 by default, measured when a project opens. Editors' writes count against the owner. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
 | `COCAT_METRICS_BIND` | Address for the Prometheus endpoint, such as `127.0.0.1:9187`. Unset or empty exports nothing; a value that is not an address stops the server at startup and names the variable. The endpoint is a separate listener, never the public port. |
 | `COCAT_METRICS_TOKEN` | Bearer token for the metrics endpoint. Unset or empty leaves `/metrics` open; anything shorter than 16 characters stops the server at startup and names the variable. The token is never logged and never appears in a label. |
 | `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
@@ -104,22 +109,22 @@ restart.
 
 | Code | Meaning |
 |---|---|
-| 1008 | access revoked: the member was removed, their role changed, the room was deleted, or the role the handshake granted was no longer confirmed right after the socket attached |
+| 1008 | access revoked: the member was removed, their role changed, the project was deleted, or the role the handshake granted was no longer confirmed right after the socket attached |
 | 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
-| 1013 | try again later: the client fell more than 1024 frames behind, or the room would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
+| 1013 | try again later: the client fell more than 1024 frames behind, or the project would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
 | 1011 | internal error while attaching the socket |
-| 4507 | room storage limit reached: an update would take the room file and its history stamps past `COCAT_ROOM_MAX_MB` or its owner's quota |
+| 4507 | project storage limit reached: an update would take the project file and its history stamps past `COCAT_ROOM_MAX_MB` or its owner's quota |
 
 A handshake that does not offer the websocket subprotocol `cocat.v2` is refused before the
 upgrade with HTTP 426: it comes from a client of the first layout (see
-[Room layout v2](#room-layout-v2)). A handshake without a valid cookie, or from a user who is
-not a member of the room, is refused before the upgrade with HTTP 403.
+[Project layout v2](#project-layout-v2)). A handshake without a valid cookie, or from a user who is
+not a member of the project, is refused before the upgrade with HTTP 403.
 
 ## Catalogue API
 
 Read-only JSON and VOTable over plain HTTP, for tools that do not speak the sync protocol
 (SciQLop, a notebook, curl). Every route needs the `fastapiusersauth` cookie, answers 401 to
-an anonymous request and 404 to a non-member, and never keeps a room open: a closed room is
+an anonymous request and 404 to a non-member, and never keeps a project open: a closed project is
 read from its file for the length of the request and dropped again.
 
 ```sh
@@ -163,8 +168,8 @@ exporter's message. The file reads back through cocat's `import_votable`.
 
 ## Groups
 
-A group has one owner and any number of members. A room is shared with a group by a grant
-(`editor` or `viewer`), and the role a user holds on a room is the highest of their direct
+A group has one owner and any number of members. A project is shared with a group by a grant
+(`editor` or `viewer`), and the role a user holds on a project is the highest of their direct
 membership and every grant to a group they belong to. A grant can never be `owner`:
 ownership only exists as a direct membership. Losing a group, a membership or a grant closes
 the sockets that carried it (1008) immediately.
@@ -172,19 +177,19 @@ the sockets that carried it (1008) immediately.
 | Route | Who | What |
 |---|---|---|
 | `GET /api/groups`, `POST /api/groups` | any user | your groups; create one (you own it) |
-| `PATCH`/`DELETE /api/groups/{id}` | group owner | rename; delete (revokes every room it carried) |
+| `PATCH`/`DELETE /api/groups/{id}` | group owner | rename; delete (revokes every project it carried) |
 | `GET /api/groups/{id}/members` | any member | members, by email |
 | `DELETE /api/groups/{id}/members/{user_id}` | owner, or yourself | remove a member (the owner cannot leave) |
-| `GET /api/rooms/{room_id}/groups` | any room member | the groups the room is shared with |
-| `PUT`/`DELETE /api/rooms/{room_id}/groups/{id}` | room owner | grant `{"role":"editor"\|"viewer"}`; unshare |
+| `GET /api/rooms/{room_id}/groups` | any project member | the groups the project is shared with |
+| `PUT`/`DELETE /api/rooms/{room_id}/groups/{id}` | project owner | grant `{"role":"editor"\|"viewer"}`; unshare |
 
 Group invitations (`POST /api/groups/{id}/invitations`, `GET` to list, `DELETE` to revoke,
 plus `POST /api/group-invitations/preview` and `/accept`) always admit a member. When an
 email is given and a mailer is configured, the link is mailed and the reply carries no token.
 
-Removing someone from a room directly does **not** remove group access: while a group they
-belong to still holds a grant, they keep the room at the group's role. Remove them from the
-group, or unshare the room, to cut access.
+Removing someone from a project directly does **not** remove group access: while a group they
+belong to still holds a grant, they keep the project at the group's role. Remove them from the
+group, or unshare the project, to cut access.
 
 ## Web UI
 
@@ -201,8 +206,8 @@ scripts carry the browser side: `fragment.js` moves a mailed `#token` into a for
 | Forgot / reset password | `/ui/forgot-password`, `/ui/reset-password#token` |
 | Verify an address | `/ui/verify#token` |
 | Account, confirm email | `/ui/account`, `/ui/confirm-email` |
-| Rooms, one room | `/ui/rooms`, `/ui/rooms/{id}` |
-| Accept a room invitation | `/ui/invitation#token` |
+| Projects, one project | `/ui/rooms`, `/ui/rooms/{id}` |
+| Accept a project invitation | `/ui/invitation#token` |
 | Groups, one group | `/ui/groups`, `/ui/groups/{id}` |
 | Accept a group invitation | `/ui/groups/join#token` |
 
@@ -215,9 +220,9 @@ scripts carry the browser side: `fragment.js` moves a mailed `#token` into a for
   that sends neither header, such as the Python client or SciQLop, still passes.
 - `?next=` after login only ever leads to a path on this site.
 - Login, sign-up, forgot-password and resend are rate-limited (10 per minute per client).
-- A message that names something (a room, a group, an address) travels in a short-lived
+- A message that names something (a project, a group, an address) travels in a short-lived
   `cocat_flash` cookie written by the action's 303 and cleared by the next page view. A
-  share link made on a room or group page rides the same way in `cocat_share_link`.
+  share link made on a project or group page rides the same way in `cocat_share_link`.
 - Invitation tokens stay in the URL fragment or a POST body, so they reach neither an
   access log nor a `Referer` header.
 
@@ -275,7 +280,7 @@ names a real address after one click from the inbox.
 
 ## Durability
 
-Every update is written to the room file before it is broadcast, so a crash of the process
+Every update is written to the project file before it is broadcast, so a crash of the process
 loses nothing a client has seen. The file is fsynced every second, and on unload, delete,
 flush and shutdown, so a power loss can lose at most one second of acknowledged edits. The
 file is the `0.0.1` append-only format the Python server writes; a record cut by a crash is
@@ -296,40 +301,40 @@ you@example.org` names the Rust account that takes every room file in `--update-
 imported database does not list: `--users` and `--owner` may be given together, and at
 least one is required. `--dry-run` prints the same summary and writes nothing.
 
-Both Python schemas import. The released one stores each user's rooms as a JSON list:
-every listed room becomes a room named by its id, everyone listed is an editor, and an
+Both Python schemas import. The released one stores each user's projects as a JSON list:
+every listed project becomes a project named by its id, everyone listed is an editor, and an
 owner is picked by the rule of Python's migration (the first member by address whose local
-part names the room, else the first member by address); accounts from it come in verified.
+part names the project, else the first member by address); accounts from it come in verified.
 The rooms schema (`room`, `membership`, `invitation`, `oauth_account`) is copied as it
 stands.
 
 Users keep their id, address, password hash and flags. Login accepts the bcrypt hashes
 older Python accounts hold and rehashes them to Argon2 on the first successful sign-in.
-Rooms keep their name and timestamps, memberships their role, invitations their token hash
+Projects keep their name and timestamps, memberships their role, invitations their token hash
 (so a live link keeps working on this server) and uses, and linked accounts their provider
 and subject; the provider tokens are dropped.
 
-The Python database is opened read-only. Room files are rewritten in the v2 layout (next
+The Python database is opened read-only. Project files are rewritten in the v2 layout (next
 section); running the command twice changes nothing the second time. The import refuses to run when `--db` and `--users` name the
 same file, and stops before writing anything when an address already belongs to an account
 here.
 
-Run the import on a copy of the room files, and keep the Python database and the original
-room files until the Rust server has run for a while: they are the way back.
+Run the import on a copy of the project files, and keep the Python database and the original
+project files until the Rust server has run for a while: they are the way back.
 
-### Room layout v2
+### Project layout v2
 
-Python cocat stores rooms in the first layout. This server and `cocat_rs` only use layout
+Python cocat stores projects in the first layout. This server and `cocat_rs` only use layout
 v2, and the two do not mix:
 
-- `import` migrates every room file in `--update-dir` to v2 by appending one record.
-- The server refuses to serve a room file still in the first layout (an error log names the
-  room): run the import on it.
+- `import` migrates every project file in `--update-dir` to v2 by appending one record.
+- The server refuses to serve a project file still in the first layout (an error log names the
+  project): run the import on it.
 - Python cocat and SciQLop plugin versions built on it do not offer the `cocat.v2`
   subprotocol, so their handshake is refused with 426 before they can write the first
-  layout into a v2 room. Users update the plugin.
-- A `cocat_rs` cache holding the first layout is discarded when the room opens, and the
-  room is fetched again from the server.
+  layout into a v2 project. Users update the plugin.
+- A `cocat_rs` cache holding the first layout is discarded when the project opens, and the
+  project is fetched again from the server.
 
 Session cookies do not survive the move. The Python server signs them and this one keeps
 its own session table, so every user signs in once again after the switch.
@@ -349,7 +354,7 @@ URL the page fetches, while the routes themselves stay where the proxy forwards 
 
 `COCAT_METRICS_BIND=127.0.0.1:9187` serves the Prometheus text at
 `http://127.0.0.1:9187/metrics`, on its own listener so nothing appears on the public port.
-Labels are fixed route templates, never a room id, an address or a request URI, and the
+Labels are fixed route templates, never a project id, an address or a request URI, and the
 counters on the websocket path allocate nothing per frame. Databases counts and file sizes
 are sampled every 60 seconds, so a scrape never queries the database or walks the disk.
 
@@ -367,7 +372,7 @@ scrape_configs:
 
 ## Python package
 
-`crates/cocat-py` builds `cocat_rs`, a Python package over the same document: a room held in a
+`crates/cocat-py` builds `cocat_rs`, a Python package over the same document: a project held in a
 directory, and either read and written locally or synchronised with a server.
 
 ```sh
@@ -408,7 +413,7 @@ Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
 the event, from `room.create_origin(...)`), `source_id`, `created`, `comment` and a TFCat
 `shape`. All are settable and all are keyword arguments of `create_event`. Attributes register
-their type in the room (`room.attribute_types()`); writing another type warns but is kept.
+their type in the project (`room.attribute_types()`); writing another type warns but is kept.
 
 ```python
 event = room.create_event(start, stop, author="you@example.org", confidence=0.8,
@@ -420,7 +425,7 @@ event.restore()                         # or event.purge(), for good
 ```
 
 A **smart catalogue** has a `rule`: its members are its listed events plus what the rule
-yields, computed on every read, so it follows the room as people edit it.
+yields, computed on every read, so it follows the project as people edit it.
 
 ```python
 smart = room.create_catalogue(name="strong shocks")
@@ -437,7 +442,7 @@ A malformed rule raises `ValueError` saying where: `rule.where.cmp: unknown oper
 The rule format (sets, interval operators, predicates) is in
 `docs/superpowers/specs/2026-11-07-catalogue-engine-v2-design.md`, section 3.
 
-**tscat** databases and JSON files import into a room, keeping uuids, so importing again
+**tscat** databases and JSON files import into a project, keeping uuids, so importing again
 updates rather than duplicates. A rating becomes a confidence (rating / 10), removed items go
 to the trash and dynamic catalogues become smart ones.
 
@@ -452,12 +457,12 @@ tscat.export_json(room, [smart], "out.json")
 tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `import_json`
 keeps such a catalogue's members without a rule, and warns.
 
-**History.** The server keeps every version of a room: a run of changes by one person with
+**History.** The server keeps every version of a project: a run of changes by one person with
 no gap over five minutes. Each version says who made it, when, and how many events it added,
 changed or removed. `cocat_rs.history` lists them, newest first, as dicts; `catalogue=` keeps
-the versions that touched one catalogue or its events. `Room.at` fetches the room as it was
+the versions that touched one catalogue or its events. `Room.at` fetches the project as it was
 at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
-fetched. `cocat_rs.restore` makes the room, or one catalogue, equal to a version again, as one
+fetched. `cocat_rs.restore` makes the project, or one catalogue, equal to a version again, as one
 new change by you, so a restore can itself be undone; events created since go to the trash.
 A restore is always a version of its own, with `restored_from` set to the version it brought
 back. A version's `id` is its first change, so it stays the same, and keeps its name, while
@@ -478,7 +483,7 @@ cookie and retries, and only a refusal right after a fresh login, or a login tha
 in `unauthorized`. Without `credentials` a refused session is final, as before.
 `room.set_cookie(...)` replaces the cookie of a running connection.
 
-A listener hears the room's changes on the loop it was registered from:
+A listener hears the project's changes on the loop it was registered from:
 
 ```python
 class Listener:

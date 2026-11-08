@@ -172,7 +172,7 @@ async fn build_page(
         confirm: format!("Leave {}?", room.name),
     });
     Ok(Some(RoomPage {
-        frame: Frame::new(&state.links, Some(user), "Room").flashing(flash),
+        frame: Frame::new(&state.links, Some(user), "Project").flashing(flash),
         name: room.name,
         role: role.as_str(),
         rooms_href: state.links.path("/rooms"),
@@ -394,7 +394,7 @@ pub(crate) async fn transfer(
         &state,
         result,
         &format!("/rooms/{room_id}"),
-        format!("{email} now owns the room"),
+        format!("{email} now owns the project"),
     )
 }
 
@@ -547,7 +547,7 @@ async fn member_answer(
 
 pub(super) fn not_found(state: &AppState, user: &db::User) -> Response {
     let page = NotFoundPage {
-        frame: Frame::new(&state.links, Some(user), "Room not found"),
+        frame: Frame::new(&state.links, Some(user), "Project not found"),
         rooms_href: state.links.path("/rooms"),
     };
     (StatusCode::NOT_FOUND, frame::page(page)).into_response()

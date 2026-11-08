@@ -48,7 +48,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     let room = Room::new(config);
     provide_context(room.clone());
     if let Err(error) = connection::connect(room.clone()) {
-        return failure(format!("The room cannot sync: {error}")).into_any();
+        return failure(format!("The project cannot sync: {error}")).into_any();
     }
     let (editor, published) = (room.can_write(), room.editing);
     let route = RwSignal::new(current_route());

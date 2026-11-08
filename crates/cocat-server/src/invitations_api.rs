@@ -134,7 +134,7 @@ struct PreviewOut {
 #[utoipa::path(
     post,
     path = "/api/rooms/{room_id}/invitations",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     request_body = InvitationCreate,
     security(("cookie" = [])),
     responses(
@@ -169,7 +169,7 @@ async fn create_invitation(
 #[utoipa::path(
     get,
     path = "/api/rooms/{room_id}/invitations",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The room's live invitations", body = [InvitationOut]),
@@ -202,7 +202,7 @@ async fn list_invitations(
     delete,
     path = "/api/rooms/{room_id}/invitations/{invitation_id}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("invitation_id" = i64, Path, description = "Invitation id"),
     ),
     security(("cookie" = [])),

@@ -168,6 +168,19 @@ def test_default_room(monkeypatch) -> None:
     assert api._default_room("http://localhost:8000/", "cookie") == "room1"
 
 
+@pytest.mark.parametrize("name", ["My catalogues", "Personal"])
+def test_default_room_is_the_personal_one(monkeypatch, name) -> None:
+    monkeypatch.setattr(
+        api,
+        "_list_rooms",
+        lambda base_url, cookie: [
+            cocat_rs.RoomInfo(id="shared", name="Lab", role="editor"),
+            cocat_rs.RoomInfo(id="mine", name=name, role="owner"),
+        ],
+    )
+    assert api._default_room("http://localhost:8000/", "cookie") == "mine"
+
+
 def test_save_waits_for_the_server(server, tmp_path) -> None:
     configure(server, tmp_path, room_id=server.room_id)
     api.log_in(server.email, "hunter2")

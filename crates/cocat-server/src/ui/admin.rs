@@ -222,7 +222,7 @@ pub(crate) async fn rooms(
         Err(error) => return refused_page(error),
     };
     frame::page(RoomsPage {
-        frame: frame(&state, &user, "Rooms", flash),
+        frame: frame(&state, &user, "Projects", flash),
         tabs: tabs(&state, "rooms"),
         room_default: bytes(state.rooms.limits().room),
         rooms: rows.into_iter().map(|row| room_view(&state, row)).collect(),
@@ -324,7 +324,7 @@ pub(crate) async fn delete_room(
     Path(room): Path<String>,
 ) -> Response {
     let result = admin::delete_room(&state, &user, &room).await;
-    answer(&state, "/admin/rooms", result, "Room deleted")
+    answer(&state, "/admin/rooms", result, "Project deleted")
 }
 
 fn frame(state: &AppState, user: &User, title: &'static str, flash: Option<String>) -> Frame {
@@ -363,7 +363,7 @@ fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
         quota_action: action("quota"),
         delete_action: action("delete"),
         delete_confirm: format!(
-            "Delete {}? Their sessions end and the rooms they own lose their owner.",
+            "Delete {}? Their sessions end and the projects they own lose their owner.",
             row.email
         ),
         email: row.email,

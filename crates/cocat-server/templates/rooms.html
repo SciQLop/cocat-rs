@@ -1,21 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <h1>My rooms</h1>
+  <h1>My projects</h1>
   <form method="post" action="{{ action }}" class="inline">
     <input id="new-room-name" name="name" type="text" required
-           placeholder="New room name" aria-label="New room name">
+           placeholder="New project name" aria-label="New project name">
     <button type="submit">Create</button>
   </form>
 </div>
 {% if rooms.is_empty() %}
-<p class="empty">You are not a member of any room yet. Create one, or open an invitation
+<p class="empty">You are not a member of any project yet. Create one, or open an invitation
 link someone sent you.</p>
 {% else %}
 <div class="table-wrap">
 <table class="rooms">
   <thead>
-    <tr><th>Room</th><th>Your role</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
+    <tr><th>Project</th><th>Your role</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for room in rooms %}

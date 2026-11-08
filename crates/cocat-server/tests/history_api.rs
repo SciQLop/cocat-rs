@@ -460,7 +460,7 @@ async fn a_viewer_cannot_name_a_version() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(
         body["detail"],
-        format!("Room {ROOM} requires the editor role")
+        format!("Project {ROOM} requires the editor role")
     );
     assert_eq!(fixture.history(fixture.alice).await[1]["name"], Value::Null);
 }
@@ -477,7 +477,7 @@ async fn strangers_get_404() {
             .get(&format!("/api/rooms/{ROOM}/{path}"), dave)
             .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
-        assert_eq!(body["detail"], format!("Room {ROOM} not found"));
+        assert_eq!(body["detail"], format!("Project {ROOM} not found"));
     }
     assert_eq!(fixture.name(0, dave, "mine").await.0, StatusCode::NOT_FOUND);
 }
@@ -621,7 +621,7 @@ async fn a_viewer_cannot_restore() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(
         body["detail"],
-        format!("Room {ROOM} requires the editor role")
+        format!("Project {ROOM} requires the editor role")
     );
     assert_eq!(ids(&fixture.history(fixture.alice).await), [1, 0]);
 }

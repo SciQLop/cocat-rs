@@ -345,7 +345,7 @@ async fn an_editor_cannot_change_a_role() {
 
     assert!(
         matches!(&error, LifecycleError::Forbidden(message)
-            if message == "Room room-forbidden requires the owner role"),
+            if message == "Project room-forbidden requires the owner role"),
         "{error:?}"
     );
 }
@@ -366,7 +366,7 @@ async fn a_non_member_actor_gets_not_found() {
 
     assert!(
         matches!(&error, LifecycleError::NotFound(message)
-            if message == "Room room-outsider not found"),
+            if message == "Project room-outsider not found"),
         "{error:?}"
     );
 }

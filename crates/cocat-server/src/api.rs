@@ -168,7 +168,7 @@ impl From<RoomError> for ApiError {
             RoomError::OverBudget { .. } => {
                 Self::Unavailable("Server memory budget reached".to_owned())
             }
-            RoomError::Full => Self::Conflict("The room reached its storage limit".to_owned()),
+            RoomError::Full => Self::Conflict("The project reached its storage limit".to_owned()),
             other => {
                 tracing::error!(%other, "the room could not be read");
                 Self::Internal
@@ -355,7 +355,7 @@ async fn create_room(
 #[utoipa::path(
     patch,
     path = "/api/rooms/{room_id}",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     request_body = NameBody,
     security(("cookie" = [])),
     responses(
@@ -380,7 +380,7 @@ async fn rename_room(
 #[utoipa::path(
     delete,
     path = "/api/rooms/{room_id}",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
         (status = 204, description = "The room is gone"),
@@ -401,7 +401,7 @@ async fn delete_room(
 #[utoipa::path(
     get,
     path = "/api/rooms/{room_id}/members",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The members and their roles", body = [MemberOut]),
@@ -431,7 +431,7 @@ async fn list_members(
     patch,
     path = "/api/rooms/{room_id}/members/{user_id}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("user_id" = Uuid, Path, description = "Member's account id"),
     ),
     request_body = RoleBody,
@@ -460,7 +460,7 @@ async fn set_member_role(
     delete,
     path = "/api/rooms/{room_id}/members/{user_id}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("user_id" = Uuid, Path, description = "Member's account id"),
     ),
     security(("cookie" = [])),
@@ -485,7 +485,7 @@ async fn remove_member(
 #[utoipa::path(
     post,
     path = "/api/rooms/{room_id}/owner",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     request_body = OwnerBody,
     security(("cookie" = [])),
     responses(
@@ -513,7 +513,7 @@ pub(crate) async fn membership(
 ) -> Result<Role, ApiError> {
     db::role_in(&state.pool, room_id, user)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Room {room_id} not found")))
+        .ok_or_else(|| ApiError::NotFound(format!("Project {room_id} not found")))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -550,7 +550,7 @@ pub async fn legacy_rooms(
 #[utoipa::path(
     get,
     path = "/room/{room_id}/users",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The members' addresses", body = RoomUsers),

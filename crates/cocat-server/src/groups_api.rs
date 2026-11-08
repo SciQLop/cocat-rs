@@ -271,7 +271,7 @@ async fn remove_member(
 #[utoipa::path(
     get,
     path = "/api/rooms/{room_id}/groups",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The groups granted on the room", body = GroupsOut),
@@ -296,7 +296,7 @@ async fn room_groups(
     put,
     path = "/api/rooms/{room_id}/groups/{group_id}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("group_id" = String, Path, description = "Group id"),
     ),
     request_body = GrantBody,
@@ -324,7 +324,7 @@ async fn grant(
     delete,
     path = "/api/rooms/{room_id}/groups/{group_id}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("group_id" = String, Path, description = "Group id"),
     ),
     security(("cookie" = [])),

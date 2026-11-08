@@ -15,7 +15,7 @@
     </ul>
   </section>
   <section class="stat">
-    <h2>Rooms</h2>
+    <h2>Projects</h2>
     <p class="figure">{{ rooms.total }}</p>
     <ul>
       <li>{{ rooms.open }} open now</li>
@@ -26,7 +26,7 @@
     <h2>Storage</h2>
     <p class="figure">{{ storage.total }}</p>
     <ul>
-      <li>{{ server.room_limit }} per room</li>
+      <li>{{ server.room_limit }} per project</li>
       <li>{{ server.owner_limit }} per owner</li>
     </ul>
   </section>
@@ -41,17 +41,17 @@
   </section>
 </div>
 
-<h2>Largest rooms</h2>
+<h2>Largest projects</h2>
 {% if largest.is_empty() %}
-<p class="empty">No room has stored anything yet.</p>
+<p class="empty">No project has stored anything yet.</p>
 {% else %}
 <div class="table-wrap">
 <table class="rooms" data-sortable>
-  <thead><tr><th>Room</th><th>Owner</th><th>Size</th><th>Live</th></tr></thead>
+  <thead><tr><th>Project</th><th>Owner</th><th>Size</th><th>Live</th></tr></thead>
   <tbody>
 {% for room in largest %}
     <tr>
-      <td class="name" title="Room id: {{ room.id }}">{{ room.name }}</td>
+      <td class="name" title="Project id: {{ room.id }}">{{ room.name }}</td>
       <td class="owner">{% if room.owner.is_empty() %}<span class="muted">no owner</span>{% else %}{{ room.owner }}{% endif %}</td>
       <td data-sort="{{ room.size_bytes }}">{% include "admin_usage_room.html" %}</td>
       <td class="nowrap" data-sort="{% if room.open %}{{ room.clients }}{% else %}-1{% endif %}">{% if room.open %}{{ room.clients }} connected{% else %}<span class="muted">closed</span>{% endif %}</td>
@@ -68,7 +68,7 @@
 {% else %}
 <div class="table-wrap">
 <table class="users" data-sortable>
-  <thead><tr><th>Owner</th><th>Rooms</th><th>Storage</th></tr></thead>
+  <thead><tr><th>Owner</th><th>Projects</th><th>Storage</th></tr></thead>
   <tbody>
 {% for user in near_quota %}
     <tr>

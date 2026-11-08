@@ -21,7 +21,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                 "cocat"
             </a>
             <nav class="crumbs" aria-label="Breadcrumb">
-                <a href="../rooms">"My rooms"</a>
+                <a href="../rooms">"My projects"</a>
                 <span aria-hidden="true">"/"</span>
                 <a class="here" href=format!("../rooms/{}", config.room_id)>
                     {config.room_name.clone()}
@@ -59,7 +59,7 @@ fn Avatars() -> impl IntoView {
     let label = move || {
         let count = peers.with(Vec::len);
         let plural = if count == 1 { "person" } else { "people" };
-        format!("{count} other {plural} in this room")
+        format!("{count} other {plural} in this project")
     };
     let avatar = |peer: Peer| {
         view! {

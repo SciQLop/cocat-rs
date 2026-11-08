@@ -2,7 +2,7 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <p class="crumbs"><a href="{{ rooms_href }}">My rooms</a> /</p>
+    <p class="crumbs"><a href="{{ rooms_href }}">My projects</a> /</p>
     <h1>{{ name }}</h1>
     <p class="meta">Your role: {{ role }}</p>
   </div>
@@ -73,7 +73,7 @@
 </form>
 {% endif %}
 {% if groups.groups.is_empty() %}
-<p class="empty">No group has access to this room.</p>
+<p class="empty">No group has access to this project.</p>
 {% else %}
 <div class="table-wrap">
 <table class="groups">

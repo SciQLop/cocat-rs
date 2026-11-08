@@ -56,7 +56,7 @@ struct EventsQuery {
 #[utoipa::path(
     get,
     path = "/api/rooms/{room_id}/catalogues",
-    params(("room_id" = String, Path, description = "Room id")),
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The catalogues in the room", body = CatalogueList),
@@ -84,7 +84,7 @@ async fn list(
     get,
     path = "/api/rooms/{room_id}/catalogues/{catalogue}",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("catalogue" = String, Path, description = "Catalogue uuid; a .votable suffix answers VOTable XML"),
     ),
     security(("cookie" = [])),
@@ -121,7 +121,7 @@ async fn one(
     get,
     path = "/api/rooms/{room_id}/catalogues/{catalogue}/events",
     params(
-        ("room_id" = String, Path, description = "Room id"),
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("catalogue" = String, Path, description = "Catalogue uuid"),
         ("start" = Option<String>, Query, format = DateTime, description = "Only events that stop at or after this time"),
         ("stop" = Option<String>, Query, format = DateTime, description = "Only events that start at or before this time"),

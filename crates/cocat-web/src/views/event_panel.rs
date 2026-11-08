@@ -92,7 +92,7 @@ fn Event(uuid: String, selected: RwSignal<Option<Row>>) -> impl IntoView {
     });
     move || match mode.get() {
         Mode::Gone => {
-            view! { <p class="quiet">"This event is no longer in the room."</p> }.into_any()
+            view! { <p class="quiet">"This event is no longer in the project."</p> }.into_any()
         }
         Mode::Read => detail.get().map(read_only).into_any(),
         Mode::Trashed => view! {
@@ -182,6 +182,6 @@ fn derived(row: &Row) -> impl IntoView + use<> {
             <dt>"Duration"</dt><dd>{duration_text(row.stop - row.start)}</dd>
             <dt>"Made from"</dt><dd>{format!("{count} event{plural}")}</dd>
         </dl>
-        <p class="quiet">"The rule made this interval; it is not an event of the room."</p>
+        <p class="quiet">"The rule made this interval; it is not an event of the project."</p>
     }
 }

@@ -710,8 +710,9 @@ pub async fn create_room(
     Ok(())
 }
 
-/// What Python (`names.py`) calls the room every account owns from the moment it exists.
-pub const PERSONAL_ROOM_NAME: &str = "Personal";
+/// The name of the room every account owns from the moment it exists. Python cocat named
+/// it "Personal"; rooms imported from Python keep that name.
+pub const PERSONAL_ROOM_NAME: &str = "My catalogues";
 
 /// Python's `create_personal_room`: a bare-uuid room named [`PERSONAL_ROOM_NAME`] whose
 /// owner is `user`. Registration and `create-user` both run it.

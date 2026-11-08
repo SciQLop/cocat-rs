@@ -66,7 +66,7 @@ async fn a_link_without_a_token_offers_the_paste_box() {
 
     let page = body_text(fixture.get("/ui/invitation", None).await).await;
 
-    assert!(page.contains("Join a room"), "{page}");
+    assert!(page.contains("Join a project"), "{page}");
     assert!(page.contains(r#"data-submit-fragment"#), "{page}");
     assert!(
         page.contains(r#"<label for="link">Invitation link</label>"#),

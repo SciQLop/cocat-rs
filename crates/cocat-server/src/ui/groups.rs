@@ -191,7 +191,7 @@ fn card(state: &AppState, group: groups::GroupRow, role: GroupRole) -> GroupCard
         rename_action: state.links.path(&format!("/groups/{}/rename", group.id)),
         delete_action: state.links.path(&format!("/groups/{}/delete", group.id)),
         delete_confirm: format!(
-            "Delete {}? Its rooms stop being shared with its members.",
+            "Delete {}? Its projects stop being shared with its members.",
             group.name
         ),
     });

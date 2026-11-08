@@ -76,7 +76,7 @@ async fn browse_for_a_stranger_is_404() {
         .await;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    assert!(body_text(response).await.contains("Room not found"));
+    assert!(body_text(response).await.contains("Project not found"));
 }
 
 #[tokio::test]

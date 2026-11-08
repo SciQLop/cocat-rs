@@ -41,14 +41,14 @@
 </table>
 </div>
 
-<h2>Rooms shared with this group</h2>
+<h2>Projects shared with this group</h2>
 {% if rooms.is_empty() %}
-<p class="empty">No room is shared with this group. Share one from the room's page.</p>
+<p class="empty">No project is shared with this group. Share one from the project's page.</p>
 {% else %}
 <div class="table-wrap">
 <table class="rooms">
   <thead>
-    <tr><th>Room</th><th>Role</th></tr>
+    <tr><th>Project</th><th>Role</th></tr>
   </thead>
   <tbody>
 {% for room in rooms %}

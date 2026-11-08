@@ -23,14 +23,14 @@ pub(crate) enum Noun {
 impl Noun {
     fn empty(self) -> &'static str {
         match self {
-            Self::Room => "Enter a room name",
+            Self::Room => "Enter a project name",
             Self::Group => "Enter a group name",
         }
     }
 
     fn control_characters(self) -> &'static str {
         match self {
-            Self::Room => "Enter a room name without control characters",
+            Self::Room => "Enter a project name without control characters",
             Self::Group => "Enter a group name without control characters",
         }
     }
@@ -191,7 +191,7 @@ pub(crate) async fn require_role(
         .ok_or_else(|| room_not_found(room_id))?;
     if role.rank() < minimum.rank() {
         return Err(LifecycleError::Forbidden(format!(
-            "Room {room_id} requires the {} role",
+            "Project {room_id} requires the {} role",
             minimum.as_str()
         )));
     }
@@ -209,9 +209,11 @@ async fn member_role(
 }
 
 fn room_not_found(room_id: &str) -> LifecycleError {
-    LifecycleError::NotFound(format!("Room {room_id} not found"))
+    LifecycleError::NotFound(format!("Project {room_id} not found"))
 }
 
 fn not_a_member(room_id: &str, member: Uuid) -> LifecycleError {
-    LifecycleError::NotFound(format!("User {member} is not a member of room {room_id}"))
+    LifecycleError::NotFound(format!(
+        "User {member} is not a member of project {room_id}"
+    ))
 }

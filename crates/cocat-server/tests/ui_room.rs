@@ -69,12 +69,15 @@ async fn not_found_for_strangers() {
     let foreign_body = body_text(foreign_page).await;
     let unknown_body = body_text(unknown_page).await;
     assert_eq!(foreign_body, unknown_body, "one page for both");
-    assert!(foreign_body.contains("Room not found"), "{foreign_body}");
+    assert!(foreign_body.contains("Project not found"), "{foreign_body}");
     assert!(
         foreign_body.contains(r#"href="/ui/rooms""#),
         "{foreign_body}"
     );
-    assert!(foreign_body.contains("Back to my rooms"), "{foreign_body}");
+    assert!(
+        foreign_body.contains("Back to my projects"),
+        "{foreign_body}"
+    );
 }
 
 #[tokio::test]
@@ -228,7 +231,7 @@ async fn transfer() {
     assert_eq!(location(&response), format!("/ui/rooms/{id}"));
     let page = page_after(&fixture, &response, &token, &format!("/ui/rooms/{id}")).await;
     assert!(
-        page.contains(&format!("{OTHER} now owns the room")),
+        page.contains(&format!("{OTHER} now owns the project")),
         "{page}"
     );
     assert!(page.contains("Your role: editor"), "{page}");
@@ -263,7 +266,7 @@ async fn leave() {
             .await,
     )
     .await;
-    assert!(page.contains("You left the room"), "{page}");
+    assert!(page.contains("You left the project"), "{page}");
     assert_eq!(
         db::role_in(&fixture.state.pool, &id, user).await.unwrap(),
         None
@@ -452,7 +455,7 @@ async fn refused_after_losing_access() {
             .await,
     )
     .await;
-    assert!(page.contains(&format!("Room {id} not found")), "{page}");
+    assert!(page.contains(&format!("Project {id} not found")), "{page}");
 }
 
 #[tokio::test]

@@ -169,7 +169,7 @@ async fn creating_a_user_creates_their_personal_room() {
 
     assert_eq!(rooms.len(), 1, "the user does not own exactly one room");
     let (room, role) = &rooms[0];
-    assert_eq!(room.name, "Personal");
+    assert_eq!(room.name, "My catalogues");
     assert_eq!(*role, Role::Owner);
     assert!(
         room.id.len() == 32

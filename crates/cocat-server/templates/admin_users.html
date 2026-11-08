@@ -16,7 +16,7 @@
 <div class="table-wrap">
 <table class="users" data-sortable>
   <thead>
-    <tr><th>Account</th><th>Joined</th><th>Rooms</th><th>Storage</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
+    <tr><th>Account</th><th>Joined</th><th>Projects</th><th>Storage</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
   </thead>
   <tbody>
 {% for user in users %}
@@ -83,7 +83,7 @@
   </tbody>
 </table>
 </div>
-<p class="muted note">A quota caps the total size of the rooms an account owns. Leave it empty
-for the server default. A change applies the next time each room opens.</p>
+<p class="muted note">A quota caps the total size of the projects an account owns. Leave it empty
+for the server default. A change applies the next time each project opens.</p>
 {% endif %}
 {% endblock %}

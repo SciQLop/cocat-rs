@@ -336,7 +336,7 @@ async fn a_blank_room_name_is_a_bad_request() {
         .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body, json!({"detail": "Enter a room name"}));
+    assert_eq!(body, json!({"detail": "Enter a project name"}));
 }
 
 #[tokio::test]
@@ -364,7 +364,7 @@ async fn a_room_name_with_control_characters_is_refused() {
     assert_eq!(renamed, StatusCode::BAD_REQUEST);
     assert_eq!(
         body,
-        json!({"detail": "Enter a room name without control characters"})
+        json!({"detail": "Enter a project name without control characters"})
     );
 }
 
@@ -661,7 +661,7 @@ async fn the_error_messages_are_pythons() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(
         body,
-        json!({"detail": "Room room-words requires the owner role"})
+        json!({"detail": "Project room-words requires the owner role"})
     );
 
     let (status, body) = fixture
@@ -674,14 +674,14 @@ async fn the_error_messages_are_pythons() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(
         body,
-        json!({"detail": format!("User {stranger} is not a member of room room-words")})
+        json!({"detail": format!("User {stranger} is not a member of project room-words")})
     );
 
     let (status, body) = fixture
         .get("/api/rooms/room-missing/members", Some(&owner_token))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, json!({"detail": "Room room-missing not found"}));
+    assert_eq!(body, json!({"detail": "Project room-missing not found"}));
 
     let (_, created) = fixture
         .post(

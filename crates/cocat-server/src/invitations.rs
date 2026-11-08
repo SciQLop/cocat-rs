@@ -113,7 +113,7 @@ async fn mail_invitation(
     .bind(room_id)
     .fetch_optional(&state.pool)
     .await?
-    .ok_or_else(|| LifecycleError::NotFound(format!("Room {room_id} not found")))?;
+    .ok_or_else(|| LifecycleError::NotFound(format!("Project {room_id} not found")))?;
     let room_name: String = row.try_get("name")?;
     let inviter: String = row.try_get("email")?;
     let (subject, body) = mail::invitation_mail(

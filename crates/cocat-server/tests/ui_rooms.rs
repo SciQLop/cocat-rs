@@ -21,6 +21,31 @@ fn flashed(response: &axum::response::Response) -> String {
     flash_cookie(response).expect("the action flashes a message")
 }
 
+/// The text a reader sees: the page with its tags (and their attributes) taken out.
+fn visible_text(html: &str) -> String {
+    html.split('<')
+        .map(|part| part.split_once('>').map_or(part, |(_, text)| text))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_list_calls_rooms_projects() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+
+    let empty = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
+    room_owned_by(&fixture, user, "lab").await;
+    let listed = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
+
+    for page in [empty, listed] {
+        let text = visible_text(&page);
+        assert!(text.contains("My projects"), "{text}");
+        assert!(!text.to_lowercase().contains("room"), "{text}");
+        assert!(page.contains(r#"placeholder="New project name""#), "{page}");
+    }
+}
+
 #[tokio::test]
 async fn login_required() {
     let fixture = Fixture::start().await;
@@ -116,7 +141,7 @@ async fn create_requires_a_name() {
             .await,
     )
     .await;
-    assert!(page.contains("Enter a room name"), "{page}");
+    assert!(page.contains("Enter a project name"), "{page}");
     assert!(
         db::list_user_rooms(&fixture.state.pool, user)
             .await
@@ -142,7 +167,7 @@ async fn create_refuses_control_characters() {
     )
     .await;
     assert!(
-        page.contains("Enter a room name without control characters"),
+        page.contains("Enter a project name without control characters"),
         "{page}"
     );
 }
@@ -284,10 +309,10 @@ async fn flash_shown_once() {
 
     assert!(flash_cleared(&page), "the page clears the flash cookie");
     let body = body_text(page).await;
-    assert!(body.contains("Room created"), "{body}");
+    assert!(body.contains("Project created"), "{body}");
 
     let again = body_text(fixture.get("/ui/rooms", Some(&token)).await).await;
-    assert!(!again.contains("Room created"), "{again}");
+    assert!(!again.contains("Project created"), "{again}");
 }
 
 #[tokio::test]

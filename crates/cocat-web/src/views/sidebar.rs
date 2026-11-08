@@ -24,7 +24,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                     <Entry item shown page=page.clone()/>
                 </For>
                 <Show when=move || list.with(|list| list.catalogues.is_empty())>
-                    <p class="quiet">"No catalogues in this room yet."</p>
+                    <p class="quiet">"No catalogues in this project yet."</p>
                 </Show>
             </nav>
             <a

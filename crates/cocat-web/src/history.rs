@@ -795,8 +795,8 @@ mod tests {
     #[test]
     fn a_refusal_reads_the_servers_detail() {
         assert_eq!(
-            refusal_text(403, r#"{"detail": "Room lab requires the editor role"}"#),
-            "Room lab requires the editor role"
+            refusal_text(403, r#"{"detail": "Project lab requires the editor role"}"#),
+            "Project lab requires the editor role"
         );
         assert_eq!(refusal_text(502, "<html>"), "the server answered 502");
     }

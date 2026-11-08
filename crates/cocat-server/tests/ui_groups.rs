@@ -90,7 +90,7 @@ async fn create_list_rename_delete() {
     assert!(page.contains(">Rename<"), "{page}");
     assert!(
         page.contains(
-            "data-confirm=\"Delete friends? Its rooms stop being shared with its members.\""
+            "data-confirm=\"Delete friends? Its projects stop being shared with its members.\""
         ),
         "{page}"
     );
@@ -423,7 +423,7 @@ async fn rooms_shared_with_group_listed() {
 
     let page = body_text(fixture.get(&format!("/ui/groups/{id}"), Some(&token)).await).await;
 
-    assert!(page.contains("Rooms shared with this group"), "{page}");
+    assert!(page.contains("Projects shared with this group"), "{page}");
     assert!(
         page.contains(&format!(r#"<a href="/ui/rooms/{room}">lab</a>"#)),
         "{page}"

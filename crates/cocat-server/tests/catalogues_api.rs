@@ -271,7 +271,7 @@ async fn non_member_gets_404() {
         .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, json!({"detail": "Room room-read not found"}));
+    assert_eq!(body, json!({"detail": "Project room-read not found"}));
 }
 
 #[tokio::test]

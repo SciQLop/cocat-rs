@@ -16,9 +16,9 @@ const MINUTE: i64 = 60 * 1_000_000_000;
 
 #[derive(Debug, Error)]
 pub enum EditError {
-    #[error("this event is no longer in the room")]
+    #[error("this event is no longer in the project")]
     NoEvent,
-    #[error("this catalogue is no longer in the room")]
+    #[error("this catalogue is no longer in the project")]
     NoCatalogue,
     #[error("{0} is not a status an event can be given here")]
     Status(String),
@@ -478,7 +478,7 @@ mod tests {
     fn an_edit_of_an_event_the_room_lost_says_so() {
         let doc = room();
         let error = refused(&doc, |txn| set_status(txn, "gone", "final"));
-        assert_eq!(error, "this event is no longer in the room");
+        assert_eq!(error, "this event is no longer in the project");
     }
 
     #[test]

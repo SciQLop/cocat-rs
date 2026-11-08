@@ -275,7 +275,7 @@ pub async fn ungrant(
         > 0;
     if !deleted {
         return Err(LifecycleError::NotFound(format!(
-            "Group {group_id} is not granted room {room_id}"
+            "Group {group_id} is not granted project {room_id}"
         )));
     }
     tx.commit().await?;
