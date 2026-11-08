@@ -15,7 +15,8 @@ use crate::rules::{self, Lookups, RuleError, Set};
 use crate::time::Timestamp;
 
 #[derive(Debug, Clone, PartialEq)]
-#[expect(
+// `allow`, not `expect`: on wasm32 the pointers are half the size and the lint stays quiet.
+#[allow(
     clippy::large_enum_variant,
     reason = "most members are events: boxing them would allocate once per event for nothing"
 )]

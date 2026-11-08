@@ -1,0 +1,7 @@
+[build]
+target = "index.html"
+dist = "dist"
+# The server serves the bundle under `<prefix>/ui/app/` and sets `<base href>` there, so
+# every asset URL stays relative.
+public_url = "./"
+filehash = true

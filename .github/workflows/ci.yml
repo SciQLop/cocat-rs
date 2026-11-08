@@ -19,6 +19,22 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  web:
+    name: Web bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p cocat-web --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo install trunk --version 0.22.1 --locked
+      # trunk downloads the wasm-bindgen that Cargo.lock pins, and wasm-opt.
+      - run: trunk build --release
+        working-directory: crates/cocat-web
+
   python:
     name: Python ${{ matrix.python }}
     runs-on: ubuntu-latest

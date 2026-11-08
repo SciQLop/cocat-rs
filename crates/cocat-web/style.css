@@ -1,0 +1,93 @@
+/* The catalogue browser's stylesheet. Its tokens are the server stylesheet's
+   (crates/cocat-server/static/style.css), so the app and the account pages look like one site. */
+
+:root {
+  --page: #f5f6f8;
+  --surface: #ffffff;
+  --surface-quiet: #fbfbfc;
+  --ink: #1c2331;
+  --muted: #5f6b7e;
+  --rule: #e1e5ec;
+  --accent: #2753b8;
+  --accent-ink: #ffffff;
+  --accent-soft: #e8eefb;
+  --span: #f0ad2e;
+  --live: #1f9d55;
+  --danger: #b42318;
+  --radius: 6px;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --focus: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #11151d;
+    --surface: #181e29;
+    --surface-quiet: #151a24;
+    --ink: #e4e8ef;
+    --muted: #97a1b3;
+    --rule: #283041;
+    --accent: #7c9ff2;
+    --accent-ink: #0f1420;
+    --accent-soft: #1f2a44;
+    --live: #4cc38a;
+    --danger: #f2786d;
+    color-scheme: dark;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--page);
+  -webkit-text-size-adjust: 100%;
+}
+
+body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
+
+a { color: var(--accent); text-underline-offset: 2px; }
+
+:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--radius); }
+
+.app-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 12px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.brand img { display: block; }
+
+.crumbs { display: flex; align-items: center; gap: 8px; color: var(--muted); min-width: 0; }
+.crumbs a { color: var(--muted); text-decoration: none; }
+.crumbs a:hover { color: var(--ink); }
+
+.loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  padding: 24px 16px;
+}
+
+@media (max-width: 480px) {
+  .app-header { padding: 10px 16px; }
+}

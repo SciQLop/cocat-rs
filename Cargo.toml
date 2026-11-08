@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cocat-client", "crates/cocat-core", "crates/cocat-py", "crates/cocat-server"]
+members = ["crates/cocat-client", "crates/cocat-core", "crates/cocat-py", "crates/cocat-server", "crates/cocat-web"]
 resolver = "3"
 
 [workspace.package]

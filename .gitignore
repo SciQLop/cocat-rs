@@ -3,3 +3,4 @@
 !crates/cocat-server/tests/fixtures/python/*.db
 __pycache__/
 bench/work/
+crates/cocat-web/dist/
