@@ -602,7 +602,9 @@ async fn a_room_file_that_cannot_be_loaded_does_not_hang() {
 
     let handle = manager.get_or_open("room-broken").unwrap();
     let (out, mut inbox) = outbox();
-    let _ = handle.attach(
+    // The room thread may give up before the attach reaches it: the attach is then refused,
+    // which the websocket turns into a close, so both outcomes answer the client.
+    let attached = handle.attach(
         1,
         Uuid::new_v4(),
         "test@example.org".to_owned(),
@@ -610,19 +612,23 @@ async fn a_room_file_that_cannot_be_loaded_does_not_hang() {
         out,
     );
 
-    let closed = timeout(Duration::from_secs(5), &mut inbox.close)
-        .await
-        .expect("a room that cannot be loaded must close its clients");
-    assert_eq!(
-        closed.ok(),
-        Some(CloseReason::Failed),
-        "the client learns the room could not be loaded"
-    );
-    assert_eq!(
-        manager.open_rooms(),
-        0,
-        "the failed room leaves the registry"
-    );
+    if attached.is_ok() {
+        let closed = timeout(Duration::from_secs(5), &mut inbox.close)
+            .await
+            .expect("a room that cannot be loaded must close its clients");
+        assert_eq!(
+            closed.ok(),
+            Some(CloseReason::Failed),
+            "the client learns the room could not be loaded"
+        );
+    }
+    let left = timeout(Duration::from_secs(5), async {
+        while manager.open_rooms() != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(left.is_ok(), "the failed room leaves the registry");
 
     let read = timeout(
         Duration::from_secs(5),
