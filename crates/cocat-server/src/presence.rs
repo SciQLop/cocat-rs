@@ -3,16 +3,18 @@
 //!
 //! A client may only speak for one awareness id, the first it announces, and only if no
 //! other client of the room holds it. Its state's `user` field is always the account the
-//! socket authenticated as, whatever the client wrote there.
+//! socket authenticated as, whatever the client wrote there, and the only other field kept
+//! is `editing`: the server relays nothing a client could grow.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use yrs::ClientID;
 use yrs::sync::Message;
 use yrs::sync::awareness::{AwarenessUpdate, AwarenessUpdateEntry};
+use yrs::sync::protocol::MSG_AWARENESS;
 use yrs::updates::encoder::Encode;
 
 use crate::room::ClientId;
@@ -23,6 +25,12 @@ use crate::room::ClientId;
 const COLORS: [&str; 8] = [
     "#2a5bd7", "#bf5300", "#1b7f72", "#8e3bd0", "#49700f", "#835a3c", "#b8246f", "#555d72",
 ];
+
+/// An awareness frame carries one small state; a larger one is dropped before it is decoded.
+const MAX_FRAME: usize = 4096;
+
+/// An event uuid is 36 characters.
+const MAX_EDITING: usize = 64;
 
 /// One client's awareness: the id it speaks for and its last state, `None` once it said
 /// it left.
@@ -48,7 +56,7 @@ impl Presence {
     ) -> Option<Bytes> {
         let id = self.owned_id(client, &update)?;
         let entry = update.clients.get(&id)?;
-        let json = with_user(&entry.json, email)?;
+        let json = vouched(&entry.json, email)?;
         let entry = AwarenessUpdateEntry {
             clock: entry.clock,
             json: Arc::from(json),
@@ -109,20 +117,33 @@ impl Presence {
     }
 }
 
-/// The client's state with the server's `user`; `null` (the client leaving) passes as is,
-/// and anything but an object or `null` is refused.
-fn with_user(json: &str, email: &str) -> Option<String> {
+/// Whether `frame` is an awareness frame too large to read.
+pub fn oversized(frame: &[u8]) -> bool {
+    frame.first() == Some(&MSG_AWARENESS) && frame.len() > MAX_FRAME
+}
+
+/// The state the server relays: the client's `editing` and the server's `user`. `null` (the
+/// client leaving) passes as is, and anything but an object or `null` is refused.
+fn vouched(json: &str, email: &str) -> Option<String> {
     match serde_json::from_str(json).ok()? {
         Value::Null => Some("null".to_owned()),
-        Value::Object(mut state) => {
-            state.insert(
-                "user".to_owned(),
-                json!({ "email": email, "color": color(email) }),
-            );
-            Some(Value::Object(state).to_string())
-        }
+        Value::Object(state) => Some(
+            json!({
+                "editing": editing(&state),
+                "user": { "email": email, "color": color(email) },
+            })
+            .to_string(),
+        ),
         _ => None,
     }
+}
+
+/// The event the client says it edits; anything but a short string reads as none.
+fn editing(state: &Map<String, Value>) -> Option<&str> {
+    state
+        .get("editing")?
+        .as_str()
+        .filter(|uuid| uuid.chars().count() <= MAX_EDITING)
 }
 
 /// The colour an account shows in: in presence, and beside its versions in the history.
@@ -143,7 +164,7 @@ mod tests {
     use palette::color_difference::{EuclideanDistance, Wcag21RelativeContrast};
     use palette::{IntoColor, Oklab, Srgb};
 
-    use super::{COLORS, color, with_user};
+    use super::{COLORS, color, oversized, vouched};
 
     /// The page's `--surface` in the dark theme.
     const DARK_SURFACE: &str = "#181e29";
@@ -182,14 +203,38 @@ mod tests {
     #[test]
     fn the_user_field_is_the_servers() {
         let state: serde_json::Value = serde_json::from_str(
-            &with_user(r#"{"user":"me","editing":"e"}"#, "a@example.org").unwrap(),
+            &vouched(r#"{"user":"me","editing":"e","extra":1}"#, "a@example.org").unwrap(),
         )
         .unwrap();
         assert_eq!(state["user"]["email"], "a@example.org");
         assert_eq!(state["editing"], "e");
-        assert_eq!(with_user("null", "a@example.org").as_deref(), Some("null"));
-        assert_eq!(with_user("[1]", "a@example.org"), None);
-        assert_eq!(with_user("not json", "a@example.org"), None);
+        assert_eq!(state.as_object().unwrap().len(), 2);
+        assert_eq!(vouched("null", "a@example.org").as_deref(), Some("null"));
+        assert_eq!(vouched("[1]", "a@example.org"), None);
+        assert_eq!(vouched("not json", "a@example.org"), None);
+    }
+
+    #[test]
+    fn only_a_short_string_is_an_edited_event() {
+        let editing = |json: &str| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&vouched(json, "a@example.org").unwrap())
+                .unwrap()["editing"]
+                .clone()
+        };
+        assert_eq!(
+            editing(&format!(r#"{{"editing":"{}"}}"#, "e".repeat(64))),
+            "e".repeat(64)
+        );
+        assert!(editing(&format!(r#"{{"editing":"{}"}}"#, "e".repeat(65))).is_null());
+        assert!(editing(r#"{"editing":7}"#).is_null());
+        assert!(editing("{}").is_null());
+    }
+
+    #[test]
+    fn only_a_large_awareness_frame_is_oversized() {
+        assert!(oversized(&[1; 4097]));
+        assert!(!oversized(&[1; 4096]));
+        assert!(!oversized(&[0; 4097]));
     }
 
     #[test]

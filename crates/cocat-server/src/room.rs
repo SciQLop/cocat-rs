@@ -1396,7 +1396,7 @@ fn handle_frame(
     client: ClientId,
     frame: Bytes,
 ) -> Result<Option<Bytes>, CloseReason> {
-    if frame.len() < 2 {
+    if frame.len() < 2 || crate::presence::oversized(&frame) {
         return Ok(None);
     }
     let Some((user, role)) = serving

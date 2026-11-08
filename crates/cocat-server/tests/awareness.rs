@@ -173,3 +173,47 @@ async fn a_closed_client_disappears_from_awareness() {
     assert!(*clock > 4, "the removal must win over the last state");
     assert_eq!(*state, Value::Null);
 }
+
+#[tokio::test]
+async fn an_oversized_awareness_frame_is_dropped() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Viewer);
+
+    let padding = "x".repeat(5000);
+    room.handle.frame(
+        2,
+        awareness(200, 1, json!({"editing": "b", "padding": padding})),
+    );
+
+    nothing_but_the_answer(&room, 1, &mut alice).await;
+}
+
+#[tokio::test]
+async fn only_the_editing_field_and_the_servers_user_are_relayed() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Viewer);
+
+    room.handle.frame(
+        2,
+        awareness(
+            200,
+            1,
+            json!({"editing": "b", "cursor": [1, 2], "name": "Mallory"}),
+        ),
+    );
+    let seen = next_awareness(&mut alice).await;
+    let state = seen[&200].1.as_object().unwrap();
+    let mut keys: Vec<&str> = state.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["editing", "user"]);
+    assert_eq!(state["editing"], "b");
+
+    room.handle
+        .frame(2, awareness(200, 2, json!({"editing": "e".repeat(65)})));
+    assert_eq!(
+        next_awareness(&mut alice).await[&200].1["editing"],
+        Value::Null
+    );
+}
