@@ -458,7 +458,7 @@ tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `i
 keeps such a catalogue's members without a rule, and warns.
 
 **History.** The server keeps every version of a project: a run of changes by one person with
-no gap over five minutes. Each version says who made it, when, and how many events it added,
+no gap over five minutes, and no longer than an hour. Each version says who made it, when, and how many events it added,
 changed or removed. `cocat_rs.history` lists them, newest first, as dicts; `catalogue=` keeps
 the versions that touched one catalogue or its events. `Room.at` fetches the project as it was
 at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
