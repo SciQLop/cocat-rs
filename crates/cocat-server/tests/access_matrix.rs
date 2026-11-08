@@ -1236,6 +1236,7 @@ async fn submission(state: &AppState, room: &str, owner: Uuid, public: &str) -> 
         .unwrap();
     let new = submissions::NewSubmission {
         author: owner,
+        room,
         kind: "new",
         target: None,
         base: None,

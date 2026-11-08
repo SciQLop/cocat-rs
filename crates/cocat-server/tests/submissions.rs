@@ -664,3 +664,34 @@ async fn only_the_author_and_curators_see_a_submission() {
     );
     assert_eq!(author["is_curator"], false);
 }
+
+#[tokio::test]
+async fn after_an_accepted_update_the_same_copy_submits_again_without_being_stale() {
+    let world = World::start().await;
+    let (_, copy, id) = proposed_update(&world).await;
+    let (status, decided) = world
+        .review(world.curator, id, json!({"accept": true}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    world
+        .edit(&copy, world.author, |txn| {
+            model::set_event_field(txn, "p1", &EventField::Confidence(Some(0.9))).unwrap();
+        })
+        .await;
+
+    let (status, again) = world
+        .call(
+            world.author,
+            Method::POST,
+            "/api/public/submissions/updates",
+            Some(json!({"room": copy, "catalogue": "pub"})),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    let (_, detail) = world
+        .detail(world.curator, again["id"].as_i64().unwrap())
+        .await;
+    assert_eq!(detail["stale"], false, "the copy holds what was accepted");
+    assert_eq!(changes(&detail), [pair("p1", "changed")]);
+}

@@ -51,9 +51,10 @@ pub const ACCEPTED: &str = "accepted";
 pub const DECLINED: &str = "declined";
 pub const WITHDRAWN: &str = "withdrawn";
 
-/// What an author offers. `target` and `base` are set for an update.
+/// What an author offers, from project `room`. `target` and `base` are set for an update.
 pub struct NewSubmission<'a> {
     pub author: Uuid,
+    pub room: &'a str,
     pub kind: &'a str,
     pub target: Option<&'a str>,
     pub base: Option<i64>,
@@ -68,10 +69,12 @@ pub struct NewSubmission<'a> {
 pub async fn insert(pool: &SqlitePool, new: &NewSubmission<'_>) -> Result<i64, DbError> {
     Ok(sqlx::query_scalar(
         "INSERT INTO submission
-             (author, kind, target, base, catalogue, title, folder, description, note, snapshot)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+             (author, room, kind, target, base, catalogue, title, folder, description, note,
+              snapshot)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(new.author.to_string())
+    .bind(new.room)
     .bind(new.kind)
     .bind(new.target)
     .bind(new.base)
@@ -189,6 +192,21 @@ pub async fn link(
     .bind(catalogue)
     .bind(target)
     .bind(base)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// After an update was accepted, the copy it came from holds what the public catalogue
+/// holds once it had `base` changes.
+pub async fn rebase(pool: &SqlitePool, id: i64, base: i64) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE proposal SET base = ?1
+         WHERE (room_id, catalogue, target) =
+             (SELECT room, catalogue, target FROM submission WHERE id = ?2)",
+    )
+    .bind(base)
+    .bind(id)
     .execute(pool)
     .await?;
     Ok(())

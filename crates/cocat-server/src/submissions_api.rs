@@ -229,6 +229,7 @@ async fn submit(
     let note = note(body.note)?;
     let new = NewSubmission {
         author: user.id,
+        room: &body.room,
         kind: NEW,
         target: None,
         base: None,
@@ -273,6 +274,7 @@ async fn submit_update(
     let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue).await?;
     let new = NewSubmission {
         author: user.id,
+        room: &body.room,
         kind: UPDATE,
         target: Some(&proposal.target),
         base: Some(proposal.base),
@@ -630,6 +632,11 @@ async fn take_in(
     let (target, written) = match (submission.kind.as_str(), &submission.target) {
         (UPDATE, Some(target)) => {
             let written = adopt_into(state, target, submission, snapshot, author).await?;
+            let base = state
+                .rooms
+                .read_log(target, 0, |records, _| count(records.len()))
+                .await?;
+            submissions::rebase(&state.pool, submission.id, base).await?;
             (target.clone(), written)
         }
         (UPDATE, None) => return Err(ApiError::Conflict(TARGET_GONE.to_owned())),
