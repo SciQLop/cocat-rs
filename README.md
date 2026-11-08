@@ -496,8 +496,33 @@ cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
 trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
 ```
 
+**Managing a project.** The calls behind the web app's Share dialog, for a tool that shows who
+has access or shares a project. Members, invitations and groups come back as dicts shaped like
+the server's JSON; ids of members are account ids (uuid strings), ids of invitations integers.
+Only the owner may change roles, remove others, invite or see the invitations; every member
+may list the members and the groups. `role` is `"viewer"` or `"editor"`: the server refuses
+anything else with a `ServerError` (422). An invitation with an `email` admits only that
+address, once; without one it is a link anyone may use, `max_uses` times (no limit by
+default). It expires after `expires_in_days` (1 to 90, 14 by default). `link` is the page
+that accepts it, on the address you called. `project_url` makes no call: it is the project's
+page in the web app, with its Share dialog open when `share=True`.
+
+```python
+info = cocat_rs.create_project(url, cookie, "Bepi MSA")       # a ProjectInfo, you own it
+cocat_rs.members(url, cookie, info.id)        # [{"user_id": ..., "email": ..., "role": "owner"}]
+cocat_rs.set_role(url, cookie, info.id, user_id, "viewer")
+cocat_rs.remove_member(url, cookie, info.id, user_id)
+created = cocat_rs.invite(url, cookie, info.id, "editor", email="colleague@example.org")
+created["link"]                               # <url>/ui/invitation#<token>, to send them
+cocat_rs.invitations(url, cookie, info.id)    # id, email, role, expires_at, uses, max_uses
+cocat_rs.revoke_invitation(url, cookie, info.id, created["id"])
+cocat_rs.project_groups(url, cookie, info.id) # [{"id": ..., "name": ..., "role": ...}]
+cocat_rs.project_url(url, info.id, share=True) # <url>/ui/rooms/<id>/browse#share
+```
+
 **Errors.** When the server refuses a call (`login`, `projects`, `history`, `Project.at`,
-`restore`, `name_version`, `commit`, `copy_version`), the error says why. `cocat_rs.Unauthorized` (401)
+`restore`, `name_version`, `commit`, `copy_version`, and the calls that manage a project), the
+error says why. `cocat_rs.Unauthorized` (401)
 means the session expired or there is none: log in again. `cocat_rs.Forbidden` (403) means
 your role does not allow it, `cocat_rs.ServerNotFound` (404) that the project or version does
 not exist, and `cocat_rs.Conflict` (409) that the call clashes with the project, e.g. nothing

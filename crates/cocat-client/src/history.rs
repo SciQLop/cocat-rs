@@ -4,9 +4,9 @@
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use url::Url;
 
-use crate::login::{LoginError, base, cookie_header, send};
+use crate::login::{LoginError, send};
+use crate::projects::room_request;
 
 /// The versions, newest first, as the server describes them; with `catalogue`, only those
 /// that touched it.
@@ -125,8 +125,7 @@ pub async fn copy_version(
     Ok(copied.room)
 }
 
-/// A request under `api/rooms/{room_id}/history`, each part its own path segment so a room
-/// id is escaped rather than read as a path.
+/// A request under `api/rooms/{room_id}/history`.
 fn request(
     method: Method,
     url: &str,
@@ -134,13 +133,8 @@ fn request(
     room_id: &str,
     tail: &[&str],
 ) -> Result<RequestBuilder, LoginError> {
-    let mut url: Url = base(url)?;
-    url.path_segments_mut()
-        .map_err(|_| url::ParseError::RelativeUrlWithCannotBeABaseBase)?
-        .pop_if_empty()
-        .extend(["api", "rooms", room_id, "history"])
-        .extend(tail);
-    Ok(reqwest::Client::new()
-        .request(method, url)
-        .header(reqwest::header::COOKIE, cookie_header(cookie)))
+    let path: Vec<&str> = std::iter::once("history")
+        .chain(tail.iter().copied())
+        .collect();
+    room_request(method, url, cookie, room_id, &path)
 }

@@ -4,6 +4,7 @@
 //! (`cocat_rs/__init__.py`) adds the asyncio and listener plumbing that needs a loop.
 
 mod server_errors;
+mod sharing;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -1833,5 +1834,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;
     server_errors::register(module)?;
+    sharing::register(module)?;
     Ok(())
 }

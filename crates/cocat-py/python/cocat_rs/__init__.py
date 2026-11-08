@@ -15,9 +15,18 @@ from ._native import (
     ServerError,
     ServerNotFound,
     Unauthorized,
+    create_project,
+    invitations,
+    invite,
     login,
+    members,
+    project_groups,
+    project_url,
     projects,
+    remove_member,
+    revoke_invitation,
     rule_from_tscat,
+    set_role,
 )
 
 _accepts_room_id = _old_names.renamed_keywords(room_id="project_id")
@@ -40,12 +49,21 @@ __all__ = [
     "Unauthorized",
     "commit",
     "copy_version",
+    "create_project",
     "history",
+    "invitations",
+    "invite",
     "login",
+    "members",
     "name_version",
+    "project_groups",
+    "project_url",
     "projects",
+    "remove_member",
     "restore",
+    "revoke_invitation",
     "rule_from_tscat",
+    "set_role",
 ]
 
 log = logging.getLogger("cocat_rs")

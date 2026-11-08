@@ -2,9 +2,11 @@
 
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     Owner,
     Editor,
@@ -60,6 +62,15 @@ mod tests {
     fn roles_round_trip_through_their_names() {
         for role in [Role::Owner, Role::Editor, Role::Viewer] {
             assert_eq!(role.as_str().parse(), Ok(role));
+        }
+    }
+
+    #[test]
+    fn json_names_are_the_role_names() {
+        for role in [Role::Owner, Role::Editor, Role::Viewer] {
+            let json = serde_json::to_string(&role).unwrap();
+            assert_eq!(json, format!("\"{}\"", role.as_str()));
+            assert_eq!(serde_json::from_str::<Role>(&json).unwrap(), role);
         }
     }
 

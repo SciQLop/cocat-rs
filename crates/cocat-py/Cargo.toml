@@ -21,6 +21,7 @@ log = "0.4"
 numpy = "0.30"
 pyo3 = { version = "0.30", features = ["abi3-py310"] }
 pyo3-log = "0.13"
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1", features = ["rt"] }
