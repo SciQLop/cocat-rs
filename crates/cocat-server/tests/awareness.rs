@@ -35,9 +35,13 @@ fn open() -> Room {
 }
 
 fn join(room: &Room, client: u64, email: &str, role: Role) -> Inbox {
+    join_as(room, client, Uuid::new_v4(), email, role)
+}
+
+fn join_as(room: &Room, client: u64, user: Uuid, email: &str, role: Role) -> Inbox {
     let (out, inbox) = outbox();
     room.handle
-        .attach(client, Uuid::new_v4(), email.to_owned(), role, out)
+        .attach(client, user, email.to_owned(), role, out)
         .unwrap();
     inbox
 }
@@ -216,4 +220,23 @@ async fn only_the_editing_field_and_the_servers_user_are_relayed() {
         next_awareness(&mut alice).await[&200].1["editing"],
         Value::Null
     );
+}
+
+#[tokio::test]
+async fn a_page_that_reconnects_takes_its_awareness_id_over() {
+    let room = open();
+    let alice = Uuid::new_v4();
+    let _old = join_as(&room, 1, alice, "alice@example.org", Role::Editor);
+    let mut bob = join(&room, 2, "bob@example.org", Role::Editor);
+    room.handle
+        .frame(1, awareness(100, 1, json!({"editing": "before"})));
+    assert_eq!(next_awareness(&mut bob).await[&100].1["editing"], "before");
+
+    let _new = join_as(&room, 3, alice, "alice@example.org", Role::Editor);
+    room.handle
+        .frame(3, awareness(100, 3, json!({"editing": "after"})));
+    assert_eq!(next_awareness(&mut bob).await[&100].1["editing"], "after");
+
+    room.handle.detach(1).await;
+    nothing_but_the_answer(&room, 2, &mut bob).await;
 }

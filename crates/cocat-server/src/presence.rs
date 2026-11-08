@@ -2,7 +2,9 @@
 //! so it can vouch for them.
 //!
 //! A client may only speak for one awareness id, the first it announces, and only if no
-//! other client of the room holds it. Its state's `user` field is always the account the
+//! other account's client holds it. A page that reconnects before the server dropped its
+//! old socket announces the same id from a new socket of the same account: the new socket
+//! takes the id over. Its state's `user` field is always the account the
 //! socket authenticated as, whatever the client wrote there, and the only other field kept
 //! is `editing`: the server relays nothing a client could grow.
 
@@ -11,6 +13,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use serde_json::{Map, Value, json};
+use uuid::Uuid;
 use yrs::ClientID;
 use yrs::sync::Message;
 use yrs::sync::awareness::{AwarenessUpdate, AwarenessUpdateEntry};
@@ -36,6 +39,7 @@ const MAX_EDITING: usize = 64;
 /// it left.
 struct State {
     id: ClientID,
+    user: Uuid,
     entry: Option<AwarenessUpdateEntry>,
     clock: u32,
 }
@@ -51,10 +55,11 @@ impl Presence {
     pub fn update(
         &mut self,
         client: ClientId,
+        user: Uuid,
         email: &str,
         update: AwarenessUpdate,
     ) -> Option<Bytes> {
-        let id = self.owned_id(client, &update)?;
+        let id = self.owned_id(client, user, &update)?;
         let entry = update.clients.get(&id)?;
         let json = vouched(&entry.json, email)?;
         let entry = AwarenessUpdateEntry {
@@ -63,6 +68,7 @@ impl Presence {
         };
         let state = self.states.entry(client).or_insert(State {
             id,
+            user,
             entry: None,
             clock: 0,
         });
@@ -105,15 +111,31 @@ impl Presence {
     }
 
     /// The id `client` speaks for: the one it holds, or, on its first update, the single id
-    /// that update names when no other client holds it.
-    fn owned_id(&self, client: ClientId, update: &AwarenessUpdate) -> Option<ClientID> {
+    /// that update names when no other account's client holds it. A client of the same
+    /// account that holds it loses it, so its departure does not remove the new state.
+    fn owned_id(
+        &mut self,
+        client: ClientId,
+        user: Uuid,
+        update: &AwarenessUpdate,
+    ) -> Option<ClientID> {
         if let Some(state) = self.states.get(&client) {
             return Some(state.id);
         }
         let mut ids = update.clients.keys();
         let id = *ids.next()?;
-        let free = !self.states.values().any(|state| state.id == id);
-        (ids.next().is_none() && free).then_some(id)
+        if ids.next().is_some() {
+            return None;
+        }
+        let holder = self.states.iter().find(|(_, state)| state.id == id);
+        match holder.map(|(holder, state)| (*holder, state.user)) {
+            None => Some(id),
+            Some((holder, owner)) if owner == user => {
+                self.states.remove(&holder);
+                Some(id)
+            }
+            Some(_) => None,
+        }
     }
 }
 

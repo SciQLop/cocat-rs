@@ -1471,14 +1471,14 @@ fn handle_frame(
 
 /// Every role may publish its presence, a viewer included: it writes nothing to the room.
 fn relay_awareness(serving: &mut Serving<'_>, client: ClientId, update: AwarenessUpdate) {
-    let Some(email) = serving
+    let Some((user, email)) = serving
         .clients
         .get(&client)
-        .map(|entry| entry.email.clone())
+        .map(|entry| (entry.user, entry.email.clone()))
     else {
         return;
     };
-    if let Some(frame) = serving.presence.update(client, &email, update) {
+    if let Some(frame) = serving.presence.update(client, user, &email, update) {
         broadcast_except(serving.clients, Some(client), frame);
     }
 }

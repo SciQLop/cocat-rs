@@ -124,7 +124,12 @@ impl Link {
             self.send(reply);
         }
         if reception.synced {
-            self.synced.set(true);
+            // The first announce can reach the server while it still holds this page's old
+            // socket, and its snapshot can carry this page's stale state: saying it again
+            // once the room answered settles both.
+            if !self.synced.replace(true) {
+                self.announce(self.room.editing.get_untracked());
+            }
             self.backoff.borrow_mut().reset();
             self.room.status.set(Status::Live);
         }
