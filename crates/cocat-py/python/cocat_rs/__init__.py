@@ -7,9 +7,14 @@ import threading
 from . import _native
 from ._native import (
     Catalogue,
+    Conflict,
     Event,
+    Forbidden,
     NotFound,
     RoomInfo,
+    ServerError,
+    ServerNotFound,
+    Unauthorized,
     commit,
     copy_version,
     history,
@@ -22,10 +27,15 @@ from ._native import (
 
 __all__ = [
     "Catalogue",
+    "Conflict",
     "Event",
+    "Forbidden",
     "NotFound",
     "Room",
     "RoomInfo",
+    "ServerError",
+    "ServerNotFound",
+    "Unauthorized",
     "commit",
     "copy_version",
     "history",

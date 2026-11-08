@@ -2,7 +2,9 @@
 
 use cocat_core::role::Role;
 use cookie::Cookie;
+use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
+use serde_json::Value;
 use thiserror::Error;
 use url::Url;
 
@@ -43,8 +45,9 @@ pub enum LoginError {
     Url(#[from] url::ParseError),
     #[error(transparent)]
     Http(#[from] reqwest::Error),
-    #[error("the server answered {0}")]
-    Refused(u16),
+    /// The server refused the call; `detail` is its own text (the JSON `detail` field).
+    #[error("{detail}")]
+    Refused { status: u16, detail: String },
     #[error("the server accepted the login without setting a session cookie")]
     NoCookie,
     #[error("the server sent a role no client knows: {0}")]
@@ -53,14 +56,10 @@ pub enum LoginError {
 
 /// Posts the credentials and returns the session cookie's value.
 pub async fn login(url: &str, user: &str, password: &str) -> Result<String, LoginError> {
-    let response = reqwest::Client::new()
+    let request = reqwest::Client::new()
         .post(base(url)?.join("auth/jwt/login")?)
-        .form(&[("username", user), ("password", password)])
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        return Err(LoginError::Refused(response.status().as_u16()));
-    }
+        .form(&[("username", user), ("password", password)]);
+    let response = send(request).await?;
     for header in response.headers().get_all(reqwest::header::SET_COOKIE) {
         let Ok(text) = header.to_str() else {
             continue;
@@ -77,15 +76,10 @@ pub async fn login(url: &str, user: &str, password: &str) -> Result<String, Logi
 
 /// Lists the rooms the session may enter, with the role it holds in each.
 pub async fn rooms(url: &str, cookie: &str) -> Result<Vec<RoomInfo>, LoginError> {
-    let response = reqwest::Client::new()
+    let request = reqwest::Client::new()
         .get(base(url)?.join("api/rooms")?)
-        .header(reqwest::header::COOKIE, cookie_header(cookie))
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        return Err(LoginError::Refused(response.status().as_u16()));
-    }
-    let rows: Vec<RoomRow> = response.json().await?;
+        .header(reqwest::header::COOKIE, cookie_header(cookie));
+    let rows: Vec<RoomRow> = send(request).await?.json().await?;
     rows.into_iter().map(room_info).collect()
 }
 
@@ -105,6 +99,36 @@ fn room_info(row: RoomRow) -> Result<RoomInfo, LoginError> {
         role,
         personal,
     })
+}
+
+/// Sends the request; an answer other than success becomes [`LoginError::Refused`].
+pub(crate) async fn send(request: RequestBuilder) -> Result<Response, LoginError> {
+    let response = request.send().await?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    let body = response.bytes().await?;
+    Err(LoginError::Refused {
+        status: status.as_u16(),
+        detail: detail(status, &body),
+    })
+}
+
+/// The `detail` of a FastAPI-style error body: its text, or its JSON when structured (a 422
+/// lists the fields at fault).
+fn detail(status: StatusCode, body: &[u8]) -> String {
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        detail: Value,
+    }
+    match serde_json::from_slice::<ErrorBody>(body) {
+        Ok(ErrorBody {
+            detail: Value::String(text),
+        }) => text,
+        Ok(ErrorBody { detail }) => detail.to_string(),
+        Err(_) => format!("the server answered {status}"),
+    }
 }
 
 pub(crate) fn cookie_header(cookie: &str) -> String {
@@ -131,7 +155,8 @@ pub(crate) fn base(url: &str) -> Result<Url, LoginError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RoomRow, room_info};
+    use super::{RoomRow, detail, room_info};
+    use reqwest::StatusCode;
 
     fn listed(json: &str) -> bool {
         let row: RoomRow = serde_json::from_str(json).unwrap();
@@ -160,5 +185,31 @@ mod tests {
             r#"{"id": "a", "name": "Personal", "role": "editor"}"#
         ));
         assert!(!listed(r#"{"id": "a", "name": "Lab", "role": "owner"}"#));
+    }
+
+    #[test]
+    fn the_detail_is_the_servers_text() {
+        let body = br#"{"detail": "Nothing changed since the last saved version."}"#;
+        assert_eq!(
+            detail(StatusCode::CONFLICT, body),
+            "Nothing changed since the last saved version."
+        );
+    }
+
+    #[test]
+    fn a_structured_detail_is_kept_as_json() {
+        let body = br#"{"detail": [{"loc": ["body", "name"], "msg": "too long"}]}"#;
+        assert_eq!(
+            detail(StatusCode::UNPROCESSABLE_ENTITY, body),
+            r#"[{"loc":["body","name"],"msg":"too long"}]"#
+        );
+    }
+
+    #[test]
+    fn without_a_detail_the_status_says_it() {
+        assert_eq!(
+            detail(StatusCode::BAD_GATEWAY, b"<html>proxy</html>"),
+            "the server answered 502 Bad Gateway"
+        );
     }
 }

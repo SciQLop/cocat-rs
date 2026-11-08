@@ -71,13 +71,13 @@ async fn a_version_takes_a_name_and_restoring_the_present_changes_nothing() {
 }
 
 #[tokio::test]
-async fn a_refused_call_carries_the_status() {
+async fn a_refused_call_carries_the_status_and_the_servers_text() {
     let (server, cookie, _) = one_version().await;
 
     let refused = history(&server.url(), &cookie, "no-such-room", None).await;
 
     assert!(
-        matches!(refused, Err(LoginError::Refused(404))),
+        matches!(&refused, Err(LoginError::Refused { status: 404, detail }) if !detail.is_empty()),
         "{refused:?}"
     );
 }
@@ -96,7 +96,11 @@ async fn saving_the_newest_version_returns_its_id_and_its_note() {
     let versions = history(&url, &cookie, ROOM, None).await.unwrap();
     assert_eq!(versions[0]["message"], "all good");
     assert_eq!(versions[0]["name"], "checked");
-    assert!(matches!(again, Err(LoginError::Refused(409))), "{again:?}");
+    let Err(LoginError::Refused { status, detail }) = again else {
+        panic!("{again:?}");
+    };
+    assert_eq!(status, 409);
+    assert_eq!(detail, "Nothing changed since the last saved version.");
 }
 
 #[tokio::test]
@@ -115,7 +119,7 @@ async fn a_copied_version_is_a_new_room_holding_it() {
     assert!(cocat_core::model::event(&copied.doc().transact(), "a").is_some());
     let unknown = copy_version(&url, &cookie, ROOM, 99, "try").await;
     assert!(
-        matches!(unknown, Err(LoginError::Refused(404))),
+        matches!(unknown, Err(LoginError::Refused { status: 404, .. })),
         "{unknown:?}"
     );
 }

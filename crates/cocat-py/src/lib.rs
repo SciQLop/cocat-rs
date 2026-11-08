@@ -3,6 +3,8 @@
 //! Everything that can be done without Python types happens in Rust; the Python wrapper
 //! (`cocat_rs/__init__.py`) adds the asyncio and listener plumbing that needs a loop.
 
+mod server_errors;
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -25,6 +27,7 @@ use pyo3::types::{
     PyDateAccess, PyDateTime, PyDict, PyList, PySet, PyTimeAccess, PyTuple, PyType, PyTzInfo,
 };
 use serde_json::{Map as JsonMap, Value};
+use server_errors::http_error;
 use yrs::{Transact, TransactionMut};
 
 type Result<T> = PyResult<T>;
@@ -1087,7 +1090,7 @@ impl Room {
                     &url, &cookie, &room_id, version,
                 ))
             })?
-            .map_err(value_error)?;
+            .map_err(http_error)?;
         let room = ClientRoom::past(&room_id, &state)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         Ok(Room::of(room))
@@ -1665,14 +1668,14 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> Result<T> {
 #[pyfunction]
 fn login(py: Python<'_>, url: String, username: String, password: String) -> Result<String> {
     let cookie = py.detach(|| block_on(cocat_client::login(&url, &username, &password)))?;
-    cookie.map_err(|error| PyValueError::new_err(error.to_string()))
+    cookie.map_err(http_error)
 }
 
 #[pyfunction]
 fn rooms(py: Python<'_>, url: String, cookie: String) -> Result<Vec<RoomInfo>> {
     let rooms = py
         .detach(|| block_on(cocat_client::rooms(&url, &cookie)))?
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(http_error)?;
     Ok(rooms.into_iter().map(RoomInfo::from).collect())
 }
 
@@ -1695,7 +1698,7 @@ fn history(
                 catalogue.as_deref(),
             ))
         })?
-        .map_err(value_error)?;
+        .map_err(http_error)?;
     versions
         .iter()
         .map(|version| to_python(py, version))
@@ -1721,7 +1724,7 @@ fn restore(
             catalogue.as_deref(),
         ))
     })?
-    .map_err(value_error)
+    .map_err(http_error)
 }
 
 #[pyfunction]
@@ -1742,7 +1745,7 @@ fn name_version(
             name.as_deref(),
         ))
     })?
-    .map_err(value_error)
+    .map_err(http_error)
 }
 
 /// Saves the room's newest version, with an optional name and note; returns its id.
@@ -1765,7 +1768,7 @@ fn commit(
             message.as_deref(),
         ))
     })?
-    .map_err(value_error)
+    .map_err(http_error)
 }
 
 /// Makes a new project, owned by the caller, holding the version; returns its id.
@@ -1783,7 +1786,7 @@ fn copy_version(
             &url, &cookie, &room_id, version, &name,
         ))
     })?
-    .map_err(value_error)
+    .map_err(http_error)
 }
 
 /// The compiled part of `cocat_rs`; `cocat_rs/__init__.py` re-exports it.
@@ -1822,5 +1825,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;
+    server_errors::register(module)?;
     Ok(())
 }

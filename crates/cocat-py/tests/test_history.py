@@ -161,7 +161,7 @@ def test_saving_twice_without_changes_is_refused(server, room):
     room.save(15)
     cc.commit(server.url, server.cookie, server.room_id)
 
-    with pytest.raises(ValueError, match="409"):
+    with pytest.raises(cc.Conflict, match="Nothing changed"):
         cc.commit(server.url, server.cookie, server.room_id)
 
 

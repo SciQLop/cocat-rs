@@ -1,12 +1,12 @@
 //! A room's version history, as the server keeps it: the versions, the room at one of them,
 //! restoring one, naming one, copying one into a new room, and saving the newest.
 
-use reqwest::{Method, RequestBuilder, Response};
+use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::login::{LoginError, base, cookie_header};
+use crate::login::{LoginError, base, cookie_header, send};
 
 /// The versions, newest first, as the server describes them; with `catalogue`, only those
 /// that touched it.
@@ -143,12 +143,4 @@ fn request(
     Ok(reqwest::Client::new()
         .request(method, url)
         .header(reqwest::header::COOKIE, cookie_header(cookie)))
-}
-
-async fn send(request: RequestBuilder) -> Result<Response, LoginError> {
-    let response = request.send().await?;
-    if !response.status().is_success() {
-        return Err(LoginError::Refused(response.status().as_u16()));
-    }
-    Ok(response)
 }

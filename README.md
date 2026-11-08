@@ -475,7 +475,7 @@ its author goes on editing.
 the server has, with an optional `name` and `message` (a note, up to 2000 characters), and
 returns its id. Call `room.save()` first so your pending edits reached the server. The next
 change starts a new version, and the list marks the saved one with `committed` and its
-`message`. Saving again with nothing new raises `ValueError` (the server answers 409).
+`message`. Saving again with nothing new raises `cocat_rs.Conflict`.
 `cocat_rs.copy_version(url, cookie, room_id, version, name)` makes a new project, owned by
 you, that starts as the version: same catalogues, events (with their uuids), rules and trash.
 It returns the new project's id. Any member may copy, a viewer too; the copy counts against
@@ -491,6 +491,25 @@ room.save()
 cocat_rs.commit(url, cookie, "my-room", name="paper v1", message="as submitted")
 cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
 trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
+```
+
+**Errors.** When the server refuses a call (`login`, `rooms`, `history`, `Room.at`, `restore`,
+`name_version`, `commit`, `copy_version`), the error says why. `cocat_rs.Unauthorized` (401)
+means the session expired or there is none: log in again. `cocat_rs.Forbidden` (403) means
+your role does not allow it, `cocat_rs.ServerNotFound` (404) that the project or version does
+not exist, and `cocat_rs.Conflict` (409) that the call clashes with the project, e.g. nothing
+to save. Any other refusal is their base, `cocat_rs.ServerError`. Each carries `status` and
+`detail`, the server's own text, which is also the message. `ServerError` subclasses
+`ValueError`, so older `except ValueError` code still catches it, and `ServerNotFound` is
+also a `cocat_rs.NotFound`.
+
+```python
+try:
+    cocat_rs.commit(url, cookie, "my-room")
+except cocat_rs.Unauthorized:
+    cookie = cocat_rs.login(url, email, password)
+except cocat_rs.Conflict as error:
+    print(error.detail)   # Nothing changed since the last saved version.
 ```
 
 `credentials` is what lets the client recover a session the server ended (a password change,

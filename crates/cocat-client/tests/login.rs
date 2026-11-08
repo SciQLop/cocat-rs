@@ -23,7 +23,7 @@ async fn a_bad_password_is_refused() {
     let refused = login(&server.url(), "owner@x.org", "wrong").await;
 
     assert!(
-        matches!(refused, Err(LoginError::Refused(400))),
+        matches!(&refused, Err(LoginError::Refused { status: 400, detail }) if detail == "LOGIN_BAD_CREDENTIALS"),
         "{refused:?}"
     );
 }
