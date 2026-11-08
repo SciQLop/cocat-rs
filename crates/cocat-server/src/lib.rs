@@ -12,6 +12,7 @@ pub mod groups;
 pub mod groups_api;
 pub mod hashing;
 pub mod history;
+pub mod history_api;
 pub mod import;
 pub mod invitations;
 pub mod invitations_api;

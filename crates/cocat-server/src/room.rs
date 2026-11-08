@@ -25,7 +25,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, ReadTxn, StateVector, Transact, Update};
 
-use crate::history::stamps::{StampFile, stamp_for, stamps_file};
+use crate::history::stamps::{Stamp, StampFile, read_stamps, stamp_for, stamps_file, valid_stamps};
 
 pub type ClientId = u64;
 
@@ -443,6 +443,61 @@ impl RoomManager {
         T: Send + 'static,
         F: FnOnce(&Doc) -> T + Send + 'static,
     {
+        let started = Instant::now();
+        let loaded = self
+            .cold(room_id, move |update_dir, id| {
+                let doc = Doc::new();
+                for update in read_updates(update_dir, id)? {
+                    let _ = apply(&doc, &update);
+                }
+                let read = reader.lock().ok().and_then(|mut slot| slot.take());
+                Ok(read.map(|read| read(&doc)))
+            })
+            .await?;
+        crate::telemetry::room_opened(started.elapsed().as_secs_f64());
+        loaded.ok_or(RoomError::Unanswered)
+    }
+
+    /// Waits for an open room to write its pending records; a closed room has none.
+    pub async fn flush(&self, room_id: &str) -> Result<(), RoomError> {
+        let open = self
+            .rooms
+            .lock()
+            .map_err(|_| RoomError::Registry)?
+            .get(room_id)
+            .cloned();
+        if let Some(handle) = open {
+            handle.flush().await;
+        }
+        Ok(())
+    }
+
+    /// Answers from the room's records as written on disk, each with its valid stamp, after
+    /// the open room flushed: a version just written is part of the answer.
+    pub async fn read_log<T, F>(&self, room_id: &str, read: F) -> Result<T, RoomError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&[Bytes], &[Option<Stamp>]) -> T + Send + 'static,
+    {
+        self.flush(room_id).await?;
+        self.cold(room_id, move |update_dir, id| {
+            let records = read_updates(update_dir, id)?;
+            let stamps = read_stamps(update_dir, id).map_err(|source| StoreError::Io {
+                path: stamps_file(update_dir, id),
+                source,
+            })?;
+            let slots = valid_stamps(&records, stamps);
+            Ok(read(&records, &slots))
+        })
+        .await
+    }
+
+    /// Runs `load` on the blocking pool under a cold-read slot and the memory budget.
+    async fn cold<T, F>(&self, room_id: &str, load: F) -> Result<T, RoomError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Path, &str) -> Result<T, StoreError> + Send + 'static,
+    {
         // The slot moves into the blocking run, so a request dropped mid-parse keeps the room
         // it is loading charged until the parse ends.
         let slot = Arc::clone(&self.cold_reads)
@@ -452,24 +507,17 @@ impl RoomManager {
         let charged = self.admit_cold_read(room_id)?;
         let update_dir = self.update_dir.clone();
         let id = room_id.to_owned();
-        let started = Instant::now();
         let loaded = tokio::task::spawn_blocking(move || {
             let _slot = slot;
             let _charged = charged;
-            let doc = Doc::new();
-            for update in read_updates(&update_dir, &id)? {
-                let _ = apply(&doc, &update);
-            }
-            let read = reader.lock().ok().and_then(|mut slot| slot.take());
-            Ok::<_, StoreError>(read.map(|read| read(&doc)))
+            load(&update_dir, &id)
         })
         .await
         .map_err(|error| {
             tracing::error!(%error, "a cold read panicked");
             RoomError::Unanswered
         })??;
-        crate::telemetry::room_opened(started.elapsed().as_secs_f64());
-        loaded.ok_or(RoomError::Unanswered)
+        Ok(loaded)
     }
 
     /// Admits one cold read and charges it in one step, under the registry lock `get_or_open`

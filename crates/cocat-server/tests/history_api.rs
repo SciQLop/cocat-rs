@@ -1,0 +1,393 @@
+use axum::body::{Body, to_bytes};
+use axum::http::{Method, Request, StatusCode, header};
+use bytes::Bytes;
+use cocat_core::model::{self, EventField, EventRecord, NewCatalogue};
+use cocat_core::role::Role;
+use cocat_core::store::FileRoomStore;
+use cocat_core::time::Timestamp;
+use cocat_server::history::stamps::{StampFile, stamp_for};
+use cocat_server::room::{RoomManager, outbox};
+use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
+use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
+use tempfile::TempDir;
+use tower::ServiceExt;
+use uuid::Uuid;
+use yrs::sync::{Message, SyncMessage};
+use yrs::updates::decoder::Decode;
+use yrs::updates::encoder::Encode;
+use yrs::{Doc, ReadTxn, Transact, TransactionMut, Update};
+
+const ROOM: &str = "history-room";
+const MINUTE: i64 = 60_000;
+
+struct Fixture {
+    state: AppState,
+    update_dir: PathBuf,
+    /// The room as the seeded records leave it, to encode the next record against.
+    doc: Doc,
+    alice: Uuid,
+    bob: Uuid,
+    carol: Uuid,
+    _dir: TempDir,
+}
+
+impl Fixture {
+    /// Alice owns the room, Bob edits it and Carol views it.
+    async fn start() -> Self {
+        let dir = TempDir::new().unwrap();
+        let update_dir = dir.path().join("rooms");
+        fs::create_dir_all(&update_dir).unwrap();
+        let pool = db::open(&dir.path().join("test.db")).await.unwrap();
+        let state = AppState {
+            pool,
+            secret: "test-secret".to_owned(),
+            rooms: RoomManager::new(update_dir.clone(), None),
+            before_attach: None,
+            login_limit: LoginLimit::default(),
+            mailer: None,
+            links: Links::default(),
+            oidc: Vec::new(),
+        };
+        let user = |email: &'static str| {
+            let pool = state.pool.clone();
+            async move {
+                db::create_user(&pool, email, "hunter2", false, true)
+                    .await
+                    .unwrap()
+            }
+        };
+        let (alice, bob, carol) = (
+            user("alice@x.org").await,
+            user("bob@x.org").await,
+            user("carol@x.org").await,
+        );
+        db::create_room(&state.pool, alice, ROOM, "History")
+            .await
+            .unwrap();
+        db::add_member(&state.pool, ROOM, bob, Role::Editor)
+            .await
+            .unwrap();
+        db::add_member(&state.pool, ROOM, carol, Role::Viewer)
+            .await
+            .unwrap();
+        Self {
+            state,
+            update_dir,
+            doc: Doc::new(),
+            alice,
+            bob,
+            carol,
+            _dir: dir,
+        }
+    }
+
+    /// Appends one record to the room file, stamped with `user` at `at_ms`.
+    fn write<T>(&self, user: Uuid, at_ms: i64, edit: impl FnOnce(&mut TransactionMut) -> T) {
+        let record = self.record(edit);
+        let (mut store, records) = FileRoomStore::open(&self.update_dir, ROOM).unwrap();
+        let index = records.len() as u64;
+        store.append(record.clone()).unwrap();
+        store.flush().unwrap();
+        let mut stamps = StampFile::open(&self.update_dir, ROOM).unwrap();
+        stamps.append(stamp_for(index, Some(user), at_ms, &record));
+        stamps.write().unwrap();
+    }
+
+    fn record<T>(&self, edit: impl FnOnce(&mut TransactionMut) -> T) -> Bytes {
+        let before = self.doc.transact().state_vector();
+        let mut txn = self.doc.transact_mut();
+        edit(&mut txn);
+        Bytes::from(txn.encode_diff_v1(&before))
+    }
+
+    async fn call(
+        &self,
+        method: Method,
+        path: &str,
+        user: Uuid,
+        body: Option<Value>,
+    ) -> (StatusCode, Option<String>, Bytes) {
+        let token = auth::start_session(&self.state.pool, user).await.unwrap();
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::COOKIE, format!("fastapiusersauth={token}"));
+        let body = match body {
+            Some(body) => {
+                request = request.header(header::CONTENT_TYPE, "application/json");
+                Body::from(body.to_string())
+            }
+            None => Body::empty(),
+        };
+        let response = ws::router(self.state.clone())
+            .oneshot(request.body(body).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|value| value.to_str().unwrap().to_owned());
+        let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, content_type, bytes)
+    }
+
+    async fn get(&self, path: &str, user: Uuid) -> (StatusCode, Value) {
+        let (status, _, bytes) = self.call(Method::GET, path, user, None).await;
+        (status, json_of(&bytes))
+    }
+
+    async fn history(&self, user: Uuid) -> Vec<Value> {
+        let (status, body) = self.get(&format!("/api/rooms/{ROOM}/history"), user).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["versions"].as_array().unwrap().clone()
+    }
+
+    async fn name(&self, version: u64, user: Uuid, name: &str) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{ROOM}/history/{version}/name");
+        let body = Some(json!({ "name": name }));
+        let (status, _, bytes) = self.call(Method::PUT, &path, user, body).await;
+        (status, json_of(&bytes))
+    }
+}
+
+fn json_of(bytes: &[u8]) -> Value {
+    if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(bytes).expect("the response is not JSON")
+    }
+}
+
+fn event(uuid: &str) -> EventRecord {
+    let at = Timestamp::parse("2020-01-01T00:00:00Z").unwrap();
+    EventRecord::new(uuid, at, at)
+}
+
+fn create(uuid: &'static str) -> impl FnOnce(&mut TransactionMut) {
+    move |txn| {
+        model::create_event(txn, &event(uuid)).unwrap();
+    }
+}
+
+fn catalogue(uuid: &str) -> NewCatalogue {
+    NewCatalogue {
+        uuid: uuid.to_owned(),
+        name: uuid.to_owned(),
+        ..NewCatalogue::default()
+    }
+}
+
+fn ids(versions: &[Value]) -> Vec<u64> {
+    versions
+        .iter()
+        .map(|version| version["id"].as_u64().unwrap())
+        .collect()
+}
+
+/// Alice adds `a`, then Bob changes `a` and adds `b`: versions 0 and 1.
+async fn two_versions() -> Fixture {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    fixture.write(fixture.bob, MINUTE, |txn| {
+        model::set_event_field(txn, "a", &EventField::Confidence(Some(0.5))).unwrap();
+        model::create_event(txn, &event("b")).unwrap();
+    });
+    fixture
+}
+
+#[tokio::test]
+async fn members_list_versions_with_author_emails() {
+    let fixture = two_versions().await;
+
+    let versions = fixture.history(fixture.carol).await;
+
+    assert_eq!(ids(&versions), [1, 0]);
+    assert_eq!(versions[0]["author"], json!(fixture.bob));
+    assert_eq!(versions[0]["author_email"], "bob@x.org");
+    assert_eq!(versions[0]["events_added"], 1);
+    assert_eq!(versions[0]["events_changed"], 1);
+    assert_eq!(versions[0]["started_ms"], MINUTE);
+    assert_eq!(versions[0]["name"], Value::Null);
+    assert_eq!(versions[1]["author_email"], "alice@x.org");
+}
+
+#[tokio::test]
+async fn a_version_just_written_to_an_open_room_is_listed() {
+    let fixture = Fixture::start().await;
+    let room = fixture.state.rooms.get_or_open(ROOM).unwrap();
+    let (out, _inbox) = outbox();
+    room.attach(1, fixture.bob, Role::Editor, out).unwrap();
+    let update = fixture.record(create("a"));
+    room.frame(
+        1,
+        Bytes::from(Message::Sync(SyncMessage::Update(update.to_vec())).encode_v1()),
+    );
+
+    let versions = fixture.history(fixture.alice).await;
+
+    assert_eq!(ids(&versions), [0]);
+    assert_eq!(versions[0]["author_email"], "bob@x.org");
+    assert_eq!(versions[0]["events_added"], 1);
+}
+
+#[tokio::test]
+async fn a_catalogue_filter_narrows_the_list() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, |txn| {
+        model::create_event(txn, &event("a")).unwrap();
+        model::create_catalogue(txn, &catalogue("plain")).unwrap();
+        assert!(model::add_catalogue_events(txn, "plain", &["a".to_owned()]));
+    });
+    fixture.write(fixture.bob, MINUTE, create("b"));
+    fixture.write(fixture.alice, 2 * MINUTE, |txn| {
+        model::create_catalogue(txn, &catalogue("smart")).unwrap();
+        let rule = json!({"all": true});
+        assert!(model::set_catalogue_rule(txn, "smart", Some(&rule)).unwrap());
+    });
+    let filtered = |catalogue: &'static str| {
+        let fixture = &fixture;
+        async move {
+            let path = format!("/api/rooms/{ROOM}/history?catalogue={catalogue}");
+            let (status, body) = fixture.get(&path, fixture.carol).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            ids(body["versions"].as_array().unwrap())
+        }
+    };
+
+    assert_eq!(filtered("plain").await, [0]);
+    assert_eq!(filtered("smart").await, [2, 1, 0]);
+    assert_eq!(filtered("missing").await, Vec::<u64>::new());
+}
+
+#[tokio::test]
+async fn the_diff_of_a_version_names_its_changes() {
+    let fixture = two_versions().await;
+
+    let (status, diff) = fixture
+        .get(&format!("/api/rooms/{ROOM}/history/1"), fixture.carol)
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{diff}");
+    let events = diff["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["uuid"], "a");
+    assert_eq!(events[0]["change"], "changed");
+    assert_eq!(events[0]["fields"], json!(["confidence"]));
+    assert_eq!(events[0]["before"]["confidence"], Value::Null);
+    assert_eq!(events[0]["after"]["confidence"], 0.5);
+    assert_eq!(events[1]["uuid"], "b");
+    assert_eq!(events[1]["change"], "added");
+
+    let (_, first) = fixture
+        .get(&format!("/api/rooms/{ROOM}/history/0"), fixture.carol)
+        .await;
+    assert_eq!(first["events"][0]["change"], "added");
+    assert_eq!(first["events"][0]["before"], Value::Null);
+}
+
+#[tokio::test]
+async fn the_state_of_a_version_replays_to_that_point() {
+    let fixture = two_versions().await;
+
+    let path = format!("/api/rooms/{ROOM}/history/0/state");
+    let (status, content_type, bytes) = fixture.call(Method::GET, &path, fixture.carol, None).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("application/octet-stream"));
+    let past = Doc::new();
+    past.transact_mut()
+        .apply_update(Update::decode_v1(&bytes).unwrap())
+        .unwrap();
+    let txn = past.transact();
+    assert_eq!(model::event(&txn, "a").unwrap().confidence, None);
+    assert!(model::event(&txn, "b").is_none());
+}
+
+#[tokio::test]
+async fn an_editor_names_a_version_and_the_list_shows_it() {
+    let fixture = two_versions().await;
+
+    let (status, body) = fixture.name(0, fixture.bob, "  paper v1 ").await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(fixture.history(fixture.carol).await[1]["name"], "paper v1");
+
+    let (status, _) = fixture.name(0, fixture.alice, "paper v2").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fixture.history(fixture.carol).await[1]["name"], "paper v2");
+
+    let path = format!("/api/rooms/{ROOM}/history/0/name");
+    let (status, _, _) = fixture.call(Method::DELETE, &path, fixture.bob, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fixture.history(fixture.carol).await[1]["name"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_blank_or_long_name_is_refused() {
+    let fixture = two_versions().await;
+
+    for name in ["   ".to_owned(), "x".repeat(101)] {
+        let (status, _) = fixture.name(0, fixture.bob, &name).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{name:?}");
+    }
+    assert_eq!(
+        fixture.name(0, fixture.bob, &"x".repeat(100)).await.0,
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn a_viewer_cannot_name_a_version() {
+    let fixture = two_versions().await;
+
+    let (status, body) = fixture.name(0, fixture.carol, "mine").await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        body["detail"],
+        format!("Room {ROOM} requires the editor role")
+    );
+    assert_eq!(fixture.history(fixture.alice).await[1]["name"], Value::Null);
+}
+
+#[tokio::test]
+async fn strangers_get_404() {
+    let fixture = two_versions().await;
+    let dave = db::create_user(&fixture.state.pool, "dave@x.org", "hunter2", false, true)
+        .await
+        .unwrap();
+
+    for path in ["history", "history/0", "history/0/state"] {
+        let (status, body) = fixture
+            .get(&format!("/api/rooms/{ROOM}/{path}"), dave)
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(body["detail"], format!("Room {ROOM} not found"));
+    }
+    assert_eq!(fixture.name(0, dave, "mine").await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_unknown_version_is_404() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    fixture.write(fixture.alice, 1, create("b"));
+
+    for path in ["history/0", "history/2", "history/2/state"] {
+        let (status, body) = fixture
+            .get(&format!("/api/rooms/{ROOM}/{path}"), fixture.carol)
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(body["detail"], "No such version");
+    }
+    assert_eq!(
+        fixture.name(0, fixture.bob, "x").await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fixture.name(1, fixture.bob, "x").await.0,
+        StatusCode::NO_CONTENT
+    );
+}

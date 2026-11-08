@@ -59,6 +59,7 @@ enum Guard {
     Public,
     SignedIn,
     RoomViewer,
+    RoomEditor,
     RoomOwner,
     GroupMember,
     GroupOwner,
@@ -186,6 +187,45 @@ const ROWS: &[Row] = &[
         "GET",
         "/api/rooms/{room}/catalogues/{catalogue}/events",
         Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .tolerant(),
+    row(
+        "GET",
+        "/api/rooms/{room}/history",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "GET",
+        "/api/rooms/{room}/history/{version}",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .tolerant(),
+    row(
+        "GET",
+        "/api/rooms/{room}/history/{version}/state",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .tolerant(),
+    row(
+        "PUT",
+        "/api/rooms/{room}/history/{version}/name",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any()
+    .tolerant(),
+    row(
+        "DELETE",
+        "/api/rooms/{room}/history/{version}/name",
+        Guard::RoomEditor,
         Style::Api,
     )
     .room_any()
@@ -593,7 +633,7 @@ impl Caps {
             _ => None,
         };
         let group = match kind {
-            Kind::GroupViewer | Kind::GroupEditor => Some(groups::GroupRole::Member),
+            Kind::GroupEditor => Some(groups::GroupRole::Member),
             Kind::GroupOwner => Some(groups::GroupRole::Owner),
             _ => None,
         };
@@ -617,6 +657,7 @@ impl Caps {
             Guard::Public => true,
             Guard::SignedIn => self.signed_in,
             Guard::RoomViewer => self.room.is_some(),
+            Guard::RoomEditor => self.room.is_some_and(|role| role.can_write()),
             Guard::RoomOwner => self.room == Some(Role::Owner),
             Guard::GroupMember => self.group.is_some(),
             Guard::GroupOwner => self.group == Some(groups::GroupRole::Owner),
@@ -681,7 +722,6 @@ impl World {
 
         let group = groups::create(&state, owner, "friends").await.unwrap();
         member(&state, &group.id, group_editor).await;
-        member(&state, &group.id, group_viewer).await;
         member(&state, &group.id, group_owner).await;
         member(&state, &group.id, target).await;
         groups::grant(&state, &room.id, &group.id, owner, Role::Editor)
@@ -748,6 +788,7 @@ impl World {
             .replace("{spare}", &self.spare)
             .replace("{group}", &self.group)
             .replace("{catalogue}", "missing")
+            .replace("{version}", "0")
             .replace("{invitation}", &self.invitation.to_string())
             .replace("{user}", &self.user.to_string())
             .replace("{member}", &self.target.to_string())
@@ -825,6 +866,9 @@ impl World {
             }
             ("PATCH", "/api/rooms/{room}/members/{member}") => {
                 (json, r#"{"role":"viewer"}"#.to_owned())
+            }
+            ("PUT", "/api/rooms/{room}/history/{version}/name") => {
+                (json, r#"{"name":"paper v1"}"#.to_owned())
             }
             ("POST", "/api/rooms/{room}/owner") => {
                 (json, format!(r#"{{"user_id":"{}"}}"#, self.target))

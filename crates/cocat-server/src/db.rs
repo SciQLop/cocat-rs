@@ -827,6 +827,51 @@ pub async fn set_owner(pool: &SqlitePool, room_id: &str, user_id: Uuid) -> Resul
     Ok(())
 }
 
+/// Names a version of the room's history, replacing the name it had.
+pub async fn name_version(
+    pool: &SqlitePool,
+    room_id: &str,
+    version: i64,
+    name: &str,
+    by: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO version_name (room_id, version, name, created_by) VALUES (?, ?, ?, ?)
+         ON CONFLICT (room_id, version) DO UPDATE
+         SET name = excluded.name, created_by = excluded.created_by,
+             created_at = CURRENT_TIMESTAMP",
+    )
+    .bind(room_id)
+    .bind(version)
+    .bind(name)
+    .bind(by.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn unname_version(pool: &SqlitePool, room_id: &str, version: i64) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM version_name WHERE room_id = ? AND version = ?")
+        .bind(room_id)
+        .bind(version)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The named versions of a room, by version.
+pub async fn version_names(
+    pool: &SqlitePool,
+    room_id: &str,
+) -> Result<BTreeMap<i64, String>, DbError> {
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT version, name FROM version_name WHERE room_id = ?")
+            .bind(room_id)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().collect())
+}
+
 async fn insert_membership(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     room_id: &str,

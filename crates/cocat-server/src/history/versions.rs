@@ -2,6 +2,7 @@
 //! by what its records touched.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bytes::Bytes;
@@ -96,14 +97,35 @@ pub fn versions(records: &[Bytes], stamps: &[Option<Stamp>]) -> Vec<Version> {
         .map(|index| stamps.get(index).copied().flatten())
         .collect();
     let mut touched = touched_by_records(records).into_iter();
-    let mut versions = Vec::new();
-    let mut first = 0;
-    for run in slots.chunk_by(continues) {
-        versions.push(version(first, run, merge(touched.by_ref().take(run.len()))));
-        first += run.len();
-    }
+    let mut versions: Vec<Version> = spans(&slots)
+        .into_iter()
+        .map(|span| {
+            let run = &slots[span.clone()];
+            version(span.start, run, merge(touched.by_ref().take(run.len())))
+        })
+        .collect();
     versions.reverse();
     versions
+}
+
+/// The records of each version, oldest first: the grouping alone, without a replay.
+pub fn spans(slots: &[Option<Stamp>]) -> Vec<Range<usize>> {
+    let mut start = 0;
+    slots
+        .chunk_by(continues)
+        .map(|run| {
+            let span = start..start + run.len();
+            start = span.end;
+            span
+        })
+        .collect()
+}
+
+/// The records of the version whose last record is `id`.
+pub fn span(slots: &[Option<Stamp>], id: u64) -> Option<Range<usize>> {
+    spans(slots)
+        .into_iter()
+        .find(|span| index(span.end - 1) == id)
 }
 
 fn observe(
@@ -521,6 +543,19 @@ mod tests {
         room.write(Some((user(2), 0)), create("c"));
 
         assert_eq!(ranges(&room.versions()), [(2, 2), (1, 1), (0, 0)]);
+    }
+
+    #[test]
+    fn a_span_is_found_by_its_last_record_only() {
+        let mut room = Room::default();
+        room.write(Some((user(1), 0)), create("a"));
+        room.write(Some((user(1), 1)), create("b"));
+        room.write(Some((user(2), 2)), create("c"));
+
+        assert_eq!(span(&room.stamps, 1), Some(0..2));
+        assert_eq!(span(&room.stamps, 2), Some(2..3));
+        assert_eq!(span(&room.stamps, 0), None);
+        assert_eq!(span(&room.stamps, 3), None);
     }
 
     #[test]
