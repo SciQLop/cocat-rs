@@ -17,6 +17,7 @@ use crate::views::projects::Projects;
 use crate::views::public::PublicPage;
 use crate::views::sidebar::Sidebar;
 use crate::views::submissions::{MySubmissionsPage, SubmissionPage, SubmissionsPage};
+use crate::views::transfer::{ImportDialog, Importer, drop_on};
 use cocat_core::model;
 
 pub fn start() {
@@ -96,6 +97,9 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let selected = RwSignal::new(None::<Row>);
     let screen = RwSignal::new(None);
+    let importer = Importer::new();
+    provide_context(importer);
+    let (drag_over, drop) = drop_on(importer, editor);
     let panel = Memo::new(move |_| selected.with(Shown::of));
     Effect::new(move |_| {
         let editing = panel.with(|shown| shown.event().map(str::to_owned));
@@ -121,6 +125,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     view! {
         <Header shown/>
         <NoticeBar/>
+        {move || importer.is_open().then(|| view! { <ImportDialog/> })}
         {move || if in_history.get() {
             view! { <HistoryPage scope picked/> }.into_any()
         } else if in_groups.get() {
@@ -131,7 +136,7 @@ fn App(config: RoomConfig) -> impl IntoView {
             view! {
                 <div class="browser">
                     <Sidebar shown/>
-                    <main class="content">
+                    <main class="content" on:dragover=drag_over on:drop=drop>
                         <CataloguePage shown selected screen/>
                     </main>
                     <EventPanel selected shown=panel route=shown screen/>

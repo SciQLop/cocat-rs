@@ -10,6 +10,7 @@ together, in the browser, in SciQLop and from Python.</p>
     <li><a href="#projects">Projects</a></li>
     <li><a href="#catalogues">Catalogues and events</a></li>
     <li><a href="#statistics">Statistics</a></li>
+    <li><a href="#import-export">Import and export</a></li>
     <li><a href="#smart-catalogues">Smart catalogues</a></li>
     <li><a href="#history">History</a></li>
     <li><a href="#sharing">Sharing</a></li>
@@ -72,6 +73,38 @@ the filter and the period picked on the timeline.</p>
 </ul>
 <p><strong>More statistics</strong> opens the other sections. The page remembers which ones
 you keep open, in this browser.</p>
+</section>
+
+<section>
+<h2 id="import-export">Import and export</h2>
+<p>A catalogue can leave the project as a file, and a file can bring catalogues in.</p>
+<p><strong>To export one catalogue</strong>, open it and use <strong>More → Export…</strong>.
+Pick a format:</p>
+<ul>
+  <li><strong>VOTable (.xml)</strong>: the astronomy table format. AMDA, TOPCAT and Python
+  cocat read it. Every event must carry the same attributes.</li>
+  <li><strong>tscat JSON (.json)</strong>: the file tscat writes. It keeps the ids, so a file
+  imported again updates the same events. tscat keeps a confidence as a rating from 1 to 10,
+  so it comes back rounded to one decimal. It does not keep the status or the comment.</li>
+  <li><strong>CSV (.csv)</strong>: for a spreadsheet. One row per event: start, stop, tags,
+  status, confidence, author, comment, then one column per attribute. Times are UTC.</li>
+</ul>
+<p>A smart catalogue is saved with the events it holds now, without its rule.</p>
+<p><strong>To export several catalogues</strong> in one VOTable or tscat JSON file, use
+<strong>Export catalogues…</strong> in the project menu and tick the ones you want.</p>
+<p><strong>To import a file</strong>, use <strong>Import…</strong> in the project menu or
+the <strong>+</strong> above the catalogues, or drop the file on the events. It takes a
+VOTable or a tscat JSON file. The page reads it first and says what it will do, for example
+"Adds 2 catalogues and 300 events, updates 5 events (same ids)". Nothing changes until you
+press <strong>Import</strong>.</p>
+<ul>
+  <li>An event with the same id as one in the project is updated, not copied.</li>
+  <li>A VOTable always makes new catalogues. A tscat JSON file updates a catalogue with the
+  same id.</li>
+  <li>The whole import is one change, so the history shows one version and you can restore
+  the project to the version before it.</li>
+</ul>
+<p>Readers can export. Only editors can import.</p>
 </section>
 
 <section>

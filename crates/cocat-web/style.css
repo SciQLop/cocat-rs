@@ -1092,3 +1092,27 @@ a.button { text-decoration: none; }
 .section-title { margin: 8px 0 0; font-size: 17px; }
 .submission-page .diff-scroll { max-height: none; }
 .review-form { max-width: 640px; }
+
+/* Import and export */
+
+.add-menu summary.add-catalogue { width: 28px; height: 28px; padding: 0; border: 0; background: none; color: var(--accent); justify-content: center; }
+.add-menu summary.add-catalogue:hover { background: var(--chip); }
+.add-menu .menu { min-width: 180px; }
+.formats, .export-list { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.formats legend, .export-list legend { padding: 0; margin-bottom: 6px; }
+.name-form :is(.formats, .export-list) label { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.name-form :is(.formats, .export-list) input { width: auto; height: auto; margin: 0; padding: 0; flex: none; }
+.export-list { max-height: 40vh; overflow-y: auto; }
+.export-list .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface-quiet);
+}
+.name-form .drop-zone input[type="file"] { width: 100%; height: auto; padding: 0; border: 0; background: none; }
+.import-summary { font-weight: 600; }

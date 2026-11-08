@@ -22,6 +22,7 @@ pub mod sharing;
 pub mod stats;
 pub mod submissions;
 pub mod sync;
+pub mod transfer;
 
 #[cfg(test)]
 mod fixture;

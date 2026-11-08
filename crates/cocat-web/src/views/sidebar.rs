@@ -5,6 +5,7 @@ use crate::edit;
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
+use crate::views::transfer::Importer;
 
 #[component]
 pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
@@ -42,11 +43,18 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     }
 }
 
-/// The "+" of the list, and the form it opens.
+/// The "+" of the list: a new catalogue, with the form it opens, or a file to import.
 #[component]
 fn NewCatalogue() -> impl IntoView {
     let room = expect_context::<Room>();
+    let importer = expect_context::<Importer>();
     let open = RwSignal::new(false);
+    let menu = NodeRef::<leptos::html::Details>::new();
+    let close = move || {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+    };
     let submit = move |name: String| {
         let author = room.config.user_email.clone();
         let made = room.write(|txn| edit::new_catalogue(txn, &name, &author))?;
@@ -55,11 +63,16 @@ fn NewCatalogue() -> impl IntoView {
     };
     let submit = StoredValue::new_local(submit);
     view! {
-        <button type="button" class="icon add-catalogue" aria-label="New catalogue"
-            aria-expanded=move || open.get().to_string() on:click=move |_| open.update(|open| *open = !*open)>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-        </button>
+        <details class="menu-button add-menu" node_ref=menu>
+            <summary class="icon add-catalogue" aria-label="Add a catalogue">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            </summary>
+            <div class="menu">
+                <button type="button" on:click=move |_| { close(); open.set(true); }>"New catalogue…"</button>
+                <button type="button" on:click=move |_| { close(); importer.open(None); }>"Import a file…"</button>
+            </div>
+        </details>
         <Show when=move || open.get()>
             <div class="sidebar-form">
                 <NameForm label="Name of the new catalogue" action="Create" initial="" open

@@ -15,6 +15,7 @@ use crate::views::rule_editor::RuleEditor;
 use crate::views::submissions::{ProposeForm, SubmitForm, UpdateForm};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
+use crate::views::transfer::ExportForm;
 use crate::views::trash::TrashedCatalogues;
 use cocat_core::room_id::is_public_id;
 use leptos::task::spawn_local;
@@ -139,7 +140,7 @@ pub fn CataloguePage(
                 </label>
                 <ColumnPicker keys columns picked/>
                 {public.then(|| view! { <ProposeButton shown form/> })}
-                {room.can_write().then(|| view! { <Actions shown selected form proposals/> })}
+                <Actions shown selected form proposals/>
             </div>
         </div>
         {move || match (form.get(), shown.get()) {
@@ -150,6 +151,7 @@ pub fn CataloguePage(
                 .with(|listed| proposal_for(listed, &uuid).cloned())
                 .map(|proposal| view! { <UpdateForm uuid proposal form/> }.into_any()),
             (Form::Propose, Route::Catalogue(_)) => Some(view! { <ProposeForm form/> }.into_any()),
+            (Form::Export, Route::Catalogue(uuid)) => Some(view! { <ExportForm uuid form/> }.into_any()),
             _ => None,
         }}
         {move || (shown.get() == Route::Trash).then(|| view! {

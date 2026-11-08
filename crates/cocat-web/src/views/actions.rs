@@ -22,6 +22,7 @@ pub enum Form {
     Submit,
     Update,
     Propose,
+    Export,
 }
 
 #[component]
@@ -32,6 +33,7 @@ pub fn Actions(
     proposals: RwSignal<Vec<Proposal>>,
 ) -> impl IntoView {
     let public = is_public_id(&expect_context::<Room>().config.room_id);
+    let editor = expect_context::<Room>().can_write();
     let room = StoredValue::new_local(expect_context::<Room>());
     let error: Error = RwSignal::new(None);
     let catalogue = Memo::new(move |_| match shown.get() {
@@ -65,7 +67,7 @@ pub fn Actions(
         }
     };
     view! {
-        <Show when=move || smart.get() == Some(true)>
+        <Show when=move || editor && smart.get() == Some(true)>
             <button type="button" class="button" aria-pressed=move || (form.get() == Form::Rule).to_string()
                 on:click=move |_| toggle(Form::Rule)>"Edit rule"</button>
         </Show>
@@ -73,20 +75,27 @@ pub fn Actions(
             <details class="menu-button" node_ref=menu>
                 <summary aria-label="More actions">"More"</summary>
                 <div class="menu">
-                    <Show when=move || smart.get() == Some(true)
-                        fallback=move || view! { <button type="button" on:click=move |_| toggle(Form::Rule)>"Add a rule…"</button> }>
-                        <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
-                    </Show>
-                    {(!public).then(|| view! {
+                    {editor.then(|| view! {
+                        <Show when=move || smart.get() == Some(true)
+                            fallback=move || view! { <button type="button" on:click=move |_| toggle(Form::Rule)>"Add a rule…"</button> }>
+                            <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
+                        </Show>
+                    })}
+                    <button type="button" on:click=move |_| toggle(Form::Export)>"Export…"</button>
+                    {(editor && !public).then(|| view! {
                         <button type="button" on:click=move |_| toggle(Form::Submit)>"Submit to Public catalogues…"</button>
                     })}
-                    {move || linked().map(|name| view! {
+                    {move || linked().filter(|_| editor).map(|name| view! {
                         <button type="button" on:click=move |_| toggle(Form::Update)>{format!("Submit as an update to “{name}”…")}</button>
                     })}
-                    <button type="button" class="danger" on:click=trash>"Move catalogue to trash…"</button>
+                    {editor.then(|| view! {
+                        <button type="button" class="danger" on:click=trash>"Move catalogue to trash…"</button>
+                    })}
                 </div>
             </details>
-            <button type="button" class="button primary" on:click=new_event>"New event"</button>
+            {editor.then(|| view! {
+                <button type="button" class="button primary" on:click=new_event>"New event"</button>
+            })}
         </Show>
         {error_line(error)}
     }

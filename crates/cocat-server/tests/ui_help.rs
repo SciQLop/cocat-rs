@@ -5,10 +5,11 @@ use cocat_server::groups;
 use ui_support::{Fixture, PUBLIC_URL, body_text};
 
 const MEMBER: &str = "member@example.org";
-const ANCHORS: [&str; 12] = [
+const ANCHORS: [&str; 13] = [
     "projects",
     "catalogues",
     "statistics",
+    "import-export",
     "smart-catalogues",
     "history",
     "sharing",
@@ -206,4 +207,16 @@ async fn the_statistics_help_says_what_coverage_and_gaps_mean() {
     assert!(statistics.contains("Coverage"), "{statistics}");
     assert!(statistics.contains("once"), "{statistics}");
     assert!(statistics.contains("Gaps"), "{statistics}");
+}
+
+#[tokio::test]
+async fn the_import_help_says_which_files_and_what_updates() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let section = section_text(&help, "import-export");
+    for words in ["VOTable", "tscat JSON", "CSV", "same id", "one change"] {
+        assert!(section.contains(words), "{words}: {section}");
+    }
 }

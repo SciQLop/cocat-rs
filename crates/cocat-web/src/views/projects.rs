@@ -10,9 +10,11 @@ use crate::history::browse_href;
 use crate::projects::{Actions, Arrival, Project, arrival, title};
 use crate::route::Route;
 use crate::session::RoomConfig;
+use crate::state::Room;
 use crate::views::controls::{Hint, go_to};
 use crate::views::notice::Notice;
 use crate::views::project_dialogs::{Dialog, ProjectDialog};
+use crate::views::transfer::Importer;
 
 /// The visitor's projects and the one the page holds. The page shows the open one; changing
 /// its id brings up a fresh room, connection and views. The notice is about the project the
@@ -133,6 +135,8 @@ pub fn ProjectMenu() -> impl IntoView {
     let projects = expect_context::<Projects>();
     let menu = NodeRef::<Details>::new();
     let dialog = RwSignal::new(None::<Dialog>);
+    let editor = expect_context::<Room>().can_write();
+    let importer = expect_context::<Importer>();
     let open_id = move || projects.open.with(|config| config.room_id.clone());
     let name = move || projects.open.with(|config| config.room_name.clone());
     let actions = move || {
@@ -196,6 +200,11 @@ pub fn ProjectMenu() -> impl IntoView {
                 <Show when=move || actions().delete>
                     <button type="button" role="menuitem" class="danger" on:click=move |_| pick(Dialog::Delete)>"Delete project…"</button>
                 </Show>
+                <hr/>
+                {editor.then(|| view! {
+                    <button type="button" role="menuitem" on:click=move |_| { close(); importer.open(None); }>"Import…"</button>
+                })}
+                <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Export)>"Export catalogues…"</button>
                 <hr/>
                 <button type="button" role="menuitem" on:click=move |_| { close(); go_to(&Route::Groups.hash()); }>"Groups…"</button>
                 <Hint text="A project is a set of catalogues shared with the same people." anchor="projects" topic="projects"/>

@@ -9,6 +9,7 @@ use crate::api::{self, ApiError};
 use crate::projects::delete_confirmed;
 use crate::views::controls::{Error, Hint, error_line};
 use crate::views::projects::Projects;
+use crate::views::transfer::ExportDialog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
@@ -16,6 +17,7 @@ pub enum Dialog {
     Rename,
     Leave,
     Delete,
+    Export,
 }
 
 /// A modal `<dialog>`: the browser keeps focus inside it and closes it on Escape.
@@ -32,6 +34,7 @@ pub fn ProjectDialog(which: Dialog, dialog: RwSignal<Option<Dialog>>) -> impl In
         Dialog::Rename => view! { <Rename dialog/> }.into_any(),
         Dialog::Leave => view! { <Leave dialog/> }.into_any(),
         Dialog::Delete => view! { <Delete dialog/> }.into_any(),
+        Dialog::Export => view! { <ExportDialog dialog/> }.into_any(),
     };
     view! {
         <dialog class="project-dialog" node_ref=node on:close=move |_| dialog.set(None)>
