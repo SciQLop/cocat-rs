@@ -77,7 +77,7 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
         <li>
             <button type="button" class="public-row" on:click=move |_| projects.switch(&project)>
                 <span class="name">{catalogue.name.clone()}</span>
-                {catalogue.description.clone().map(|text| view! { <span class="description">{text}</span> })}
+                {catalogue.description.clone().map(|text| view! { <span class="description" title=text.clone()>{text.clone()}</span> })}
                 <span class="meta">
                     {catalogue.source.clone().map(|source| view! { <span class="source">{source}</span> })}
                     {catalogue.events().map(|events| view! { <span>{events}</span> })}

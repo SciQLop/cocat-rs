@@ -1049,6 +1049,9 @@ a.button { text-decoration: none; }
 .public-row:hover { border-color: var(--accent); }
 .public-row:focus-visible { outline: 0; box-shadow: var(--focus); }
 .public-row .name { font-weight: 600; overflow-wrap: anywhere; }
-.public-row .description { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.public-row .description {
+  color: var(--muted); font-size: 13px; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
 .public-row .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
 .public-row .source { color: var(--accent); font-weight: 500; }
