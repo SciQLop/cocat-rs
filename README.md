@@ -120,6 +120,13 @@ upgrade with HTTP 426: it comes from a client of the first layout (see
 [Project layout v2](#project-layout-v2)). A handshake without a valid cookie, or from a user who is
 not a member of the project, is refused before the upgrade with HTTP 403.
 
+The upgrade answer (HTTP 101) carries a `cocat-role` header: `owner`, `editor` or `viewer`, the
+role the socket was admitted with. The server drops the updates of a viewer, so a client
+uses the header to refuse a viewer's edits before they reach its document, and to drop
+local changes a viewer's cache holds that the server never took (see the Python package's
+read-only projects). Clients that do not read it work as before. A role change closes the
+member's sockets with 1008, so the next handshake reports the new role.
+
 ## Catalogue API
 
 Read-only JSON and VOTable over plain HTTP, for tools that do not speak the sync protocol

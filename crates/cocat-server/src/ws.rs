@@ -7,12 +7,12 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use cocat_core::SUBPROTOCOL;
 use cocat_core::role::Role;
+use cocat_core::{ROLE_HEADER, SUBPROTOCOL};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
@@ -82,10 +82,15 @@ async fn room_socket(
         Some(admitted) => admitted,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
-    upgrade
+    let mut response = upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| bridge(socket, state, room_id, user, role))
+        .on_upgrade(move |socket| bridge(socket, state, room_id, user, role));
+    response.headers_mut().insert(
+        HeaderName::from_static(ROLE_HEADER),
+        HeaderValue::from_static(role.as_str()),
+    );
+    response
 }
 
 /// Python cocat and the old SciQLop plugin offer no subprotocol and would write the first

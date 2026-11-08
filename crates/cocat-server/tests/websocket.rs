@@ -277,6 +277,30 @@ async fn a_member_receives_the_sync_step2() {
 }
 
 #[tokio::test]
+async fn the_upgrade_answer_names_the_role() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let viewer = fixture.user("viewer@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-role", "Role")
+        .await
+        .unwrap();
+    db::add_member(&fixture.pool, "room-role", viewer, Role::Viewer)
+        .await
+        .unwrap();
+
+    for (user, role) in [(owner, "owner"), (viewer, "viewer")] {
+        let request = fixture.request("room-role", Some(&fixture.token(user).await));
+        let (_, response) = connect_async(request).await.unwrap();
+        assert_eq!(
+            response.headers()[cocat_core::ROLE_HEADER]
+                .to_str()
+                .unwrap(),
+            role
+        );
+    }
+}
+
+#[tokio::test]
 async fn an_editor_update_reaches_another_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
