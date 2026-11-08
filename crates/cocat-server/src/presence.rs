@@ -17,9 +17,11 @@ use yrs::updates::encoder::Encode;
 
 use crate::room::ClientId;
 
-/// Readable on both themes; an account keeps its colour across sessions and rooms.
+/// Blue, orange, teal, purple, green, brown, pink and slate: each carries white text and
+/// shows on both themes, and no two look alike. An account keeps its colour across sessions
+/// and rooms.
 const COLORS: [&str; 8] = [
-    "#2753b8", "#7c4dcc", "#c26a00", "#1f7a3d", "#b42318", "#0e7490", "#9d174d", "#4d5b16",
+    "#2a5bd7", "#bf5300", "#1b7f72", "#8e3bd0", "#49700f", "#835a3c", "#b8246f", "#555d72",
 ];
 
 /// One client's awareness: the id it speaks for and its last state, `None` once it said
@@ -138,7 +140,44 @@ fn frame(entries: impl IntoIterator<Item = (ClientID, AwarenessUpdateEntry)>) ->
 
 #[cfg(test)]
 mod tests {
+    use palette::color_difference::{EuclideanDistance, Wcag21RelativeContrast};
+    use palette::{IntoColor, Oklab, Srgb};
+
     use super::{COLORS, color, with_user};
+
+    /// The page's `--surface` in the dark theme.
+    const DARK_SURFACE: &str = "#181e29";
+
+    fn srgb(hex: &str) -> Srgb {
+        hex.parse::<Srgb<u8>>().unwrap().into_format()
+    }
+
+    #[test]
+    fn each_colour_carries_white_text_and_shows_on_both_themes() {
+        let white = Srgb::new(1.0, 1.0, 1.0);
+        for hex in COLORS {
+            let colour = srgb(hex);
+            assert!(
+                colour.relative_contrast(white) >= 4.5,
+                "{hex} under white text"
+            );
+            assert!(
+                colour.relative_contrast(srgb(DARK_SURFACE)) >= 2.5,
+                "{hex} on dark"
+            );
+        }
+    }
+
+    #[test]
+    fn no_two_colours_look_alike() {
+        let oklab = |hex: &str| -> Oklab { srgb(hex).into_linear().into_color() };
+        for (index, a) in COLORS.iter().enumerate() {
+            for b in &COLORS[index + 1..] {
+                let distance = oklab(a).distance(oklab(b));
+                assert!(distance >= 0.1, "{a} and {b} are {distance:.3} apart");
+            }
+        }
+    }
 
     #[test]
     fn the_user_field_is_the_servers() {

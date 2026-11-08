@@ -44,6 +44,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
 
 [dev-dependencies]
+palette = "0.7"
 proptest = "1"
 tempfile = "3"
 tokio-tungstenite = "0.30"
