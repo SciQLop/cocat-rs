@@ -695,3 +695,44 @@ async fn after_an_accepted_update_the_same_copy_submits_again_without_being_stal
     assert_eq!(detail["stale"], false, "the copy holds what was accepted");
     assert_eq!(changes(&detail), [pair("p1", "changed")]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_curators_accepting_the_same_title_at_once_get_two_public_catalogues() {
+    let world = std::sync::Arc::new(World::start().await);
+    world
+        .edit(&world.project, world.author, |txn| {
+            catalogue(txn, "mine", &["a", "b"])
+        })
+        .await;
+    let second = db::create_user(&world.state.pool, "second@example.org", "pwd", false, true)
+        .await
+        .unwrap();
+    db::set_curator(&world.state.pool, second, true)
+        .await
+        .unwrap();
+    for round in 0..20 {
+        let title = format!("Twins {round}");
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let body = json!({"room": world.project, "catalogue": "mine", "title": title});
+            let (status, made) = world.submit(body).await;
+            assert_eq!(status, StatusCode::CREATED, "{made}");
+            ids.push(made["id"].as_i64().unwrap());
+        }
+
+        let accepting = [(world.curator, ids[0]), (second, ids[1])].map(|(curator, id)| {
+            let world = world.clone();
+            tokio::spawn(async move { world.review(curator, id, json!({"accept": true})).await })
+        });
+        let mut targets = Vec::new();
+        for task in accepting {
+            let (status, decided) = task.await.unwrap();
+            assert_eq!(status, StatusCode::OK, "round {round}: {decided}");
+            targets.push(decided["target"].as_str().unwrap().to_owned());
+        }
+
+        targets.sort();
+        let key = format!("public.twins-{round}");
+        assert_eq!(targets, [key.clone(), format!("{key}-2")]);
+    }
+}

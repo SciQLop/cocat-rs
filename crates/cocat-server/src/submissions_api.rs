@@ -689,16 +689,7 @@ async fn new_public(
     snapshot: Vec<u8>,
     author: Uuid,
 ) -> Result<String, ApiError> {
-    let room = PublicRoom {
-        id: free_id(state, &submission.title).await?,
-        name: submission.title.clone(),
-        folder: submission.folder.clone(),
-        source: None,
-        description: submission.description.clone(),
-        public_count: None,
-        counted_file: None,
-    };
-    db::create_public_room(&state.pool, &room, curator).await?;
+    let room = create_public(state, submission, curator).await?;
     let allowance = state.rooms.allowance(&state.pool, &room.id).await?;
     let written = state
         .rooms
@@ -714,21 +705,31 @@ async fn new_public(
     Ok(room.id)
 }
 
-/// `public.<slug of the title>`, with `-2`, `-3`… when taken.
-// simplify: two curators accepting two submissions of one title at the same instant can both
-// pick the same free id, and the second insert fails; reserve the id in the insert itself if
-// that ever shows.
-async fn free_id(state: &AppState, title: &str) -> Result<String, ApiError> {
-    let key = key(title);
+/// The public catalogue `public.<slug of the title>`, with `-2`, `-3`… when taken. Taken is
+/// what the insert meets, so two curators accepting one title at once get one id each.
+async fn create_public(
+    state: &AppState,
+    submission: &Submission,
+    curator: Uuid,
+) -> Result<PublicRoom, ApiError> {
+    let key = key(&submission.title);
     let mut tried = 1;
     loop {
         let candidate = match tried {
             1 => key.clone(),
             n => format!("{key}-{n}"),
         };
-        let id = public_id(&candidate).map_err(|_| ApiError::Internal)?;
-        if !db::room_exists(&state.pool, &id).await? {
-            return Ok(id);
+        let room = PublicRoom {
+            id: public_id(&candidate).map_err(|_| ApiError::Internal)?,
+            name: submission.title.clone(),
+            folder: submission.folder.clone(),
+            source: None,
+            description: submission.description.clone(),
+            public_count: None,
+            counted_file: None,
+        };
+        if db::create_public_room(&state.pool, &room, curator).await? {
+            return Ok(room);
         }
         tried += 1;
     }

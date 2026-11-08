@@ -120,13 +120,12 @@ async fn create(
         return Err(ApiError::Forbidden(NOT_A_CURATOR.to_owned()));
     }
     let room = checked(body)?;
-    if db::room_exists(&state.pool, &room.id).await? {
+    if !db::create_public_room(&state.pool, &room, user.id).await? {
         return Err(ApiError::Conflict(format!(
             "A public catalogue already has the id {}",
             room.id
         )));
     }
-    db::create_public_room(&state.pool, &room, user.id).await?;
     Ok((
         StatusCode::CREATED,
         Json(out(&state, room, Role::Editor).await),

@@ -848,12 +848,14 @@ pub struct PublicRoom {
 }
 
 /// Makes a public catalogue: no owner and no members, so `created_by` only records who.
+/// Makes the public room; false when a room has its id already. The insert itself tells, so
+/// two callers racing for one id cannot both get it.
 pub async fn create_public_room(
     pool: &SqlitePool,
     room: &PublicRoom,
     by: Uuid,
-) -> Result<(), DbError> {
-    sqlx::query(
+) -> Result<bool, DbError> {
+    let made = sqlx::query(
         "INSERT INTO room (id, name, created_by, public, folder, source, description)
          VALUES (?, ?, ?, TRUE, ?, ?, ?)",
     )
@@ -864,8 +866,12 @@ pub async fn create_public_room(
     .bind(&room.source)
     .bind(&room.description)
     .execute(pool)
-    .await?;
-    Ok(())
+    .await;
+    match made {
+        Ok(_) => Ok(true),
+        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Every public catalogue, by folder then name.

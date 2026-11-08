@@ -1199,9 +1199,11 @@ async fn public_catalogue(state: &AppState, by: Uuid) -> String {
         public_count: None,
         counted_file: None,
     };
-    db::create_public_room(&state.pool, &room, by)
-        .await
-        .unwrap();
+    assert!(
+        db::create_public_room(&state.pool, &room, by)
+            .await
+            .unwrap()
+    );
     room.id
 }
 

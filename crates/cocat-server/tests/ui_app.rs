@@ -460,9 +460,11 @@ async fn browse_opens_a_public_catalogue_for_everyone_signed_in() {
         public_count: None,
         counted_file: None,
     };
-    db::create_public_room(&fixture.state.pool, &room, curator)
-        .await
-        .unwrap();
+    assert!(
+        db::create_public_room(&fixture.state.pool, &room, curator)
+            .await
+            .unwrap()
+    );
 
     for (user, role) in [(reader, "viewer"), (curator, "editor")] {
         let token = fixture.token(user).await;
