@@ -227,7 +227,7 @@ is not public has a `public.` id (only an id imported from Python can).
 
 Every account reads a public catalogue, so nobody's email shows there. The socket relays no
 presence in either direction. A reader's history names each author "a curator" or
-"a contributor"; curators still see emails. A submission's author sees its reviewer as
+"a contributor", with no account id; curators still see emails and ids. A submission's author sees its reviewer as
 "a curator".
 
 ### Submissions

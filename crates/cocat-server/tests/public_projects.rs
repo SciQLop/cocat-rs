@@ -746,6 +746,22 @@ async fn a_readers_history_names_curators_and_contributors_never_their_emails() 
         authors(&curated),
         ["reader@example.org", "curator@example.org"]
     );
+    let author_ids = |history: &Value| -> Vec<Value> {
+        history["versions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|version| version["author"].clone())
+            .collect()
+    };
+    assert_eq!(author_ids(&read), [Value::Null, Value::Null]);
+    assert_eq!(
+        author_ids(&curated),
+        [
+            json!(world.reader.to_string()),
+            json!(world.curator.to_string())
+        ]
+    );
 }
 
 /// What `set-curator --revoke` does from its own process: it can only reach the database, so

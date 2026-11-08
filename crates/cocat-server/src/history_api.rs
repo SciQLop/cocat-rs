@@ -138,7 +138,8 @@ async fn list(
         versions.retain(|version| version.events.contains(&event));
     }
     let names = db::version_names(&state.pool, &room_id).await?;
-    let emails = if db::is_public(&state.pool, &room_id).await? && !role.can_write() {
+    let anonymous = db::is_public(&state.pool, &room_id).await? && !role.can_write();
+    let emails = if anonymous {
         author_labels(&state, &versions).await?
     } else {
         author_emails(&state, &versions).await?
@@ -146,6 +147,7 @@ async fn list(
     let versions = versions
         .into_iter()
         .map(|version| view(version, &names, &commits, &emails))
+        .map(|view| author_unless_anonymous(anonymous, view))
         .collect();
     Ok(Json(History { versions }))
 }
@@ -709,6 +711,14 @@ fn view(
         message: commit.cloned().flatten(),
         version,
     }
+}
+
+/// A public catalogue's reader gets no account id either: it would tell authors apart.
+fn author_unless_anonymous(anonymous: bool, mut view: VersionView) -> VersionView {
+    if anonymous {
+        view.version.author = None;
+    }
+    view
 }
 
 fn no_such_version() -> ApiError {
