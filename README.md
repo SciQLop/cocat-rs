@@ -1,6 +1,6 @@
 # cocat-rs
 
-<img src="docs/logo.png" alt="CoCat" height="160">
+<img src="docs/banner.png" alt="CoCat, the cosmic collaboration cat" width="500">
 
 The Rust server for cocat: projects over the Yjs sync protocol, the project lifecycle, and the
 seeding CLI. The Python `cocat` keeps running until this server is feature-complete; the
