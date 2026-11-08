@@ -12,6 +12,7 @@ mod login;
 mod oauth;
 mod reset;
 mod room;
+mod room_page;
 mod rooms;
 mod signup;
 mod verify;

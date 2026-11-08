@@ -57,7 +57,7 @@ async fn the_created_message_reaches_the_login_page() {
 
 #[tokio::test]
 async fn sign_up_without_a_mailer_lands_in_the_app() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
 
     let response = fixture.sign_up(NEW, PASSWORD).await;
 

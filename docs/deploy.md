@@ -85,7 +85,11 @@ so systemd restarts it after a crash.
 The browser app (`crates/cocat-web`) is a static bundle that trunk builds; the image builds it
 and copies it to `/usr/share/cocat/web`, and `COCAT_WEB_DIR` points the server at it. Without
 that variable, or with a directory missing its `index.html`, a project's `/browse` page answers
-503 "The catalogue browser is not installed on this server"; everything else works.
+503 "The catalogue browser is not installed on this server". Signing in then lands on the
+server's own pages: the projects list (`/ui/rooms`), each project's page (`/ui/rooms/<id>`:
+members, groups, invitations and share links) and the groups pages (`/ui/groups`). With the
+bundle installed, those pages open the app instead, where the Share dialog and the groups view
+do the same work.
 
 The page tells the app where its project's websocket is. With `COCAT_PUBLIC_URL` set that is an
 absolute `wss://` (or `ws://`) URL under `COCAT_PROXY_PREFIX`; without, a path the browser

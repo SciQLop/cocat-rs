@@ -410,7 +410,7 @@ async fn remove_from_foreign_group_refused() {
 /// The group pages are the app's groups view now; they stay for someone with no project.
 #[tokio::test]
 async fn with_a_project_the_group_pages_open_the_app() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let owner = fixture.verified(OWNER).await;
     let token = fixture.token(owner).await;
     let id = group_owned_by(&fixture, owner, "friends").await;

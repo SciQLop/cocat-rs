@@ -91,11 +91,15 @@ pub(crate) async fn open(
     }
 }
 
-/// The app's page for the visitor, or `None` when they have no project it could open.
+/// The app's page for the visitor, or `None` when the app is not installed or they have no
+/// project it could open: the server's own pages then manage projects and groups.
 pub(crate) async fn entry(
     state: &AppState,
     user: &db::User,
 ) -> Result<Option<String>, Box<Response>> {
+    if !installed(state).await {
+        return Ok(None);
+    }
     match db::list_user_rooms(&state.pool, user.id).await {
         Ok(rooms) => Ok(opening(&rooms).map(|room| format!("/rooms/{}/browse", segment(&room.id)))),
         Err(error) => {
@@ -110,6 +114,16 @@ fn opening(rooms: &[(db::RoomRow, Role)]) -> Option<&db::RoomRow> {
         *role == Role::Owner && db::PERSONAL_ROOM_NAMES.contains(&room.name.as_str())
     });
     personal.or(rooms.first()).map(|(room, _)| room)
+}
+
+/// Whether a bundle is installed, so the app can open.
+pub(crate) async fn installed(state: &AppState) -> bool {
+    match &state.web_dir {
+        Some(dir) => tokio::fs::try_exists(dir.join("index.html"))
+            .await
+            .unwrap_or(false),
+        None => false,
+    }
 }
 
 /// The bundle's `index.html`, or `None` when no bundle is installed.

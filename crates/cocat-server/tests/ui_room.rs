@@ -84,7 +84,7 @@ async fn not_found_for_strangers() {
 
 #[tokio::test]
 async fn every_member_is_sent_to_the_share_dialog() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(MEMBER).await;
     let id = room_owned_by(&fixture, user, "lab").await;
     for (email, role) in [(OTHER, Role::Editor), (GUEST, Role::Viewer)] {
@@ -102,6 +102,73 @@ async fn every_member_is_sent_to_the_share_dialog() {
         assert_eq!(response.status(), StatusCode::SEE_OTHER, "{email}");
         assert_eq!(location(&response), format!("/ui/rooms/{id}/browse#share"));
     }
+}
+
+/// Without the bundle the app has no Share dialog, so the old page stays.
+#[tokio::test]
+async fn without_the_bundle_the_owner_manages_the_project_on_its_page() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+    let id = room_owned_by(&fixture, user, "lab").await;
+    let member = member_of(&fixture, &id, OTHER, Role::Editor).await;
+
+    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
+
+    assert!(page.contains("Your role: owner"), "{page}");
+    assert!(page.contains(OTHER), "{page}");
+    assert!(page.contains("Create share link"), "{page}");
+    assert!(page.contains(r#"name="email""#), "{page}");
+    assert!(page.contains(&format!(r#"data-role="{member}""#)), "{page}");
+    assert!(
+        page.contains(&format!(r#"data-confirm="Make {OTHER} the owner?""#)),
+        "{page}"
+    );
+    assert!(!page.contains(&format!("/ui/rooms/{id}/leave")), "{page}");
+}
+
+#[tokio::test]
+async fn without_the_bundle_an_editor_sees_the_page_without_controls() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let other = fixture.verified(OTHER).await;
+    let token = fixture.token(user).await;
+    let id = room_owned_by(&fixture, other, "theirs").await;
+    member_of(&fixture, &id, MEMBER, Role::Editor).await;
+
+    let page = body_text(fixture.get(&format!("/ui/rooms/{id}"), Some(&token)).await).await;
+
+    assert!(page.contains("Your role: editor"), "{page}");
+    assert!(page.contains(&format!("/ui/rooms/{id}/leave")), "{page}");
+    assert!(
+        page.contains("Only the owner can manage invitations."),
+        "{page}"
+    );
+    assert!(!page.contains("Create share link"), "{page}");
+    assert!(!page.contains(r#"name="role""#), "{page}");
+}
+
+/// An imported id is escaped in every link the page holds.
+#[tokio::test]
+async fn without_the_bundle_the_page_escapes_an_imported_id() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+    let id = "Bepi MSA";
+    sqlx::query("INSERT INTO room (id, name, created_by) VALUES (?, 'imported', ?)")
+        .bind(id)
+        .bind(user.to_string())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    member_of(&fixture, id, MEMBER, Role::Owner).await;
+    member_of(&fixture, id, OTHER, Role::Editor).await;
+
+    let page = body_text(fixture.get("/ui/rooms/Bepi%20MSA", Some(&token)).await).await;
+
+    assert!(page.contains("/ui/rooms/Bepi%20MSA/invitations"), "{page}");
+    assert!(page.contains("/ui/rooms/Bepi%20MSA/browse"), "{page}");
+    assert!(!page.contains("/ui/rooms/Bepi MSA"), "{page}");
 }
 
 #[tokio::test]

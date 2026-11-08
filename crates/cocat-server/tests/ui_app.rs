@@ -242,7 +242,7 @@ async fn the_app_requires_login() {
 
 #[tokio::test]
 async fn the_app_opens_the_personal_project() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(OWNER).await;
     lifecycle::create_room(&fixture.state, user, "A first project")
         .await
@@ -261,7 +261,7 @@ async fn the_app_opens_the_personal_project() {
 
 #[tokio::test]
 async fn the_app_opens_a_personal_project_imported_from_python() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(OWNER).await;
     lifecycle::create_room(&fixture.state, user, "A first project")
         .await
@@ -279,7 +279,7 @@ async fn the_app_opens_a_personal_project_imported_from_python() {
 
 #[tokio::test]
 async fn someone_else_s_personal_project_is_not_the_one_opened() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let owner = fixture.verified(OWNER).await;
     let viewer = fixture.verified(VIEWER).await;
     let theirs = lifecycle::create_room(&fixture.state, owner, db::PERSONAL_ROOM_NAME)
@@ -302,7 +302,7 @@ async fn someone_else_s_personal_project_is_not_the_one_opened() {
 
 #[tokio::test]
 async fn without_a_personal_project_the_app_opens_the_first_one() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let (room, viewer) = room_with_viewer(&fixture).await;
     let token = fixture.token(viewer).await;
 
@@ -386,4 +386,30 @@ async fn imported_room(fixture: &Fixture, owner: Uuid, id: &str) {
     db::add_member(&fixture.state.pool, id, owner, Role::Owner)
         .await
         .unwrap();
+}
+
+/// Without the bundle the app cannot open, so the server's own pages manage projects.
+#[tokio::test]
+async fn without_the_bundle_the_projects_and_groups_pages_render() {
+    for web_dir in [None, Some("absent")] {
+        let mut fixture = Fixture::start().await;
+        fixture.state.web_dir = web_dir.map(|name| fixture.dir().join(name));
+        let (room, viewer) = room_with_viewer(&fixture).await;
+        let token = fixture.token(viewer).await;
+
+        let entry = fixture.get("/ui/app", Some(&token)).await;
+        let projects = fixture.get("/ui/rooms", Some(&token)).await;
+        let groups = fixture.get("/ui/groups", Some(&token)).await;
+        let project = fixture
+            .get(&format!("/ui/rooms/{room}"), Some(&token))
+            .await;
+
+        assert_eq!(location(&entry), "/ui/rooms", "{web_dir:?}");
+        assert_eq!(projects.status(), StatusCode::OK, "{web_dir:?}");
+        assert_eq!(groups.status(), StatusCode::OK, "{web_dir:?}");
+        assert_eq!(project.status(), StatusCode::OK, "{web_dir:?}");
+        let page = body_text(project).await;
+        assert!(page.contains("Your role: viewer"), "{page}");
+        assert!(page.contains(OWNER), "{page}");
+    }
 }

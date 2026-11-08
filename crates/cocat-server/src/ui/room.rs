@@ -1,5 +1,5 @@
-//! The old project page, now the app's Share dialog, and the form actions it posted, which
-//! old tabs and links may still send.
+//! The project page and its form actions, which the page (without the app) and old tabs
+//! still send.
 
 use std::str::FromStr;
 
@@ -13,7 +13,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::links::segment;
-use crate::ui::frame::{self, Frame, RequireUser};
+use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
+use crate::ui::room_page;
 use crate::ui::{answer, redirect, redirect_to};
 use crate::{AppState, db, groups, invitations, lifecycle, mail};
 
@@ -54,15 +55,29 @@ struct NotFoundPage {
     rooms_href: String,
 }
 
-/// The project page moved into the app's Share dialog.
+/// The project page is the app's Share dialog, where the app is installed.
 pub(crate) async fn page(
     Path(room_id): Path<String>,
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
+    Flash(flash): Flash,
+    ShareLink(link): ShareLink,
 ) -> Response {
-    match db::role_in(&state.pool, &room_id, user.id).await {
-        Ok(Some(_)) => redirect_to(&state, &format!("{}/browse#share", page_of(&room_id))),
-        Ok(None) => not_found(&state, &user),
+    let room = match db::list_user_rooms(&state.pool, user.id).await {
+        Ok(rooms) => rooms.into_iter().find(|(room, _)| room.id == room_id),
+        Err(error) => {
+            tracing::warn!(%error, "cannot read a room page");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let Some((room, role)) = room else {
+        return not_found(&state, &user);
+    };
+    if super::app::installed(&state).await {
+        return redirect_to(&state, &format!("{}/browse#share", page_of(&room_id)));
+    }
+    match room_page::build(&state, &user, room, role, flash, link).await {
+        Ok(page) => frame::page(page),
         Err(error) => {
             tracing::warn!(%error, "cannot read a room page");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()

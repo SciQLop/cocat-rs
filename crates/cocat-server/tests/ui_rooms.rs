@@ -45,7 +45,7 @@ async fn the_list_calls_rooms_projects() {
 /// The list is the app's project menu now: it stays only for someone with no project.
 #[tokio::test]
 async fn with_a_project_the_list_opens_the_app() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(MEMBER).await;
     let token = fixture.token(user).await;
     let id = room_owned_by(&fixture, user, "lab").await;
@@ -68,7 +68,7 @@ async fn login_required() {
 
 #[tokio::test]
 async fn the_app_opens_a_project_reached_through_a_group() {
-    let fixture = Fixture::start().await;
+    let fixture = Fixture::start().await.with_app();
     let user = fixture.verified(MEMBER).await;
     let other = fixture.verified(OTHER).await;
     let token = fixture.token(user).await;
