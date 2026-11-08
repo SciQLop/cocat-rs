@@ -159,9 +159,10 @@ async fn the_public_help_says_how_to_submit_and_what_curators_do() {
 
     let public = section_text(&help, "public");
     for words in [
-        "More → Submit to Public catalogues…",
+        "on the left, under the catalogues",
+        "Submit…",
+        "Submit update…",
         "Propose a change…",
-        "Submit as an update to",
         "My submissions",
         "Submissions",
         "What changed",
@@ -174,6 +175,20 @@ async fn the_public_help_says_how_to_submit_and_what_curators_do() {
     for word in ["snapshot", "merge", "commit", "diff", "soon"] {
         assert!(!public.to_lowercase().contains(word), "{word}: {public}");
     }
+}
+
+#[tokio::test]
+async fn only_the_server_side_names_still_call_a_project_a_room() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let projects = section_text(&help, "projects");
+    assert!(!projects.contains("SciQLop calls"), "{projects}");
+    assert!(
+        projects.contains("the server API, the websocket path and the command-line tool"),
+        "{projects}"
+    );
 }
 
 #[tokio::test]

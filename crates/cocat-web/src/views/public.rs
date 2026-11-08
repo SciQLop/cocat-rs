@@ -5,10 +5,12 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
+use crate::help;
 use crate::public::{PublicCatalogue, Shelf, shelves};
 use crate::route::Route;
 use crate::views::controls::{Error, Hint, error_line};
 use crate::views::projects::Projects;
+use crate::views::sidebar::PublicIcon;
 use crate::views::submissions::SubmissionLinks;
 
 #[component]
@@ -29,6 +31,7 @@ pub fn PublicPage() -> impl IntoView {
         }
     });
     let page = window().location().pathname().unwrap_or_default();
+    let none_yet = move || all.with(|all| all.as_ref().is_some_and(Vec::is_empty));
     let shown = move || {
         all.with(|all| {
             all.as_ref()
@@ -43,16 +46,31 @@ pub fn PublicPage() -> impl IntoView {
             </div>
             <Hint text="Catalogues everyone signed in can read. Curators keep them." anchor="public" topic="public catalogues"/>
             <SubmissionLinks/>
-            <input type="search" class="public-search" placeholder="Search names and descriptions"
+            <input type="search" class="public-search" hidden=none_yet placeholder="Search names and descriptions"
                 aria-label="Search the public catalogues"
                 prop:value=move || search.get() on:input=move |event| search.set(event_target_value(&event))/>
             {error_line(error)}
             {move || shown().map(|(empty, shelves)| match (empty, shelves.is_empty()) {
-                (true, _) => view! { <p class="quiet">"No public catalogue yet."</p> }.into_any(),
+                (true, _) => view! { <NoneYet/> }.into_any(),
                 (false, true) => view! { <p class="quiet">"No public catalogue matches."</p> }.into_any(),
                 (false, false) => shelves.into_iter().map(|shelf| view! { <PublicShelf shelf/> }).collect_view().into_any(),
             })}
         </main>
+    }
+}
+
+/// What the index says before the first public catalogue: who adds them, and how to offer one.
+#[component]
+fn NoneYet() -> impl IntoView {
+    view! {
+        <section class="empty-state" aria-labelledby="none-yet">
+            <span class="empty-icon"><PublicIcon size=28/></span>
+            <h2 id="none-yet">"No public catalogue yet"</h2>
+            <p>"Curators add them. They import shared catalogues, such as AMDA's, and accept what people submit."</p>
+            <p>"Anyone can offer one: open a catalogue in one of your projects and choose "
+                <strong>"Submit…"</strong>" above its events."</p>
+            <a class="button" href=help::href("public") target="_blank" rel="noopener">"How public catalogues work"</a>
+        </section>
     }
 }
 

@@ -5,7 +5,9 @@ use crate::edit;
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
+use crate::views::submissions::waiting_submissions;
 use crate::views::transfer::Importer;
+use cocat_core::room_id::is_public_id;
 
 #[component]
 pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
@@ -14,6 +16,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let list = Memo::new(move |_| reader.read(|txn| catalogue_list(txn)));
     let page = window().location().pathname().unwrap_or_default();
     let trash = Route::Trash.href(&page);
+    let public = page.clone();
     view! {
         <aside class="sidebar" aria-label="Catalogues">
             <div class="sidebar-head">
@@ -39,6 +42,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 </span>
                 <span class="count">{move || list.get().trash}</span>
             </a>
+            <PublicEntry shown page=public/>
         </aside>
     }
 }
@@ -103,6 +107,37 @@ fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView
     }
 }
 
+/// The way to the public catalogues, from any project; a curator also sees how many
+/// submissions wait.
+#[component]
+fn PublicEntry(shown: Memo<Route>, page: String) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let public = is_public_id(&room.config.room_id);
+    let waiting = waiting_submissions(room.config.api_url.clone());
+    let badge = move || {
+        waiting.get().filter(|count| *count > 0).map(|count| {
+            let plural = if count == 1 { "" } else { "s" };
+            view! {
+                <span class="count-badge" title=format!("{count} submission{plural} to review")
+                    aria-label=format!("{count} waiting")>{count}</span>
+            }
+        })
+    };
+    view! {
+        <a
+            class="catalogue public-link"
+            href=Route::Public.href(&page)
+            aria-current=move || current(shown.with(|shown| shown.in_public_catalogues(public)))
+        >
+            <span class="name">
+                <PublicIcon size=14/>
+                "Public catalogues"
+            </span>
+            {badge}
+        </a>
+    }
+}
+
 fn current(selected: bool) -> Option<&'static str> {
     selected.then_some("page")
 }
@@ -123,6 +158,18 @@ fn TrashIcon() -> impl IntoView {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" aria-hidden="true">
             <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path>
+        </svg>
+    }
+}
+
+/// A globe: what everyone signed in can read.
+#[component]
+pub fn PublicIcon(size: u32) -> impl IntoView {
+    view! {
+        <svg width=size height=size viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z"></path>
         </svg>
     }
 }

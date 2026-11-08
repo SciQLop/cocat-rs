@@ -7,7 +7,7 @@ use crate::period::Period;
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
-use crate::submissions::{Proposal, proposal_for};
+use crate::submissions::{Proposal, proposal_for, propose_is_main};
 use crate::views::actions::{Actions, Form, Freeze, ProposeButton};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
@@ -139,8 +139,8 @@ pub fn CataloguePage(
                     />
                 </label>
                 <ColumnPicker keys columns picked/>
-                {public.then(|| view! { <ProposeButton shown form/> })}
                 <Actions shown selected form proposals/>
+                {propose_is_main(public, can_write).then(|| view! { <ProposeButton shown form/> })}
             </div>
         </div>
         {move || match (form.get(), shown.get()) {

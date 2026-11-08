@@ -59,6 +59,12 @@ impl Route {
         )
     }
 
+    /// The sidebar marks "Public catalogues" as current: on its pages, and anywhere in a
+    /// public catalogue.
+    pub fn in_public_catalogues(&self, public_project: bool) -> bool {
+        public_project || self.is_public_index()
+    }
+
     /// The history of what this view shows: its catalogue, else the whole room.
     pub fn history(&self) -> Self {
         let catalogue = match self {
@@ -175,6 +181,15 @@ mod tests {
         assert!(Route::Public.is_public_index());
         assert!(!Route::Trash.is_public_index());
         assert_eq!(Route::Submissions.history(), history(None, None));
+    }
+
+    #[test]
+    fn the_public_catalogues_are_current_on_their_pages_and_in_a_public_project() {
+        assert!(Route::Public.in_public_catalogues(false));
+        assert!(Route::Submission(3).in_public_catalogues(false));
+        assert!(Route::Catalogue("abc".into()).in_public_catalogues(true));
+        assert!(!Route::Catalogue("abc".into()).in_public_catalogues(false));
+        assert!(!Route::Trash.in_public_catalogues(false));
     }
 
     #[test]

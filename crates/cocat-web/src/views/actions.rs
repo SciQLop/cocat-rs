@@ -9,7 +9,7 @@ use crate::edit;
 use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
-use crate::submissions::{Proposal, proposal_for};
+use crate::submissions::{Offer, Proposal, proposal_for, submit_offer};
 use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
 use cocat_core::room_id::is_public_id;
 
@@ -59,6 +59,7 @@ pub fn Actions(
         let uuid = catalogue.get()?;
         proposals.with(|listed| proposal_for(listed, &uuid).map(|proposal| proposal.name.clone()))
     };
+    let offer = move || submit_offer(public, editor, linked().is_some());
     let menu = NodeRef::<leptos::html::Details>::new();
     let toggle = move |which: Form| {
         form.update(|open| *open = if *open == which { Form::Closed } else { which });
@@ -72,6 +73,16 @@ pub fn Actions(
                 on:click=move |_| toggle(Form::Rule)>"Edit rule"</button>
         </Show>
         <Show when=move || smart.get().is_some()>
+            {move || offer().map(|offer| {
+                let which = match offer {
+                    Offer::New => Form::Submit,
+                    Offer::Update => Form::Update,
+                };
+                view! {
+                    <button type="button" class="button submit-button" aria-pressed=move || (form.get() == which).to_string()
+                        on:click=move |_| toggle(which)>{offer.label()}</button>
+                }
+            })}
             <details class="menu-button" node_ref=menu>
                 <summary aria-label="More actions">"More"</summary>
                 <div class="menu">
@@ -82,6 +93,9 @@ pub fn Actions(
                         </Show>
                     })}
                     <button type="button" on:click=move |_| toggle(Form::Export)>"Export…"</button>
+                    {public.then(|| view! {
+                        <button type="button" on:click=move |_| toggle(Form::Propose)>"Propose a change…"</button>
+                    })}
                     {(editor && !public).then(|| view! {
                         <button type="button" on:click=move |_| toggle(Form::Submit)>"Submit to Public catalogues…"</button>
                     })}
@@ -101,7 +115,7 @@ pub fn Actions(
     }
 }
 
-/// In a public catalogue, for everyone: copy it to change it, then submit the change.
+/// In a public catalogue, for its readers: copy it to change it, then submit the change.
 #[component]
 pub fn ProposeButton(shown: Memo<Route>, form: RwSignal<Form>) -> impl IntoView {
     let on_catalogue = move || matches!(shown.get(), Route::Catalogue(_));
@@ -115,7 +129,7 @@ pub fn ProposeButton(shown: Memo<Route>, form: RwSignal<Form>) -> impl IntoView 
     };
     view! {
         <Show when=on_catalogue>
-            <button type="button" class="button" aria-pressed=move || (form.get() == Form::Propose).to_string()
+            <button type="button" class="button primary" aria-pressed=move || (form.get() == Form::Propose).to_string()
                 on:click=toggle>"Propose a change…"</button>
         </Show>
     }

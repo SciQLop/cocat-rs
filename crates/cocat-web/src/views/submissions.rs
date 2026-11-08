@@ -213,7 +213,7 @@ pub fn ProposeForm(form: RwSignal<Form>) -> impl IntoView {
                 <div class="inline-form submit-form" role="status">
                     <p>
                         "The copy is in “" {proposed.name} "”. Change it there, then choose "
-                        <strong>"More → Submit as an update to “" {public_name.clone()} "”…"</strong>
+                        <strong>"Submit update…"</strong>" to send it back to “" {public_name.clone()} "”."
                     </p>
                     <div class="row-buttons">
                         <a class="button primary" href=href>"Open the copy"</a>
@@ -247,11 +247,9 @@ pub fn ProposeForm(form: RwSignal<Form>) -> impl IntoView {
     }
 }
 
-/// The links of the public catalogues' page: the curators' queue, with how many wait, and
-/// the visitor's own submissions.
-#[component]
-pub fn SubmissionLinks() -> impl IntoView {
-    let api = expect_context::<Projects>().api();
+/// How many submissions wait for review, read once; it stays `None` for a visitor who is
+/// not a curator.
+pub fn waiting_submissions(api: String) -> RwSignal<Option<usize>> {
     let waiting = RwSignal::new(None::<usize>);
     spawn_local(async move {
         if !api::is_curator(&api).await.unwrap_or(false) {
@@ -261,6 +259,14 @@ pub fn SubmissionLinks() -> impl IntoView {
             waiting.try_set(Some(pending(&all)));
         }
     });
+    waiting
+}
+
+/// The links of the public catalogues' page: the curators' queue, with how many wait, and
+/// the visitor's own submissions.
+#[component]
+pub fn SubmissionLinks() -> impl IntoView {
+    let waiting = waiting_submissions(expect_context::<Projects>().api());
     let page = page();
     let queue = page.clone();
     view! {

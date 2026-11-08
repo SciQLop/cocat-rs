@@ -130,16 +130,21 @@ fn App(config: RoomConfig) -> impl IntoView {
             view! { <HistoryPage scope picked/> }.into_any()
         } else if in_groups.get() {
             view! { <GroupsPage shown/> }.into_any()
-        } else if in_public.get() {
-            public_page(shown.get())
         } else {
             view! {
                 <div class="browser">
                     <Sidebar shown/>
-                    <main class="content" on:dragover=drag_over on:drop=drop>
-                        <CataloguePage shown selected screen/>
-                    </main>
-                    <EventPanel selected shown=panel route=shown screen/>
+                    {move || if in_public.get() {
+                        view! { <div class="public-holder">{move || public_page(shown.get())}</div> }.into_any()
+                    } else {
+                        view! {
+                            <main class="content" on:dragover=drag_over on:drop=drop>
+                                <CataloguePage shown selected screen/>
+                            </main>
+                            <EventPanel selected shown=panel route=shown screen/>
+                        }
+                        .into_any()
+                    }}
                 </div>
             }
             .into_any()
