@@ -7,7 +7,7 @@ use leptos::html::Div;
 use leptos::prelude::*;
 
 use crate::format::{duration_text, time_text, value_text};
-use crate::layout::window;
+use crate::layout::{tags_that_fit, window};
 use crate::presence::{Peer, editing};
 use crate::rows::{Row, SortKey};
 use crate::state::Room;
@@ -15,6 +15,12 @@ use crate::views::catalogue::Members;
 
 /// Every row's height in pixels; the stylesheet sets the same.
 const ROW: f64 = 40.0;
+/// The table's narrowest width: the stylesheet's fixed columns, the author column at 100 px
+/// (it takes whatever room is left), and 130 px per attribute column.
+const FIXED_WIDTH: f64 = 830.0;
+const ATTRIBUTE_WIDTH: f64 = 130.0;
+/// The tag cell's inner width: `.w-tags` less the cell's padding.
+const TAGS_WIDTH: f64 = 162.0;
 
 const FIXED: [(&str, SortKey); 6] = [
     ("Start", SortKey::Start),
@@ -71,7 +77,10 @@ pub fn Table(
     let empty = move || order.with(Vec::is_empty);
     view! {
         <div class="table-scroll" node_ref=scroller on:scroll=move |_| measure()>
-            <table class="events">
+            <table class="events" style=move || {
+                let width = FIXED_WIDTH + ATTRIBUTE_WIDTH * columns.with(Vec::len) as f64;
+                format!("min-width: {width}px")
+            }>
                 <colgroup>
                     <col class="w-start"/>
                     <col class="w-duration"/>
@@ -171,7 +180,7 @@ fn row(
             <td class="text">{tags(row)}</td>
             <td>{confidence(row.confidence)}</td>
             <td>{status(row)}</td>
-            <td class="text quiet-cell">{row.author.clone().unwrap_or_default()}</td>
+            <td class="text quiet-cell" title=row.author.clone()>{row.author.clone().unwrap_or_default()}</td>
             {attributes}
         </tr>
     }
@@ -184,9 +193,12 @@ fn tags(row: &Row) -> impl IntoView + use<> {
         return view! { <span class="quiet-cell">{format!("from {count} event{plural}")}</span> }
             .into_any();
     }
+    let shown = tags_that_fit(&row.tags, TAGS_WIDTH);
+    let hidden = row.tags.len() - shown;
     view! {
-        <span class="tags">
-            {row.tags.iter().map(|tag| view! { <span class="tag">{tag.clone()}</span> }).collect_view()}
+        <span class="tags" title=(hidden > 0).then(|| row.tags.join(", "))>
+            {row.tags[..shown].iter().map(|tag| view! { <span class="tag">{tag.clone()}</span> }).collect_view()}
+            {(hidden > 0).then(|| view! { <span class="tag more">{format!("+{hidden}")}</span> })}
         </span>
     }
     .into_any()

@@ -270,13 +270,12 @@ a { color: var(--accent); text-underline-offset: 2px; }
   border: 1px solid var(--rule);
   border-radius: 8px;
 }
-.events { width: 100%; min-width: 820px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.events { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 .w-start { width: 180px; }
 .w-duration { width: 110px; }
 .w-tags { width: 190px; }
 .w-confidence { width: 130px; }
 .w-status { width: 120px; }
-.w-author { width: 140px; }
 .w-attribute { width: 130px; }
 .events thead th {
   position: sticky;
@@ -322,7 +321,9 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .empty { padding: 24px 14px; }
 
 .tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.events .tags { flex-wrap: nowrap; }
+.events .tags { flex-wrap: nowrap; max-width: 100%; }
+.events .tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.events .tag.more { flex: none; background: var(--chip); color: var(--muted); }
 .tag { padding: 2px 8px; border-radius: 999px; background: var(--tag-bg); color: var(--accent); font-size: 12px; }
 
 .confidence { display: flex; align-items: center; gap: 8px; color: var(--muted); }

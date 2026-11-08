@@ -17,6 +17,36 @@ pub fn window(scroll_top: f64, viewport: f64, row: f64, total: usize) -> Range<u
     first.saturating_sub(OVERSCAN).min(end)..end
 }
 
+/// How many of `tags`, from the first, the table's tag cell shows in `width` pixels,
+/// keeping room for the "+N" chip that counts the rest. At least one shows; the
+/// stylesheet cuts it when it is too long.
+pub fn tags_that_fit(tags: &[String], width: f64) -> usize {
+    let mut used = 0.0;
+    for (index, tag) in tags.iter().enumerate() {
+        used += pill_width(tag) + TAG_GAP;
+        let rest = if index + 1 < tags.len() {
+            MORE_CHIP
+        } else {
+            0.0
+        };
+        if used + rest > width {
+            return index.max(1);
+        }
+    }
+    tags.len()
+}
+
+// simplify: a pill's width is estimated from its length in 12 px Inter, not measured; a
+// ResizeObserver on the cell would be exact if the estimate shows wrong on some fonts.
+const TAG_CHAR: f64 = 7.0;
+const TAG_PADDING: f64 = 16.0;
+const TAG_GAP: f64 = 4.0;
+const MORE_CHIP: f64 = 34.0;
+
+fn pill_width(tag: &str) -> f64 {
+    tag.chars().count() as f64 * TAG_CHAR + TAG_PADDING
+}
+
 /// A bar on the timeline, in percent of its width.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
@@ -83,6 +113,34 @@ pub fn ticks(first: i64, last: i64, count: usize) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::fixture::{DAY, DAY0};
+
+    fn words(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    #[test]
+    fn every_tag_shows_when_they_all_fit() {
+        assert_eq!(tags_that_fit(&words(&["sw", "mms1"]), 160.0), 2);
+        assert_eq!(tags_that_fit(&[], 160.0), 0);
+    }
+
+    #[test]
+    fn tags_that_do_not_fit_leave_room_for_the_count_of_the_rest() {
+        let tags = words(&["bow shock", "by hand", "checked", "inbound"]);
+        let shown = tags_that_fit(&tags, 160.0);
+        assert!((1..tags.len()).contains(&shown), "{shown}");
+        let used: f64 = tags[..shown]
+            .iter()
+            .map(|tag| pill_width(tag) + TAG_GAP)
+            .sum();
+        assert!(used + MORE_CHIP <= 160.0, "{used}");
+    }
+
+    #[test]
+    fn one_tag_always_shows_even_when_too_long() {
+        let tags = words(&["a very long tag name that cannot fit", "b"]);
+        assert_eq!(tags_that_fit(&tags, 160.0), 1);
+    }
 
     #[test]
     fn the_window_holds_the_rows_in_view_and_ten_on_each_side() {
