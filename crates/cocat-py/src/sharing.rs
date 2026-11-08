@@ -12,7 +12,7 @@ use crate::server_errors::http_error;
 use crate::{ProjectInfo, Result, block_on, to_python};
 
 /// Runs a server call off the GIL; its answer becomes dicts and lists, as JSON would.
-fn answer<T: Serialize + Send>(
+pub(crate) fn answer<T: Serialize + Send>(
     py: Python<'_>,
     call: impl Future<Output = std::result::Result<T, LoginError>> + Send,
 ) -> Result<Py<PyAny>> {

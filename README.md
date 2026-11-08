@@ -225,6 +225,25 @@ groups, sharing, leaving and transfer answer 409 for everyone. They are not in
 `GET /api/rooms`. The server refuses to start, and the import to run, when a project that
 is not public has a `public.` id (only an id imported from Python can).
 
+### Submissions
+
+Everyone else submits. A submission holds the catalogue and its events as they were when it
+was submitted (a Yjs update); later edits do not change it. Only its author and the curators
+see it: anyone else gets 404.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /api/public/submissions` | editors of the project | `{"room", "catalogue", "title"?, "folder"?, "description"?, "note"?}` → 201, a new catalogue (the title defaults to its name); 413 when it is bigger than a project may be |
+| `POST /api/public/{id}/proposals` | any user | `{"room"?, "name"?}` → 201 `{room, name, catalogue}`: a copy of the public catalogue (same uuids) in one of your projects or a new one; the server remembers where it came from |
+| `GET /api/rooms/{id}/proposals` | members | the project's catalogues copied that way: `catalogue`, `target`, `name` |
+| `POST /api/public/submissions/updates` | editors of the project | `{"room", "catalogue", "note"?}` → 201, the copy as the public catalogue's next version |
+| `GET /api/public/submissions` | any user | your own; a curator's lists everyone's unless `?mine=true`. Pending first |
+| `GET /api/public/submissions/{n}` | author, curators | the submission, `changes` (what accepting does, against the public catalogue now) and `stale` (it changed since the copy) |
+| `POST /api/public/submissions/{n}/review` | curators | `{"accept", "note"?}`. Accepting a new one makes `public.<slug of the title>`; an update makes the public catalogue equal to the submission, events it left out go to the trash. Either is one change by the author, saved as the version "Submission n: title" |
+| `POST /api/public/submissions/{n}/withdraw` | author | a pending one only (409 otherwise) |
+
+`GET /api/me` says `is_curator`.
+
 ## Web UI
 
 Server-rendered pages under `{COCAT_PROXY_PREFIX}/ui/`, with the paths and messages of the
@@ -550,6 +569,16 @@ key=None)`, which answers its id (`public.<key>`, or a random one); anyone else 
 `Forbidden`, a key already taken `Conflict`. `update_public_catalogue(url, cookie, id,
 name=None, folder=None, source=None, description=None)` changes its entry: `None` keeps a
 field, `""` clears it.
+
+Submitting: `submit_catalogue(url, cookie, project_id, catalogue_uuid, title=None,
+folder=None, description=None, note=None)` offers one of your catalogues and answers the
+submission's id. `propose_change(url, cookie, public_id, project_id=None, name=None)` copies a
+public catalogue into one of your projects (a new one without `project_id`) and answers
+`{"project_id", "name", "catalogue"}`; change it there, then `submit_update(url, cookie,
+project_id, catalogue_uuid, note=None)`. `submissions(url, cookie, mine=False)` lists yours
+(a curator's: everyone's, unless `mine`), with `status` and the curator's `review_note`.
+Curators call `review_submission(url, cookie, id, accept, note=None)`; authors
+`withdraw_submission(url, cookie, id)`.
 
 ```python
 index = cocat_rs.public_catalogues(url, cookie)

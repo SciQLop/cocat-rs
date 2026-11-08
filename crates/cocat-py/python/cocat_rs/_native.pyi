@@ -217,5 +217,30 @@ def update_public_catalogue(
     source: str | None = None,
     description: str | None = None,
 ) -> None: ...
+def submit_catalogue(
+    url: str,
+    cookie: str,
+    project_id: str,
+    catalogue_uuid: str,
+    title: str | None = None,
+    folder: str | None = None,
+    description: str | None = None,
+    note: str | None = None,
+) -> int: ...
+def propose_change(
+    url: str,
+    cookie: str,
+    public_id: str,
+    project_id: str | None = None,
+    name: str | None = None,
+) -> dict[str, str]: ...
+def submit_update(
+    url: str, cookie: str, project_id: str, catalogue_uuid: str, note: str | None = None
+) -> int: ...
+def submissions(url: str, cookie: str, mine: bool = False) -> list[dict[str, Any]]: ...
+def review_submission(
+    url: str, cookie: str, id: int, accept: bool, note: str | None = None
+) -> dict[str, Any]: ...
+def withdraw_submission(url: str, cookie: str, id: int) -> dict[str, Any]: ...
 def export_votable(catalogues: Catalogue | list[Catalogue]) -> str: ...
 def rule_from_tscat(predicate: dict[str, Any]) -> dict[str, Any]: ...

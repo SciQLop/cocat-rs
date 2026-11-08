@@ -5,6 +5,7 @@
 
 mod server_errors;
 mod sharing;
+mod submissions;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -1870,5 +1871,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("NotFound", not_found(module.py())?)?;
     server_errors::register(module)?;
     sharing::register(module)?;
+    submissions::register(module)?;
     Ok(())
 }

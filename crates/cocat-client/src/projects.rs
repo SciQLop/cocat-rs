@@ -291,7 +291,7 @@ pub(crate) fn room_request(
     api_request(method, url, cookie, &path)
 }
 
-fn api_request(
+pub(crate) fn api_request(
     method: Method,
     url: &str,
     cookie: &str,

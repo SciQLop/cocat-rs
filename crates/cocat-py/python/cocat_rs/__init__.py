@@ -24,13 +24,19 @@ from ._native import (
     project_groups,
     project_url,
     projects,
+    propose_change,
     public_catalogues,
     remove_member,
+    review_submission,
     revoke_invitation,
     rule_from_tscat,
     set_editors_can_share,
     set_role,
+    submissions,
+    submit_catalogue,
+    submit_update,
     update_public_catalogue,
+    withdraw_submission,
 )
 
 _accepts_room_id = _old_names.renamed_keywords(room_id="project_id")
@@ -64,14 +70,20 @@ __all__ = [
     "project_groups",
     "project_url",
     "projects",
+    "propose_change",
     "public_catalogues",
     "remove_member",
     "restore",
+    "review_submission",
     "revoke_invitation",
     "rule_from_tscat",
     "set_editors_can_share",
     "set_role",
+    "submissions",
+    "submit_catalogue",
+    "submit_update",
     "update_public_catalogue",
+    "withdraw_submission",
 ]
 
 log = logging.getLogger("cocat_rs")
