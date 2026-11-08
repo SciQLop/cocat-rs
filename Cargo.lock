@@ -705,7 +705,15 @@ version = "0.0.0"
 dependencies = [
  "cocat-core",
  "console_error_panic_hook",
+ "gloo-net",
+ "js-sys",
  "leptos",
+ "serde_json",
+ "thiserror 2.0.21",
+ "url",
+ "wasm-bindgen",
+ "web-sys",
+ "yrs",
 ]
 
 [[package]]

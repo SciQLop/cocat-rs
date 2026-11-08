@@ -6,12 +6,29 @@ publish.workspace = true
 
 [dependencies]
 cocat-core = { path = "../cocat-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+url = "2"
+yrs.workspace = true
 
 # The view only exists in the browser; the logic modules stay native so the workspace gate
 # tests them without the wasm toolchain.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
+gloo-net = { version = "0.6", default-features = false, features = ["http"] }
+js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "BinaryType",
+    "Document",
+    "Element",
+    "Location",
+    "MessageEvent",
+    "Node",
+    "WebSocket",
+    "Window",
+] }
 
 [lints]
 workspace = true
