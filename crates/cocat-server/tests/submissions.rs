@@ -436,6 +436,16 @@ async fn an_update_shows_what_changed_against_the_public_catalogue_now() {
         .find(|change| change["uuid"] == "p1")
         .unwrap()["fields"];
     assert_eq!(p1, &json!(["confidence"]));
+    let p2 = fresh["changes"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["uuid"] == "p2")
+        .unwrap();
+    assert_eq!(
+        p2["after"]["status"], "deleted",
+        "accepting moves what the submission left out to the trash"
+    );
 }
 
 #[tokio::test]

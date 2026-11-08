@@ -17,7 +17,7 @@ use yrs::{Doc, ReadTxn, StateVector, Transact};
 use crate::AppState;
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
 use crate::db::{self, PublicRoom};
-use crate::history::diff::{Diff, diff, replay_until};
+use crate::history::diff::{Diff, before_and_after, diff, replay_until};
 use crate::history::versions::apply;
 use crate::history_api::{copy_name, make_copy, save_newest};
 use crate::lifecycle;
@@ -585,8 +585,8 @@ async fn copy_into(
     Ok((room_id.to_owned(), name))
 }
 
-/// What accepting changes, and whether the public catalogue changed since the author
-/// copied it.
+/// What accepting changes, worked out by accepting it on a replay of the public catalogue,
+/// and whether the public catalogue changed since the author copied it.
 async fn what_changed(
     state: &AppState,
     submission: &Submission,
@@ -605,9 +605,10 @@ async fn what_changed(
     };
     let (changes, records) = state
         .rooms
-        .read_log(target, 2, move |records, _| {
-            let current = replay_until(records, u64::MAX);
-            let changes = diff(&current, &doc_of(&snapshot), Some(&catalogue));
+        .read_log(target, 3, move |records, _| {
+            let (current, accepted) = before_and_after(records, records.len(), records.len());
+            model::adopt(&mut accepted.transact_mut(), &doc_of(&snapshot), &catalogue);
+            let changes = diff(&current, &accepted, Some(&catalogue));
             (changes, count(records.len()))
         })
         .await?;
