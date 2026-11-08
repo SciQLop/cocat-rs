@@ -54,7 +54,7 @@ pub fn connect(room: Room) -> Result<Connection, TransactionAcqError> {
         socket: RefCell::new(None),
         synced: Cell::new(false),
         backoff: RefCell::new(Backoff::default()),
-        presence: RefCell::new(Presence::new(room.doc.clone())),
+        presence: RefCell::new(Presence::for_room(room.doc.clone(), &room.config.room_id)),
         render_queued: Rc::default(),
         stopped: Cell::new(false),
         handlers: handlers(link),

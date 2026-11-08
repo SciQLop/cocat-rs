@@ -113,7 +113,7 @@ async fn list(
     ApiPath(room_id): ApiPath<String>,
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<History>, ApiError> {
-    membership(&state, &room_id, user.id).await?;
+    let role = membership(&state, &room_id, user.id).await?;
     let filter = match query.catalogue {
         Some(uuid) => Some(Filter::new(&state, &room_id, uuid).await?),
         None => None,
@@ -138,7 +138,11 @@ async fn list(
         versions.retain(|version| version.events.contains(&event));
     }
     let names = db::version_names(&state.pool, &room_id).await?;
-    let emails = author_emails(&state, &versions).await?;
+    let emails = if db::is_public(&state.pool, &room_id).await? && !role.can_write() {
+        author_labels(&state, &versions).await?
+    } else {
+        author_emails(&state, &versions).await?
+    };
     let versions = versions
         .into_iter()
         .map(|version| view(version, &names, &commits, &emails))
@@ -660,6 +664,27 @@ async fn author_emails(
         }
     }
     Ok(emails)
+}
+
+/// What a public catalogue's reader sees of its authors: who looks after it, or who
+/// contributed to it, never an email.
+async fn author_labels(
+    state: &AppState,
+    versions: &[Version],
+) -> Result<HashMap<Uuid, String>, ApiError> {
+    let mut labels = HashMap::new();
+    for author in versions.iter().filter_map(|version| version.author) {
+        if labels.contains_key(&author) {
+            continue;
+        }
+        let label = if db::is_curator(&state.pool, author).await? {
+            "a curator"
+        } else {
+            "a contributor"
+        };
+        labels.insert(author, label.to_owned());
+    }
+    Ok(labels)
 }
 
 fn view(

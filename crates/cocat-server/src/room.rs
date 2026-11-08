@@ -875,7 +875,7 @@ fn room_loop(
     let mut full_state = None;
     let mut commands = Some(commands);
     let mut seen = doc.transact().state_vector();
-    let mut presence = Presence::default();
+    let mut presence = Presence::for_room(&room_id);
 
     'serving: loop {
         let mut schedule = SyncSchedule::new(Instant::now());
@@ -1480,6 +1480,7 @@ fn handle_frame(
 }
 
 /// Every role may publish its presence, a viewer included: it writes nothing to the room.
+/// A public catalogue's presence relays nothing (`Presence::for_room`).
 fn relay_awareness(serving: &mut Serving<'_>, client: ClientId, update: AwarenessUpdate) {
     let Some((user, email)) = serving
         .clients

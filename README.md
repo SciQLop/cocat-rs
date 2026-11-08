@@ -225,6 +225,11 @@ groups, sharing, leaving and transfer answer 409 for everyone. They are not in
 `GET /api/rooms`. The server refuses to start, and the import to run, when a project that
 is not public has a `public.` id (only an id imported from Python can).
 
+Every account reads a public catalogue, so nobody's email shows there. The socket relays no
+presence in either direction. A reader's history names each author "a curator" or
+"a contributor"; curators still see emails. A submission's author sees its reviewer as
+"a curator".
+
 ### Submissions
 
 Everyone else submits. A submission holds the catalogue and its events as they were when it

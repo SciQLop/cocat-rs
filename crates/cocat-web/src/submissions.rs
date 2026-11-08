@@ -29,6 +29,15 @@ impl Submission {
         self.status == "pending"
     }
 
+    /// Who wrote the review note: a curator sees the reviewer's email, an author is only
+    /// told it was a curator.
+    pub fn said_by(&self) -> String {
+        match self.reviewer.as_deref() {
+            Some(email) if email.contains('@') => format!("{email} said"),
+            _ => "The curator said".to_owned(),
+        }
+    }
+
     /// "New catalogue", or "Change to “Shocks”".
     pub fn kind_text(&self) -> String {
         match self.kind.as_str() {
@@ -165,6 +174,16 @@ mod tests {
             created: "2026-11-08T10:00:00Z".into(),
             decided: None,
         }
+    }
+
+    #[test]
+    fn the_review_note_names_its_curator_only_by_email() {
+        let mut decided = submission("new", "declined");
+        assert_eq!(decided.said_by(), "The curator said");
+        decided.reviewer = Some("a curator".into());
+        assert_eq!(decided.said_by(), "The curator said");
+        decided.reviewer = Some("alice@example.org".into());
+        assert_eq!(decided.said_by(), "alice@example.org said");
     }
 
     #[test]

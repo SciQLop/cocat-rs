@@ -26,10 +26,14 @@ struct Room {
 }
 
 fn open() -> Room {
+    open_named("lab")
+}
+
+fn open_named(room_id: &str) -> Room {
     let dir = TempDir::new().unwrap();
     let manager = RoomManager::new(dir.path().to_owned(), None);
     Room {
-        handle: manager.get_or_open("lab").unwrap(),
+        handle: manager.get_or_open(room_id).unwrap(),
         _dir: dir,
     }
 }
@@ -239,4 +243,18 @@ async fn a_page_that_reconnects_takes_its_awareness_id_over() {
 
     room.handle.detach(1).await;
     nothing_but_the_answer(&room, 2, &mut bob).await;
+}
+
+#[tokio::test]
+async fn a_public_catalogue_relays_no_presence_either_way() {
+    let room = open_named("public.shocks");
+    let mut curator = join(&room, 1, "curator@example.org", Role::Editor);
+    room.handle
+        .frame(1, awareness(100, 1, json!({"editing": "e1"})));
+    let mut reader = join(&room, 2, "reader@example.org", Role::Viewer);
+    room.handle
+        .frame(2, awareness(200, 1, json!({"editing": "e2"})));
+
+    nothing_but_the_answer(&room, 2, &mut reader).await;
+    nothing_but_the_answer(&room, 1, &mut curator).await;
 }

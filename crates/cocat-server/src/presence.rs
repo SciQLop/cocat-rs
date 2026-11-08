@@ -6,12 +6,14 @@
 //! old socket announces the same id from a new socket of the same account: the new socket
 //! takes the id over. Its state's `user` field is always the account the
 //! socket authenticated as, whatever the client wrote there, and the only other field kept
-//! is `editing`: the server relays nothing a client could grow.
+//! is `editing`: the server relays nothing a client could grow. A public catalogue relays
+//! no presence at all.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use cocat_core::room_id::is_public_id;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 use yrs::ClientID;
@@ -47,9 +49,18 @@ struct State {
 #[derive(Default)]
 pub struct Presence {
     states: HashMap<ClientId, State>,
+    /// A public catalogue is read by every account, so nobody's email is shown there.
+    silent: bool,
 }
 
 impl Presence {
+    pub fn for_room(room_id: &str) -> Self {
+        Self {
+            silent: is_public_id(room_id),
+            ..Self::default()
+        }
+    }
+
     /// Takes a client's awareness update and answers the frame to relay to the others, if
     /// any part of it is the client's to make.
     pub fn update(
@@ -59,6 +70,9 @@ impl Presence {
         email: &str,
         update: AwarenessUpdate,
     ) -> Option<Bytes> {
+        if self.silent {
+            return None;
+        }
         let id = self.owned_id(client, user, &update)?;
         let entry = update.clients.get(&id)?;
         let json = vouched(&entry.json, email)?;

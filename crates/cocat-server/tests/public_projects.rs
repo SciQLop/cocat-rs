@@ -8,7 +8,7 @@ use cocat_core::role::Role;
 use cocat_core::store::FileRoomStore;
 use cocat_core::time::Timestamp;
 use cocat_server::history::stamps::{StampFile, stamp_for};
-use cocat_server::room::RoomManager;
+use cocat_server::room::{Author, RoomManager};
 use cocat_server::{AppState, auth, db, groups, links::Links, ratelimit::LoginLimit, ws};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -698,4 +698,52 @@ async fn the_index_counts_the_events_and_follows_their_changes() {
     store.append(bytes::Bytes::from(update)).unwrap();
     store.flush().unwrap();
     assert_eq!(count().await, json!(2), "the trash does not count");
+}
+
+/// One event as an update `author` writes into `room`.
+async fn write_event(world: &World, room: &str, author: Uuid, uuid: &str) {
+    let doc = Doc::new();
+    let at = Timestamp::parse("2020-01-01T00:00:00Z").unwrap();
+    model::create_event(&mut doc.transact_mut(), &EventRecord::new(uuid, at, at)).unwrap();
+    let update = doc
+        .transact()
+        .encode_state_as_update_v1(&Default::default());
+    world
+        .state
+        .rooms
+        .write_as(room, u64::MAX, Author::Client(author), update)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_readers_history_names_curators_and_contributors_never_their_emails() {
+    let world = World::start().await;
+    let id = world.public(json!({"name": "Shocks"})).await;
+    write_event(&world, &id, world.curator, "by-curator").await;
+    write_event(&world, &id, world.reader, "by-contributor").await;
+    let path = format!("/api/rooms/{id}/history");
+
+    let (status, read) = world
+        .call(Some(world.reader), Method::GET, &path, None)
+        .await;
+    let (_, curated) = world
+        .call(Some(world.curator), Method::GET, &path, None)
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert!(!read.to_string().contains('@'), "{read}");
+    let authors = |history: &Value| -> Vec<String> {
+        history["versions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|version| version["author_email"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(authors(&read), ["a contributor", "a curator"]);
+    assert_eq!(
+        authors(&curated),
+        ["reader@example.org", "curator@example.org"]
+    );
 }

@@ -585,6 +585,15 @@ async fn a_declined_submission_tells_its_author_why_and_is_decided_once() {
         .await;
     assert_eq!(mine[0]["status"], "declined");
     assert_eq!(mine[0]["review_note"], "needs sources");
+    assert_eq!(
+        mine[0]["reviewer"], "a curator",
+        "an author never sees a curator's email"
+    );
+    let detail = format!("/api/public/submissions/{id}");
+    let (_, seen) = world.call(world.author, Method::GET, &detail, None).await;
+    assert_eq!(seen["reviewer"], "a curator");
+    let (_, curated) = world.call(world.curator, Method::GET, &detail, None).await;
+    assert_eq!(curated["reviewer"], "curator@example.org");
     assert!(mine[0]["decided"].is_string());
     let (_, index) = world
         .call(world.author, Method::GET, "/api/public", None)

@@ -29,6 +29,7 @@ use crate::submissions::{
 };
 
 const NEW: &str = "new";
+const A_CURATOR: &str = "a curator";
 const UPDATE: &str = "update";
 const NO_SUCH_SUBMISSION: &str = "No such submission";
 const NO_SUCH_CATALOGUE: &str = "No such catalogue in this project";
@@ -85,7 +86,7 @@ struct SubmissionOut {
     note: Option<String>,
     /// `pending`, `accepted`, `declined` or `withdrawn`.
     status: String,
-    /// The curator who decided it.
+    /// The curator who decided it: their email for curators, "a curator" for its author.
     reviewer: Option<String>,
     /// The curator's note.
     review_note: Option<String>,
@@ -93,6 +94,24 @@ struct SubmissionOut {
     created: String,
     /// When it was accepted, declined or withdrawn.
     decided: Option<String>,
+}
+
+impl SubmissionOut {
+    /// Only curators see who reviewed it; its author sees "a curator".
+    fn seen_by(submission: Submission, curator: bool) -> Self {
+        let reviewer = if curator {
+            submission.reviewer_email.clone()
+        } else {
+            submission
+                .reviewer_email
+                .as_ref()
+                .map(|_| A_CURATOR.to_owned())
+        };
+        Self {
+            reviewer,
+            ..submission.into()
+        }
+    }
 }
 
 impl From<Submission> for SubmissionOut {
@@ -204,7 +223,11 @@ async fn list(
     let curator = db::is_curator(&state.pool, user.id).await?;
     let author = (query.mine || !curator).then_some(user.id);
     let listed = submissions::list(&state.pool, author).await?;
-    Ok(Json(listed.into_iter().map(SubmissionOut::from).collect()))
+    let seen = listed
+        .into_iter()
+        .map(|submission| SubmissionOut::seen_by(submission, curator))
+        .collect();
+    Ok(Json(seen))
 }
 
 #[utoipa::path(
@@ -248,7 +271,7 @@ async fn submit(
         snapshot: &snapshot,
     };
     let id = submissions::insert(&state.pool, &new).await?;
-    Ok((StatusCode::CREATED, Json(stored(&state, id).await?)))
+    Ok((StatusCode::CREATED, Json(stored(&state, id, false).await?)))
 }
 
 #[utoipa::path(
@@ -294,7 +317,7 @@ async fn submit_update(
         snapshot: &snapshot,
     };
     let id = submissions::insert(&state.pool, &new).await?;
-    Ok((StatusCode::CREATED, Json(stored(&state, id).await?)))
+    Ok((StatusCode::CREATED, Json(stored(&state, id, false).await?)))
 }
 
 #[utoipa::path(
@@ -313,11 +336,11 @@ async fn one(
     CurrentUser(user): CurrentUser,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<SubmissionDetail>, ApiError> {
-    let (submission, _) = visible(&state, id, user.id).await?;
+    let (submission, curator) = visible(&state, id, user.id).await?;
     let snapshot = submissions::snapshot(&state.pool, id).await?;
     let (changes, stale) = what_changed(&state, &submission, snapshot).await?;
     Ok(Json(SubmissionDetail {
-        submission: submission.into(),
+        submission: SubmissionOut::seen_by(submission, curator),
         stale,
         changes,
     }))
@@ -364,7 +387,7 @@ async fn review(
         submissions::reopen(&state.pool, id).await?;
         return Err(error);
     }
-    Ok(Json(stored(&state, id).await?))
+    Ok(Json(stored(&state, id, true).await?))
 }
 
 #[utoipa::path(
@@ -385,7 +408,7 @@ async fn withdraw(
     CurrentUser(user): CurrentUser,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<SubmissionOut>, ApiError> {
-    let (submission, _) = visible(&state, id, user.id).await?;
+    let (submission, curator) = visible(&state, id, user.id).await?;
     if !submission.is_by(user.id) {
         return Err(ApiError::Forbidden(ONLY_THE_AUTHOR.to_owned()));
     }
@@ -397,7 +420,7 @@ async fn withdraw(
     if !submissions::decide(&state.pool, id, &decision).await? {
         return Err(ApiError::Conflict(DECIDED.to_owned()));
     }
-    Ok(Json(stored(&state, id).await?))
+    Ok(Json(stored(&state, id, curator).await?))
 }
 
 #[utoipa::path(
@@ -492,11 +515,11 @@ async fn visible(state: &AppState, id: i64, user: Uuid) -> Result<(Submission, b
     Ok((submission, curator))
 }
 
-async fn stored(state: &AppState, id: i64) -> Result<SubmissionOut, ApiError> {
+async fn stored(state: &AppState, id: i64, curator: bool) -> Result<SubmissionOut, ApiError> {
     let submission = submissions::one(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::NotFound(NO_SUCH_SUBMISSION.to_owned()))?;
-    Ok(submission.into())
+    Ok(SubmissionOut::seen_by(submission, curator))
 }
 
 /// The catalogue's name and the catalogue alone as one update, once `author` may store it.

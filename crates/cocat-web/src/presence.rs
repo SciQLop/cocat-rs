@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use cocat_core::room_id::is_public_id;
 use serde_json::{Value, json};
 use yrs::Doc;
 use yrs::sync::{Awareness, Message};
@@ -21,17 +22,31 @@ pub struct Peer {
 
 pub struct Presence {
     awareness: Awareness,
+    /// A public catalogue is read by every account: the server relays no presence there,
+    /// and this page shows none.
+    silent: bool,
 }
 
 impl Presence {
     pub fn new(doc: Doc) -> Self {
         Self {
             awareness: awareness(doc),
+            silent: false,
+        }
+    }
+
+    pub fn for_room(doc: Doc, room_id: &str) -> Self {
+        Self {
+            silent: is_public_id(room_id),
+            ..Self::new(doc)
         }
     }
 
     /// Sets what this page is editing and answers the frame that tells the room.
     pub fn announce(&mut self, editing: Option<String>) -> Option<Vec<u8>> {
+        if self.silent {
+            return None;
+        }
         self.awareness
             .set_local_state_raw(json!({ "editing": editing }).to_string());
         let own = self.awareness.client_id();
@@ -49,6 +64,9 @@ impl Presence {
 
     /// The others in the room, one per account, by email.
     pub fn peers(&self) -> Vec<Peer> {
+        if self.silent {
+            return Vec::new();
+        }
         let own = self.awareness.client_id();
         let mut peers: BTreeMap<String, Peer> = BTreeMap::new();
         let states = self.awareness.iter().filter(|(id, _)| *id != own);
@@ -195,6 +213,22 @@ mod tests {
         let frame = theirs.announce(None).unwrap();
         mine.receive(&relayed(&frame, "carol.dupont@example.org", "#7c4dcc"));
         assert_eq!(mine.peers(), [carol(None)]);
+    }
+
+    #[test]
+    fn a_public_catalogue_announces_nothing_and_lists_nobody() {
+        let mut mine = Presence::for_room(Doc::new(), "public.shocks");
+        let mut theirs = Presence::new(Doc::new());
+        let frame = theirs.announce(Some("e1".into())).unwrap();
+
+        assert_eq!(mine.announce(Some("e2".into())), None);
+        mine.receive(&relayed(&frame, "carol.dupont@example.org", "#7c4dcc"));
+        assert!(mine.peers().is_empty());
+        assert!(
+            Presence::for_room(Doc::new(), "lab")
+                .announce(None)
+                .is_some()
+        );
     }
 
     #[test]

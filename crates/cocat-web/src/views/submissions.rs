@@ -471,7 +471,7 @@ fn SubmissionView(
         })}
         {submission.review_note.clone().map(|said| view! {
             <div class="submission-note">
-                <span class="field-label">{format!("{} said", submission.reviewer.clone().unwrap_or_else(|| "The curator".to_owned()))}</span>
+                <span class="field-label">{submission.said_by()}</span>
                 <p class="version-note">{said}</p>
             </div>
         })}

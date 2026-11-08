@@ -117,7 +117,7 @@ def test_a_declined_submission_tells_its_author_why(server, tmp_path):
     statuses = {s["id"]: s for s in cc.submissions(server.url, server.cookie, mine=True)}
     assert statuses[first]["status"] == "declined"
     assert statuses[first]["review_note"] == "Add a description"
-    assert statuses[first]["reviewer"] == "curator@example.org"
+    assert statuses[first]["reviewer"] == "a curator"
     assert statuses[second]["status"] == "withdrawn"
     assert cc.submissions(server.url, stranger) == []
     assert cc.public_catalogues(server.url, server.cookie) == []
