@@ -1,7 +1,7 @@
 //! The sidebar's list: the room's catalogues with their member counts, and the trash.
 
 use cocat_core::model;
-use yrs::ReadTxn;
+use yrs::{Map as _, ReadTxn};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogueItem {
@@ -12,10 +12,18 @@ pub struct CatalogueItem {
     pub count: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Named {
+    pub uuid: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CatalogueList {
     pub catalogues: Vec<CatalogueItem>,
+    /// What the trash holds: events and catalogues.
     pub trash: usize,
+    pub trashed: Vec<Named>,
 }
 
 // simplify: every smart catalogue's rule runs on each room update (about 70 ms each at
@@ -41,10 +49,30 @@ pub fn catalogue_list<T: ReadTxn>(txn: &T) -> CatalogueList {
             }
         })
         .collect();
+    let trashed = trashed_catalogues(txn);
     CatalogueList {
         catalogues,
-        trash: model::trash(txn).len(),
+        trash: model::trash(txn).len() + trashed.len(),
+        trashed,
     }
+}
+
+/// The catalogues in the trash, by name.
+fn trashed_catalogues<T: ReadTxn>(txn: &T) -> Vec<Named> {
+    let Some(root) = txn.get_map(model::CATALOGUES) else {
+        return Vec::new();
+    };
+    let mut trashed: Vec<Named> = root
+        .keys(txn)
+        .filter_map(|uuid| model::catalogue(txn, uuid))
+        .filter(|catalogue| catalogue.deleted)
+        .map(|catalogue| Named {
+            uuid: catalogue.uuid,
+            name: catalogue.name,
+        })
+        .collect();
+    trashed.sort_by(|left, right| left.name.cmp(&right.name));
+    trashed
 }
 
 #[cfg(test)]
@@ -118,7 +146,14 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(list.trash, 1);
+        assert_eq!(list.trash, 2);
+        assert_eq!(
+            list.trashed,
+            [Named {
+                uuid: "c-old".into(),
+                name: "Old".into()
+            }]
+        );
     }
 
     #[test]

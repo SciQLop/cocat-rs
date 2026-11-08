@@ -68,6 +68,12 @@ pub fn rows<T: ReadTxn>(txn: &T, catalogue: &str) -> Result<Vec<Row>, RuleError>
         .collect())
 }
 
+/// One event as the table shows it, deleted or not.
+pub fn event<T: ReadTxn>(txn: &T, uuid: &str) -> Option<Row> {
+    let record = model::event(txn, uuid)?;
+    Some(event_row(record, &mut OriginNames::new(txn)))
+}
+
 pub fn trash_rows<T: ReadTxn>(txn: &T) -> Vec<Row> {
     let mut origins = OriginNames::new(txn);
     model::trash(txn)
@@ -269,6 +275,14 @@ mod tests {
     #[test]
     fn an_unknown_catalogue_has_no_rows() {
         assert!(catalogue("nope").is_empty());
+    }
+
+    #[test]
+    fn one_event_reads_as_the_row_a_list_shows() {
+        let doc = room();
+        let one = event(&doc.transact(), "e2").unwrap();
+        assert_eq!(one, catalogue("c-smart")[1]);
+        assert_eq!(event(&doc.transact(), "nope"), None);
     }
 
     #[test]

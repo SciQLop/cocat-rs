@@ -10,6 +10,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 url = "2"
+uuid = { version = "1", features = ["v4"] }
 yrs.workspace = true
 
 # The view only exists in the browser; the logic modules stay native so the workspace gate
@@ -24,6 +25,8 @@ web-sys = { version = "0.3", features = [
     "BinaryType",
     "Document",
     "Element",
+    "HtmlInputElement",
+    "HtmlSelectElement",
     "Location",
     "MessageEvent",
     "Node",

@@ -1,18 +1,24 @@
 use leptos::prelude::*;
 
 use crate::catalogues::{CatalogueItem, catalogue_list};
+use crate::edit;
 use crate::route::Route;
 use crate::state::Room;
+use crate::views::controls::{NameForm, go_to};
 
 #[component]
 pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let room = expect_context::<Room>();
-    let list = Memo::new(move |_| room.read(|txn| catalogue_list(txn)));
+    let reader = room.clone();
+    let list = Memo::new(move |_| reader.read(|txn| catalogue_list(txn)));
     let page = window().location().pathname().unwrap_or_default();
     let trash = Route::Trash.href(&page);
     view! {
         <aside class="sidebar" aria-label="Catalogues">
-            <h2 class="eyebrow">"Catalogues"</h2>
+            <div class="sidebar-head">
+                <h2 class="eyebrow">"Catalogues"</h2>
+                {room.can_write().then(|| view! { <NewCatalogue/> })}
+            </div>
             <nav class="catalogue-list">
                 <For each=move || list.get().catalogues key=Clone::clone let:item>
                     <Entry item shown page=page.clone()/>
@@ -33,6 +39,33 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 <span class="count">{move || list.get().trash}</span>
             </a>
         </aside>
+    }
+}
+
+/// The "+" of the list, and the form it opens.
+#[component]
+fn NewCatalogue() -> impl IntoView {
+    let room = expect_context::<Room>();
+    let open = RwSignal::new(false);
+    let submit = move |name: String| {
+        let author = room.config.user_email.clone();
+        let made = room.write(|txn| edit::new_catalogue(txn, &name, &author))?;
+        go_to(&Route::Catalogue(made).hash());
+        Ok(())
+    };
+    let submit = StoredValue::new_local(submit);
+    view! {
+        <button type="button" class="icon add-catalogue" aria-label="New catalogue"
+            aria-expanded=move || open.get().to_string() on:click=move |_| open.update(|open| *open = !*open)>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+        </button>
+        <Show when=move || open.get()>
+            <div class="sidebar-form">
+                <NameForm label="Name of the new catalogue" action="Create" initial="" open
+                    submit=move |name| submit.with_value(|submit| submit(name))/>
+            </div>
+        </Show>
     }
 }
 

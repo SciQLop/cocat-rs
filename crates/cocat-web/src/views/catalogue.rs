@@ -5,9 +5,12 @@ use leptos::prelude::*;
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
+use crate::views::actions::{Actions, Form, Materialize};
 use crate::views::rule::Heading;
+use crate::views::rule_editor::RuleEditor;
 use crate::views::table::Table;
 use crate::views::timeline::Timeline;
+use crate::views::trash::TrashedCatalogues;
 
 /// The rows of what is on screen, or the rule's error.
 pub type Members = Memo<Result<Vec<Row>, String>>;
@@ -43,8 +46,10 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
             .get()
             .unwrap_or_else(|| preferred_columns(&reader, &shown.get()))
     });
+    let form = RwSignal::new(Form::Closed);
     Effect::new(move |_| {
         shown.track();
+        form.set(Form::Closed);
         picked.set(None);
         query.set(String::new());
         selected.set(None);
@@ -72,8 +77,15 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
                     />
                 </label>
                 <ColumnPicker keys columns picked/>
+                {room.can_write().then(|| view! { <Actions shown selected form/> })}
             </div>
         </div>
+        {move || match (form.get(), shown.get()) {
+            (Form::Rule, Route::Catalogue(uuid)) => Some(view! { <RuleEditor uuid form/> }.into_any()),
+            (Form::Materialize, Route::Catalogue(uuid)) => Some(view! { <Materialize uuid form/> }.into_any()),
+            _ => None,
+        }}
+        {move || (shown.get() == Route::Trash).then(|| view! { <TrashedCatalogues/> })}
         <Timeline members order/>
         <Table members order sorting columns selected/>
     }

@@ -1,8 +1,9 @@
 //! What the event panel shows about one event.
 
-use cocat_core::model::{self, OriginKind};
+use cocat_core::model::{self, OriginKind, Status};
 use yrs::ReadTxn;
 
+use crate::catalogues::Named;
 use crate::format::{clock_text, date_text, duration_text, time_text, value_text};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -10,33 +11,46 @@ pub struct EventDetail {
     pub uuid: String,
     pub start: String,
     pub stop: String,
+    /// The stop in full, as its input shows it.
+    pub stop_time: String,
     pub error: Option<String>,
     pub duration: String,
     pub status: String,
-    pub confidence: Option<String>,
+    pub deleted: bool,
+    pub confidence: Option<f64>,
     pub tags: Vec<String>,
     pub author: Option<String>,
     pub origin: Option<String>,
     pub comment: Option<String>,
     pub attributes: Vec<(String, String)>,
-    /// The names of the catalogues that list the event.
-    pub catalogues: Vec<String>,
+    /// The catalogues that list the event.
+    pub catalogues: Vec<Named>,
+    /// The other catalogues not in the trash, where the event could be listed.
+    pub elsewhere: Vec<Named>,
 }
 
 pub fn event_detail<T: ReadTxn>(txn: &T, uuid: &str) -> Option<EventDetail> {
     let record = model::event(txn, uuid)?;
     let (start, stop) = (record.start.unix_nanos()?, record.stop.unix_nanos()?);
     let (start_text, stop_text) = range_text(start, stop);
+    let listing = model::event_catalogues(txn, uuid);
+    let (catalogues, elsewhere) = model::catalogues(txn)
+        .into_iter()
+        .map(|catalogue| Named {
+            uuid: catalogue.uuid,
+            name: catalogue.name,
+        })
+        .partition(|catalogue| listing.contains(&catalogue.uuid));
     Some(EventDetail {
         uuid: record.uuid,
         start: start_text,
         stop: stop_text,
+        stop_time: time_text(stop),
         error: error_text(record.start_err, record.stop_err),
         duration: duration_text(stop - start),
         status: record.status.name().to_owned(),
-        confidence: record
-            .confidence
-            .map(|confidence| format!("{confidence:.2}")),
+        deleted: record.status == Status::Deleted,
+        confidence: record.confidence,
         tags: record.tags,
         author: record.author,
         origin: record.origin.map(|id| origin_text(txn, &id)),
@@ -46,10 +60,8 @@ pub fn event_detail<T: ReadTxn>(txn: &T, uuid: &str) -> Option<EventDetail> {
             .iter()
             .map(|(key, value)| (key.clone(), value_text(value)))
             .collect(),
-        catalogues: model::event_catalogues(txn, uuid)
-            .iter()
-            .filter_map(|catalogue| model::catalogue(txn, catalogue).map(|found| found.name))
-            .collect(),
+        catalogues,
+        elsewhere,
     })
 }
 
@@ -94,6 +106,13 @@ mod tests {
 
     use super::*;
 
+    fn named(uuid: &str, name: &str) -> Named {
+        Named {
+            uuid: uuid.into(),
+            name: name.into(),
+        }
+    }
+
     #[test]
     fn an_event_detail_names_its_origin_comment_and_catalogues() {
         let detail = event_detail(&crate::fixture::room().transact(), "e2").unwrap();
@@ -103,25 +122,43 @@ mod tests {
                 uuid: "e2".into(),
                 start: "2019-11-05 08:47:30".into(),
                 stop: "08:47:42".into(),
+                stop_time: "2019-11-05 08:47:42".into(),
                 error: Some("±0.5 s".into()),
                 duration: "12 s".into(),
                 status: "preliminary".into(),
-                confidence: Some("0.74".into()),
+                deleted: false,
+                confidence: Some(0.74),
                 tags: vec!["sw".into()],
                 author: None,
                 origin: Some("Detector sw-finder 1.2".into()),
                 comment: Some("Seen by the finder only".into()),
                 attributes: vec![("spacecraft".into(), "MMS2".into())],
                 catalogues: Vec::new(),
+                elsewhere: vec![
+                    named("c-static", "Bow shock crossings"),
+                    named("c-loop", "Loop"),
+                    named("c-smart", "Solitary waves"),
+                    named("c-merged", "Wave trains"),
+                ],
             }
         );
     }
 
     #[test]
-    fn an_event_lists_the_catalogues_that_list_it() {
+    fn an_event_lists_the_catalogues_that_list_it_and_the_others() {
         let detail = event_detail(&crate::fixture::room().transact(), "e1").unwrap();
-        assert_eq!(detail.catalogues, ["Bow shock crossings"]);
+        assert_eq!(
+            detail.catalogues,
+            [named("c-static", "Bow shock crossings")]
+        );
+        assert_eq!(detail.elsewhere.len(), 3);
         assert_eq!(detail.author.as_deref(), Some("alexis.jeandet"));
+    }
+
+    #[test]
+    fn a_trashed_event_says_so() {
+        let detail = event_detail(&crate::fixture::room().transact(), "e4").unwrap();
+        assert!(detail.deleted);
     }
 
     #[test]

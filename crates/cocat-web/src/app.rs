@@ -8,7 +8,7 @@ use crate::rows::Row;
 use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
 use crate::views::catalogue::CataloguePage;
-use crate::views::event_panel::EventPanel;
+use crate::views::event_panel::{EventPanel, Shown};
 use crate::views::header::Header;
 use crate::views::sidebar::Sidebar;
 use cocat_core::model;
@@ -57,6 +57,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         route.get().or_first(first.as_deref())
     });
     let selected = RwSignal::new(None::<Row>);
+    let panel = Memo::new(move |_| selected.with(Shown::of));
     view! {
         <Header/>
         <div class="browser">
@@ -64,7 +65,7 @@ fn App(config: RoomConfig) -> impl IntoView {
             <main class="content">
                 <CataloguePage shown selected/>
             </main>
-            <EventPanel selected/>
+            <EventPanel selected shown=panel/>
         </div>
     }
     .into_any()
