@@ -157,17 +157,19 @@ fn Brush(
     }
 }
 
-/// The period's dates and how many events it keeps, above the table.
+/// The period's dates and how many events it keeps, above the table, of all the events of
+/// the catalogue, as the statistics count them.
 #[component]
 pub fn PeriodLine(
     period: RwSignal<Option<Period>>,
     order: Memo<Vec<usize>>,
-    matching: Memo<Vec<usize>>,
+    members: Members,
 ) -> impl IntoView {
+    let all = move || members.with(|members| members.as_ref().map_or(0, Vec::len));
     let text = move || {
         period
             .get()
-            .map(|period| counts_text(&period, order.with(Vec::len), matching.with(Vec::len)))
+            .map(|period| counts_text(&period, order.with(Vec::len), all()))
     };
     view! {
         <Show when=move || period.with(Option::is_some)>

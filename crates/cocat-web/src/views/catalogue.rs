@@ -160,7 +160,7 @@ pub fn CataloguePage(
             <TrashedCatalogues/>
         })}
         <Timeline members matching period selected/>
-        <PeriodLine period order matching/>
+        <PeriodLine period order members/>
         <Table members order sorting columns selected empty/>
     }
 }
