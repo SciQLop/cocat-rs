@@ -111,7 +111,7 @@ struct RoomRow {
 }
 
 /// The server url as a directory, so joining a path keeps any prefix the url carries.
-fn base(url: &str) -> Result<Url, LoginError> {
+pub(crate) fn base(url: &str) -> Result<Url, LoginError> {
     let mut url = Url::parse(url)?;
     if !url.path().ends_with('/') {
         let path = format!("{}/", url.path());

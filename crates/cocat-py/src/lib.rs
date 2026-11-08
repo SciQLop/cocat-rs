@@ -25,7 +25,7 @@ use pyo3::types::{
     PyDateAccess, PyDateTime, PyDict, PyList, PySet, PyTimeAccess, PyTuple, PyType, PyTzInfo,
 };
 use serde_json::{Map as JsonMap, Value};
-use yrs::Transact;
+use yrs::{Transact, TransactionMut};
 
 type Result<T> = PyResult<T>;
 
@@ -34,6 +34,16 @@ const DEFAULT_SAVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Every write goes through here, so a past version refuses them all alike.
+fn write<T>(room: &ClientRoom, edit: impl FnOnce(&mut TransactionMut<'_>) -> T) -> Result<T> {
+    if room.is_past() {
+        return Err(PyRuntimeError::new_err(
+            cocat_client::RoomError::Past.to_string(),
+        ));
+    }
+    Ok(room.write(edit))
 }
 
 /// A datetime as Python gets it: timezone-aware UTC, the form Python cocat returns.
@@ -463,9 +473,11 @@ impl Catalogue {
     }
 
     #[setter]
-    fn set_name(&self, name: String) {
-        self.room
-            .write(|txn| model::rename_catalogue(txn, &self.uuid, &name));
+    fn set_name(&self, name: String) -> Result<()> {
+        write(&self.room, |txn| {
+            model::rename_catalogue(txn, &self.uuid, &name)
+        })?;
+        Ok(())
     }
 
     #[getter]
@@ -491,10 +503,9 @@ impl Catalogue {
 
     #[setter]
     fn set_columns(&self, columns: Vec<String>) -> Result<()> {
-        if !self
-            .room
-            .write(|txn| model::set_catalogue_columns(txn, &self.uuid, &columns))
-        {
+        if !write(&self.room, |txn| {
+            model::set_catalogue_columns(txn, &self.uuid, &columns)
+        })? {
             return Err(unknown("catalogue"));
         }
         Ok(())
@@ -510,10 +521,9 @@ impl Catalogue {
     #[setter]
     fn set_tags(&self, tags: &Bound<'_, PyAny>) -> Result<()> {
         let tags = uuids(Some(tags))?;
-        if !self
-            .room
-            .write(|txn| model::set_catalogue_tags(txn, &self.uuid, &tags))
-        {
+        if !write(&self.room, |txn| {
+            model::set_catalogue_tags(txn, &self.uuid, &tags)
+        })? {
             return Err(unknown("catalogue"));
         }
         Ok(())
@@ -543,10 +553,10 @@ impl Catalogue {
             true => None,
             false => Some(to_json(rule)?),
         };
-        let found = self
-            .room
-            .write(|txn| model::set_catalogue_rule(txn, &self.uuid, rule.as_ref()))
-            .map_err(value_error)?;
+        let found = write(&self.room, |txn| {
+            model::set_catalogue_rule(txn, &self.uuid, rule.as_ref())
+        })?
+        .map_err(value_error)?;
         if !found {
             return Err(unknown("catalogue"));
         }
@@ -562,9 +572,7 @@ impl Catalogue {
             created: Some(now()?),
             ..NewCatalogue::default()
         };
-        let found = self
-            .room
-            .write(|txn| model::materialize(txn, &self.uuid, &into))
+        let found = write(&self.room, |txn| model::materialize(txn, &self.uuid, &into))?
             .map_err(value_error)?;
         if !found {
             return Err(unknown("catalogue"));
@@ -588,19 +596,19 @@ impl Catalogue {
             return Ok(());
         };
         let attributes = to_json_map(attributes)?;
-        self.room
-            .write(|txn| model::set_catalogue_attributes(txn, &self.uuid, &attributes))
-            .ok()
-            .ok_or_else(|| unknown("catalogue"))?;
+        write(&self.room, |txn| {
+            model::set_catalogue_attributes(txn, &self.uuid, &attributes)
+        })?
+        .ok()
+        .ok_or_else(|| unknown("catalogue"))?;
         Ok(())
     }
 
     fn remove_attributes(&self, keys: &Bound<'_, PyAny>) -> Result<()> {
         let keys = uuids(Some(keys))?;
-        if !self
-            .room
-            .write(|txn| model::remove_catalogue_attributes(txn, &self.uuid, &keys))
-        {
+        if !write(&self.room, |txn| {
+            model::remove_catalogue_attributes(txn, &self.uuid, &keys)
+        })? {
             return Err(unknown("catalogue"));
         }
         Ok(())
@@ -608,10 +616,9 @@ impl Catalogue {
 
     fn add_events(&self, events: &Bound<'_, PyAny>) -> Result<()> {
         let events = uuids(Some(events))?;
-        if !self
-            .room
-            .write(|txn| model::add_catalogue_events(txn, &self.uuid, &events))
-        {
+        if !write(&self.room, |txn| {
+            model::add_catalogue_events(txn, &self.uuid, &events)
+        })? {
             return Err(unknown("catalogue"));
         }
         Ok(())
@@ -619,30 +626,29 @@ impl Catalogue {
 
     fn remove_events(&self, events: &Bound<'_, PyAny>) -> Result<()> {
         let events = uuids(Some(events))?;
-        if !self
-            .room
-            .write(|txn| model::remove_catalogue_events(txn, &self.uuid, &events))
-        {
+        if !write(&self.room, |txn| {
+            model::remove_catalogue_events(txn, &self.uuid, &events)
+        })? {
             return Err(unknown("catalogue"));
         }
         Ok(())
     }
 
     /// Moves the catalogue to the trash; its events stay where they are.
-    fn delete(&self) {
-        self.room
-            .write(|txn| model::delete_catalogue(txn, &self.uuid));
+    fn delete(&self) -> Result<()> {
+        write(&self.room, |txn| model::delete_catalogue(txn, &self.uuid))?;
+        Ok(())
     }
 
-    fn restore(&self) {
-        self.room
-            .write(|txn| model::restore_catalogue(txn, &self.uuid));
+    fn restore(&self) -> Result<()> {
+        write(&self.room, |txn| model::restore_catalogue(txn, &self.uuid))?;
+        Ok(())
     }
 
     /// Removes the catalogue for good.
-    fn purge(&self) {
-        self.room
-            .write(|txn| model::purge_catalogue(txn, &self.uuid));
+    fn purge(&self) -> Result<()> {
+        write(&self.room, |txn| model::purge_catalogue(txn, &self.uuid))?;
+        Ok(())
     }
 
     /// Uuids, start and stop times, and with `attributes=True` each event's attributes, all
@@ -722,10 +728,10 @@ impl Event {
     }
 
     fn set_field(&self, field: EventField) -> Result<()> {
-        let found = self
-            .room
-            .write(|txn| model::set_event_field(txn, &self.uuid, &field))
-            .map_err(value_error)?;
+        let found = write(&self.room, |txn| {
+            model::set_event_field(txn, &self.uuid, &field)
+        })?
+        .map_err(value_error)?;
         if !found {
             return Err(unknown("event"));
         }
@@ -773,10 +779,10 @@ impl Event {
         let (start, stop): (Bound<'_, PyAny>, Bound<'_, PyAny>) = range.extract()?;
         let start = to_timestamp(&start)?;
         let stop = to_timestamp(&stop)?;
-        let found = self
-            .room
-            .write(|txn| model::set_event_range(txn, &self.uuid, start, stop))
-            .map_err(value_error)?;
+        let found = write(&self.room, |txn| {
+            model::set_event_range(txn, &self.uuid, start, stop)
+        })?
+        .map_err(value_error)?;
         if !found {
             return Err(unknown("event"));
         }
@@ -886,10 +892,9 @@ impl Event {
 
     #[setter]
     fn set_comment(&self, comment: Option<String>) -> Result<()> {
-        if !self
-            .room
-            .write(|txn| model::set_comment(txn, &self.uuid, comment.as_deref()))
-        {
+        if !write(&self.room, |txn| {
+            model::set_comment(txn, &self.uuid, comment.as_deref())
+        })? {
             return Err(unknown("event"));
         }
         Ok(())
@@ -933,40 +938,40 @@ impl Event {
     #[pyo3(signature = (**attributes))]
     fn set_attributes(&self, py: Python<'_>, attributes: Option<&Bound<'_, PyDict>>) -> Result<()> {
         let attributes = Attributes::of(attributes)?;
-        let warnings = self
-            .room
-            .write(|txn| {
-                attributes.register_dates(txn);
-                model::set_event_attributes(txn, &self.uuid, &attributes.values)
-            })
-            .map_err(value_error)?
-            .ok_or_else(|| unknown("event"))?;
+        let warnings = write(&self.room, |txn| {
+            attributes.register_dates(txn);
+            model::set_event_attributes(txn, &self.uuid, &attributes.values)
+        })?
+        .map_err(value_error)?
+        .ok_or_else(|| unknown("event"))?;
         warn(py, &warnings)
     }
 
     fn remove_attributes(&self, keys: &Bound<'_, PyAny>) -> Result<()> {
         let keys = uuids(Some(keys))?;
-        if !self
-            .room
-            .write(|txn| model::remove_event_attributes(txn, &self.uuid, &keys))
-        {
+        if !write(&self.room, |txn| {
+            model::remove_event_attributes(txn, &self.uuid, &keys)
+        })? {
             return Err(unknown("event"));
         }
         Ok(())
     }
 
     /// Moves the event to the trash: catalogues stop showing it until it is restored.
-    fn delete(&self) {
-        self.room.write(|txn| model::delete_event(txn, &self.uuid));
+    fn delete(&self) -> Result<()> {
+        write(&self.room, |txn| model::delete_event(txn, &self.uuid))?;
+        Ok(())
     }
 
-    fn restore(&self) {
-        self.room.write(|txn| model::restore_event(txn, &self.uuid));
+    fn restore(&self) -> Result<()> {
+        write(&self.room, |txn| model::restore_event(txn, &self.uuid))?;
+        Ok(())
     }
 
     /// Removes the event for good, from the room and from every catalogue.
-    fn purge(&self) {
-        self.room.write(|txn| model::purge_event(txn, &self.uuid));
+    fn purge(&self) -> Result<()> {
+        write(&self.room, |txn| model::purge_event(txn, &self.uuid))?;
+        Ok(())
     }
 }
 
@@ -1039,26 +1044,53 @@ pub struct Room {
     credentials: Mutex<Option<(String, String)>>,
 }
 
+impl Room {
+    fn of(room: ClientRoom) -> Room {
+        let room = Arc::new(room);
+        let (sender, batches) = mpsc::channel();
+        room.subscribe(move |batch| {
+            let _ = sender.send(batch);
+        });
+        Room {
+            room,
+            batches: Mutex::new(batches),
+            url: Mutex::new(None),
+            credentials: Mutex::new(None),
+        }
+    }
+}
+
 #[pymethods]
 impl Room {
     #[staticmethod]
     fn open(cache_dir: String, room_id: String) -> Result<Room> {
         std::fs::create_dir_all(Path::new(&cache_dir))
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let room = Arc::new(
-            ClientRoom::open(Path::new(&cache_dir), &room_id)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?,
-        );
-        let (sender, batches) = mpsc::channel();
-        room.subscribe(move |batch| {
-            let _ = sender.send(batch);
-        });
-        Ok(Room {
-            room,
-            batches: Mutex::new(batches),
-            url: Mutex::new(None),
-            credentials: Mutex::new(None),
-        })
+        let room = ClientRoom::open(Path::new(&cache_dir), &room_id)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(Room::of(room))
+    }
+
+    /// The room as of a version, read-only and never connected: once the state is fetched,
+    /// the server is not needed.
+    #[staticmethod]
+    fn at(
+        py: Python<'_>,
+        url: String,
+        cookie: String,
+        room_id: String,
+        version: u64,
+    ) -> Result<Room> {
+        let state = py
+            .detach(|| {
+                block_on(cocat_client::version_state(
+                    &url, &cookie, &room_id, version,
+                ))
+            })?
+            .map_err(value_error)?;
+        let room = ClientRoom::past(&room_id, &state)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(Room::of(room))
     }
 
     /// Connects, and keeps `(username, password)` so a session the server refuses can log in
@@ -1232,9 +1264,9 @@ impl Room {
         unit: Option<String>,
         description: Option<String>,
     ) -> Result<()> {
-        if !self.room.write(|txn| {
+        if !write(&self.room, |txn| {
             model::set_attribute_info(txn, key, unit.as_deref(), description.as_deref())
-        }) {
+        })? {
             return Err(PyLookupError::new_err(format!(
                 "no attribute {key} is registered"
             )));
@@ -1274,9 +1306,7 @@ impl Room {
             parameters: parameters.map(to_json).transpose()?,
             derived_from,
         };
-        self.room
-            .write(|txn| model::create_origin(txn, &origin))
-            .map_err(value_error)?;
+        write(&self.room, |txn| model::create_origin(txn, &origin))?.map_err(value_error)?;
         Ok(origin.id)
     }
 
@@ -1335,16 +1365,15 @@ impl Room {
                 None => JsonMap::new(),
             },
         };
-        self.room
-            .write(|txn| model::create_catalogue(txn, &catalogue))
-            .map_err(value_error)?;
+        write(&self.room, |txn| model::create_catalogue(txn, &catalogue))?.map_err(value_error)?;
         if let Some(events) = events {
             let mut uuids = Vec::new();
             for event in events.try_iter()? {
                 uuids.push(event_uuid(&event?)?);
             }
-            self.room
-                .write(|txn| model::add_catalogue_events(txn, &uuid, &uuids));
+            write(&self.room, |txn| {
+                model::add_catalogue_events(txn, &uuid, &uuids)
+            })?;
         }
         Py::new(py, Catalogue::of(&self.room, &uuid))
     }
@@ -1398,15 +1427,13 @@ impl Room {
         event.shape = shape.map(to_shape).transpose()?.flatten();
         let attributes = Attributes::of(attributes)?;
         event.attributes = attributes.values.clone();
-        let warnings = self
-            .room
-            .write(|txn| {
-                attributes.register_dates(txn);
-                let warnings = model::create_event(txn, &event)?;
-                model::set_comment(txn, &event.uuid, comment.as_deref());
-                Ok::<_, model::WriteError>(warnings)
-            })
-            .map_err(value_error)?;
+        let warnings = write(&self.room, |txn| {
+            attributes.register_dates(txn);
+            let warnings = model::create_event(txn, &event)?;
+            model::set_comment(txn, &event.uuid, comment.as_deref());
+            Ok::<_, model::WriteError>(warnings)
+        })?
+        .map_err(value_error)?;
         warn(py, &warnings)?;
         Py::new(py, Event::of(&self.room, &event.uuid))
     }
@@ -1438,9 +1465,9 @@ impl Room {
             .author
             .unwrap_or_else(|| "VOTable Import".to_owned());
         let single = imported.tables.len() == 1;
-        let warnings = self
-            .room
-            .write(|txn| -> std::result::Result<_, model::WriteError> {
+        let warnings = write(
+            &self.room,
+            |txn| -> std::result::Result<_, model::WriteError> {
                 let mut warnings = Vec::new();
                 for (index, table) in imported.tables.iter().enumerate() {
                     let name = if single {
@@ -1451,8 +1478,9 @@ impl Room {
                     warnings.extend(import_table(txn, name, &author, &table.events)?);
                 }
                 Ok(warnings)
-            })
-            .map_err(value_error)?;
+            },
+        )?
+        .map_err(value_error)?;
         warn(py, &warnings)?;
         Ok(imported.tables.len())
     }
@@ -1638,6 +1666,75 @@ fn rooms(py: Python<'_>, url: String, cookie: String) -> Result<Vec<RoomInfo>> {
     Ok(rooms.into_iter().map(RoomInfo::from).collect())
 }
 
+/// The room's versions, newest first, as dicts; with `catalogue`, only those that touched it.
+#[pyfunction]
+#[pyo3(signature = (url, cookie, room_id, catalogue=None))]
+fn history(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    room_id: String,
+    catalogue: Option<String>,
+) -> Result<Vec<Py<PyAny>>> {
+    let versions = py
+        .detach(|| {
+            block_on(cocat_client::history(
+                &url,
+                &cookie,
+                &room_id,
+                catalogue.as_deref(),
+            ))
+        })?
+        .map_err(value_error)?;
+    versions
+        .iter()
+        .map(|version| to_python(py, version))
+        .collect()
+}
+
+#[pyfunction]
+#[pyo3(signature = (url, cookie, room_id, version, catalogue=None))]
+fn restore(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    room_id: String,
+    version: u64,
+    catalogue: Option<String>,
+) -> Result<bool> {
+    py.detach(|| {
+        block_on(cocat_client::restore(
+            &url,
+            &cookie,
+            &room_id,
+            version,
+            catalogue.as_deref(),
+        ))
+    })?
+    .map_err(value_error)
+}
+
+#[pyfunction]
+fn name_version(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    room_id: String,
+    version: u64,
+    name: Option<String>,
+) -> Result<()> {
+    py.detach(|| {
+        block_on(cocat_client::name_version(
+            &url,
+            &cookie,
+            &room_id,
+            version,
+            name.as_deref(),
+        ))
+    })?
+    .map_err(value_error)
+}
+
 /// The compiled part of `cocat_rs`; `cocat_rs/__init__.py` re-exports it.
 /// The sync thread's warnings (a server out of reach, a refused handshake) go to Python's
 /// `logging` under `cocat_client.*`. Levels are read from Python on each record so that
@@ -1666,6 +1763,9 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RoomInfo>()?;
     module.add_function(wrap_pyfunction!(login, module)?)?;
     module.add_function(wrap_pyfunction!(rooms, module)?)?;
+    module.add_function(wrap_pyfunction!(history, module)?)?;
+    module.add_function(wrap_pyfunction!(restore, module)?)?;
+    module.add_function(wrap_pyfunction!(name_version, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;

@@ -137,3 +137,29 @@ def other(server, tmp_path):
         yield room
     finally:
         room.close()
+
+
+@pytest.fixture
+def colleague(server, tmp_path):
+    """A second account, an editor of the room, connected from its own cache."""
+    email = "colleague@example.org"
+    database = str(server.directory / "cocat.db")
+    run("create-user", "--email", email, "--password", PASSWORD, "--db_path", database)
+    run(
+        "add-user-to-room",
+        "--email",
+        email,
+        "--room_id",
+        server.room_id,
+        "--db_path",
+        database,
+    )
+    directory = tmp_path / "colleague"
+    directory.mkdir()
+    room = cc.Room.open(str(directory), server.room_id)
+    room.connect(server.url, login(server.url, email))
+    room.wait_synced(15)
+    try:
+        yield room
+    finally:
+        room.close()

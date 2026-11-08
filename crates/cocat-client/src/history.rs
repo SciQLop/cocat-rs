@@ -1,0 +1,111 @@
+//! A room's version history, as the server keeps it: the versions, the room at one of them,
+//! restoring one, and naming one.
+
+use reqwest::{Method, RequestBuilder, Response};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use url::Url;
+
+use crate::login::{LoginError, base, cookie_header};
+
+/// The versions, newest first, as the server describes them; with `catalogue`, only those
+/// that touched it.
+pub async fn history(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    catalogue: Option<&str>,
+) -> Result<Vec<Value>, LoginError> {
+    #[derive(Deserialize)]
+    struct History {
+        versions: Vec<Value>,
+    }
+    let mut request = request(Method::GET, url, cookie, room_id, &[])?;
+    if let Some(catalogue) = catalogue {
+        request = request.query(&[("catalogue", catalogue)]);
+    }
+    let history: History = send(request).await?.json().await?;
+    Ok(history.versions)
+}
+
+/// The room as of the version, as one update to apply to an empty document.
+pub async fn version_state(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    version: u64,
+) -> Result<Vec<u8>, LoginError> {
+    let version = version.to_string();
+    let request = request(Method::GET, url, cookie, room_id, &[&version, "state"])?;
+    Ok(send(request).await?.bytes().await?.to_vec())
+}
+
+/// Makes the room, or one catalogue, equal to the version again; false when it already was.
+pub async fn restore(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    version: u64,
+    catalogue: Option<&str>,
+) -> Result<bool, LoginError> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        catalogue: Option<&'a str>,
+    }
+    #[derive(Deserialize)]
+    struct Restored {
+        restored: bool,
+    }
+    let version = version.to_string();
+    let request = request(Method::POST, url, cookie, room_id, &[&version, "restore"])?
+        .json(&Body { catalogue });
+    let restored: Restored = send(request).await?.json().await?;
+    Ok(restored.restored)
+}
+
+/// Names the version, or takes its name away with `None`.
+pub async fn name_version(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    version: u64,
+    name: Option<&str>,
+) -> Result<(), LoginError> {
+    let version = version.to_string();
+    let path = [version.as_str(), "name"];
+    let request = match name {
+        Some(name) => request(Method::PUT, url, cookie, room_id, &path)?
+            .json(&serde_json::json!({ "name": name })),
+        None => request(Method::DELETE, url, cookie, room_id, &path)?,
+    };
+    send(request).await?;
+    Ok(())
+}
+
+/// A request under `api/rooms/{room_id}/history`, each part its own path segment so a room
+/// id is escaped rather than read as a path.
+fn request(
+    method: Method,
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    tail: &[&str],
+) -> Result<RequestBuilder, LoginError> {
+    let mut url: Url = base(url)?;
+    url.path_segments_mut()
+        .map_err(|_| url::ParseError::RelativeUrlWithCannotBeABaseBase)?
+        .pop_if_empty()
+        .extend(["api", "rooms", room_id, "history"])
+        .extend(tail);
+    Ok(reqwest::Client::new()
+        .request(method, url)
+        .header(reqwest::header::COOKIE, cookie_header(cookie)))
+}
+
+async fn send(request: RequestBuilder) -> Result<Response, LoginError> {
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(LoginError::Refused(response.status().as_u16()));
+    }
+    Ok(response)
+}

@@ -5,7 +5,18 @@ import logging
 import threading
 
 from . import _native
-from ._native import Catalogue, Event, NotFound, RoomInfo, login, rooms, rule_from_tscat
+from ._native import (
+    Catalogue,
+    Event,
+    NotFound,
+    RoomInfo,
+    history,
+    login,
+    name_version,
+    restore,
+    rooms,
+    rule_from_tscat,
+)
 
 __all__ = [
     "Catalogue",
@@ -13,7 +24,10 @@ __all__ = [
     "NotFound",
     "Room",
     "RoomInfo",
+    "history",
     "login",
+    "name_version",
+    "restore",
     "rooms",
     "rule_from_tscat",
 ]
@@ -103,6 +117,11 @@ class Room:
     @classmethod
     def open(cls, cache_dir, room_id):
         return cls(_native.Room.open(str(cache_dir), str(room_id)))
+
+    @classmethod
+    def at(cls, url, cookie, room_id, version):
+        """The room as of a version: read-only, and offline once fetched."""
+        return cls(_native.Room.at(url, cookie, str(room_id), version))
 
     @property
     def status(self):

@@ -67,6 +67,8 @@ pub enum RoomError {
     Offline,
     #[error("the server did not acknowledge the room's changes in time")]
     Unacknowledged,
+    #[error("a past version is read-only")]
+    Past,
 }
 
 /// A room: the document, the cache and the session to the server.
@@ -79,7 +81,8 @@ pub struct Room {
 pub(crate) struct Inner {
     pub(crate) doc: Doc,
     pub(crate) room_id: String,
-    pub(crate) cache: Arc<Mutex<FileRoomStore>>,
+    /// `None` for a past version, which is never written or connected.
+    pub(crate) cache: Option<Arc<Mutex<FileRoomStore>>>,
     pub(crate) outbox: Arc<Outbox>,
     /// Whether a session socket is open; only then can a local update be sent at once.
     pub(crate) online: Arc<AtomicBool>,
@@ -242,11 +245,29 @@ impl Room {
     /// this returns, and the room works offline until [`Room::connect`].
     pub fn open(cache_dir: &Path, room_id: &str) -> Result<Room, RoomError> {
         let (store, doc) = load_cache(cache_dir, room_id)?;
+        let cache = Arc::new(Mutex::new(store));
+        let room = Room::new(doc, room_id, Some(Arc::clone(&cache)));
+        observe(&room.inner, cache)?;
+        Ok(room)
+    }
+
+    /// The room as it was at a past version, from the state the server sends for it: no
+    /// cache, no session, and [`Room::connect`] refuses.
+    pub fn past(room_id: &str, state: &[u8]) -> Result<Room, RoomError> {
+        let doc = replay(vec![Bytes::copy_from_slice(state)])?;
+        Ok(Room::new(doc, room_id, None))
+    }
+
+    pub fn is_past(&self) -> bool {
+        self.inner.cache.is_none()
+    }
+
+    fn new(doc: Doc, room_id: &str, cache: Option<Arc<Mutex<FileRoomStore>>>) -> Room {
         let (changes, _) = broadcast::channel(CHANGES);
         let inner = Arc::new(Inner {
             doc,
             room_id: room_id.to_owned(),
-            cache: Arc::new(Mutex::new(store)),
+            cache,
             outbox: Arc::new(Outbox::new()),
             online: Arc::new(AtomicBool::new(false)),
             changes,
@@ -257,11 +278,10 @@ impl Room {
             status: StatusCell::new(),
             ack: AckCell::new(),
         });
-        observe(&inner)?;
-        Ok(Room {
+        Room {
             inner,
             session: Mutex::new(None),
-        })
+        }
     }
 
     /// Runs `edit` in one transaction, which is one update for the server and for the cache.
@@ -361,6 +381,9 @@ impl Room {
         cookie: &str,
         credentials: Option<Credentials>,
     ) -> Result<(), RoomError> {
+        if self.is_past() {
+            return Err(RoomError::Past);
+        }
         let url = websocket_url(url, &self.inner.room_id)?;
         self.stop();
         // Set before spawning: a caller that just gave a new cookie must not read the old
@@ -383,7 +406,9 @@ impl Room {
     pub fn close(&self) {
         self.stop();
         self.inner.status.set(Status::Offline);
-        if let Err(error) = lock(&self.inner.cache).flush() {
+        if let Some(cache) = &self.inner.cache
+            && let Err(error) = lock(cache).flush()
+        {
             tracing::error!(%error, "the cache could not be flushed");
         }
     }
@@ -443,7 +468,7 @@ fn merge(updates: &[Vec<u8>]) -> Option<Vec<u8>> {
 }
 
 /// Registers the observers that cache, forward and translate document changes.
-fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
+fn observe(inner: &Arc<Inner>, cache: Arc<Mutex<FileRoomStore>>) -> Result<(), RoomError> {
     // The deep observers come first: getting a root map out of the document is itself a
     // transaction, and nothing a room opens should look like a local edit to the cache.
     for (root, name) in [
@@ -463,7 +488,6 @@ fn observe(inner: &Arc<Inner>) -> Result<(), RoomError> {
         });
     }
 
-    let cache = Arc::clone(&inner.cache);
     let outbox = Arc::clone(&inner.outbox);
     let online = Arc::clone(&inner.online);
     let batching = Arc::clone(&inner.batching);

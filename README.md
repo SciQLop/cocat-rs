@@ -452,6 +452,23 @@ tscat.export_json(room, [smart], "out.json")
 tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `import_json`
 keeps such a catalogue's members without a rule, and warns.
 
+**History.** The server keeps every version of a room: a run of changes by one person with
+no gap over five minutes. Each version says who made it, when, and how many events it added,
+changed or removed. `cocat_rs.history` lists them, newest first, as dicts; `catalogue=` keeps
+the versions that touched one catalogue or its events. `Room.at` fetches the room as it was
+at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
+fetched. `cocat_rs.restore` makes the room, or one catalogue, equal to a version again, as one
+new change by you, so a restore can itself be undone; events created since go to the trash.
+
+```python
+versions = cocat_rs.history(url, cookie, "my-room")
+first = versions[-1]["id"]
+past = cocat_rs.Room.at(url, cookie, "my-room", first)
+past.catalogues()                       # as they were
+cocat_rs.name_version(url, cookie, "my-room", first, "before the import")
+cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
+```
+
 `credentials` is what lets the client recover a session the server ended (a password change,
 a deactivation, a restart with a new database): the sync task logs in again once, swaps the
 cookie and retries, and only a refusal right after a fresh login, or a login that fails, ends
