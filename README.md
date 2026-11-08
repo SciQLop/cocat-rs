@@ -417,11 +417,23 @@ project.connect(url, cookie, credentials=("you@example.org", "secret"))
 project.wait_synced(10)
 
 print(project.status)                   # offline, connecting, synced, unauthorized
+print(project.role, project.read_only)  # "editor", False
 
 event = project.event("<a uuid>")
 print(event.catalogues)                 # the uuids of the catalogues listing it
 print(project.event_arrays([event], attributes=True))
 ```
+
+**Read-only projects.** `project.role` is the role the server named at the last connect
+(`owner`, `editor`, `viewer`), remembered next to the cache, so a project opened offline keeps
+it; it is `None` until a first connect. A viewer's project is `read_only`, as is a past
+version from `Project.at`: every write raises `RuntimeError` ("this project is read-only for
+you (viewer)") before it touches the project, since the server would drop it. When a viewer
+connects with a cache holding changes the server never took (made before the role was known,
+or by cocat_rs 0.3.0), the cache is dropped and the project reloaded from the server, with one
+warning in the `cocat_client` log. A role changed while connected closes the socket; with
+`credentials` the project logs in again and picks up the new role, without them it ends in
+`unauthorized` until `set_cookie` or `connect`.
 
 Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made

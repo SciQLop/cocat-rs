@@ -163,6 +163,16 @@ impl FileRoomStore {
         self.needs_sync
     }
 
+    /// Empties the file back to its header, dropping every record, pending ones too.
+    pub fn clear(&mut self) -> Result<(), StoreError> {
+        self.pending.clear();
+        reset_to_header(&mut self.file, &self.path)?;
+        self.records = 0;
+        self.truncated_at = None;
+        self.needs_sync = false;
+        Ok(())
+    }
+
     pub fn flush(&mut self) -> Result<(), StoreError> {
         self.write()?;
         self.sync()
@@ -323,6 +333,24 @@ mod tests {
 
         store.write().unwrap();
         assert!(store.needs_sync());
+        let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert_eq!(updates, [record]);
+    }
+
+    #[test]
+    fn a_cleared_store_reopens_empty_and_takes_new_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        store.append(Bytes::from_static(b"old")).unwrap();
+        store.write().unwrap();
+        store.append(Bytes::from_static(b"pending")).unwrap();
+
+        store.clear().unwrap();
+        let record = Bytes::from_static(b"new");
+        store.append(record.clone()).unwrap();
+        store.write().unwrap();
+
+        assert_eq!(store.record_count(), 1);
         let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
         assert_eq!(updates, [record]);
     }

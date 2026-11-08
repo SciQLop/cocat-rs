@@ -5,6 +5,7 @@
 //! task that exchanges the document with the server and reconnects on its own. Remote
 //! transactions are reported as batches of [`Change`] values through [`Room::changes`].
 
+mod access;
 pub mod changes;
 mod history;
 mod login;

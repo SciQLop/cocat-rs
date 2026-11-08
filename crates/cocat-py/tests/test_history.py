@@ -74,7 +74,9 @@ def test_a_past_project_is_read_only(server, project):
 
     past = cc.Project.at(server.url, server.cookie, server.project_id, version)
 
-    read_only = "a past version is read-only"
+    assert past.read_only
+    assert past.role is None
+    read_only = "this project is read-only: it is a past version"
     with pytest.raises(RuntimeError, match=read_only):
         past.create_event(start=START, stop=STOP)
     with pytest.raises(RuntimeError, match=read_only):

@@ -5,13 +5,16 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use cocat_core::role::Role;
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::connect_async;
+use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Error as SocketError;
 use tokio_tungstenite::tungstenite::Message as Frame;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Response;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use url::Url;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -19,7 +22,9 @@ use yrs::updates::encoder::Encode;
 use yrs::{ReadTxn, Transact, Update};
 
 use crate::login::Credentials;
-use crate::room::{Inner, Outgoing, REMOTE_ORIGIN, Status};
+use crate::room::{Inner, Outgoing, REMOTE_ORIGIN, RoomError, Status};
+
+type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// The first wait after a dropped session, doubling up to [`MAX_BACKOFF`].
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -125,8 +130,8 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     let Some(request) = request(url, cookie) else {
         return Ending::Lost { synced: false };
     };
-    let mut socket = match connect_async(request).await {
-        Ok((socket, _)) => socket,
+    let (mut socket, role) = match connect_async(request).await {
+        Ok((socket, response)) => (socket, announced_role(&response)),
         Err(SocketError::Http(response)) => {
             let status = response.status();
             if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -141,10 +146,24 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
         }
     };
 
-    let hello = {
-        let txn = inner.doc.transact();
-        Message::Sync(SyncMessage::SyncStep1(txn.state_vector())).encode_v1()
-    };
+    // A server that names a role sends its state vector first; a read-only room reads it
+    // before saying hello, so the hello already describes the document it keeps.
+    let mut first = None;
+    if let Some(role) = role {
+        inner.access.learn(role);
+        if !role.can_write() {
+            let frame = socket.next().await;
+            if let Some(Ok(Frame::Binary(bytes))) = &frame
+                && let Err(error) = drop_unshared_changes(inner, bytes)
+            {
+                tracing::error!(%error, "the read-only room could not start over");
+                return Ending::Lost { synced: false };
+            }
+            first = Some(frame);
+        }
+    }
+
+    let hello = state_vector(inner);
     if let Err(error) = socket.send(Frame::Binary(hello.into())).await {
         tracing::warn!(%error, "the room could not say hello");
         return Ending::Lost { synced: false };
@@ -155,7 +174,7 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     let mut awaiting_ack = false;
     loop {
         tokio::select! {
-            frame = socket.next() => {
+            frame = next_frame(&mut first, &mut socket) => {
                 let Some(frame) = frame else {
                     return Ending::Lost { synced };
                 };
@@ -204,6 +223,52 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     }
 }
 
+/// The role the upgrade answer names; `None` from a server that does not say.
+fn announced_role(response: &Response) -> Option<Role> {
+    response
+        .headers()
+        .get(cocat_core::ROLE_HEADER)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
+}
+
+/// The frame read ahead of the hello, if any, before the socket's next one.
+async fn next_frame(
+    first: &mut Option<Option<Result<Frame, SocketError>>>,
+    socket: &mut Socket,
+) -> Option<Result<Frame, SocketError>> {
+    match first.take() {
+        Some(frame) => frame,
+        None => socket.next().await,
+    }
+}
+
+/// A read-only room whose document holds changes the server lacks (written before the role
+/// was known, or by an older client) starts over from the server's copy: the server drops
+/// those changes, so they would otherwise stay in the cache forever.
+// simplify: only insertions show in a state vector; a viewer's pure deletion made before the
+// role was known stays local. Comparing delete sets needs the server's full state; fetch it
+// over the history API's state route if that case matters.
+fn drop_unshared_changes(inner: &Arc<Inner>, server_hello: &[u8]) -> Result<(), RoomError> {
+    let Ok(Message::Sync(SyncMessage::SyncStep1(server))) = Message::decode_v1(server_hello) else {
+        return Ok(());
+    };
+    let local = inner.doc().transact().state_vector();
+    let unshared = local
+        .iter()
+        .any(|(client, clock)| *clock > server.get(client));
+    if !unshared {
+        return Ok(());
+    }
+    tracing::warn!(
+        room = %inner.room_id,
+        "this account may only read the project; dropping the local changes the server never took"
+    );
+    inner.start_over()
+}
+
 /// The handshake request: the websocket address, the v2 subprotocol and the session cookie
 /// the server reads.
 fn request(
@@ -245,10 +310,7 @@ fn receive(
             // this point: dropping it here sends it once, not twice. Anything pushed later is
             // still sent as its own update.
             let queued = inner.outbox.drain();
-            let reply = {
-                let txn = inner.doc.transact();
-                txn.encode_state_as_update_v1(&wanted)
-            };
+            let reply = inner.doc().transact().encode_state_as_update_v1(&wanted);
             let mut frames = vec![Message::Sync(SyncMessage::SyncStep2(reply)).encode_v1()];
             // An acknowledgement asked for before the server spoke still has to be asked for,
             // and only after the diff above: the answer proves that diff was applied too.
@@ -280,8 +342,8 @@ fn receive(
 /// The frame that asks the server what it still needs, and whose answer proves our updates
 /// before it have been processed.
 fn state_vector(inner: &Inner) -> Vec<u8> {
-    let txn = inner.doc.transact();
-    Message::Sync(SyncMessage::SyncStep1(txn.state_vector())).encode_v1()
+    let state = inner.doc().transact().state_vector();
+    Message::Sync(SyncMessage::SyncStep1(state)).encode_v1()
 }
 
 /// Applies what the server sent as one remote transaction, so its changes are one batch.
@@ -294,7 +356,7 @@ fn apply(inner: &Inner, bytes: &[u8]) {
         }
     };
     if let Err(error) = inner
-        .doc
+        .doc()
         .transact_mut_with(REMOTE_ORIGIN)
         .apply_update(update)
     {

@@ -247,15 +247,18 @@ pub fn new_event(uuid: &str, start: &str, stop: &str) -> EventRecord {
 }
 
 pub fn create_catalogue(room: &Room, uuid: &str, name: &str) {
-    room.write(|txn| model::create_catalogue(txn, &new_catalogue(uuid, name)).unwrap());
+    room.write(|txn| model::create_catalogue(txn, &new_catalogue(uuid, name)).unwrap())
+        .unwrap();
 }
 
 pub fn create_event(room: &Room, uuid: &str, start: &str, stop: &str) {
-    room.write(|txn| model::create_event(txn, &new_event(uuid, start, stop)).unwrap());
+    room.write(|txn| model::create_event(txn, &new_event(uuid, start, stop)).unwrap())
+        .unwrap();
 }
 
 pub fn names(room: &Room) -> Vec<String> {
-    let txn = room.doc().transact();
+    let doc = room.doc();
+    let txn = doc.transact();
     model::catalogues(&txn)
         .into_iter()
         .map(|catalogue| catalogue.name)
@@ -263,12 +266,14 @@ pub fn names(room: &Room) -> Vec<String> {
 }
 
 pub fn has_catalogue(room: &Room, uuid: &str) -> bool {
-    let txn = room.doc().transact();
+    let doc = room.doc();
+    let txn = doc.transact();
     model::catalogue(&txn, uuid).is_some()
 }
 
 pub fn has_event(room: &Room, uuid: &str) -> bool {
-    let txn = room.doc().transact();
+    let doc = room.doc();
+    let txn = doc.transact();
     model::catalogues(&txn).iter().any(|catalogue| {
         model::catalogue_events(&txn, &catalogue.uuid)
             .and_then(Result::ok)

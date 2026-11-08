@@ -77,6 +77,8 @@ class Project:
     @staticmethod
     def at(url: str, cookie: str, project_id: str, version: int) -> Project: ...
     status: str
+    role: str | None
+    read_only: bool
     def connect(
         self, url: str, cookie: str, credentials: tuple[str, str] | None = None
     ) -> None: ...

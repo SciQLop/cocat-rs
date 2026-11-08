@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use cocat_core::model;
+use cocat_core::role::Role;
 use cocat_core::store::{FileRoomStore, StoreError};
 use thiserror::Error;
 use tokio::sync::{Notify, broadcast};
@@ -17,6 +18,7 @@ use yrs::types::DeepObservable;
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, Origin, ReadTxn, StateVector, Transact, TransactionMut, Update, WriteTxn};
 
+use crate::access::Access;
 use crate::changes::{self, Change, Observation, Root};
 use crate::login::Credentials;
 
@@ -67,8 +69,10 @@ pub enum RoomError {
     Offline,
     #[error("the server did not acknowledge the room's changes in time")]
     Unacknowledged,
-    #[error("a past version is read-only")]
+    #[error("this project is read-only: it is a past version")]
     Past,
+    #[error("this project is read-only for you ({})", .0.as_str())]
+    ReadOnly(Role),
 }
 
 /// A room: the document, the cache and the session to the server.
@@ -79,7 +83,9 @@ pub struct Room {
 
 /// What the sync task and the document observers share.
 pub(crate) struct Inner {
-    pub(crate) doc: Doc,
+    /// Replaced, never edited back, when a read-only room drops changes the server lacks.
+    doc: Mutex<Doc>,
+    pub(crate) access: Access,
     pub(crate) room_id: String,
     /// `None` for a past version, which is never written or connected.
     pub(crate) cache: Option<Arc<Mutex<FileRoomStore>>>,
@@ -242,12 +248,14 @@ impl Drop for Room {
 
 impl Room {
     /// Opens the cache of one room. Everything the cache holds is in the document by the time
-    /// this returns, and the room works offline until [`Room::connect`].
+    /// this returns, and the room works offline until [`Room::connect`], with the role the
+    /// last connect learned.
     pub fn open(cache_dir: &Path, room_id: &str) -> Result<Room, RoomError> {
         let (store, doc) = load_cache(cache_dir, room_id)?;
+        let access = Access::remembered(store.path());
         let cache = Arc::new(Mutex::new(store));
-        let room = Room::new(doc, room_id, Some(Arc::clone(&cache)));
-        observe(&room.inner, cache)?;
+        let room = Room::new(doc.clone(), room_id, Some(Arc::clone(&cache)), access);
+        observe(&doc, &room.inner, cache)?;
         Ok(room)
     }
 
@@ -255,17 +263,43 @@ impl Room {
     /// cache, no session, and [`Room::connect`] refuses.
     pub fn past(room_id: &str, state: &[u8]) -> Result<Room, RoomError> {
         let doc = replay(vec![Bytes::copy_from_slice(state)])?;
-        Ok(Room::new(doc, room_id, None))
+        Ok(Room::new(doc, room_id, None, Access::none()))
     }
 
     pub fn is_past(&self) -> bool {
         self.inner.cache.is_none()
     }
 
-    fn new(doc: Doc, room_id: &str, cache: Option<Arc<Mutex<FileRoomStore>>>) -> Room {
+    /// The role the server gave this account when the room last connected, `None` before
+    /// the first connect to a server that says.
+    pub fn role(&self) -> Option<Role> {
+        self.inner.access.role()
+    }
+
+    /// Whether a write would be refused: a past version, or a role that cannot write.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only().is_some()
+    }
+
+    fn read_only(&self) -> Option<RoomError> {
+        if self.is_past() {
+            return Some(RoomError::Past);
+        }
+        self.role()
+            .filter(|role| !role.can_write())
+            .map(RoomError::ReadOnly)
+    }
+
+    fn new(
+        doc: Doc,
+        room_id: &str,
+        cache: Option<Arc<Mutex<FileRoomStore>>>,
+        access: Access,
+    ) -> Room {
         let (changes, _) = broadcast::channel(CHANGES);
         let inner = Arc::new(Inner {
-            doc,
+            doc: Mutex::new(doc),
+            access,
             room_id: room_id.to_owned(),
             cache,
             outbox: Arc::new(Outbox::new()),
@@ -285,9 +319,18 @@ impl Room {
     }
 
     /// Runs `edit` in one transaction, which is one update for the server and for the cache.
-    pub fn write<T>(&self, edit: impl FnOnce(&mut TransactionMut<'_>) -> T) -> T {
-        let mut txn = self.inner.doc.transact_mut_with(LOCAL_ORIGIN);
-        edit(&mut txn)
+    /// A read-only room refuses before it touches the document: the server would drop the
+    /// change, and the cache would keep it.
+    pub fn write<T>(
+        &self,
+        edit: impl FnOnce(&mut TransactionMut<'_>) -> T,
+    ) -> Result<T, RoomError> {
+        if let Some(refusal) = self.read_only() {
+            return Err(refusal);
+        }
+        let doc = self.doc();
+        let mut txn = doc.transact_mut_with(LOCAL_ORIGIN);
+        Ok(edit(&mut txn))
     }
 
     /// Calls `listener` with every batch of remote changes, on the thread that applied them.
@@ -328,8 +371,10 @@ impl Room {
         }
     }
 
-    pub fn doc(&self) -> &Doc {
-        &self.inner.doc
+    /// The document as it is now; a read-only room that dropped its local changes holds a
+    /// new one from then on.
+    pub fn doc(&self) -> Doc {
+        self.inner.doc()
     }
 
     pub fn room_id(&self) -> &str {
@@ -467,8 +512,33 @@ fn merge(updates: &[Vec<u8>]) -> Option<Vec<u8>> {
     )
 }
 
+impl Inner {
+    pub(crate) fn doc(&self) -> Doc {
+        lock(&self.doc).clone()
+    }
+
+    /// Drops the cache and the document for an empty one, which the session then fills from
+    /// the server. A read-only room cannot undo its local changes any other way: the server
+    /// will never take them, and a document only grows.
+    pub(crate) fn start_over(self: &Arc<Self>) -> Result<(), RoomError> {
+        let Some(cache) = &self.cache else {
+            return Ok(());
+        };
+        lock(cache).clear()?;
+        self.outbox.drain();
+        let doc = Doc::new();
+        observe(&doc, self, Arc::clone(cache))?;
+        *lock(&self.doc) = doc;
+        Ok(())
+    }
+}
+
 /// Registers the observers that cache, forward and translate document changes.
-fn observe(inner: &Arc<Inner>, cache: Arc<Mutex<FileRoomStore>>) -> Result<(), RoomError> {
+fn observe(
+    doc: &Doc,
+    inner: &Arc<Inner>,
+    cache: Arc<Mutex<FileRoomStore>>,
+) -> Result<(), RoomError> {
     // The deep observers come first: getting a root map out of the document is itself a
     // transaction, and nothing a room opens should look like a local edit to the cache.
     for (root, name) in [
@@ -476,10 +546,7 @@ fn observe(inner: &Arc<Inner>, cache: Arc<Mutex<FileRoomStore>>) -> Result<(), R
         (Root::Events, model::EVENTS),
     ] {
         let pending = Arc::clone(&inner.pending);
-        let map = inner
-            .doc
-            .transact_mut_with(REPLAY_ORIGIN)
-            .get_or_insert_map(name);
+        let map = doc.transact_mut_with(REPLAY_ORIGIN).get_or_insert_map(name);
         map.observe_deep("cocat-client:changes", move |txn, events| {
             if !is_remote(txn) {
                 return;
@@ -492,55 +559,51 @@ fn observe(inner: &Arc<Inner>, cache: Arc<Mutex<FileRoomStore>>) -> Result<(), R
     let online = Arc::clone(&inner.online);
     let batching = Arc::clone(&inner.batching);
     let batched = Arc::clone(&inner.batched);
-    inner
-        .doc
-        .observe_update_v1("cocat-client:cache", move |_txn, update| {
-            // Every update is appended, local or remote: the cache is the room's copy on disk,
-            // so a room opens offline with what the server already sent and a reconnect asks
-            // the server only for what changed since.
-            // simplify: the file only ever grows. Rewriting it as one state update when a room
-            // opens and the file is much larger than that (and compaction is wanted back) is
-            // the upgrade path.
-            if let Err(error) = lock(&cache).append(Bytes::copy_from_slice(&update.update)) {
-                tracing::error!(%error, "the cache rejected an update");
-                return;
-            }
-            if let Err(error) = lock(&cache).write() {
-                tracing::error!(%error, "the cache could not write an update");
-            }
-            if batching.load(Ordering::Relaxed) {
-                lock(&batched).push(update.update.clone());
-                return;
-            }
-            // Offline work needs no outbox: the handshake diff carries it to the server on
-            // the next connect, so queuing it would only grow without a reader.
-            if online.load(Ordering::Relaxed) {
-                outbox.push(update.update.clone());
-            }
-        })
-        .map_err(|_| RoomError::Observer)?;
+    doc.observe_update_v1("cocat-client:cache", move |_txn, update| {
+        // Every update is appended, local or remote: the cache is the room's copy on disk,
+        // so a room opens offline with what the server already sent and a reconnect asks
+        // the server only for what changed since.
+        // simplify: the file only ever grows. Rewriting it as one state update when a room
+        // opens and the file is much larger than that (and compaction is wanted back) is
+        // the upgrade path.
+        if let Err(error) = lock(&cache).append(Bytes::copy_from_slice(&update.update)) {
+            tracing::error!(%error, "the cache rejected an update");
+            return;
+        }
+        if let Err(error) = lock(&cache).write() {
+            tracing::error!(%error, "the cache could not write an update");
+        }
+        if batching.load(Ordering::Relaxed) {
+            lock(&batched).push(update.update.clone());
+            return;
+        }
+        // Offline work needs no outbox: the handshake diff carries it to the server on
+        // the next connect, so queuing it would only grow without a reader.
+        if online.load(Ordering::Relaxed) {
+            outbox.push(update.update.clone());
+        }
+    })
+    .map_err(|_| RoomError::Observer)?;
 
     let pending = Arc::clone(&inner.pending);
     let sender = inner.changes.clone();
     let subscribers = Arc::clone(&inner.subscribers);
-    inner
-        .doc
-        .observe_after_transaction("cocat-client:batch", move |txn| {
-            let observations = std::mem::take(&mut *lock(&pending));
-            if observations.is_empty() {
-                return;
-            }
-            let batch = changes::finish(&observations, txn);
-            if batch.is_empty() {
-                return;
-            }
-            for subscriber in lock(&subscribers).iter() {
-                subscriber(batch.clone());
-            }
-            // A closed channel means nobody listens any more; the changes are not news.
-            let _ = sender.send(batch);
-        })
-        .map_err(|_| RoomError::Observer)?;
+    doc.observe_after_transaction("cocat-client:batch", move |txn| {
+        let observations = std::mem::take(&mut *lock(&pending));
+        if observations.is_empty() {
+            return;
+        }
+        let batch = changes::finish(&observations, txn);
+        if batch.is_empty() {
+            return;
+        }
+        for subscriber in lock(&subscribers).iter() {
+            subscriber(batch.clone());
+        }
+        // A closed channel means nobody listens any more; the changes are not news.
+        let _ = sender.send(batch);
+    })
+    .map_err(|_| RoomError::Observer)?;
     Ok(())
 }
 

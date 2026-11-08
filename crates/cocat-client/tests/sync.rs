@@ -2,7 +2,7 @@ mod support;
 
 use std::time::Duration;
 
-use cocat_client::{Change, Room, Status};
+use cocat_client::{Change, Room, RoomError, Status};
 use cocat_core::model;
 use cocat_core::role::Role;
 use cocat_core::time::Timestamp;
@@ -117,7 +117,7 @@ async fn a_refused_handshake_is_unauthorized_and_is_not_retried() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_server_drops_a_viewer_write() {
+async fn a_viewer_write_is_refused_and_never_sent() {
     let server = Server::start().await;
     let owner = user(&server, "owner@x.org").await;
     room(&server, ROOM, owner).await;
@@ -137,10 +137,10 @@ async fn the_server_drops_a_viewer_write() {
     v.connect(&server.url(), &viewer_token).unwrap();
     v.wait_synced(WAIT).unwrap();
 
-    create_catalogue(&v, CATALOGUE, "sneaky");
+    let refused = v.write(|txn| model::create_catalogue(txn, &new_catalogue(CATALOGUE, "sneaky")));
 
-    // The server ignores a viewer's update without a word, so the client has nothing to
-    // report: it stays synced and the write never leaves this room.
+    assert!(matches!(refused, Err(RoomError::ReadOnly(Role::Viewer))));
+    assert!(!has_catalogue(&v, CATALOGUE));
     assert_eq!(v.status(), Status::Synced);
     assert!(
         timeout(Duration::from_millis(500), changes.recv())
@@ -217,7 +217,8 @@ async fn a_reconnect_downloads_only_the_diff() {
             Timestamp::parse("2025-02-01 00:01:00").unwrap(),
         )
         .unwrap()
-    });
+    })
+    .unwrap();
     // The first batch is the whole room arriving; the one after it carries the change, which
     // proves the server applied it before the measurement runs.
     loop {
@@ -250,11 +251,13 @@ fn write_catalogue_with_events(room: &Room, catalogue: &str, events: &[String]) 
             model::create_event(txn, &event).unwrap();
         }
         model::add_catalogue_events(txn, catalogue, events);
-    });
+    })
+    .unwrap();
 }
 
 fn listed(room: &Room, catalogue: &str) -> usize {
-    let txn = room.doc().transact();
+    let doc = room.doc();
+    let txn = doc.transact();
     model::catalogue_events(&txn, catalogue)
         .and_then(Result::ok)
         .map_or(0, |events| events.len())
@@ -285,7 +288,8 @@ async fn a_remote_transaction_is_one_merged_batch() {
             CATALOGUE,
             &[E1.to_owned(), E2.to_owned(), E3.to_owned()],
         );
-    });
+    })
+    .unwrap();
 
     let batch = next_batch(&mut changes).await;
     assert_eq!(
@@ -331,4 +335,40 @@ async fn an_https_url_opens_a_tls_connection() {
     const TLS_HANDSHAKE_RECORD: u8 = 0x16;
     assert_eq!(first[0], TLS_HANDSHAKE_RECORD);
     room.close();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_viewer_drops_unshared_changes_and_writes_nothing() {
+    let server = Server::start().await;
+    let owner_token = seeded(&server, ROOM, "owner@x.org").await;
+    let viewer = user(&server, "viewer@x.org").await;
+    member(&server, ROOM, viewer, Role::Viewer).await;
+    let owner_dir = cache();
+    let owner = Room::open(owner_dir.path(), ROOM).unwrap();
+    owner.connect(&server.url(), &owner_token).unwrap();
+    owner.wait_synced(WAIT).unwrap();
+    create_catalogue(&owner, FIRST, "shared");
+    owner.save(WAIT).unwrap();
+
+    let dir = cache();
+    let drifted = Room::open(dir.path(), ROOM).unwrap();
+    create_catalogue(&drifted, SECOND, "phantom");
+    drifted.close();
+    drop(drifted);
+
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    room.connect(&server.url(), &token(&server, viewer).await)
+        .unwrap();
+    room.wait_synced(WAIT).unwrap();
+
+    assert_eq!(room.role(), Some(Role::Viewer));
+    assert_eq!(names(&room), ["shared"]);
+    assert!(matches!(
+        room.write(|_| ()),
+        Err(RoomError::ReadOnly(Role::Viewer))
+    ));
+    room.close();
+    let reopened = Room::open(dir.path(), ROOM).unwrap();
+    assert!(reopened.is_read_only());
+    assert_eq!(names(&reopened), ["shared"]);
 }

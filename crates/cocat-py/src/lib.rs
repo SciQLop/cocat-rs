@@ -40,14 +40,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Every write goes through here, so a past version refuses them all alike.
+/// Every write goes through here, so a read-only project refuses them all alike.
 fn write<T>(room: &ClientRoom, edit: impl FnOnce(&mut TransactionMut<'_>) -> T) -> Result<T> {
-    if room.is_past() {
-        return Err(PyRuntimeError::new_err(
-            cocat_client::RoomError::Past.to_string(),
-        ));
-    }
-    Ok(room.write(edit))
+    room.write(edit)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 /// A datetime as Python gets it: timezone-aware UTC, the form Python cocat returns.
@@ -470,7 +466,8 @@ impl Catalogue {
 
     #[getter]
     fn name(&self) -> Result<String> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::catalogue(&txn, &self.uuid)
             .map(|catalogue| catalogue.name)
             .ok_or_else(|| unknown("catalogue"))
@@ -517,7 +514,8 @@ impl Catalogue {
 
     #[getter]
     fn tags(&self, py: Python<'_>) -> Result<Py<PyAny>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
         Ok(PySet::new(py, catalogue.tags)?.into_any().unbind())
     }
@@ -535,7 +533,8 @@ impl Catalogue {
 
     #[getter]
     fn attributes(&self, py: Python<'_>) -> Result<Py<PyAny>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
         to_python_map(py, &catalogue.attributes)
     }
@@ -690,12 +689,14 @@ impl Catalogue {
 
 impl Catalogue {
     fn summary(&self) -> Result<model::CatalogueSummary> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))
     }
 
     fn records(&self) -> Result<Vec<EventRecord>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::catalogue_events(&txn, &self.uuid)
             .ok_or_else(|| unknown("catalogue"))?
             .map_err(value_error)
@@ -703,7 +704,8 @@ impl Catalogue {
 
     /// The members and the date-typed attribute keys, from one read.
     fn members_and_dates(&self) -> Result<(Vec<Member>, Vec<String>)> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         let members = model::catalogue_members(&txn, &self.uuid)
             .ok_or_else(|| unknown("catalogue"))?
             .map_err(value_error)?;
@@ -727,7 +729,8 @@ impl Event {
     }
 
     fn record(&self) -> Result<EventRecord> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::event(&txn, &self.uuid).ok_or_else(|| unknown("event"))
     }
 
@@ -889,7 +892,8 @@ impl Event {
 
     #[getter]
     fn comment(&self) -> Result<Option<String>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::event(&txn, &self.uuid).ok_or_else(|| unknown("event"))?;
         Ok(model::comment(&txn, &self.uuid))
     }
@@ -926,7 +930,8 @@ impl Event {
 
     #[getter]
     fn attributes(&self, py: Python<'_>) -> Result<Py<PyAny>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         let record = model::event(&txn, &self.uuid).ok_or_else(|| unknown("event"))?;
         attributes_to_python(py, &date_keys(&txn), &record.attributes)
     }
@@ -934,7 +939,8 @@ impl Event {
     /// The uuids of the catalogues that list this event, sorted.
     #[getter]
     fn catalogues(&self, py: Python<'_>) -> Result<Py<PyAny>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         let uuids = model::event_catalogues(&txn, &self.uuid);
         Ok(PyList::new(py, uuids)?.into_any().unbind())
     }
@@ -1141,6 +1147,18 @@ impl Project {
         status_name(self.room.status())
     }
 
+    /// The role the server gave this account at the last connect; `None` before any.
+    #[getter]
+    fn role(&self) -> Option<&'static str> {
+        self.room.role().map(|role| role.as_str())
+    }
+
+    /// Whether writes are refused: a past version, or a viewer's project.
+    #[getter]
+    fn read_only(&self) -> bool {
+        self.room.is_read_only()
+    }
+
     #[pyo3(signature = (timeout=None))]
     fn wait_synced(&self, py: Python<'_>, timeout: Option<f64>) -> Result<()> {
         // A year is long enough to mean "until it happens" and short enough to be a duration.
@@ -1188,7 +1206,8 @@ impl Project {
     }
 
     fn catalogues(&self, py: Python<'_>) -> Result<Vec<Py<Catalogue>>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::catalogues(&txn)
             .iter()
             .map(|catalogue| Py::new(py, Catalogue::of(&self.room, &catalogue.uuid)))
@@ -1196,7 +1215,8 @@ impl Project {
     }
 
     fn catalogue(&self, py: Python<'_>, uuid_or_name: &str) -> Result<Py<Catalogue>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         let found = model::catalogue(&txn, uuid_or_name).or_else(|| {
             model::catalogues(&txn)
                 .into_iter()
@@ -1207,7 +1227,8 @@ impl Project {
     }
 
     fn event(&self, py: Python<'_>, uuid: &str) -> Result<Py<Event>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::event(&txn, uuid).ok_or_else(|| unknown("event"))?;
         Py::new(py, Event::of(&self.room, uuid))
     }
@@ -1224,7 +1245,8 @@ impl Project {
     ) -> Result<Py<PyAny>> {
         let wanted = uuids(Some(events))?;
         let records = {
-            let txn = self.room.doc().transact();
+            let doc = self.room.doc();
+            let txn = doc.transact();
             let records = wanted
                 .iter()
                 .filter_map(|uuid| model::event(&txn, uuid))
@@ -1237,7 +1259,8 @@ impl Project {
 
     /// The events in the trash, in time order.
     fn trash(&self, py: Python<'_>) -> Result<Vec<Py<Event>>> {
-        let txn = self.room.doc().transact();
+        let doc = self.room.doc();
+        let txn = doc.transact();
         model::trash(&txn)
             .iter()
             .map(|record| Py::new(py, Event::of(&self.room, &record.uuid)))
@@ -1523,7 +1546,8 @@ fn import_table(
 #[pyfunction]
 fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
     let (room, uuids) = catalogues_of(catalogues)?;
-    let txn = room.doc().transact();
+    let doc = room.doc();
+    let txn = doc.transact();
     let mut exported = Vec::new();
     for uuid in &uuids {
         let catalogue = model::catalogue(&txn, uuid).ok_or_else(|| unknown("catalogue"))?;
