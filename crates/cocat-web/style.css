@@ -1133,3 +1133,33 @@ a.button { text-decoration: none; }
   display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%;
   background: var(--accent-soft); color: var(--accent);
 }
+
+/* The public catalogues as a place of their own: the switcher's globe, the folder tree. */
+.project-switch svg { color: var(--accent); flex: none; }
+.folder-tree { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.folder-tree .name svg { color: var(--accent); flex: none; }
+.folder-node > summary { list-style: none; display: flex; align-items: center; }
+.folder-node > summary::-webkit-details-marker { display: none; }
+.folder-node > summary > .catalogue { flex: 1; min-width: 0; }
+.folder-node > .catalogue { margin-left: 18px; }
+.twisty { flex: none; width: 18px; height: 32px; display: grid; place-items: center; cursor: pointer; color: var(--muted); }
+.twisty::before { content: "▸"; font-size: 12px; transition: transform 0.1s; }
+.folder-node[open] > summary .twisty::before { transform: rotate(90deg); }
+.folder-children { display: flex; flex-direction: column; gap: 2px; padding-left: 14px; }
+.catalogue.leaf { font-size: 13px; margin-left: 18px; }
+.public-more { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--rule); }
+.public-more .count-badge { margin-left: 0; }
+.folders-toggle { display: none; }
+
+@media (max-width: 480px) {
+  .folders-toggle {
+    display: flex; justify-content: space-between; align-items: center; width: 100%;
+    padding: 8px 10px; font: inherit; font-weight: 600; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); cursor: pointer;
+  }
+  .folders-toggle .caret { color: var(--muted); font-weight: 400; }
+  .folders-toggle[aria-expanded="true"] .caret { transform: rotate(180deg); }
+  .folder-tree { flex: none; }
+  .folder-tree.shut { display: none; }
+  .public-more { flex-direction: row; flex-wrap: wrap; margin-top: 8px; }
+}

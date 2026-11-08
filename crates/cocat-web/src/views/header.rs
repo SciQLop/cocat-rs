@@ -17,40 +17,19 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let public = cocat_core::room_id::is_public_id(&config.room_id);
     let page = window().location().pathname().unwrap_or_default();
     let in_history = move || matches!(shown.get(), Route::History { .. });
-    let here = move || match shown.get() {
-        Route::History { .. } => Some("History"),
-        Route::Groups | Route::Group(_) => Some("Groups"),
-        Route::Public => Some("Public catalogues"),
-        Route::Submissions | Route::Submission(_) => Some("Submissions"),
-        Route::MySubmissions => Some("My submissions"),
-        _ => None,
-    };
     let history = move || shown.get().history().href(&page);
     view! {
         <header class="app-header">
-            <a class="brand" href="../app">
-                <img src="mark.png" alt="" width="24" height="28"/>
-                "cocat"
-            </a>
-            <nav class="crumbs" aria-label="Breadcrumb">
-                <ProjectMenu/>
-                {move || here().map(|here| view! {
-                    <span aria-hidden="true">"/"</span>
-                    <span class="here" aria-current="page">{here}</span>
-                })}
-            </nav>
+            <Crumbs shown/>
             <div class="header-end">
                 <Avatars/>
-                <Show when=move || public>
-                    <span class="chip public-badge" title="A public catalogue: everyone signed in reads it, curators edit it">"Public"</span>
-                </Show>
                 <Show when=move || !public>
                     <ShareButton/>
                 </Show>
                 <Show when=move || !in_history()>
                     <a class="button history-button" href=history.clone()>"History"</a>
                 </Show>
-                <a class="button help-button" href=help::PAGE target="_blank" rel="noopener">"Help"</a>
+                <HelpButton/>
                 <Show when=move || read_only>
                     <span class="chip">"Read-only"</span>
                 </Show>
@@ -65,6 +44,43 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
             </div>
         </header>
     }
+}
+
+/// The header of the public catalogues' index and submissions: no project is open there, so
+/// nothing to share, no history and no connection.
+#[component]
+pub fn PublicHeader(shown: Memo<Route>) -> impl IntoView {
+    view! {
+        <header class="app-header">
+            <Crumbs shown/>
+            <div class="header-end">
+                <HelpButton/>
+            </div>
+        </header>
+    }
+}
+
+/// The brand, the project switcher and where the page is after it.
+#[component]
+fn Crumbs(shown: Memo<Route>) -> impl IntoView {
+    view! {
+        <a class="brand" href="../app">
+            <img src="mark.png" alt="" width="24" height="28"/>
+            "cocat"
+        </a>
+        <nav class="crumbs" aria-label="Breadcrumb">
+            <ProjectMenu/>
+            {move || shown.get().crumb().map(|here| view! {
+                <span aria-hidden="true">"/"</span>
+                <span class="here" aria-current="page">{here}</span>
+            })}
+        </nav>
+    }
+}
+
+#[component]
+fn HelpButton() -> impl IntoView {
+    view! { <a class="button help-button" href=help::PAGE target="_blank" rel="noopener">"Help"</a> }
 }
 
 /// The others in the room, each in the colour the server gave the account.

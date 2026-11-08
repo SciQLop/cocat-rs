@@ -7,7 +7,6 @@ use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
 use crate::views::submissions::waiting_submissions;
 use crate::views::transfer::Importer;
-use cocat_core::room_id::is_public_id;
 
 #[component]
 pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
@@ -42,7 +41,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 </span>
                 <span class="count">{move || list.get().trash}</span>
             </a>
-            <PublicEntry shown page=public/>
+            <PublicEntry page=public/>
         </aside>
     }
 }
@@ -110,9 +109,8 @@ fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView
 /// The way to the public catalogues, from any project; a curator also sees how many
 /// submissions wait.
 #[component]
-fn PublicEntry(shown: Memo<Route>, page: String) -> impl IntoView {
+fn PublicEntry(page: String) -> impl IntoView {
     let room = expect_context::<Room>();
-    let public = is_public_id(&room.config.room_id);
     let waiting = waiting_submissions(room.config.api_url.clone());
     let badge = move || {
         waiting.get().filter(|count| *count > 0).map(|count| {
@@ -126,8 +124,7 @@ fn PublicEntry(shown: Memo<Route>, page: String) -> impl IntoView {
     view! {
         <a
             class="catalogue public-link"
-            href=Route::Public.href(&page)
-            aria-current=move || current(shown.with(|shown| shown.in_public_catalogues(public)))
+            href=Route::Public(None).href(&page)
         >
             <span class="name">
                 <PublicIcon size=14/>

@@ -1,5 +1,7 @@
 //! What the page shows, kept in the URL's hash so a link opens the same view.
 
+use url::form_urlencoded;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Route {
     /// Nothing picked: the page shows the first catalogue.
@@ -10,8 +12,8 @@ pub enum Route {
     /// The visitor's groups, and one of them.
     Groups,
     Group(String),
-    /// The index of the public catalogues.
-    Public,
+    /// The index of the public catalogues: all of them, or one folder's (`AMDA/EARTH`).
+    Public(Option<String>),
     /// The curators' queue of submissions, the visitor's own, and one submission.
     Submissions,
     MySubmissions,
@@ -30,13 +32,16 @@ impl Route {
         if let Some(route) = history(hash) {
             return route;
         }
+        if let Some(folder) = hash.strip_prefix("public=") {
+            return Route::Public(decoded(folder));
+        }
         match hash.split_once('=') {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
             Some(("submission", id)) => id.parse().map_or(Route::Default, Route::Submission),
             None if hash == "trash" => Route::Trash,
             None if hash == "groups" => Route::Groups,
-            None if hash == "public" => Route::Public,
+            None if hash == "public" => Route::Public(None),
             None if hash == "submissions" => Route::Submissions,
             None if hash == "my-submissions" => Route::MySubmissions,
             _ => Route::Default,
@@ -55,14 +60,26 @@ impl Route {
     pub fn is_public_index(&self) -> bool {
         matches!(
             self,
-            Route::Public | Route::Submissions | Route::MySubmissions | Route::Submission(_)
+            Route::Public(_) | Route::Submissions | Route::MySubmissions | Route::Submission(_)
         )
     }
 
-    /// The sidebar marks "Public catalogues" as current: on its pages, and anywhere in a
-    /// public catalogue.
+    /// The page is in the public catalogues, which the switcher then names: on their pages,
+    /// and anywhere in a public catalogue.
     pub fn in_public_catalogues(&self, public_project: bool) -> bool {
         public_project || self.is_public_index()
+    }
+
+    /// What the header's breadcrumb names after the project switcher. The public index has
+    /// none: the switcher already reads "Public catalogues".
+    pub fn crumb(&self) -> Option<&'static str> {
+        match self {
+            Route::History { .. } => Some("History"),
+            Route::Groups | Route::Group(_) => Some("Groups"),
+            Route::Submissions | Route::Submission(_) => Some("Submissions"),
+            Route::MySubmissions => Some("My submissions"),
+            _ => None,
+        }
     }
 
     /// The history of what this view shows: its catalogue, else the whole room.
@@ -104,7 +121,13 @@ impl Route {
             Route::Catalogue(uuid) => format!("#c={uuid}"),
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
-            Route::Public => "#public".to_owned(),
+            Route::Public(None) => "#public".to_owned(),
+            Route::Public(Some(folder)) => {
+                format!(
+                    "#public={}",
+                    form_urlencoded::byte_serialize(folder.as_bytes()).collect::<String>()
+                )
+            }
             Route::Submissions => "#submissions".to_owned(),
             Route::MySubmissions => "#my-submissions".to_owned(),
             Route::Submission(id) => format!("#submission={id}"),
@@ -125,6 +148,14 @@ impl Route {
 /// The old project page sends here with `#share`: the page opens with its Share dialog.
 pub fn opens_share(hash: &str) -> bool {
     hash.strip_prefix('#').unwrap_or(hash) == "share"
+}
+
+/// A folder escaped as a form value; an empty one is no folder.
+fn decoded(folder: &str) -> Option<String> {
+    let text: String = form_urlencoded::parse(format!("f={folder}").as_bytes())
+        .map(|(_, value)| value.into_owned())
+        .collect();
+    (!text.is_empty()).then_some(text)
 }
 
 /// `h`, `h=<version>`, each with an optional `&c=<catalogue>`.
@@ -166,9 +197,33 @@ mod tests {
 
     #[test]
     fn the_public_catalogues_have_a_route() {
-        assert_eq!(Route::parse("#public"), Route::Public);
-        assert_eq!(Route::Public.hash(), "#public");
-        assert_eq!(Route::Public.history(), history(None, None));
+        assert_eq!(Route::parse("#public"), Route::Public(None));
+        assert_eq!(Route::Public(None).hash(), "#public");
+        assert_eq!(Route::Public(None).history(), history(None, None));
+    }
+
+    #[test]
+    fn a_folder_of_the_public_catalogues_is_in_the_hash() {
+        let folder = |path: &str| Route::Public(Some(path.to_owned()));
+        assert_eq!(Route::parse("#public="), Route::Public(None));
+        for path in ["AMDA/EARTH", "Solar wind & co/été", "a=b#c"] {
+            let hash = folder(path).hash();
+            assert!(!hash[1..].contains('#'), "{hash}");
+            assert_eq!(Route::parse(&hash), folder(path));
+        }
+        assert_eq!(folder("AMDA").hash(), "#public=AMDA");
+        assert!(folder("AMDA").is_public_index());
+    }
+
+    #[test]
+    fn the_breadcrumb_names_the_pages_the_switcher_does_not() {
+        assert_eq!(Route::Public(None).crumb(), None);
+        assert_eq!(Route::Public(Some("AMDA".into())).crumb(), None);
+        assert_eq!(Route::Submission(3).crumb(), Some("Submissions"));
+        assert_eq!(Route::MySubmissions.crumb(), Some("My submissions"));
+        assert_eq!(Route::Group("g".into()).crumb(), Some("Groups"));
+        assert_eq!(history(None, None).crumb(), Some("History"));
+        assert_eq!(Route::Trash.crumb(), None);
     }
 
     #[test]
@@ -178,14 +233,14 @@ mod tests {
         assert_eq!(Route::parse("#submission=12"), Route::Submission(12));
         assert_eq!(Route::parse("#submission=x"), Route::Default);
         assert!(Route::Submission(12).is_public_index());
-        assert!(Route::Public.is_public_index());
+        assert!(Route::Public(None).is_public_index());
         assert!(!Route::Trash.is_public_index());
         assert_eq!(Route::Submissions.history(), history(None, None));
     }
 
     #[test]
     fn the_public_catalogues_are_current_on_their_pages_and_in_a_public_project() {
-        assert!(Route::Public.in_public_catalogues(false));
+        assert!(Route::Public(None).in_public_catalogues(false));
         assert!(Route::Submission(3).in_public_catalogues(false));
         assert!(Route::Catalogue("abc".into()).in_public_catalogues(true));
         assert!(!Route::Catalogue("abc".into()).in_public_catalogues(false));
@@ -264,7 +319,8 @@ mod tests {
             Route::Trash,
             Route::Groups,
             Route::Group("g1".into()),
-            Route::Public,
+            Route::Public(None),
+            Route::Public(Some("AMDA/EARTH".into())),
             Route::Submissions,
             Route::MySubmissions,
             Route::Submission(7),

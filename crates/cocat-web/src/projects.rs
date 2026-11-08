@@ -101,6 +101,12 @@ pub enum Arrival {
     Reload,
 }
 
+/// Picking `target` while `open` is open changes nothing, unless the page shows the public
+/// catalogues' pages: then it goes back to the project.
+pub fn stays(open: &str, target: &str, on_public_pages: bool) -> bool {
+    open == target && !on_public_pages
+}
+
 pub fn arrival(open: &str, path: &str, projects: &[Project]) -> Arrival {
     let Some(segment) = room_in_path(path) else {
         return Arrival::Reload;
@@ -319,6 +325,26 @@ mod tests {
         assert_eq!(
             arrival("lab", "/ui/rooms/a+b/browse", &plus),
             Arrival::Open(plus[0].clone())
+        );
+    }
+
+    #[test]
+    fn picking_the_open_project_stays_unless_the_page_shows_the_public_catalogues() {
+        assert!(stays("lab", "lab", false));
+        assert!(!stays("lab", "lab", true), "the public index leaves for it");
+        assert!(!stays("lab", "bepi", false));
+        assert!(!stays("public.a", "public.a", true));
+    }
+
+    #[test]
+    fn going_back_to_a_public_catalogue_opens_it_without_a_reload() {
+        let listed = [
+            project("lab", "Solitary Waves", Role::Owner),
+            project("public.a", "Shocks", Role::Viewer),
+        ];
+        assert_eq!(
+            arrival("lab", "/ui/rooms/public.a/browse", &listed),
+            Arrival::Open(listed[1].clone())
         );
     }
 

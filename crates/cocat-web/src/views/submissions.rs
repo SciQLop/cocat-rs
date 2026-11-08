@@ -262,26 +262,6 @@ pub fn waiting_submissions(api: String) -> RwSignal<Option<usize>> {
     waiting
 }
 
-/// The links of the public catalogues' page: the curators' queue, with how many wait, and
-/// the visitor's own submissions.
-#[component]
-pub fn SubmissionLinks() -> impl IntoView {
-    let waiting = waiting_submissions(expect_context::<Projects>().api());
-    let page = page();
-    let queue = page.clone();
-    view! {
-        <nav class="public-tabs" aria-label="Submissions">
-            {move || waiting.get().map(|count| view! {
-                <a class="button" href=Route::Submissions.href(&queue)>
-                    "Submissions"
-                    <span class="count-badge" aria-label=format!("{count} waiting")>{count}</span>
-                </a>
-            })}
-            <a class="button" href=Route::MySubmissions.href(&page)>"My submissions"</a>
-        </nav>
-    }
-}
-
 /// The curators' queue: the submissions waiting for review.
 #[component]
 pub fn SubmissionsPage() -> impl IntoView {
@@ -323,7 +303,7 @@ fn SubmissionList(
     hint: &'static str,
 ) -> impl IntoView {
     let page = page();
-    let back = Route::Public.href(&page);
+    let back = Route::Public(None).href(&page);
     let rows = move || {
         listed.get().map(|listed| match listed {
             Err(error) => view! { <p class="field-error" role="alert">{error}</p> }.into_any(),

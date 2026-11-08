@@ -160,6 +160,9 @@ async fn the_public_help_says_how_to_submit_and_what_curators_do() {
     let public = section_text(&help, "public");
     for words in [
         "on the left, under the catalogues",
+        "the folders on the left",
+        "All",
+        "pick it in the menu at the top",
         "Submit…",
         "Submit update…",
         "Propose a change…",
