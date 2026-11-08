@@ -38,10 +38,11 @@ COPY --from=build /build/crates/cocat-web/dist /usr/share/cocat/web
 COPY docker/entry_point.sh /home/cocat/entry_point.sh
 COPY docker/create-user.sh /usr/local/bin/create-user
 COPY docker/set-superuser.sh /usr/local/bin/set-superuser
+COPY docker/set-curator.sh /usr/local/bin/set-curator
 COPY docker/add-user-to-room.sh /usr/local/bin/add-user-to-room
 COPY docker/remove-user-from-room.sh /usr/local/bin/remove-user-from-room
 RUN chmod 0755 /home/cocat/entry_point.sh /usr/local/bin/create-user \
-    /usr/local/bin/set-superuser /usr/local/bin/add-user-to-room \
+    /usr/local/bin/set-superuser /usr/local/bin/set-curator /usr/local/bin/add-user-to-room \
     /usr/local/bin/remove-user-from-room
 
 USER cocat

@@ -93,6 +93,7 @@ struct UserView {
     is_active: bool,
     is_verified: bool,
     is_superuser: bool,
+    is_curator: bool,
     is_self: bool,
     rooms_owned: u64,
     used: String,
@@ -258,6 +259,10 @@ pub(crate) async fn set_flag(
         return answer(&state, "/admin", Err(AdminError::NotFound), "");
     }
     let value = form.value == "true";
+    if form.flag == "curator" {
+        let result = admin::set_curator(&state, &user, target, value).await;
+        return answer(&state, "/admin/users", result, "Account updated");
+    }
     let (active, verified, superuser) = match form.flag.as_str() {
         "active" => (Some(value), None, None),
         "verified" => (None, Some(value), None),
@@ -371,6 +376,7 @@ fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
         is_active: row.is_active,
         is_verified: row.is_verified,
         is_superuser: row.is_superuser,
+        is_curator: row.is_curator,
         rooms_owned: row.rooms_owned,
     }
 }

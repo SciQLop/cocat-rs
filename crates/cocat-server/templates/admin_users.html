@@ -24,6 +24,7 @@
       <td class="email">{{ user.email }}
         {% if user.is_self %}<span class="tag">you</span>{% endif %}
         {% if user.is_superuser %}<span class="tag accent">admin</span>{% endif %}
+        {% if user.is_curator %}<span class="tag">curator</span>{% endif %}
         {% if !user.is_verified %}<span class="tag">unverified</span>{% endif %}
         {% if !user.is_active %}<span class="tag danger">deactivated</span>{% endif %}
       </td>
@@ -71,6 +72,18 @@
               <button type="submit" class="quiet">Make administrator</button>
 {% endif %}
             </form>
+{% if !user.is_superuser %}
+            <form method="post" action="{{ user.superuser_action }}">
+              <input type="hidden" name="flag" value="curator">
+{% if user.is_curator %}
+              <input type="hidden" name="value" value="false">
+              <button type="submit" class="quiet">Remove curator</button>
+{% else %}
+              <input type="hidden" name="value" value="true">
+              <button type="submit" class="quiet">Make curator</button>
+{% endif %}
+            </form>
+{% endif %}
             <form method="post" action="{{ user.delete_action }}" data-confirm="{{ user.delete_confirm }}">
               <button type="submit" class="danger">Delete account</button>
             </form>

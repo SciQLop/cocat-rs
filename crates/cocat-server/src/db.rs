@@ -280,6 +280,27 @@ pub async fn owned_rooms(pool: &SqlitePool, user: Uuid) -> Result<Vec<String>, D
     )
 }
 
+/// Whether the account looks after the public catalogues: an administrator, or an account an
+/// administrator marked.
+pub async fn is_curator(pool: &SqlitePool, user: Uuid) -> Result<bool, DbError> {
+    let curator: Option<bool> =
+        sqlx::query_scalar(r#"SELECT is_superuser OR is_curator FROM "user" WHERE id = ?"#)
+            .bind(user.to_string())
+            .fetch_optional(pool)
+            .await?;
+    Ok(curator.unwrap_or(false))
+}
+
+/// Marks the account a curator, or no longer; false for an unknown account.
+pub async fn set_curator(pool: &SqlitePool, user: Uuid, curator: bool) -> Result<bool, DbError> {
+    let updated = sqlx::query(r#"UPDATE "user" SET is_curator = ? WHERE id = ?"#)
+        .bind(curator)
+        .bind(user.to_string())
+        .execute(pool)
+        .await?;
+    Ok(updated.rows_affected() > 0)
+}
+
 /// The storage quota an account carries, in MB, when an administrator set one.
 pub async fn user_quota(pool: &SqlitePool, user: Uuid) -> Result<Option<u64>, DbError> {
     let quota: Option<i64> = sqlx::query_scalar("SELECT quota_mb FROM \"user\" WHERE id = ?")
@@ -343,6 +364,7 @@ pub struct AdminUser {
     pub is_active: bool,
     pub is_verified: bool,
     pub is_superuser: bool,
+    pub is_curator: bool,
     pub rooms_owned: u64,
     pub quota_mb: Option<u64>,
 }
@@ -358,7 +380,8 @@ pub async fn admin_users(
         .filter(|term| !term.is_empty())
         .map(|term| format!("%{}%", term.to_lowercase()));
     let rows = sqlx::query(
-        "SELECT u.id, u.email, u.created_at, u.is_active, u.is_verified, u.is_superuser, u.quota_mb,
+        "SELECT u.id, u.email, u.created_at, u.is_active, u.is_verified, u.is_superuser,
+                u.is_curator, u.quota_mb,
                 (SELECT COUNT(*) FROM membership m
                  WHERE m.user_id = u.id AND m.role = 'owner') AS rooms_owned
          FROM \"user\" u
@@ -380,6 +403,7 @@ pub async fn admin_users(
             is_active: row.try_get("is_active")?,
             is_verified: row.try_get("is_verified")?,
             is_superuser: row.try_get("is_superuser")?,
+            is_curator: row.try_get("is_curator")?,
             rooms_owned: row.try_get::<i64, _>("rooms_owned")?.max(0) as u64,
             quota_mb: row
                 .try_get::<Option<i64>, _>("quota_mb")?

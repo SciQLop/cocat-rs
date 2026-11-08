@@ -121,6 +121,10 @@ podman exec cocat set-superuser admin@example.org
 podman exec cocat set-superuser admin@example.org --revoke   # to take it back
 ```
 
+Curators look after the public catalogues. Every administrator is one; mark someone else
+with `podman exec cocat set-curator them@example.org` (`--revoke` to take it back), or from
+the admin pages (Users, Manage).
+
 They run the server's CLI on `/db/cocat-rs.db`. An account created this way is already
 verified. The README's [Seeding](../README.md#seeding) lists the full commands;
 `add-user-to-room` and `remove-user-from-room` have wrappers too.

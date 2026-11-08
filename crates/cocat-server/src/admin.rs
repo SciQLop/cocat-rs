@@ -83,6 +83,7 @@ pub struct UserRow {
     pub is_active: bool,
     pub is_verified: bool,
     pub is_superuser: bool,
+    pub is_curator: bool,
     pub rooms_owned: u64,
     pub used_bytes: u64,
     pub quota_bytes: u64,
@@ -205,6 +206,7 @@ pub async fn users(
             is_active: user.is_active,
             is_verified: user.is_verified,
             is_superuser: user.is_superuser,
+            is_curator: user.is_curator,
             rooms_owned: user.rooms_owned,
             used_bytes,
             quota_bytes: user.quota_mb.map(megabytes).unwrap_or(limits.owner),
@@ -267,6 +269,20 @@ pub async fn set_user_flags(
         },
     )
     .await?;
+    Ok(())
+}
+
+/// Marks the account a curator of the public catalogues, or no longer.
+pub async fn set_curator(
+    state: &AppState,
+    actor: &User,
+    user: Uuid,
+    curator: bool,
+) -> Result<(), AdminError> {
+    require(actor)?;
+    if !db::set_curator(&state.pool, user, curator).await? {
+        return Err(AdminError::UnknownUser);
+    }
     Ok(())
 }
 
