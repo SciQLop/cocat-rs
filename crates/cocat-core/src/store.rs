@@ -49,6 +49,7 @@ pub struct FileRoomStore {
     /// Appended records wait here until `write`; the caller owns when they reach the disk.
     pending: Vec<u8>,
     needs_sync: bool,
+    records: u64,
 }
 
 impl FileRoomStore {
@@ -83,6 +84,7 @@ impl FileRoomStore {
             truncated_at,
             pending: Vec::new(),
             needs_sync: false,
+            records: updates.len() as u64,
         };
         Ok((store, updates))
     }
@@ -106,9 +108,16 @@ impl FileRoomStore {
         self.size().saturating_add(self.pending.len() as u64)
     }
 
+    /// Records loaded at open plus records appended since, so the last append's index is
+    /// `record_count() - 1`.
+    pub fn record_count(&self) -> u64 {
+        self.records
+    }
+
     pub fn append(&mut self, update: Bytes) -> Result<(), StoreError> {
         write_varuint(update.len() as u64, &mut self.pending);
         self.pending.extend_from_slice(&update);
+        self.records += 1;
         Ok(())
     }
 
@@ -349,6 +358,28 @@ mod tests {
         store.flush().unwrap();
         let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
         assert_eq!(updates, [record]);
+    }
+
+    #[test]
+    fn the_record_count_spans_loaded_and_appended_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        store.append(Bytes::from_static(b"first")).unwrap();
+        store.flush().unwrap();
+
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert_eq!(store.record_count(), 1);
+        store.append(Bytes::from_static(b"second")).unwrap();
+        assert_eq!(store.record_count(), 2);
+    }
+
+    #[test]
+    fn a_stamps_file_is_not_a_room_file() {
+        assert_eq!(room_id_from_file(Path::new("lab.y.h")), None);
+        assert_eq!(
+            room_id_from_file(Path::new("lab.y")),
+            Some("lab".to_owned())
+        );
     }
 
     #[test]

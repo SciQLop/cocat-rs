@@ -39,6 +39,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 utoipa = { version = "6", features = ["macros", "uuid"] }
 utoipa-axum = "0.3"
 utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
 
 [dev-dependencies]

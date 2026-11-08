@@ -25,6 +25,8 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, ReadTxn, StateVector, Transact, Update};
 
+use crate::history::stamps::{StampFile, stamp_for, stamps_file};
+
 pub type ClientId = u64;
 
 /// The durability policy. Every update is written to the room file before it is broadcast,
@@ -740,6 +742,7 @@ fn room_loop(
     commands: Receiver<RoomCommand>,
     registry: Rooms,
 ) {
+    let mut stamps = open_stamps(&update_dir, &room_id);
     let mut clients = HashMap::new();
     let mut backlog = VecDeque::new();
     let mut full_state = None;
@@ -753,7 +756,7 @@ fn room_loop(
                 match next_command(&commands, &mut backlog, schedule.remaining(Instant::now())) {
                     Next::Command(command) => command,
                     Next::Idle => {
-                        sync(&mut store, &room_id);
+                        sync(&mut store, &mut stamps, &room_id);
                         schedule.advance(Instant::now());
                         continue;
                     }
@@ -775,6 +778,7 @@ fn room_loop(
                         let mut serving = Serving {
                             doc: &doc,
                             store: &mut store,
+                            stamps: &mut stamps,
                             seen: &mut seen,
                             full_state: &mut full_state,
                             clients: &mut clients,
@@ -814,7 +818,7 @@ fn room_loop(
                     }
                     RoomCommand::Flush { done } => {
                         let started = Instant::now();
-                        flush(&mut store, &room_id);
+                        flush(&mut store, &mut stamps, &room_id);
                         crate::telemetry::room_flushed(started.elapsed().as_secs_f64());
                         let _ = done.send(());
                         Step::Serving
@@ -834,7 +838,7 @@ fn room_loop(
                 // Written before the broadcast so a client that sees an update can read it
                 // back from the file; the fsync follows on the timer.
                 if backlog.is_empty() {
-                    write(&mut store, &room_id);
+                    write(&mut store, &mut stamps, &room_id);
                 }
                 if let Some(frame) = broadcast {
                     broadcast_to(&mut clients, frame);
@@ -859,7 +863,7 @@ fn room_loop(
 
         match unloaded {
             Unload::Detached(done) => {
-                flush(&mut store, &room_id);
+                flush(&mut store, &mut stamps, &room_id);
                 let keep_serving = close_room(&room_id, &registry, &mut commands, &mut backlog);
                 if let Some(done) = done {
                     let _ = done.send(());
@@ -873,6 +877,7 @@ fn room_loop(
                     &room_id,
                     &update_dir,
                     store,
+                    stamps,
                     &registry,
                     &mut commands,
                     &mut backlog,
@@ -917,7 +922,7 @@ fn drop_queued(
                 let _ = out.close.send(CloseReason::Failed);
             }
             RoomCommand::Delete { done } => {
-                let _ = std::fs::remove_file(cocat_core::store::room_file(update_dir, room_id));
+                delete_file(update_dir, room_id);
                 let _ = done.send(());
             }
             _ => {}
@@ -1025,6 +1030,7 @@ fn remove_room(
     room_id: &str,
     update_dir: &Path,
     store: FileRoomStore,
+    stamps: Option<StampFile>,
     registry: &Rooms,
     commands: &mut Option<Receiver<RoomCommand>>,
     backlog: &mut VecDeque<RoomCommand>,
@@ -1033,25 +1039,30 @@ fn remove_room(
         Ok(rooms) => rooms,
         Err(_) => {
             tracing::error!(room = %room_id, "the room registry is poisoned");
-            drop(store);
+            drop((store, stamps));
             return delete_file(update_dir, room_id);
         }
     };
     rooms.remove(room_id);
     crate::telemetry::rooms_open(rooms.len());
-    drop(store);
+    drop((store, stamps));
     delete_file(update_dir, room_id);
     commands.take();
     settle(backlog);
 }
 
+/// Removes the room file and its stamps, so a later room with the same id starts clean.
 fn delete_file(update_dir: &Path, room_id: &str) {
-    let path = update_dir.join(format!("{room_id}.y"));
-    match std::fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            tracing::warn!(room = %room_id, path = %path.display(), %error, "cannot delete the room file");
+    for path in [
+        room_file(update_dir, room_id),
+        stamps_file(update_dir, room_id),
+    ] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(room = %room_id, path = %path.display(), %error, "cannot delete a room file");
+            }
         }
     }
 }
@@ -1077,25 +1088,42 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
     }
 }
 
-fn write(store: &mut FileRoomStore, room_id: &str) {
+/// The room runs without history rather than not at all when its stamps file cannot be
+/// opened (a room id whose file name is already at the 255-byte limit, for one).
+fn open_stamps(update_dir: &Path, room_id: &str) -> Option<StampFile> {
+    StampFile::open(update_dir, room_id)
+        .inspect_err(|error| {
+            tracing::warn!(room = %room_id, %error, "cannot open the stamps file, the room runs without history");
+        })
+        .ok()
+}
+
+/// Stamps are written only once their records are, so a failed room write never leaves a
+/// stamp ahead of its record on the disk.
+fn write(store: &mut FileRoomStore, stamps: &mut Option<StampFile>, room_id: &str) {
     if let Err(error) = store.write() {
         tracing::warn!(room = %room_id, %error, "cannot write the room");
-    }
-}
-
-fn sync(store: &mut FileRoomStore, room_id: &str) {
-    if !store.needs_sync() {
         return;
     }
-    if let Err(error) = store.sync() {
-        tracing::warn!(room = %room_id, %error, "cannot sync the room");
+    if let Some(Err(error)) = stamps.as_mut().map(StampFile::write) {
+        tracing::warn!(room = %room_id, %error, "cannot write the room's stamps");
     }
 }
 
-fn flush(store: &mut FileRoomStore, room_id: &str) {
-    if let Err(error) = store.flush() {
-        tracing::warn!(room = %room_id, %error, "cannot flush the room");
+fn sync(store: &mut FileRoomStore, stamps: &mut Option<StampFile>, room_id: &str) {
+    if store.needs_sync()
+        && let Err(error) = store.sync()
+    {
+        tracing::warn!(room = %room_id, %error, "cannot sync the room");
     }
+    if let Some(Err(error)) = stamps.as_mut().map(StampFile::sync) {
+        tracing::warn!(room = %room_id, %error, "cannot sync the room's stamps");
+    }
+}
+
+fn flush(store: &mut FileRoomStore, stamps: &mut Option<StampFile>, room_id: &str) {
+    write(store, stamps, room_id);
+    sync(store, stamps, room_id);
 }
 
 enum Post {
@@ -1193,7 +1221,11 @@ fn handle_frame(
     if frame.len() < 2 {
         return Ok(None);
     }
-    let Some(role) = serving.clients.get(&client).map(|client| client.role) else {
+    let Some((user, role)) = serving
+        .clients
+        .get(&client)
+        .map(|client| (client.user, client.role))
+    else {
         return Ok(None);
     };
     // yrs asserts inside its decoders on values it cannot represent (a state vector naming a
@@ -1240,9 +1272,11 @@ fn handle_frame(
             let broadcast = handle_update(
                 serving.doc,
                 serving.store,
+                serving.stamps,
                 serving.seen,
                 serving.limit,
                 update,
+                Some(user),
             )?;
             if broadcast.is_some() {
                 *serving.full_state = None;
@@ -1257,6 +1291,7 @@ fn handle_frame(
 struct Serving<'a> {
     doc: &'a Doc,
     store: &'a mut FileRoomStore,
+    stamps: &'a mut Option<StampFile>,
     seen: &'a mut StateVector,
     full_state: &'a mut Option<Bytes>,
     clients: &'a mut HashMap<ClientId, Client>,
@@ -1281,9 +1316,11 @@ fn full_state_frame<'a>(doc: &Doc, cache: &'a mut Option<Bytes>) -> &'a Bytes {
 fn handle_update(
     doc: &Doc,
     store: &mut FileRoomStore,
+    stamps: &mut Option<StampFile>,
     seen: &mut StateVector,
     limit: u64,
     payload: Vec<u8>,
+    user: Option<Uuid>,
 ) -> Result<Option<Bytes>, CloseReason> {
     // Python's wire_file drops this payload: an empty v1 update is two zero bytes, and
     // clients send one as their SyncStep2 on every connect.
@@ -1302,10 +1339,17 @@ fn handle_update(
     }
     if let Err(error) = store.append(Bytes::from(payload.clone())) {
         tracing::warn!(%error, "cannot append to the room file, the update is in memory only");
+    } else if let Some(stamps) = stamps {
+        let record = store.record_count().saturating_sub(1);
+        stamps.append(stamp_for(record, user, now_ms(), &payload));
     }
     Ok(Some(Bytes::from(
         Message::Sync(SyncMessage::Update(payload)).encode_v1(),
     )))
+}
+
+fn now_ms() -> i64 {
+    (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
 }
 
 /// Applies one live update and says whether it changed the document: a block for a client
@@ -1534,6 +1578,7 @@ mod tests {
                 &mut Serving {
                     doc: &doc,
                     store: &mut store,
+                    stamps: &mut None,
                     seen: &mut StateVector::default(),
                     full_state: &mut None,
                     clients: &mut clients,
@@ -1571,6 +1616,7 @@ mod tests {
                 &mut Serving {
                     doc: &doc,
                     store: &mut store,
+                    stamps: &mut None,
                     seen: &mut StateVector::default(),
                     full_state: &mut None,
                     clients: &mut clients,
@@ -1656,6 +1702,7 @@ mod tests {
                 &mut Serving {
                     doc: &doc,
                     store: &mut store,
+                    stamps: &mut None,
                     seen: &mut StateVector::default(),
                     full_state: &mut None,
                     clients: &mut clients,
@@ -1831,15 +1878,31 @@ mod tests {
         let update = update_with("key", "value");
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, update.clone())
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                update.clone(),
+                None
+            )
+            .unwrap()
+            .is_some(),
             "the first update is broadcast"
         );
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, update)
-                .unwrap()
-                .is_none(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                update,
+                None
+            )
+            .unwrap()
+            .is_none(),
             "a repeated update changes nothing and is broadcast again"
         );
         store.write().unwrap();
@@ -1870,15 +1933,31 @@ mod tests {
         let second = writer.transact().encode_state_as_update_v1(&after_first);
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, second)
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                second,
+                None
+            )
+            .unwrap()
+            .is_some(),
             "an update ahead of its neighbour is kept"
         );
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, first)
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                first,
+                None
+            )
+            .unwrap()
+            .is_some(),
             "the update that fills the gap is kept"
         );
         store.write().unwrap();
@@ -1906,9 +1985,17 @@ mod tests {
         let doc = Doc::new();
         let mut seen = StateVector::default();
         let insert = update_with("key", "value");
-        handle_update(&doc, &mut store, &mut seen, u64::MAX, insert.clone())
-            .unwrap()
-            .expect("the insert is broadcast");
+        handle_update(
+            &doc,
+            &mut store,
+            &mut None,
+            &mut seen,
+            u64::MAX,
+            insert.clone(),
+            None,
+        )
+        .unwrap()
+        .expect("the insert is broadcast");
 
         let writer = Doc::new();
         writer
@@ -1922,9 +2009,17 @@ mod tests {
         drop(txn);
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, deletion)
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                deletion,
+                None
+            )
+            .unwrap()
+            .is_some(),
             "an update that only deletes is broadcast"
         );
         store.write().unwrap();
@@ -1951,9 +2046,17 @@ mod tests {
         let doc = Doc::new();
         let mut seen = StateVector::default();
         let insert = update_with("key", "value");
-        handle_update(&doc, &mut store, &mut seen, u64::MAX, insert.clone())
-            .unwrap()
-            .expect("the insert is broadcast");
+        handle_update(
+            &doc,
+            &mut store,
+            &mut None,
+            &mut seen,
+            u64::MAX,
+            insert.clone(),
+            None,
+        )
+        .unwrap()
+        .expect("the insert is broadcast");
 
         let writer = Doc::new();
         writer
@@ -1967,15 +2070,31 @@ mod tests {
         drop(txn);
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, deletion.clone())
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                deletion.clone(),
+                None
+            )
+            .unwrap()
+            .is_some(),
             "an update that only deletes is broadcast"
         );
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, deletion)
-                .unwrap()
-                .is_none(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                deletion,
+                None
+            )
+            .unwrap()
+            .is_none(),
             "a repeated delete changes nothing and is broadcast again"
         );
         store.write().unwrap();
@@ -1995,9 +2114,17 @@ mod tests {
         let doc = Doc::new();
         let mut seen = StateVector::default();
         let first = update_with("old", "value");
-        handle_update(&doc, &mut store, &mut seen, u64::MAX, first.clone())
-            .unwrap()
-            .expect("the first update is broadcast");
+        handle_update(
+            &doc,
+            &mut store,
+            &mut None,
+            &mut seen,
+            u64::MAX,
+            first.clone(),
+            None,
+        )
+        .unwrap()
+        .expect("the first update is broadcast");
 
         let producer = Doc::new();
         producer
@@ -2012,9 +2139,17 @@ mod tests {
             .encode_state_as_update_v1(&StateVector::default());
 
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, combined)
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                combined,
+                None
+            )
+            .unwrap()
+            .is_some(),
             "an update with new blocks is broadcast even when it repeats old ones"
         );
         store.write().unwrap();
@@ -2047,9 +2182,17 @@ mod tests {
             transaction.encode_update_v1()
         };
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, first)
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                first,
+                None
+            )
+            .unwrap()
+            .is_some(),
             "the first update is broadcast"
         );
         let second = {
@@ -2058,9 +2201,17 @@ mod tests {
             transaction.encode_update_v1()
         };
         assert!(
-            handle_update(&doc, &mut store, &mut seen, u64::MAX, second)
-                .unwrap()
-                .is_some(),
+            handle_update(
+                &doc,
+                &mut store,
+                &mut None,
+                &mut seen,
+                u64::MAX,
+                second,
+                None
+            )
+            .unwrap()
+            .is_some(),
             "an update that continues a client's history is broadcast"
         );
         store.write().unwrap();
@@ -2106,6 +2257,7 @@ mod tests {
             &mut Serving {
                 doc: &doc,
                 store: &mut store,
+                stamps: &mut None,
                 seen: &mut seen,
                 full_state: &mut full_state,
                 clients: &mut clients,
@@ -2124,6 +2276,7 @@ mod tests {
                 &mut Serving {
                     doc: &doc,
                     store: &mut store,
+                    stamps: &mut None,
                     seen: &mut seen,
                     full_state: &mut full_state,
                     clients: &mut clients,
@@ -2147,6 +2300,7 @@ mod tests {
             &mut Serving {
                 doc: &doc,
                 store: &mut store,
+                stamps: &mut None,
                 seen: &mut seen,
                 full_state: &mut full_state,
                 clients: &mut clients,
