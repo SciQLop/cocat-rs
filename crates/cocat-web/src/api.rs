@@ -1,0 +1,112 @@
+//! The history routes of the server's API. Same-origin requests, so the browser sends the
+//! session cookie with each.
+
+use gloo_net::http::{Request, RequestBuilder, Response};
+use serde::de::DeserializeOwned;
+use serde_json::json;
+use thiserror::Error;
+
+use crate::history::{Diff, History, Version, endpoint, refusal_text};
+use crate::session::RoomConfig;
+
+#[derive(Debug, Error)]
+pub enum ApiError {
+    #[error("the server cannot be reached: {0}")]
+    Network(#[from] gloo_net::Error),
+    #[error("{0}")]
+    Refused(String),
+    #[error("the server's answer does not read: {0}")]
+    Format(#[from] serde_json::Error),
+    #[error("the history's address cannot be built")]
+    Url,
+}
+
+/// The versions, newest first: of the room, or those touching a catalogue or an event.
+pub async fn history(
+    config: &RoomConfig,
+    catalogue: Option<&str>,
+    event: Option<&str>,
+) -> Result<Vec<Version>, ApiError> {
+    let query: Vec<(&str, &str)> = [("catalogue", catalogue), ("event", event)]
+        .into_iter()
+        .filter_map(|(key, value)| Some((key, value?)))
+        .collect();
+    let url = url(config, &[], &query)?;
+    let history: History = json(Request::get(&url)).await?;
+    Ok(history.versions)
+}
+
+/// What the version changed, for a catalogue or the room.
+pub async fn changes(
+    config: &RoomConfig,
+    version: u64,
+    catalogue: Option<&str>,
+) -> Result<Diff, ApiError> {
+    let query: Vec<(&str, &str)> = catalogue
+        .map(|uuid| ("catalogue", uuid))
+        .into_iter()
+        .collect();
+    let url = url(config, &[&version.to_string()], &query)?;
+    json(Request::get(&url)).await
+}
+
+/// The room as of the version, as one Yjs update.
+pub async fn state(config: &RoomConfig, version: u64) -> Result<Vec<u8>, ApiError> {
+    let url = url(config, &[&version.to_string(), "state"], &[])?;
+    let response = checked(Request::get(&url).send().await?).await?;
+    Ok(response.binary().await?)
+}
+
+/// Makes the catalogue, or the room, equal to the version again; false when it already was.
+pub async fn restore(
+    config: &RoomConfig,
+    version: u64,
+    catalogue: Option<&str>,
+) -> Result<bool, ApiError> {
+    let url = url(config, &[&version.to_string(), "restore"], &[])?;
+    let body = json!({ "catalogue": catalogue }).to_string();
+    let restored: serde_json::Value = json_body(Request::post(&url), body).await?;
+    Ok(restored["restored"].as_bool().unwrap_or(false))
+}
+
+/// Names the version; a blank name removes its name.
+pub async fn name(config: &RoomConfig, version: u64, name: &str) -> Result<(), ApiError> {
+    let url = url(config, &[&version.to_string(), "name"], &[])?;
+    let request = match name.trim() {
+        "" => Request::delete(&url).build()?,
+        name => Request::put(&url)
+            .header("Content-Type", "application/json")
+            .body(json!({ "name": name }).to_string())?,
+    };
+    checked(request.send().await?).await?;
+    Ok(())
+}
+
+fn url(config: &RoomConfig, path: &[&str], query: &[(&str, &str)]) -> Result<String, ApiError> {
+    endpoint(&config.api_url, &config.room_id, path, query).ok_or(ApiError::Url)
+}
+
+async fn json<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, ApiError> {
+    let response = checked(request.send().await?).await?;
+    Ok(serde_json::from_str(&response.text().await?)?)
+}
+
+async fn json_body<T: DeserializeOwned>(
+    request: RequestBuilder,
+    body: String,
+) -> Result<T, ApiError> {
+    let request = request
+        .header("Content-Type", "application/json")
+        .body(body)?;
+    let response = checked(request.send().await?).await?;
+    Ok(serde_json::from_str(&response.text().await?)?)
+}
+
+async fn checked(response: Response) -> Result<Response, ApiError> {
+    if response.ok() {
+        return Ok(response);
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(ApiError::Refused(refusal_text(status, &body)))
+}

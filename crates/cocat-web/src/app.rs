@@ -10,6 +10,7 @@ use crate::state::Room;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
 use crate::views::header::Header;
+use crate::views::history::HistoryPage;
 use crate::views::sidebar::Sidebar;
 use cocat_core::model;
 
@@ -63,15 +64,37 @@ fn App(config: RoomConfig) -> impl IntoView {
         let editing = panel.with(|shown| shown.event().map(str::to_owned));
         published.set(editing.filter(|_| editor));
     });
+    let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
+    // Both keep their value once the page leaves the history: see `HistoryPage`.
+    let scope = Memo::new(move |kept: Option<&Option<String>>| match shown.get() {
+        Route::History { catalogue, .. } => catalogue,
+        _ => kept.cloned().flatten(),
+    });
+    let picked = Memo::new(move |kept: Option<&Option<u64>>| match shown.get() {
+        Route::History { version, .. } => version,
+        _ => kept.copied().flatten(),
+    });
+    Effect::new(move |_| {
+        if in_history.get() {
+            selected.set(None);
+        }
+    });
     view! {
-        <Header/>
-        <div class="browser">
-            <Sidebar shown/>
-            <main class="content">
-                <CataloguePage shown selected/>
-            </main>
-            <EventPanel selected shown=panel/>
-        </div>
+        <Header shown/>
+        {move || if in_history.get() {
+            view! { <HistoryPage scope picked/> }.into_any()
+        } else {
+            view! {
+                <div class="browser">
+                    <Sidebar shown/>
+                    <main class="content">
+                        <CataloguePage shown selected/>
+                    </main>
+                    <EventPanel selected shown=panel route=shown/>
+                </div>
+            }
+            .into_any()
+        }}
     }
     .into_any()
 }

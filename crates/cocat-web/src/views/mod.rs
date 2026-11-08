@@ -6,6 +6,7 @@ pub mod controls;
 pub mod event_editor;
 pub mod event_panel;
 pub mod header;
+pub mod history;
 pub mod rule;
 pub mod rule_editor;
 pub mod sidebar;

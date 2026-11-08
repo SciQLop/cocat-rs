@@ -7,6 +7,7 @@ pub mod catalogues;
 pub mod detail;
 pub mod edit;
 pub mod format;
+pub mod history;
 pub mod layout;
 pub mod presence;
 pub mod route;
@@ -18,6 +19,8 @@ pub mod sync;
 #[cfg(test)]
 mod fixture;
 
+#[cfg(target_arch = "wasm32")]
+mod api;
 #[cfg(target_arch = "wasm32")]
 pub mod app;
 #[cfg(target_arch = "wasm32")]

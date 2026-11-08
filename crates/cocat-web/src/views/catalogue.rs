@@ -24,7 +24,7 @@ pub fn CataloguePage(shown: Memo<Route>, selected: RwSignal<Option<Row>>) -> imp
             .read(|txn| rows(txn, &uuid))
             .map_err(|error| error.to_string()),
         Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
-        Route::Default => Ok(Vec::new()),
+        Route::Default | Route::History { .. } => Ok(Vec::new()),
     });
     let query = RwSignal::new(String::new());
     let sorting = RwSignal::new((SortKey::Start, false));

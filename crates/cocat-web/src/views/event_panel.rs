@@ -4,9 +4,11 @@ use leptos::prelude::*;
 
 use crate::detail::{EventDetail, event_detail, range_text};
 use crate::format::duration_text;
+use crate::route::Route;
 use crate::rows::Row;
 use crate::state::Room;
 use crate::views::event_editor::{Editor, TrashActions};
+use crate::views::history::LastChanges;
 
 /// What the panel shows. Built from the selection so that the editor of one event stays put
 /// while the room changes around it.
@@ -37,11 +39,19 @@ impl Shown {
 }
 
 #[component]
-pub fn EventPanel(selected: RwSignal<Option<Row>>, shown: Memo<Shown>) -> impl IntoView {
+pub fn EventPanel(
+    selected: RwSignal<Option<Row>>,
+    shown: Memo<Shown>,
+    route: Memo<Route>,
+) -> impl IntoView {
     let content = move || match shown.get() {
         Shown::Nothing => view! { <p class="quiet">"Pick an event to see it here."</p> }.into_any(),
         Shown::Derived(row) => derived(&row).into_any(),
-        Shown::Event(uuid) => view! { <Event uuid selected/> }.into_any(),
+        Shown::Event(uuid) => view! {
+            <Event uuid=uuid.clone() selected/>
+            <LastChanges uuid shown=route/>
+        }
+        .into_any(),
     };
     view! {
         <aside class="panel" aria-label="Selected event">

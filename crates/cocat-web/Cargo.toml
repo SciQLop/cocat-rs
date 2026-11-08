@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 cocat-core = { path = "../cocat-core" }
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true

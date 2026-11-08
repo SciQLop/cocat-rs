@@ -1,15 +1,19 @@
 use leptos::prelude::*;
 
 use crate::presence::Peer;
+use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
 
 #[component]
-pub fn Header() -> impl IntoView {
+pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let room = expect_context::<Room>();
     let config = room.config.clone();
     let status = room.status;
     let read_only = !config.role.can_write();
+    let page = window().location().pathname().unwrap_or_default();
+    let in_history = move || matches!(shown.get(), Route::History { .. });
+    let history = move || shown.get().history().href(&page);
     view! {
         <header class="app-header">
             <a class="brand" href="../rooms">
@@ -22,9 +26,16 @@ pub fn Header() -> impl IntoView {
                 <a class="here" href=format!("../rooms/{}", config.room_id)>
                     {config.room_name.clone()}
                 </a>
+                <Show when=in_history>
+                    <span aria-hidden="true">"/"</span>
+                    <span class="here" aria-current="page">"History"</span>
+                </Show>
             </nav>
             <div class="header-end">
                 <Avatars/>
+                <Show when=move || !in_history()>
+                    <a class="button history-button" href=history.clone()>"History"</a>
+                </Show>
                 <Show when=move || read_only>
                     <span class="chip">"Read-only"</span>
                 </Show>
