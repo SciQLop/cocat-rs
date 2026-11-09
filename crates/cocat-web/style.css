@@ -1488,9 +1488,8 @@ a.home-project:hover { color: var(--accent); }
 }
 .entry-menu summary::-webkit-details-marker { display: none; }
 .entry:hover .entry-menu summary,
-.entry:focus-within .entry-menu summary,
-.entry-menu[open] summary,
-.entry a[aria-current] + .entry-menu summary { opacity: 1; }
+.entry:has(:focus-visible) .entry-menu summary,
+.entry-menu[open] summary { opacity: 1; }
 .entry-menu summary:hover, .entry-menu[open] summary { background: var(--chip); color: var(--ink); }
 .entry-menu[open] > summary::before { content: ""; position: fixed; inset: 0; z-index: 3; cursor: default; }
 .entry-menu .menu {
