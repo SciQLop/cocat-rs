@@ -9,14 +9,16 @@ use serde_json::json;
 use wasm_bindgen::JsValue;
 
 use crate::api::{self, ApiError};
+use crate::help;
 use crate::presence::initials;
 use crate::route::opens_share;
 use crate::sharing::{
-    Group, Groups, Invitation, Member, Target, addable, colour_of, heirs, member_editable,
-    sharing_note,
+    Group, Groups, Invitation, Member, Target, addable, colour_of, heirs, in_order,
+    member_editable, sharing_note,
 };
 use crate::state::Room;
 use crate::views::controls::{Error, Hint, confirm, error_line};
+use crate::views::invite::RoleChip;
 use crate::views::invite::{InviteByEmail, Pending, RolePicker, ShareLinkMaker, act};
 use crate::views::projects::Projects;
 
@@ -179,7 +181,10 @@ fn ShareDialog(open: RwSignal<bool>) -> impl IntoView {
         view! {
             {sharer.then(|| view! {
                 <InviteByEmail target=target.clone() suggestions=share.list(|shared| &shared.suggestions) changed=share.changed()/>
-                <Hint text="Suggestions come from people you already work with. What each role can do:" anchor="roles" topic="roles"/>
+                <p class="hint">
+                    "Suggestions come from people you already work with. "
+                    <a href=help::href("roles") target="_blank" rel="noopener">"What can each role do?"</a>
+                </p>
             })}
             <People me/>
             <Grants/>
@@ -221,27 +226,23 @@ fn People(me: String) -> impl IntoView {
     let peers = expect_context::<Room>().peers;
     let row = move |member: Member| {
         let email = member.email.clone();
-        let colour = {
-            let email = email.clone();
-            move || {
-                peers.with(|peers| {
-                    colour_of(&email, peers).map(|colour| format!("background: {colour}"))
-                })
-            }
-        };
+        let colour = format!("background: {}", cocat_core::person::color(&email));
         let present = {
-            let colour = colour.clone();
-            move || colour().is_some()
+            let email = email.clone();
+            move || peers.with(|peers| colour_of(&email, peers).is_some())
         };
         let you = (member.email == me).then(|| view! { <span class="tag">"you"</span> });
         let controls = match member_editable(share.sharer.get_untracked(), member.role) {
             true => view! { <MemberControls member=member.clone()/> }.into_any(),
-            false => view! { <span class="role">{member.role.as_str()}</span> }.into_any(),
+            false => view! { <RoleChip role=member.role.as_str()/> }.into_any(),
         };
         view! {
             <li class="person">
-                <span class="avatar" class:absent=move || !present() style=colour aria-hidden="true">{initials(&email)}</span>
-                <span class="who"><span class="email">{email.clone()}</span>{you}</span>
+                <span class="avatar" class:here=present.clone() style=colour aria-hidden="true">{initials(&email)}</span>
+                <span class="who">
+                    <span class="email">{email.clone()}</span>{you}
+                    <Show when=present><span class="here-now">"here now"</span></Show>
+                </span>
                 {controls}
             </li>
         }
@@ -250,7 +251,7 @@ fn People(me: String) -> impl IntoView {
         <section class="share-section">
             <h3 class="eyebrow">"People"</h3>
             <ul class="plain-list people">
-                <For each=move || share.shared.with(|shared| shared.members.clone()) key=|member| (member.user_id.clone(), member.role) children=row/>
+                <For each=move || share.shared.with(|shared| in_order(&shared.members)) key=|member| (member.user_id.clone(), member.role) children=row/>
             </ul>
         </section>
     }
@@ -282,7 +283,7 @@ fn MemberControls(member: Member) -> impl IntoView {
     };
     view! {
         <RolePicker role label=format!("Role for {}", member.email) on_pick=change/>
-        <button type="button" class="link-button danger" on:click=remove>"Remove"</button>
+        <button type="button" class="link-button remove" on:click=remove>"Remove"</button>
     }
 }
 
@@ -294,11 +295,12 @@ fn Grants() -> impl IntoView {
     let row = move |group: Group| {
         let controls = match sharer {
             true => view! { <GrantControls group=group.clone()/> }.into_any(),
-            false => view! { <span class="role">{group.role.clone()}</span> }.into_any(),
+            false => view! { <RoleChip role=group.role.clone()/> }.into_any(),
         };
+        let colour = format!("background: {}", cocat_core::person::color(&group.name));
         view! {
             <li class="person">
-                <span class="avatar group" aria-hidden="true">{initials(&group.name)}</span>
+                <span class="avatar group" style=colour aria-hidden="true">{initials(&group.name)}</span>
                 <span class="who"><span class="email">{group.name.clone()}</span><span class="tag">"group"</span></span>
                 {controls}
             </li>
@@ -345,7 +347,7 @@ fn GrantControls(group: Group) -> impl IntoView {
     };
     view! {
         <RolePicker role label=format!("Role for {}", group.name) on_pick=change/>
-        <button type="button" class="link-button danger" on:click=remove>"Remove"</button>
+        <button type="button" class="link-button remove" on:click=remove>"Remove"</button>
     }
 }
 

@@ -86,6 +86,14 @@ pub fn addable(mine: &[Group], granted: &[Group]) -> Vec<Group> {
         .collect()
 }
 
+/// The members as the Share dialog lists them: the owner first, then by address.
+pub fn in_order(members: &[Member]) -> Vec<Member> {
+    let mut members = members.to_vec();
+    members
+        .sort_by(|a, b| (a.role != Role::Owner, &a.email).cmp(&(b.role != Role::Owner, &b.email)));
+    members
+}
+
 /// The members a project can be handed to: everyone but the visitor.
 pub fn heirs<'a>(members: &'a [Member], visitor: &str) -> Vec<&'a Member> {
     members
@@ -216,6 +224,22 @@ mod tests {
     use time::macros::date;
 
     use super::*;
+
+    #[test]
+    fn the_owner_comes_first_then_addresses_in_order() {
+        let member = |email: &str, role| Member {
+            user_id: email.into(),
+            email: email.into(),
+            role,
+        };
+        let listed = [
+            member("carol@x.org", Role::Viewer),
+            member("zoe@x.org", Role::Owner),
+            member("alice@x.org", Role::Editor),
+        ];
+        let emails: Vec<_> = in_order(&listed).into_iter().map(|m| m.email).collect();
+        assert_eq!(emails, ["zoe@x.org", "alice@x.org", "carol@x.org"]);
+    }
 
     fn member(email: &str, role: Role) -> Member {
         Member {

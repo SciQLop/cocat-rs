@@ -27,9 +27,7 @@ use crate::room::ClientId;
 /// Blue, orange, teal, purple, green, brown, pink and slate: each carries white text and
 /// shows on both themes, and no two look alike. An account keeps its colour across sessions
 /// and rooms.
-const COLORS: [&str; 8] = [
-    "#2a5bd7", "#bf5300", "#1b7f72", "#8e3bd0", "#49700f", "#835a3c", "#b8246f", "#555d72",
-];
+pub use cocat_core::person::{COLORS, color};
 
 /// An awareness frame carries one small state; a larger one is dropped before it is decoded.
 const MAX_FRAME: usize = 4096;
@@ -180,12 +178,6 @@ fn editing(state: &Map<String, Value>) -> Option<&str> {
         .get("editing")?
         .as_str()
         .filter(|uuid| uuid.chars().count() <= MAX_EDITING)
-}
-
-/// The colour an account shows in: in presence, and beside its versions in the history.
-pub fn color(email: &str) -> &'static str {
-    let hash = xxhash_rust::xxh3::xxh3_64(email.as_bytes());
-    COLORS[(hash % COLORS.len() as u64) as usize]
 }
 
 fn frame(entries: impl IntoIterator<Item = (ClientID, AwarenessUpdateEntry)>) -> Bytes {

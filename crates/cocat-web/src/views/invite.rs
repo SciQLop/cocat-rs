@@ -43,11 +43,18 @@ pub fn RolePicker(
         }
     };
     view! {
-        <select class="role-picker" aria-label=label on:change=pick prop:value=move || role.get()>
+        <select class=move || format!("role-picker role-{}", role.get()) aria-label=label on:change=pick prop:value=move || role.get()>
             <option value="editor">"editor"</option>
             <option value="viewer">"viewer"</option>
         </select>
     }
+}
+
+/// A role that can't be changed here, in the role's colour.
+#[component]
+pub fn RoleChip(#[prop(into)] role: String) -> impl IntoView {
+    let class = format!("role role-chip role-{role}");
+    view! { <span class=class>{role}</span> }
 }
 
 /// The link the server just made, shown once: it is the only time it exists in clear.
