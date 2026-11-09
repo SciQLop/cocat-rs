@@ -68,7 +68,17 @@ fn class_for(py: Python<'_>, status: u16) -> PyResult<Bound<'_, PyType>> {
 }
 
 fn refused(py: Python<'_>, status: u16, detail: String) -> PyResult<PyErr> {
-    let error = PyErr::from_type(class_for(py, status)?, (detail.clone(),));
+    refused_as(py, class_for(py, status)?, &detail.clone(), status, detail)
+}
+
+fn refused_as(
+    py: Python<'_>,
+    class: Bound<'_, PyType>,
+    message: &str,
+    status: u16,
+    detail: String,
+) -> PyResult<PyErr> {
+    let error = PyErr::from_type(class, (message.to_owned(),));
     let value = error.value(py);
     value.setattr("status", status)?;
     value.setattr("detail", detail)?;
@@ -83,6 +93,21 @@ pub fn http_error(error: LoginError) -> PyErr {
             Python::attach(|py| refused(py, status, detail).unwrap_or_else(|failure| failure))
         }
         other => PyValueError::new_err(other.to_string()),
+    }
+}
+
+/// The login route answers a wrong password with 400 `LOGIN_BAD_CREDENTIALS`, the code the
+/// Python server used; to a caller it is an `Unauthorized`.
+pub fn login_error(error: LoginError) -> PyErr {
+    match error {
+        LoginError::Refused { status, detail } if detail == "LOGIN_BAD_CREDENTIALS" => {
+            Python::attach(|py| {
+                let class = py.get_type::<Unauthorized>();
+                refused_as(py, class, "wrong email or password", status, detail)
+                    .unwrap_or_else(|failure| failure)
+            })
+        }
+        other => http_error(other),
     }
 }
 

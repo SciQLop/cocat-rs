@@ -67,10 +67,9 @@ def test_saving_without_changes_is_a_conflict(server):
     assert str(refused.value) == "Nothing changed since the last saved version."
 
 
-def test_a_bad_password_is_a_plain_server_error(server):
-    with pytest.raises(cc.ServerError) as refused:
+def test_a_bad_password_is_unauthorized_with_the_servers_detail(server):
+    with pytest.raises(cc.Unauthorized, match="wrong email or password") as refused:
         cc.login(server.url, server.email, "wrong")
 
-    assert type(refused.value) is cc.ServerError
     assert refused.value.status == 400
     assert refused.value.detail == "LOGIN_BAD_CREDENTIALS"

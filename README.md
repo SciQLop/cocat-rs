@@ -39,8 +39,8 @@ Three wrappers take the same positional arguments as the Python image:
 
 ```sh
 podman exec cocat create-user you@example.org secret
-podman exec cocat add-user-to-room them@example.org my-room
-podman exec cocat remove-user-from-room them@example.org my-room
+podman exec cocat add-user-to-room them@example.org my-project
+podman exec cocat remove-user-from-room them@example.org my-project
 ```
 
 Each release publishes the image as `ghcr.io/sciqlop/cocat-server:<version>` and `:latest`.
@@ -55,10 +55,10 @@ documented step by step in [docs/deploy.md](docs/deploy.md).
 cocat-server create-user --email you@example.org --password secret [--is-superuser]
 cocat-server set-superuser --email you@example.org [--revoke]
 cocat-server set-curator --email them@example.org [--revoke]
-cocat-server create-room --owner you@example.org [--room-id my-room] [--name "My room"]
-cocat-server add-user-to-room --email them@example.org --room_id my-room [--role editor]
-cocat-server remove-user-from-room --email them@example.org --room_id my-room
-cocat-server set-room-owner --email them@example.org --room_id my-room
+cocat-server create-room --owner you@example.org [--room-id my-project] [--name "My project"]
+cocat-server add-user-to-room --email them@example.org --room_id my-project [--role editor]
+cocat-server remove-user-from-room --email them@example.org --room_id my-project
+cocat-server set-room-owner --email them@example.org --room_id my-project
 ```
 
 Every command takes `--db_path` (default `./test.db`). Project ids match
@@ -137,20 +137,20 @@ read from its file for the length of the request and dropped again.
 ```sh
 # the room's catalogues, with their event counts
 curl --cookie "fastapiusersauth=$TOKEN" \
-  http://localhost:8000/api/rooms/my-room/catalogues
+  http://localhost:8000/api/rooms/my-project/catalogues
 
 # one catalogue
 curl --cookie "fastapiusersauth=$TOKEN" \
-  http://localhost:8000/api/rooms/my-room/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60
+  http://localhost:8000/api/rooms/my-project/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60
 
 # the same catalogue as a VOTable
 curl --cookie "fastapiusersauth=$TOKEN" \
   -o catalogue.xml \
-  http://localhost:8000/api/rooms/my-room/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60.votable
+  http://localhost:8000/api/rooms/my-project/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60.votable
 
 # one page of events inside a time window
 curl --cookie "fastapiusersauth=$TOKEN" \
-  'http://localhost:8000/api/rooms/my-room/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60/events?start=2025-01-01T00:00:00Z&stop=2025-02-01T00:00:00Z&limit=100'
+  'http://localhost:8000/api/rooms/my-project/catalogues/6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60/events?start=2025-01-01T00:00:00Z&stop=2025-02-01T00:00:00Z&limit=100'
 ```
 
 Times come back as `YYYY-MM-DDTHH:MM:SS.ffffffZ`; a `start` or `stop` argument accepts that
@@ -452,7 +452,7 @@ Before 0.3.0 the package said room: `Room`, `RoomInfo`, `rooms()` and `room_id=`
 ```python
 from cocat_rs import api
 
-api.set_config(host="http://localhost:8000", file_path="/tmp/cocat", project_id="my-room")
+api.set_config(host="http://localhost:8000", file_path="/tmp/cocat", project_id="my-project")
 api.log_in("you@example.org", "secret")
 catalogue = api.create_catalogue(name="events", author="you@example.org")
 api.save()
@@ -471,9 +471,8 @@ proxy), and adds `/room/<id>` itself:
 import cocat_rs
 
 url = "http://localhost:8000"
-cookie = cocat_rs.login(url, "you@example.org", "secret")
-project = cocat_rs.Project.open("/tmp/cocat", "my-room")
-project.connect(url, cookie, credentials=("you@example.org", "secret"))
+project = cocat_rs.Project.open("/tmp/cocat", "my-project")
+project.connect(url, credentials=("you@example.org", "secret"))
 project.wait_synced(10)
 
 print(project.status)                   # offline, connecting, synced, unauthorized
@@ -484,6 +483,15 @@ print(event.catalogues)                 # the uuids of the catalogues listing it
 print(project.event_arrays([event], attributes=True))
 ```
 
+`connect` signs in with the credentials and keeps them, so the project signs in again by
+itself when the session expires or your role changes. A wrong password raises
+`Unauthorized` right away. If you already have a session cookie (SciQLop gets one from the
+browser sign-in), pass it instead: `project.connect(url, cookie)`. Without credentials, a
+session the server drops leaves the project `unauthorized` until `set_cookie` gives it a
+new one. The functions below that talk to the server directly (`history`, `commit`,
+`public_catalogues`, ...) take a cookie: get one with `cookie = cocat_rs.login(url, email,
+password)`.
+
 **Read-only projects.** `project.role` is the role the server named at the last connect
 (`owner`, `editor`, `viewer`), remembered next to the cache, so a project opened offline keeps
 it; it is `None` until a first connect. A viewer's project is `read_only`, as is a past
@@ -493,8 +501,7 @@ connects with a cache holding changes the server never took (made before the rol
 or by cocat_rs 0.3.0), the cache is dropped and the project reloaded from the server, with one
 warning in the `cocat_client` log. Give each account its own cache folder (script mode does):
 the drop clears whatever that folder holds for the project. A role changed while connected closes the socket; with
-`credentials` the project logs in again and picks up the new role, without them it ends in
-`unauthorized` until `set_cookie` or `connect`.
+`credentials` the project signs in again and picks up the new role.
 
 Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
@@ -565,15 +572,15 @@ It returns the new project's id. Any member may copy, a viewer too; the copy cou
 your storage quota. The original and its history stay as they were.
 
 ```python
-versions = cocat_rs.history(url, cookie, "my-room")
+versions = cocat_rs.history(url, cookie, "my-project")
 first = versions[-1]["id"]
-past = cocat_rs.Project.at(url, cookie, "my-room", first)
+past = cocat_rs.Project.at(url, cookie, "my-project", first)
 past.catalogues()                       # as they were
-cocat_rs.name_version(url, cookie, "my-room", first, "before the import")
+cocat_rs.name_version(url, cookie, "my-project", first, "before the import")
 project.save()
-cocat_rs.commit(url, cookie, "my-room", name="paper v1", message="as submitted")
-cocat_rs.restore(url, cookie, "my-room", first)   # False when nothing differed
-trial = cocat_rs.copy_version(url, cookie, "my-room", first, "my-room (copy)")
+cocat_rs.commit(url, cookie, "my-project", name="paper v1", message="as submitted")
+cocat_rs.restore(url, cookie, "my-project", first)   # False when nothing differed
+trial = cocat_rs.copy_version(url, cookie, "my-project", first, "my-project (copy)")
 ```
 
 **Public catalogues.** `public_catalogues(url, cookie)` lists them as dicts (`id`, `name`,
@@ -641,7 +648,7 @@ also a `cocat_rs.NotFound`.
 
 ```python
 try:
-    cocat_rs.commit(url, cookie, "my-room")
+    cocat_rs.commit(url, cookie, "my-project")
 except cocat_rs.Unauthorized:
     cookie = cocat_rs.login(url, email, password)
 except cocat_rs.Conflict as error:

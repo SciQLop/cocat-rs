@@ -88,7 +88,10 @@ class Project:
     role: str | None
     read_only: bool
     def connect(
-        self, url: str, cookie: str, credentials: tuple[str, str] | None = None
+        self,
+        url: str,
+        cookie: str | None = None,
+        credentials: tuple[str, str] | None = None,
     ) -> None: ...
     def set_cookie(self, cookie: str) -> None: ...
     def close(self) -> None: ...

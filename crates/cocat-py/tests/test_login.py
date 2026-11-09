@@ -21,7 +21,7 @@ def test_login_returns_the_session_cookie(server):
 
 
 def test_a_bad_password_is_refused(server):
-    with pytest.raises(ValueError):
+    with pytest.raises(cc.Unauthorized, match="wrong email or password"):
         cc.login(server.url, server.email, "wrong")
 
 
@@ -60,6 +60,35 @@ def test_credentials_log_in_again_when_the_cookie_is_stale(server, cache):
         project.connect(server.url, "not-a-session", (server.email, "hunter2"))
         project.wait_synced(15)
         assert project.status == "synced"
+    finally:
+        project.close()
+
+
+def test_credentials_alone_connect(server, cache):
+    project = cc.Project.open(str(cache), server.project_id)
+    try:
+        project.connect(server.url, credentials=(server.email, "hunter2"))
+        project.wait_synced(15)
+        assert project.status == "synced"
+    finally:
+        project.close()
+
+
+def test_a_wrong_password_is_refused_at_connect(server, cache):
+    project = cc.Project.open(str(cache), server.project_id)
+    try:
+        with pytest.raises(cc.Unauthorized):
+            project.connect(server.url, credentials=(server.email, "wrong"))
+        assert project.status == "offline"
+    finally:
+        project.close()
+
+
+def test_connect_needs_a_cookie_or_credentials(server, cache):
+    project = cc.Project.open(str(cache), server.project_id)
+    try:
+        with pytest.raises(ValueError, match="cookie or credentials"):
+            project.connect(server.url)
     finally:
         project.close()
 

@@ -183,7 +183,10 @@ class Project:
         return getattr(self._native, name)
 
     def connect(
-        self, url: str, cookie: str, credentials: tuple[str, str] | None = None
+        self,
+        url: str,
+        cookie: str | None = None,
+        credentials: tuple[str, str] | None = None,
     ) -> None:
         self._native.connect(url, cookie, credentials)
 

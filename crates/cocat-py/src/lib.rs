@@ -1107,15 +1107,28 @@ impl Project {
         Ok(Project::of(room))
     }
 
-    /// Connects, and keeps `(username, password)` so a session the server refuses can log in
-    /// again; `set_cookie` reuses them.
-    #[pyo3(signature = (url, cookie, credentials=None))]
+    /// Connects with a session cookie, or with `(username, password)`, which logs in first.
+    /// The credentials are kept so a session the server refuses can log in again;
+    /// `set_cookie` reuses them.
+    #[pyo3(signature = (url, cookie=None, credentials=None))]
     fn connect(
         &self,
+        py: Python<'_>,
         url: String,
-        cookie: String,
+        cookie: Option<String>,
         credentials: Option<(String, String)>,
     ) -> Result<()> {
+        let cookie = match (cookie, &credentials) {
+            (Some(cookie), _) => cookie,
+            (None, Some((username, password))) => {
+                login(py, url.clone(), username.clone(), password.clone())?
+            }
+            (None, None) => {
+                return Err(PyValueError::new_err(
+                    "connect needs a cookie or credentials",
+                ));
+            }
+        };
         let login = credentials
             .clone()
             .map(|(username, password)| Credentials::new(username, password));
@@ -1702,7 +1715,7 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> Result<T> {
 #[pyfunction]
 fn login(py: Python<'_>, url: String, username: String, password: String) -> Result<String> {
     let cookie = py.detach(|| block_on(cocat_client::login(&url, &username, &password)))?;
-    cookie.map_err(http_error)
+    cookie.map_err(server_errors::login_error)
 }
 
 /// The id of the account behind the cookie.
