@@ -14,11 +14,13 @@ quick-xml = "0.42"
 regex = "1"
 serde.workspace = true
 serde_json.workspace = true
+strsim = "0.11"
 thiserror.workspace = true
 time.workspace = true
 tracing.workspace = true
 utoipa = { version = "6", default-features = false, features = ["macros"] }
 uuid = { version = "1", features = ["v4"] }
+winnow = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
 

@@ -2,6 +2,7 @@
 
 pub mod model;
 pub mod person;
+pub mod query;
 pub mod role;
 pub mod room_id;
 pub mod rules;

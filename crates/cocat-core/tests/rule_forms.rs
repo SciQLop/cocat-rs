@@ -179,3 +179,16 @@ fn a_search_tests_one_event_or_interval_at_a_time() {
     assert!(search.matches(&txn, None, 0, 61 * SECOND));
     assert!(!search.matches(&txn, None, 0, 60 * SECOND));
 }
+
+#[test]
+fn a_query_searches_like_its_rule() {
+    let doc = room();
+    let txn = doc.transact();
+    let predicate =
+        cocat_core::query::parse("tag:Shock OR (duration:>1min created:>now-2d)", &[]).unwrap();
+    let found = model::search(&txn, &predicate, at(0)).unwrap();
+    assert_eq!(
+        found.into_iter().map(|e| e.uuid).collect::<Vec<_>>(),
+        uuids(&[1, 2])
+    );
+}
