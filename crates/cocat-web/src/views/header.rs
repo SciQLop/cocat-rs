@@ -17,7 +17,11 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let public = cocat_core::room_id::is_public_id(&config.room_id);
     let page = window().location().pathname().unwrap_or_default();
     let in_history = move || matches!(shown.get(), Route::History { .. });
-    let history = move || shown.get().history().href(&page);
+    let history = {
+        let page = page.clone();
+        move || shown.get().history().href(&page)
+    };
+    let close_history = move || shown.get().live().href(&page);
     view! {
         <header class="app-header">
             <Crumbs shown/>
@@ -26,7 +30,12 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                 <Show when=move || !public>
                     <ShareButton/>
                 </Show>
-                <Show when=move || !in_history()>
+                <Show
+                    when=move || !in_history()
+                    fallback=move || view! {
+                        <a class="button history-button" href=close_history.clone()>"Close history"</a>
+                    }
+                >
                     <a class="button history-button" href=history.clone()>"History"</a>
                 </Show>
                 <HelpButton/>
