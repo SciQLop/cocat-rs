@@ -624,6 +624,17 @@ the changes the server never took, as above. Two statuses mean the project stopp
 longer in this project (you were removed, or it was deleted), and signing in again will not
 help.
 
+**Merging a local project.** A project opened with `Project.open` and never connected works
+like any other, offline. `target.merge(source)` brings everything `source` holds into
+`target` as one edit of `target`: catalogues, events, the trash, origins, comments and the
+attribute registry, with their uuids. It returns how many catalogues and events were new,
+`{"catalogues": 2, "events": 40}`, and a read-only target refuses it like any other write.
+Merging the same source again adds only what it gained since. The server records the merge
+as one edit by the account signed in on `target`, at the time of the merge. `source` is left
+as it is; close it and delete its cache folder if it is no longer wanted. When both projects
+registered the same attribute key, one side's registry entry (type, unit, description) wins
+as a whole; values are never touched, a mismatch only warns.
+
 Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
 the event, from `project.create_origin(...)`), `source_id`, `created`, `comment` and a

@@ -31,7 +31,7 @@ use pyo3::types::{
 };
 use serde_json::{Map as JsonMap, Value};
 use server_errors::http_error;
-use yrs::{Transact, TransactionMut};
+use yrs::{Map as _, ReadTxn as _, Transact, TransactionMut};
 
 type Result<T> = PyResult<T>;
 
@@ -1138,6 +1138,14 @@ impl Project {
     }
 }
 
+/// How many catalogues and events the project holds, the trash included.
+fn root_sizes(room: &ClientRoom) -> (u32, u32) {
+    let doc = room.doc();
+    let txn = doc.transact();
+    let size = |name| txn.get_map(name).map_or(0, |map| map.len(&txn));
+    (size(model::CATALOGUES), size(model::EVENTS))
+}
+
 #[pymethods]
 impl Project {
     #[staticmethod]
@@ -1588,6 +1596,20 @@ impl Project {
         .map_err(value_error)?;
         warn(py, &warnings)?;
         Py::new(py, Event::of(&self.room, &event.uuid))
+    }
+
+    /// Brings in what `source` holds, as one edit of this project, and says how many
+    /// catalogues and events were new here.
+    fn merge(&self, py: Python<'_>, source: PyRef<'_, Project>) -> Result<Py<PyAny>> {
+        let before = root_sizes(&self.room);
+        self.room
+            .merge(&source.room)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let after = root_sizes(&self.room);
+        let added = PyDict::new(py);
+        added.set_item("catalogues", after.0.saturating_sub(before.0))?;
+        added.set_item("events", after.1.saturating_sub(before.1))?;
+        Ok(added.into_any().unbind())
     }
 
     /// Blocks until the server has processed every change made so far, or `timeout` passes.

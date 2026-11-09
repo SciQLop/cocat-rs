@@ -78,6 +78,8 @@ pub enum RoomError {
     Past,
     #[error("this project is read-only for you ({})", .0.as_str())]
     ReadOnly(Role),
+    #[error("the other project's state could not be applied")]
+    Merge,
 }
 
 /// A room: the document, the cache and the session to the server.
@@ -338,6 +340,17 @@ impl Room {
         let doc = self.doc();
         let mut txn = doc.transact_mut_with(LOCAL_ORIGIN);
         Ok(edit(&mut txn))
+    }
+
+    /// Applies what `source` holds and this room lacks, as one local edit: it is cached, sent
+    /// to the server and refused on a read-only room like any other write. `source` is left
+    /// as it is, and merging it again adds only what it gained since.
+    pub fn merge(&self, source: &Room) -> Result<(), RoomError> {
+        let known = self.doc().transact().state_vector();
+        let missing = source.doc().transact().encode_state_as_update_v1(&known);
+        let update = Update::decode_v1(&missing).map_err(|_| RoomError::Merge)?;
+        self.write(|txn| txn.apply_update(update))?
+            .map_err(|_| RoomError::Merge)
     }
 
     /// Calls `listener` with every batch of remote changes, on the thread that applied them.

@@ -264,6 +264,11 @@ class Project:
     def transaction(self):
         return _Transaction(self)
 
+    def merge(self, source):
+        """Brings in another project's catalogues, events and registry, as one edit of this
+        one; returns how many catalogues and events were new here."""
+        return self._native.merge(source._native)
+
     def close(self):
         self._running = False
         self._native.close()
