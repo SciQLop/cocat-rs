@@ -1,7 +1,8 @@
-//! Sign-in sessions and the cookies that carry them: the same `fastapiusersauth` cookie as the
+//! Sign-in sessions and how a request carries them: the same `fastapiusersauth` cookie as the
 //! Python server, but holding an opaque random token instead of a JWT. The server keeps only
 //! the token's hash, so a logout, a password change, or a deactivation can end a session
-//! before it expires. The `COCAT_SECRET` HMAC key is still what signs the mailed links.
+//! before it expires. Apps send the same kind of token, a named one, as `Authorization:
+//! Bearer`. The `COCAT_SECRET` HMAC key is still what signs the mailed links.
 //!
 //! Cookies minted by the Python server stop working at the cutover: users sign in once more.
 

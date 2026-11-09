@@ -3,6 +3,7 @@
 mod account;
 mod admin;
 mod app;
+mod connect;
 mod frame;
 mod groups;
 mod help;
@@ -109,6 +110,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/admin/rooms/{room}/delete", post(admin::delete_room))
         .route("/account", get(account::page))
         .route("/account/password", post(account::password))
+        .route("/connect", get(connect::page).post(connect::decide))
         .route("/account/tokens/{id}/revoke", post(account::revoke_app))
         .route(
             "/confirm-email",

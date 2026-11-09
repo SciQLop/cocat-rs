@@ -333,12 +333,15 @@ impl FromRequestParts<AppState> for RequireUser {
     }
 }
 
-/// The path the browser asked for, before the `/ui` nest stripped its prefix.
+/// The path and query the browser asked for, before the `/ui` nest stripped its prefix: a
+/// page such as a sign-in link carries what it needs in the query.
 fn request_path(parts: &Parts) -> &str {
-    match parts.extensions.get::<OriginalUri>() {
-        Some(OriginalUri(uri)) => uri.path(),
-        None => parts.uri.path(),
-    }
+    let uri = match parts.extensions.get::<OriginalUri>() {
+        Some(OriginalUri(uri)) => uri,
+        None => &parts.uri,
+    };
+    uri.path_and_query()
+        .map_or_else(|| uri.path(), |path| path.as_str())
 }
 
 /// A deactivated account reads as anonymous here: `auth::authenticate` refuses it, so a

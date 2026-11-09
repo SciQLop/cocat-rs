@@ -1,4 +1,4 @@
-//! The websocket route: authenticate the cookie and check the role before the handshake,
+//! The websocket route: authenticate the cookie or bearer token and check the role before the handshake,
 //! then bridge the socket to the room's actor thread.
 
 use std::collections::HashSet;

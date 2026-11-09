@@ -66,9 +66,13 @@ pub(crate) async fn page(
             .iter()
             .map(|provider| Provider {
                 name: provider.config.name.clone(),
-                href: state
-                    .links
-                    .path(&format!("/oauth/{}/login", provider.config.name)),
+                href: format!(
+                    "{}{}",
+                    state
+                        .links
+                        .path(&format!("/oauth/{}/login", provider.config.name)),
+                    next_query(query.get("next").map(String::as_str))
+                ),
             })
             .collect(),
     })

@@ -19,7 +19,7 @@ use utoipa_swagger_ui::Config;
 
 use crate::links::Links;
 use crate::ratelimit::LoginLimit;
-use crate::{AppState, accounts_api, api, auth};
+use crate::{AppState, accounts_api, api, auth, sign_in_api};
 
 /// The one error body every JSON route sends: `{"detail": "..."}`.
 #[derive(ToSchema)]
@@ -93,6 +93,7 @@ pub fn api(limit: &LoginLimit, links: &Links) -> Api {
         .merge(api::router())
         .merge(accounts_api::router(limit))
         .merge(auth::router(limit))
+        .merge(sign_in_api::router(limit))
         .split_for_parts();
     accept_bearer(&mut document);
     let prefix = links.app("");

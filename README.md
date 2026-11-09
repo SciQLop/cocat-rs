@@ -106,6 +106,39 @@ says why in plain words, with zxcvbn's suggestion (the API answers 400 with it a
 Passwords stored before the rule keep working: it is checked when a password is set, never
 at login.
 
+### Tokens and browser sign-in
+
+Apps sign in with a **token**: a named session ("Python on lpp-jupyter") sent as
+`Authorization: Bearer <token>`, accepted wherever the session cookie is (API, websocket,
+history, public catalogues, submissions). A token lasts until revoked, or six months unused;
+using it moves that date, at most once an hour. A password change ends browser sessions and
+keeps tokens. The account page lists them under "Signed-in apps", each with Revoke, and so
+does the API:
+
+| Route | Answer |
+|---|---|
+| `GET /api/tokens` | `[{"id", "name", "created_at", "last_used_at"}]`, newest first; `id` is not the token |
+| `DELETE /api/tokens/{id}` | 204, or 404 for no such token of the caller's |
+| `DELETE /api/tokens/current` | 204: the token (or cookie) this call carries is ended (an app's logout) |
+
+Revoking a token closes the websockets it opened (1008) at once.
+
+An app gets a token through the browser, without a password:
+
+1. `POST /api/sign-in-requests` with `{"name": "Python on <host>"}`, no session needed,
+   answers 201 `{"code": "K7QM-2XRD", "url": "<base>/ui/connect?code=K7QM-2XRD", "poll":
+   "<secret>", "expires_in": 600, "interval": 2}`. `<base>` is `COCAT_PUBLIC_URL` with the
+   proxy prefix, or the `Host` the app called. Limited like a login: ten a minute per client.
+2. The app shows the link and the code. The person opens the link, signs in (password or
+   provider), checks the code and clicks Allow or Deny.
+3. The app polls `POST /api/sign-in-requests/poll` with `{"poll": "<secret>"}` every
+   `interval` seconds: `{"status": "pending"}`, `"denied"`, `"expired"` (also for an
+   unknown or spent request), or `{"status": "approved", "token": "..."}`, once: the request
+   is gone afterwards. A poll within a second of the previous one answers 429
+   `{"detail": "slow_down"}`.
+
+The server keeps only hashes of tokens and poll secrets.
+
 ### Login rate limit
 
 `POST /auth/jwt/login` takes ten calls per minute per client (the socket address, or the
@@ -119,7 +152,7 @@ restart.
 
 | Code | Meaning |
 |---|---|
-| 1008 | access revoked: the member was removed, their role changed, the project was deleted, or the role the handshake granted was no longer confirmed right after the socket attached |
+| 1008 | access revoked: the member was removed, their role changed, the project was deleted, the token the socket was opened with was revoked, or the role the handshake granted was no longer confirmed right after the socket attached |
 | 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
 | 1013 | try again later: the client fell more than 1024 frames behind, or the project would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
 | 1011 | internal error while attaching the socket |
@@ -127,7 +160,7 @@ restart.
 
 A handshake that does not offer the websocket subprotocol `cocat.v2` is refused before the
 upgrade with HTTP 426: it comes from a client of the first layout (see
-[Project layout v2](#project-layout-v2)). A handshake without a valid cookie, or from a user who is
+[Project layout v2](#project-layout-v2)). A handshake without a valid cookie or bearer token, or from a user who is
 not a member of the project, is refused before the upgrade with HTTP 403.
 
 The upgrade answer (HTTP 101) carries a `cocat-role` header: `owner`, `editor` or `viewer`, the

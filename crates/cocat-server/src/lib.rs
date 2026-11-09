@@ -26,6 +26,8 @@ pub mod presence;
 pub mod public_api;
 pub mod ratelimit;
 pub mod room;
+pub mod sign_in;
+pub mod sign_in_api;
 pub mod submissions;
 pub mod submissions_api;
 pub mod telemetry;

@@ -150,6 +150,13 @@ const ROWS: &[Row] = &[
     row("DELETE", "/users/{user}", Guard::Superuser, Style::Api),
     row("GET", "/api/me", Guard::SignedIn, Style::Api),
     row("GET", "/api/tokens", Guard::SignedIn, Style::Api),
+    row("POST", "/api/sign-in-requests", Guard::Public, Style::Api),
+    row(
+        "POST",
+        "/api/sign-in-requests/poll",
+        Guard::Public,
+        Style::Api,
+    ),
     row("DELETE", "/api/tokens/current", Guard::SignedIn, Style::Api),
     row("DELETE", "/api/tokens/{token}", Guard::SignedIn, Style::Api).tolerant(),
     row("GET", "/api/rooms", Guard::SignedIn, Style::Api),
@@ -650,6 +657,8 @@ const ROWS: &[Row] = &[
     )
     .room_any(),
     row("GET", "/ui/account", Guard::SignedIn, Style::UiPage),
+    row("GET", "/ui/connect", Guard::SignedIn, Style::UiPage),
+    row("POST", "/ui/connect", Guard::SignedIn, Style::UiAction),
     row(
         "POST",
         "/ui/account/tokens/{token}/revoke",
@@ -1026,6 +1035,8 @@ impl World {
                 (json, r#"{"email":"owner@example.org"}"#.to_owned())
             }
             ("POST", "/auth/verify") => (json, r#"{"token":"nope"}"#.to_owned()),
+            ("POST", "/api/sign-in-requests") => (json, r#"{"name":"Python"}"#.to_owned()),
+            ("POST", "/api/sign-in-requests/poll") => (json, r#"{"poll":"nope"}"#.to_owned()),
             ("POST", "/api/invitations/preview" | "/api/invitations/accept") => {
                 (json, format!(r#"{{"token":"{}"}}"#, self.invitation_token))
             }
@@ -1120,6 +1131,7 @@ impl World {
                 ),
             ),
             ("POST", "/ui/confirm-email") => (form, "email=fresh@example.org".to_owned()),
+            ("POST", "/ui/connect") => (form, "code=ABCD-1234&decision=allow".to_owned()),
             ("POST", "/ui/admin/users/{user}/flag") => {
                 (form, "flag=verified&value=true".to_owned())
             }

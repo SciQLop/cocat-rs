@@ -695,6 +695,7 @@ dependencies = [
  "clap",
  "cocat-core",
  "cookie",
+ "data-encoding",
  "email_address",
  "form_urlencoded",
  "futures-util",

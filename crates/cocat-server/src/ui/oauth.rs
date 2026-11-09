@@ -33,6 +33,9 @@ struct Pending {
     verifier: String,
     nonce: String,
     state: String,
+    /// The page to return to once signed in, as `safe_next` reads it.
+    #[serde(default)]
+    next: Option<String>,
     aud: Vec<String>,
     exp: i64,
 }
@@ -55,6 +58,7 @@ pub(crate) async fn login(
     Path(name): Path<String>,
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
     if !state
@@ -88,6 +92,7 @@ pub(crate) async fn login(
         verifier: verifier.secret().to_owned(),
         nonce: nonce.secret().to_owned(),
         state: csrf.secret().to_owned(),
+        next: query.get("next").cloned(),
         aud: vec![AUDIENCE.to_owned()],
         exp: expiry(),
     };
@@ -129,7 +134,7 @@ pub(crate) async fn callback(
     };
     match oidc::sign_in(&state, &provider.config, identity).await {
         Ok(user) if !user.is_active => cleared(&state, failed(&state, "credentials")),
-        Ok(user) => signed_in(&state, user).await,
+        Ok(user) => signed_in(&state, user, pending.next.as_deref()).await,
         Err(oidc::SignInError::Exists) => cleared(&state, failed(&state, "exists")),
         Err(error) => {
             tracing::warn!(%error, "cannot sign a provider account in");
@@ -185,7 +190,7 @@ async fn user_info_email(
     Ok(claims.email().map(|email| email.as_str().to_owned()))
 }
 
-async fn signed_in(state: &AppState, user: crate::db::User) -> Response {
+async fn signed_in(state: &AppState, user: crate::db::User, next: Option<&str>) -> Response {
     let token = match auth::start_session(&state.pool, user.id).await {
         Ok(token) => token,
         Err(error) => {
@@ -196,7 +201,7 @@ async fn signed_in(state: &AppState, user: crate::db::User) -> Response {
     let target = if mail::is_placeholder(&user.email) {
         state.links.path("/confirm-email")
     } else {
-        state.links.path("/app")
+        crate::ui::login::safe_next(next, &state.links)
     };
     let response = Redirect::to(&target).into_response();
     let response = with_cookie(response, &auth::set_cookie(&token));

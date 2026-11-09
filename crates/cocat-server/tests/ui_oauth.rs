@@ -438,3 +438,70 @@ async fn the_pending_state_is_bound_to_the_provider() {
     assert_eq!(done.status(), StatusCode::BAD_REQUEST);
     assert!(body_text(done).await.contains("Bad state"));
 }
+
+#[tokio::test]
+async fn the_provider_link_carries_the_way_back() {
+    let (fixture, _fake) = started(false).await;
+
+    let page = body_text(
+        fixture
+            .get("/ui/login?next=%2Fui%2Fconnect%3Fcode%3DABCD-1234", None)
+            .await,
+    )
+    .await;
+
+    assert!(
+        page.contains(r#"href="/ui/oauth/orcid/login?next=%2Fui%2Fconnect%3Fcode%3DABCD-1234""#),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn a_provider_sign_in_returns_to_the_page_that_asked() {
+    let (fixture, fake) = started(false).await;
+    fake.email(Some(MEMBER));
+    let response = fixture
+        .get(
+            "/ui/oauth/orcid/login?next=%2Fui%2Fconnect%3Fcode%3DABCD-1234",
+            None,
+        )
+        .await;
+    let target = Url::parse(&location(&response)).unwrap();
+    let asked = query(&target);
+    fake.agree(&asked["code_challenge"], &asked["nonce"]);
+    let cookie = cookie_named(&response, "cocat_oidc").unwrap();
+
+    let done = callback(
+        &fixture,
+        &cookie,
+        &format!("code=code&state={}", asked["state"]),
+    )
+    .await;
+
+    assert_eq!(location(&done), "/ui/connect?code=ABCD-1234");
+}
+
+#[tokio::test]
+async fn a_provider_sign_in_never_leaves_the_site() {
+    let (fixture, fake) = started(false).await;
+    fake.email(Some(MEMBER));
+    let response = fixture
+        .get(
+            "/ui/oauth/orcid/login?next=https%3A%2F%2Fevil.example",
+            None,
+        )
+        .await;
+    let target = Url::parse(&location(&response)).unwrap();
+    let asked = query(&target);
+    fake.agree(&asked["code_challenge"], &asked["nonce"]);
+    let cookie = cookie_named(&response, "cocat_oidc").unwrap();
+
+    let done = callback(
+        &fixture,
+        &cookie,
+        &format!("code=code&state={}", asked["state"]),
+    )
+    .await;
+
+    assert_eq!(location(&done), "/ui/app");
+}

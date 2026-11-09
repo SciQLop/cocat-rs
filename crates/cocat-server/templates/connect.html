@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% import "hint.html" as help %}
+{% block content %}
+<article class="card connect">
+{% match waiting %}
+{% when Some with (request) %}
+<h1>Sign in an app</h1>
+<p class="lead"><strong>{{ request.name }}</strong> wants to use your account.</p>
+<p>Check that the app shows this code:</p>
+<p class="code">{{ request.code }}</p>
+{% call help::hint(frame.help_href, "apps", "signed-in apps", "Allow only an app you just started yourself. It stays signed in until you revoke it on the Account page.") %}{% endcall %}
+<div class="choices">
+  <form method="post" action="{{ action }}">
+    <input type="hidden" name="code" value="{{ request.code }}">
+    <input type="hidden" name="decision" value="allow">
+    <button type="submit">Allow</button>
+  </form>
+  <form method="post" action="{{ action }}">
+    <input type="hidden" name="code" value="{{ request.code }}">
+    <input type="hidden" name="decision" value="deny">
+    <button type="submit" class="quiet">Deny</button>
+  </form>
+</div>
+{% when None %}
+<h1>{{ heading }}</h1>
+<p>{{ outcome }}</p>
+<p class="links"><a href="{{ account_href }}">Signed-in apps</a></p>
+{% endmatch %}
+</article>
+{% endblock %}

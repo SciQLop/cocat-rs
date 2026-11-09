@@ -44,8 +44,8 @@
 {% for app in apps %}
     <tr>
       <td class="name">{{ app.name }}</td>
-      <td>{{ app.created }}</td>
-      <td>{{ app.last_used }}</td>
+      <td data-label="Signed in">{{ app.created }}</td>
+      <td data-label="Last used">{{ app.last_used }}</td>
       <td class="actions">
         <form method="post" action="{{ app.revoke }}" data-confirm="Sign {{ app.name }} out? It will need a new sign-in.">
           <button type="submit" class="danger">Revoke</button>
