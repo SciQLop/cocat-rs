@@ -657,6 +657,41 @@ A malformed rule raises `ValueError` saying where: `rule.where.cmp: unknown oper
 The rule format (sets, interval operators, predicates) is in
 `docs/superpowers/specs/2026-11-07-catalogue-engine-v2-design.md`, section 3.
 
+**Searching.** A search is one line of text, the same in Python and the web app. A word or a
+"quoted phrase" matches any text of an event (tags, status, author, source id, origin,
+attribute values, ignoring case) or the start of its start time. A field narrows it:
+
+| Query | Matches |
+|---|---|
+| `author:alice`, `author:=alice`, `author:/^al/` | contains (ignoring case), exactly, a regex |
+| `tag:shock`, `product:amda/x` | one tag or product, exactly |
+| `status:reviewed` | preliminary, confirmed, reviewed, final or rejected |
+| `confidence:>=0.8`, `confidence:[0.2 TO 0.5]`, `start_err:[* TO 3]` | comparisons, ranges (`*`: open) |
+| `duration:>10min`, `duration:[1h TO 2d]` | seconds, or with s, min, h, d |
+| `start:2015`, `stop:2015-03`, `created:>2015-03-01T12:00:00` | a year, month or day is its span |
+| `created:>now-7d` | relative to now: s, m, h, d, M (months), y |
+| `catalogue:"Bow shocks"` | listed by that catalogue |
+| `_exists_:shape`, `NOT _exists_:catalogue` | the field is set; listed by no catalogue |
+| `#density:>10`, `#label:bow` | an attribute: a number when the value reads as one |
+
+Space means AND; `AND`, `OR`, `NOT` and parentheses combine, NOT binding tightest, then AND,
+then OR. A query that does not read raises `ValueError` with the place and the reason:
+`there is no field “auhtor”: did you mean “author”? (at character 7)`.
+
+```python
+project.search("tag:shock confidence:>=0.8")           # the matching events, in time order
+smart = project.create_smart_catalogue("recent", "created:>now-7d")
+picked = project.create_smart_catalogue("bob's", "author:bob", source=catalogue)
+smart.query                         # "created:>now-7d"; None for a rule a search cannot say
+smart.query = "tag:shock NOT status:rejected"   # the rule becomes this search of all events
+cocat_rs.parse_query("tag:shock")   # the rule as a dict, for scripts that build rules
+```
+
+The rule is what is kept, not the text: `query` prints it back in one standard spelling. A
+rule using time operations (merge, shift, tile, window, closest, set algebra) has no search
+form. A time relative to now is worked out each time the catalogue is read; nothing re-reads
+it on a timer.
+
 **tscat** databases and JSON files import into a project, keeping uuids, so importing again
 updates rather than duplicates. A rating becomes a confidence (rating / 10), removed items go
 to the trash and dynamic catalogues become smart ones.

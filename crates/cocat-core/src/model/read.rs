@@ -22,6 +22,14 @@ pub fn catalogues<T: ReadTxn>(txn: &T) -> Vec<CatalogueSummary> {
     catalogues
 }
 
+/// The catalogues not in the trash as `(uuid, name)`: how a search names them.
+pub fn catalogue_names<T: ReadTxn>(txn: &T) -> Vec<(String, String)> {
+    catalogues(txn)
+        .into_iter()
+        .map(|catalogue| (catalogue.uuid, catalogue.name))
+        .collect()
+}
+
 /// One catalogue by uuid, deleted or not.
 pub fn catalogue<T: ReadTxn>(txn: &T, uuid: &str) -> Option<CatalogueSummary> {
     Some(summary(txn, uuid, &object(txn, CATALOGUES, uuid)?))

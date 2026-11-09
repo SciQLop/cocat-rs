@@ -21,7 +21,7 @@ use cocat_core::model::{
     Used, Vertex,
 };
 use cocat_core::time::Timestamp;
-use cocat_core::{tfcat, tscat_json, votable};
+use cocat_core::{query, tfcat, tscat_json, votable};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -350,6 +350,23 @@ fn uuids(items: Option<&Bound<'_, PyAny>>) -> Result<Vec<String>> {
     Ok(out)
 }
 
+fn catalogue_uuid(catalogue: &Bound<'_, PyAny>) -> Result<String> {
+    match catalogue.cast::<Catalogue>() {
+        Ok(catalogue) => Ok(catalogue.get().uuid.clone()),
+        Err(_) => catalogue
+            .extract::<String>()
+            .map_err(|_| PyValueError::new_err("expected a catalogue uuid or a Catalogue")),
+    }
+}
+
+/// The rule of the search `text`, catalogues named as the room names them.
+fn search_rule(room: &ClientRoom, text: &str, source: Option<&str>) -> Result<Value> {
+    let doc = room.doc();
+    let txn = doc.transact();
+    let predicate = query::parse(text, &model::catalogue_names(&txn)).map_err(value_error)?;
+    Ok(query::rule(&predicate, source))
+}
+
 fn event_uuid(event: &Bound<'_, PyAny>) -> Result<String> {
     match event.cast::<Event>() {
         Ok(event) => Ok(event.get().uuid.clone()),
@@ -581,14 +598,28 @@ impl Catalogue {
             true => None,
             false => Some(to_json(rule)?),
         };
-        let found = write(&self.room, |txn| {
-            model::set_catalogue_rule(txn, &self.uuid, rule.as_ref())
-        })?
-        .map_err(value_error)?;
-        if !found {
-            return Err(unknown("catalogue"));
-        }
-        Ok(())
+        self.store_rule(rule.as_ref())
+    }
+
+    /// The rule as search text, or `None` when there is no rule or it has no search form
+    /// (the time operations: merge, shift, tile, window, closest, set algebra).
+    #[getter]
+    fn query(&self) -> Result<Option<String>> {
+        let doc = self.room.doc();
+        let txn = doc.transact();
+        let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
+        let names = model::catalogue_names(&txn);
+        Ok(catalogue
+            .rule
+            .and_then(|rule| query::rule_query(&rule, &names))
+            .map(|(text, _)| text))
+    }
+
+    /// Makes this catalogue the search `text` over all events.
+    #[setter]
+    fn set_query(&self, text: &str) -> Result<()> {
+        let rule = search_rule(&self.room, text, None)?;
+        self.store_rule(Some(&rule))
     }
 
     /// A new static catalogue named `name` holding this catalogue's current members; each
@@ -713,6 +744,17 @@ impl Catalogue {
 }
 
 impl Catalogue {
+    fn store_rule(&self, rule: Option<&Value>) -> Result<()> {
+        let found = write(&self.room, |txn| {
+            model::set_catalogue_rule(txn, &self.uuid, rule)
+        })?
+        .map_err(value_error)?;
+        if !found {
+            return Err(unknown("catalogue"));
+        }
+        Ok(())
+    }
+
     fn summary(&self) -> Result<model::CatalogueSummary> {
         let doc = self.room.doc();
         let txn = doc.transact();
@@ -1294,6 +1336,47 @@ impl Project {
             (records, date_keys(&txn))
         };
         event_arrays_of(py, &records.0, &records.1, attributes)
+    }
+
+    /// The events not in the trash that the search `query` matches, in time order.
+    fn search(&self, py: Python<'_>, query: &str) -> Result<Vec<Py<Event>>> {
+        let records = {
+            let doc = self.room.doc();
+            let txn = doc.transact();
+            let predicate =
+                query::parse(query, &model::catalogue_names(&txn)).map_err(value_error)?;
+            model::search(&txn, &predicate, now()?).map_err(value_error)?
+        };
+        records
+            .iter()
+            .map(|record| Py::new(py, Event::of(&self.room, &record.uuid)))
+            .collect()
+    }
+
+    /// A smart catalogue whose rule is the search `query` over all events, or over the
+    /// events of `source` (a `Catalogue` or a uuid).
+    #[pyo3(signature = (name, query, source=None))]
+    fn create_smart_catalogue(
+        &self,
+        py: Python<'_>,
+        name: String,
+        query: &str,
+        source: Option<&Bound<'_, PyAny>>,
+    ) -> Result<Py<Catalogue>> {
+        let source = source.map(catalogue_uuid).transpose()?;
+        let rule = search_rule(&self.room, query, source.as_deref())?;
+        let catalogue = NewCatalogue {
+            uuid: uuid_argument(None)?,
+            name,
+            created: Some(now()?),
+            ..NewCatalogue::default()
+        };
+        write(&self.room, |txn| {
+            model::create_catalogue(txn, &catalogue)?;
+            model::set_catalogue_rule(txn, &catalogue.uuid, Some(&rule))
+        })?
+        .map_err(value_error)?;
+        Py::new(py, Catalogue::of(&self.room, &catalogue.uuid))
     }
 
     /// The events in the trash, in time order.
@@ -1935,6 +2018,14 @@ fn forward_logs_to_python(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
+/// The rule of a search over all events, for scripts that build rules. A catalogue is named
+/// by uuid here: there is no project to look names up in.
+#[pyfunction]
+fn parse_query(py: Python<'_>, text: &str) -> Result<Py<PyAny>> {
+    let predicate = query::parse(text, &[]).map_err(value_error)?;
+    to_python(py, &query::rule(&predicate, None))
+}
+
 /// The rule a tscat predicate (its `to_dict()` form) becomes.
 #[pyfunction]
 fn rule_from_tscat(py: Python<'_>, predicate: &Bound<'_, PyAny>) -> Result<Py<PyAny>> {
@@ -1962,6 +2053,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(tfcat_json, module)?)?;
     module.add_function(wrap_pyfunction!(export_tscat_json, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
+    module.add_function(wrap_pyfunction!(parse_query, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;
     server_errors::register(module)?;
     sharing::register(module)?;
