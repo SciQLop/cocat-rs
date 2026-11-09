@@ -13,7 +13,7 @@ use crate::route::Route;
 use crate::views::controls::{Error, Hint, error_line};
 use crate::views::header::PublicHeader;
 use crate::views::projects::{Projects, set_title};
-use crate::views::sidebar::PublicIcon;
+use crate::views::sidebar::{PublicIcon, keep_current_in_view};
 use crate::views::submissions::{
     MySubmissionsPage, SubmissionPage, SubmissionsPage, waiting_submissions,
 };
@@ -39,7 +39,7 @@ pub fn PublicSpace() -> impl IntoView {
         <PublicHeader shown/>
         <div class="browser">
             <PublicSidebar current=None/>
-            <div class="public-holder">{page}</div>
+            <div class="pane">{page}</div>
         </div>
     }
 }
@@ -80,13 +80,18 @@ pub fn PublicSidebar(current: Option<String>) -> impl IntoView {
             (folders, tree.leaves(None))
         })
     };
+    let folders = NodeRef::<leptos::html::Nav>::new();
+    keep_current_in_view(folders, move || {
+        projects.public.track();
+        selected.track();
+    });
     view! {
         <aside class="sidebar public-sidebar" aria-label="Public catalogues">
             <button type="button" class="folders-toggle" aria-expanded=move || unfolded.get().to_string()
                 on:click=move |_| unfolded.update(|open| *open = !*open)>
                 "Folders"<span class="caret" aria-hidden="true">"▾"</span>
             </button>
-            <nav class="folder-tree" class:shut=move || !unfolded.get() aria-label="Folders">
+            <nav class="folder-tree" class:shut=move || !unfolded.get() aria-label="Folders" node_ref=folders>
                 <a class="catalogue" href=all_href aria-current=move || current_page(selected.get() == Some(None))>
                     <span class="name"><PublicIcon size=14/><span class="label">"All"</span></span>
                     <span class="count">{total}</span>

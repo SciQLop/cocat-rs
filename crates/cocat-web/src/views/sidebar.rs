@@ -2,6 +2,7 @@ use leptos::prelude::*;
 
 use crate::catalogues::{CatalogueItem, catalogue_list};
 use crate::edit;
+use crate::layout::{Span, reveal};
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
@@ -16,13 +17,15 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let page = window().location().pathname().unwrap_or_default();
     let trash = Route::Trash.href(&page);
     let public = page.clone();
+    let entries = NodeRef::<leptos::html::Nav>::new();
+    keep_current_in_view(entries, move || shown.track());
     view! {
         <aside class="sidebar" aria-label="Catalogues">
             <div class="sidebar-head">
                 <h2 class="eyebrow">"Catalogues"</h2>
                 {room.can_write().then(|| view! { <NewCatalogue/> })}
             </div>
-            <nav class="catalogue-list">
+            <nav class="catalogue-list" node_ref=entries>
                 <For each=move || list.get().catalogues key=Clone::clone let:item>
                     <Entry item shown page=page.clone()/>
                 </For>
@@ -132,6 +135,35 @@ fn PublicEntry(page: String) -> impl IntoView {
             </span>
             {badge}
         </a>
+    }
+}
+
+/// After each change `watch` tracks, scrolls `list`, and nothing around it, so its
+/// highlighted entry shows. A list that does not scroll (the phone's stacked layout) stays put.
+pub fn keep_current_in_view(list: NodeRef<leptos::html::Nav>, watch: impl Fn() + 'static) {
+    Effect::new(move |_| {
+        watch();
+        if let Some(list) = list.get() {
+            request_animation_frame(move || reveal_current(&list));
+        }
+    });
+}
+
+fn reveal_current(list: &web_sys::Element) {
+    let Ok(Some(entry)) = list.query_selector("[aria-current]") else {
+        return;
+    };
+    let span = |rect: web_sys::DomRect| Span {
+        top: rect.top(),
+        height: rect.height(),
+    };
+    let list_span = Span {
+        top: list.get_bounding_client_rect().top(),
+        height: f64::from(list.client_height()),
+    };
+    let entry_span = span(entry.get_bounding_client_rect());
+    if let Some(top) = reveal(f64::from(list.scroll_top()), list_span, entry_span) {
+        list.set_scroll_top(top.round() as i32);
     }
 }
 

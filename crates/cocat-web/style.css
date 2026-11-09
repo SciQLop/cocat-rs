@@ -137,6 +137,19 @@ a { color: var(--accent); text-underline-offset: 2px; }
 }
 
 .browser { display: flex; flex-wrap: wrap; flex: 1; min-height: 0; }
+/* Everything right of the sidebar: the page, and the event panel beside or under it. */
+.pane { flex: 999 1 560px; min-width: 0; display: flex; flex-wrap: wrap; }
+
+/* Once the sidebar and the page share a row, the window stops scrolling: the sidebar keeps the
+   window's height under the header, its list scrolls by itself above the pinned entries, and the
+   page scrolls in its pane. A new page gets a new pane, so it starts at the top. */
+@media (min-width: 800px) {
+  body:has(> .browser) { height: 100dvh; }
+  .browser { flex-wrap: nowrap; overflow: hidden; }
+  .browser > .sidebar { overflow-y: auto; }
+  .catalogue-list, .folder-tree { min-height: 8rem; overflow-y: auto; }
+  .pane { overflow-y: auto; }
+}
 
 .sidebar {
   flex: 1 1 240px;
@@ -1121,7 +1134,6 @@ a.button { text-decoration: none; }
 .catalogue.public-link { margin-top: 2px; }
 .catalogue.public-link .name svg { color: var(--accent); flex: none; }
 .catalogue.public-link .count-badge { margin-left: 0; }
-.public-holder { flex: 999 1 560px; min-width: 0; }
 .empty-state {
   display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
   padding: 40px 24px; border: 1px dashed var(--line); border-radius: 12px; background: var(--surface-quiet);

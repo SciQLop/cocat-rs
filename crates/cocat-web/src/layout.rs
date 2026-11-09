@@ -1,4 +1,5 @@
-//! Where things go on screen: the table's rendered window and the timeline's histogram.
+//! Where things go on screen: the table's rendered window, the sidebar's scroll to the
+//! highlighted entry and the timeline's histogram.
 
 use std::ops::Range;
 
@@ -16,6 +17,23 @@ pub fn window(scroll_top: f64, viewport: f64, row: f64, total: usize) -> Range<u
     let last = ((scroll_top + viewport) / row).ceil().max(0.0) as usize;
     let end = (last + OVERSCAN).min(total);
     first.saturating_sub(OVERSCAN).min(end)..end
+}
+
+/// A box's top and height on screen, in pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub top: f64,
+    pub height: f64,
+}
+
+/// Where a list scrolled to `scroll_top` and showing `list` on screen must scroll so that
+/// `item` shows: nowhere when it already shows whole, else with the item in the middle.
+pub fn reveal(scroll_top: f64, list: Span, item: Span) -> Option<f64> {
+    let offset = item.top - list.top;
+    if offset >= 0.0 && offset + item.height <= list.height {
+        return None;
+    }
+    Some((scroll_top + offset - (list.height - item.height) / 2.0).max(0.0))
 }
 
 /// How many of `tags`, from the first, the table's tag cell shows in `width` pixels,
@@ -127,6 +145,32 @@ mod tests {
 
     fn words(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    const LIST: Span = Span {
+        top: 100.0,
+        height: 400.0,
+    };
+
+    fn item(top: f64) -> Span {
+        Span { top, height: 32.0 }
+    }
+
+    #[test]
+    fn an_entry_already_in_view_does_not_move_the_list() {
+        assert_eq!(reveal(0.0, LIST, item(100.0)), None);
+        assert_eq!(reveal(250.0, LIST, item(468.0)), None);
+    }
+
+    #[test]
+    fn an_entry_out_of_view_is_scrolled_to_the_list_s_middle() {
+        assert_eq!(reveal(0.0, LIST, item(3_000.0)), Some(2_716.0));
+        assert_eq!(reveal(2_716.0, LIST, item(80.0)), Some(2_512.0));
+    }
+
+    #[test]
+    fn an_entry_near_the_top_scrolls_no_further_than_the_start() {
+        assert_eq!(reveal(50.0, LIST, item(60.0)), Some(0.0));
     }
 
     #[test]

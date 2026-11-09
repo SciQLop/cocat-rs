@@ -142,10 +142,12 @@ fn App(config: RoomConfig) -> impl IntoView {
                         Some(current) => view! { <PublicSidebar current=Some(current)/> }.into_any(),
                         None => view! { <Sidebar shown/> }.into_any(),
                     }}
-                    <main class="content" on:dragover=drag_over on:drop=drop>
-                        <CataloguePage shown selected screen/>
-                    </main>
-                    <EventPanel selected shown=panel route=shown screen/>
+                    <div class="pane">
+                        <main class="content" on:dragover=drag_over on:drop=drop>
+                            <CataloguePage shown selected screen/>
+                        </main>
+                        <EventPanel selected shown=panel route=shown screen/>
+                    </div>
                 </div>
             }
             .into_any()
