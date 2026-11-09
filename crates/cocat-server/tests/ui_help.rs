@@ -236,7 +236,16 @@ async fn the_import_help_says_which_files_and_what_updates() {
     let help = page(&fixture, "/ui/help", None).await;
 
     let section = section_text(&help, "import-export");
-    for words in ["VOTable", "tscat JSON", "CSV", "same id", "one change"] {
+    let words = [
+        "VOTable",
+        "tscat JSON",
+        "TFCat",
+        "one file per catalogue",
+        "CSV",
+        "same id",
+        "one change",
+    ];
+    for words in words {
         assert!(section.contains(words), "{words}: {section}");
     }
 }

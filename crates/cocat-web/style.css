@@ -1219,6 +1219,10 @@ select.role-picker[class*="role-"] {
 .name-form :is(.formats, .export-list) label { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 .name-form :is(.formats, .export-list) input { width: auto; height: auto; margin: 0; padding: 0; flex: none; }
 .export-list { max-height: 40vh; overflow-y: auto; }
+.value-range { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.value-range legend { padding: 0; margin-bottom: 6px; }
+.value-range .quiet { margin: 0; }
+.value-range-boxes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .export-list .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drop-zone {
   display: flex;

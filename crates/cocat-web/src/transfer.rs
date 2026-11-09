@@ -3,8 +3,11 @@
 
 use std::collections::BTreeSet;
 
-use cocat_core::model::{self, CatalogueSummary, EventRecord, Member, WriteError, Written};
+use cocat_core::model::{
+    self, CatalogueSummary, EventRecord, Member, ShapeAxis, WriteError, Written,
+};
 use cocat_core::rules::RuleError;
+use cocat_core::tfcat::{self, TfcatError, TfcatImport};
 use cocat_core::time::Timestamp;
 use cocat_core::tscat_json::{self, TscatImport, TscatJsonError};
 use cocat_core::votable::{self, Imported, VotableError};
@@ -22,9 +25,11 @@ pub enum TransferError {
     Votable(#[from] VotableError),
     #[error(transparent)]
     Tscat(#[from] TscatJsonError),
+    #[error(transparent)]
+    Tfcat(#[from] TfcatError),
     #[error("cannot write the file: {0}")]
     Encoding(String),
-    #[error("This file is neither a VOTable (.xml, .vot) nor tscat JSON (.json).")]
+    #[error("This file is not a VOTable (.xml, .vot), tscat JSON or TFCat (.json).")]
     Unknown,
 }
 
@@ -32,18 +37,25 @@ pub enum TransferError {
 pub enum Format {
     Votable,
     TscatJson,
+    Tfcat,
     Csv,
 }
 
 impl Format {
-    pub const ALL: [Format; 3] = [Format::Votable, Format::TscatJson, Format::Csv];
-    /// The formats that hold several catalogues in one file.
-    pub const MANY: [Format; 2] = [Format::Votable, Format::TscatJson];
+    pub const ALL: [Format; 4] = [
+        Format::Votable,
+        Format::TscatJson,
+        Format::Tfcat,
+        Format::Csv,
+    ];
+    /// The formats the project's export offers for several catalogues.
+    pub const MANY: [Format; 3] = [Format::Votable, Format::TscatJson, Format::Tfcat];
 
     pub fn label(self) -> &'static str {
         match self {
             Format::Votable => "VOTable (.xml)",
             Format::TscatJson => "tscat JSON (.json)",
+            Format::Tfcat => "TFCat, radio time–frequency (.json)",
             Format::Csv => "CSV (.csv)",
         }
     }
@@ -51,7 +63,7 @@ impl Format {
     pub fn extension(self) -> &'static str {
         match self {
             Format::Votable => "xml",
-            Format::TscatJson => "json",
+            Format::TscatJson | Format::Tfcat => "json",
             Format::Csv => "csv",
         }
     }
@@ -59,9 +71,56 @@ impl Format {
     pub fn mime(self) -> &'static str {
         match self {
             Format::Votable => "application/x-votable+xml",
-            Format::TscatJson => "application/json",
+            Format::TscatJson | Format::Tfcat => "application/json",
             Format::Csv => "text/csv",
         }
+    }
+}
+
+/// The files an export makes, as (file name, content): one, except for TFCat, which holds
+/// one catalogue per file.
+pub fn files<T: ReadTxn>(
+    txn: &T,
+    uuids: &[String],
+    format: Format,
+    value_range: Option<(f64, f64)>,
+) -> Result<Vec<(String, String)>, TransferError> {
+    let groups: Vec<&[String]> = match format {
+        Format::Tfcat => uuids.chunks(1).collect(),
+        _ => vec![uuids],
+    };
+    groups
+        .into_iter()
+        .map(|uuids| {
+            let names: Vec<String> = uuids
+                .iter()
+                .filter_map(|uuid| model::catalogue(txn, uuid).map(|found| found.name))
+                .collect();
+            let text = export(txn, uuids, format, value_range)?;
+            Ok((file_name(&names, format), text))
+        })
+        .collect()
+}
+
+/// The shape axis of the first catalogue whose TFCat export needs a range of values from
+/// the visitor, or `None` when none does.
+pub fn needs_range<T: ReadTxn>(txn: &T, uuids: &[String]) -> Option<ShapeAxis> {
+    uuids.iter().find_map(|uuid| {
+        let catalogue = model::catalogue(txn, uuid)?;
+        let members = model::catalogue_members(txn, uuid)?.ok()?;
+        tfcat::needs_value_range(&events_of(&members)).then(|| tfcat::shape_axis(&catalogue))
+    })
+}
+
+/// The range typed in two boxes: `None` when both are empty.
+pub fn value_range(low: &str, high: &str) -> Result<Option<(f64, f64)>, String> {
+    let refused = || "Give two numbers, the lowest first.".to_owned();
+    match (low.trim(), high.trim()) {
+        ("", "") => Ok(None),
+        (low, high) => match (low.parse::<f64>(), high.parse::<f64>()) {
+            (Ok(low), Ok(high)) if low < high => Ok(Some((low, high))),
+            _ => Err(refused()),
+        },
     }
 }
 
@@ -70,6 +129,7 @@ pub fn export<T: ReadTxn>(
     txn: &T,
     uuids: &[String],
     format: Format,
+    value_range: Option<(f64, f64)>,
 ) -> Result<String, TransferError> {
     let mut exported = Vec::with_capacity(uuids.len());
     for uuid in uuids {
@@ -88,6 +148,12 @@ pub fn export<T: ReadTxn>(
     match format {
         Format::Votable => Ok(votable::export_many(&pairs)?),
         Format::TscatJson => tscat_json::export(txn, &pairs).map_err(encoding),
+        Format::Tfcat => match pairs.as_slice() {
+            [(catalogue, events)] => Ok(tfcat::export(txn, catalogue, events, value_range)?),
+            _ => Err(TransferError::Encoding(
+                "a TFCat file holds one catalogue".to_owned(),
+            )),
+        },
         Format::Csv => {
             let members = exported.iter().flat_map(|(_, members)| members.iter());
             csv(txn, members)
@@ -215,16 +281,35 @@ fn sanitise(name: &str) -> String {
 pub enum Incoming {
     Votable(Imported),
     Tscat(TscatImport),
+    /// A TFCat file, with the name of the catalogue it makes.
+    Tfcat(TfcatImport, String),
 }
 
-/// Reads a file by what it holds, whatever its name says.
-pub fn read(text: &str) -> Result<Incoming, TransferError> {
+/// Reads a file by what it holds, whatever its name says. A TFCat file without a title
+/// names its catalogue after `file_name`.
+pub fn read(text: &str, file_name: &str) -> Result<Incoming, TransferError> {
     let text = text.trim_start_matches('\u{feff}').trim_start();
     match text.chars().next() {
         Some('<') => Ok(Incoming::Votable(votable::import(text)?)),
+        Some('{') if is_feature_collection(text) => {
+            let import = tfcat::parse(text)?;
+            let name = import.name(None, file_name);
+            Ok(Incoming::Tfcat(import, name))
+        }
         Some('{') => Ok(Incoming::Tscat(tscat_json::parse(text)?)),
         _ => Err(TransferError::Unknown),
     }
+}
+
+/// TFCat is GeoJSON: a `FeatureCollection`. tscat's JSON has no `type`.
+fn is_feature_collection(text: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Typed {
+        #[serde(rename = "type")]
+        kind: Option<String>,
+    }
+    serde_json::from_str::<Typed>(text)
+        .is_ok_and(|typed| typed.kind.as_deref() == Some("FeatureCollection"))
 }
 
 /// What an import will do to the project.
@@ -254,6 +339,7 @@ pub fn summary<T: ReadTxn>(txn: &T, incoming: &Incoming) -> Summary {
                 .collect(),
             import.events.iter().collect(),
         ),
+        Incoming::Tfcat(import, _) => (vec![None], import.events.iter().collect()),
     };
     let uuids: BTreeSet<&str> = events.iter().map(|event| event.uuid.as_str()).collect();
     let updated_events = uuids
@@ -306,6 +392,7 @@ pub fn warnings(incoming: &Incoming) -> &[String] {
     match incoming {
         Incoming::Votable(_) => &[],
         Incoming::Tscat(import) => &import.warnings,
+        Incoming::Tfcat(import, _) => &import.warnings,
     }
 }
 
@@ -318,6 +405,7 @@ pub fn write(
     match incoming {
         Incoming::Votable(imported) => votable::write(txn, imported, None),
         Incoming::Tscat(import) => tscat_json::write(txn, import, now),
+        Incoming::Tfcat(import, name) => tfcat::write(txn, import, name, now),
     }
 }
 

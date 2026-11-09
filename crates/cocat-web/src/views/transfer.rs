@@ -1,6 +1,6 @@
 //! Export and import: the forms, the download, and reading a file the visitor picks or drops.
 
-use cocat_core::model;
+use cocat_core::model::{self, ShapeAxis};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -12,7 +12,7 @@ use yrs::ReadTxn;
 use crate::edit::EditError;
 use crate::route::Route;
 use crate::state::Room;
-use crate::transfer::{self, Format, Incoming, Summary, file_name};
+use crate::transfer::{self, Format, Incoming, Summary};
 use crate::views::actions::Form;
 use crate::views::controls::{Error, Hint, error_line, go_to, now};
 use crate::views::project_dialogs::Dialog;
@@ -39,15 +39,23 @@ impl Importer {
     }
 }
 
-/// The catalogues in a format, saved by the browser as a file.
-fn save<T: ReadTxn>(txn: &T, uuids: &[String], format: Format) -> Result<(), String> {
-    let names: Vec<String> = uuids
-        .iter()
-        .filter_map(|uuid| model::catalogue(txn, uuid).map(|found| found.name))
-        .collect();
-    let text = transfer::export(txn, uuids, format).map_err(|error| error.to_string())?;
-    download(&file_name(&names, format), format.mime(), &text)
-        .map_err(|_| "The browser refused to save the file.".to_owned())
+/// The catalogues in a format, saved by the browser as files: one, or one per catalogue
+/// for TFCat.
+fn save<T: ReadTxn>(
+    txn: &T,
+    uuids: &[String],
+    format: Format,
+    range: &Range,
+) -> Result<(), String> {
+    let value_range =
+        transfer::value_range(&range.low.get_untracked(), &range.high.get_untracked())?;
+    let made =
+        transfer::files(txn, uuids, format, value_range).map_err(|error| error.to_string())?;
+    for (name, text) in &made {
+        download(name, format.mime(), text)
+            .map_err(|_| "The browser refused to save the file.".to_owned())?;
+    }
+    Ok(())
 }
 
 /// A file made here, downloaded through a temporary link to a Blob.
@@ -89,17 +97,84 @@ fn Formats(formats: &'static [Format], format: RwSignal<Format>) -> impl IntoVie
     }
 }
 
+/// The two boxes of the range a TFCat export draws value-less events over.
+#[derive(Clone, Copy)]
+struct Range {
+    low: RwSignal<String>,
+    high: RwSignal<String>,
+}
+
+impl Range {
+    fn new() -> Self {
+        Self {
+            low: RwSignal::new(String::new()),
+            high: RwSignal::new(String::new()),
+        }
+    }
+}
+
+/// Asks for a range when TFCat is picked and some events have no place on the shape axis.
+#[component]
+fn RangeBoxes(axis: Memo<Option<ShapeAxis>>, range: Range) -> impl IntoView {
+    let boxes = move |axis: ShapeAxis| {
+        let quantity = axis.quantity.clone();
+        let unit = axis.unit.clone();
+        let input = move |value: RwSignal<String>, label: String| {
+            view! {
+                <label>
+                    <span class="field-label">{label}</span>
+                    <input type="number" step="any" inputmode="decimal" prop:value=move || value.get()
+                        on:input=move |event| value.set(event_target_value(&event))/>
+                </label>
+            }
+        };
+        view! {
+            <fieldset class="value-range">
+                <legend class="field-label">{format!("Range of {quantity}")}</legend>
+                <p class="quiet">{format!(
+                    "Some events have no {quantity}: TFCat draws each of them over this range."
+                )}</p>
+                <div class="value-range-boxes">
+                    {input(range.low, format!("From ({unit})"))}
+                    {input(range.high, format!("To ({unit})"))}
+                </div>
+            </fieldset>
+        }
+    };
+    move || axis.get().map(boxes)
+}
+
+/// The shape axis to ask a range on, while TFCat is the format picked.
+fn range_axis(
+    room: StoredValue<Room, LocalStorage>,
+    format: RwSignal<Format>,
+    uuids: impl Fn() -> Vec<String> + Send + Sync + 'static,
+) -> Memo<Option<ShapeAxis>> {
+    Memo::new(move |_| {
+        if format.get() != Format::Tfcat {
+            return None;
+        }
+        let uuids = uuids();
+        room.with_value(|room| room.read_untracked(|txn| transfer::needs_range(txn, &uuids)))
+    })
+}
+
 /// Under the heading: the catalogue on screen as a file.
 #[component]
 pub fn ExportForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     let room = StoredValue::new_local(expect_context::<Room>());
     let format = RwSignal::new(Format::Votable);
     let error: Error = RwSignal::new(None);
+    let range = Range::new();
     let uuids = vec![uuid];
+    let axis = {
+        let uuids = uuids.clone();
+        range_axis(room, format, move || uuids.clone())
+    };
     let send = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
-        let saved =
-            room.with_value(|room| room.read_untracked(|txn| save(txn, &uuids, format.get())));
+        let saved = room
+            .with_value(|room| room.read_untracked(|txn| save(txn, &uuids, format.get(), &range)));
         match saved {
             Ok(()) => form.set(Form::Closed),
             Err(failure) => error.set(Some(failure)),
@@ -108,6 +183,7 @@ pub fn ExportForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     view! {
         <form class="inline-form name-form export-form" on:submit=send>
             <Formats formats=&Format::ALL format/>
+            <RangeBoxes axis range/>
             <Hint anchor="import-export" topic="import and export"
                 text="A smart catalogue is saved with the events it holds now."/>
             {error_line(error)}
@@ -132,11 +208,13 @@ pub fn ExportDialog(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
     );
     let format = RwSignal::new(Format::Votable);
     let error: Error = RwSignal::new(None);
+    let range = Range::new();
+    let axis = range_axis(room, format, move || picked.get());
     let send = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
         let uuids = picked.get_untracked();
-        let saved =
-            room.with_value(|room| room.read_untracked(|txn| save(txn, &uuids, format.get())));
+        let saved = room
+            .with_value(|room| room.read_untracked(|txn| save(txn, &uuids, format.get(), &range)));
         match saved {
             Ok(()) => dialog.set(None),
             Err(failure) => error.set(Some(failure)),
@@ -175,8 +253,9 @@ pub fn ExportDialog(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
                 {empty.then(|| view! { <p class="quiet">"No catalogues in this project yet."</p> })}
             </fieldset>
             <Formats formats=&Format::MANY format/>
+            <RangeBoxes axis range/>
             <Hint anchor="import-export" topic="import and export"
-                text="One file holds them all. For CSV, export one catalogue from its More menu."/>
+                text="VOTable and tscat JSON put them all in one file; TFCat makes one file per catalogue. For CSV, export one catalogue from its More menu."/>
             {error_line(error)}
             <div class="row-buttons">
                 <button type="submit" class="button primary"
@@ -237,7 +316,7 @@ pub fn ImportDialog() -> impl IntoView {
             let read = match text_of(&file).await {
                 Ok(text) => {
                     breathe().await;
-                    transfer::read(&text).map_err(|failure| failure.to_string())
+                    transfer::read(&text, &file.name()).map_err(|failure| failure.to_string())
                 }
                 Err(failure) => Err(failure),
             };
@@ -330,7 +409,7 @@ pub fn ImportDialog() -> impl IntoView {
             <form class="name-form import-form" on:submit=import>
                 <h2>"Import a file"</h2>
                 <Hint anchor="import-export" topic="import and export"
-                    text="A VOTable (.xml) or a tscat JSON file (.json). Events whose id the project already holds are updated."/>
+                    text="A VOTable (.xml), a tscat JSON file or a TFCat file (.json). Events whose id the project already holds are updated."/>
                 {body}
                 {error_line(error)}
                 <div class="row-buttons">
