@@ -1278,3 +1278,44 @@ select.role-picker[class*="role-"] {
   .folder-tree.shut { display: none; }
   .public-more { flex-direction: row; flex-wrap: wrap; margin-top: 8px; }
 }
+
+/* Home: what waits on the visitor, then what changed in their projects. */
+
+.home-page { gap: 24px; }
+.home-section { display: flex; flex-direction: column; gap: 10px; }
+.home-section h2 { margin: 0; font-size: 15px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+a.home-card { color: var(--ink); text-decoration: none; }
+a.home-card:hover { border-color: var(--accent); }
+.home-card.invitation { border-left: 3px solid var(--accent); }
+.home-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.home-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.home-what strong { overflow-wrap: anywhere; }
+.home-project { font-weight: 600; font-size: 16px; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+a.home-project:hover { color: var(--accent); }
+.home-card .changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.home-card .changes li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.home-card .changes .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.home-card .changes .when { margin-left: auto; font-size: 13px; }
+.home-card .more { align-self: flex-start; font-size: 14px; color: var(--accent); text-decoration: none; }
+.home-card .more:hover { text-decoration: underline; }
+.quiet-projects { gap: 2px; }
+.quiet-project {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--ink);
+  text-decoration: none;
+}
+.quiet-project:hover { background: var(--chip); }
+.quiet-project .home-project { font-size: 15px; font-weight: 500; }

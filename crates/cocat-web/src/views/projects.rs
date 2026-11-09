@@ -89,8 +89,8 @@ impl Projects {
     /// Opens `project` as a new step of the browser's history.
     pub fn switch(self, project: &Project) {
         let open = self.open.with_untracked(|config| config.room_id.clone());
-        let on_index = self.route.with_untracked(Route::is_public_index);
-        if stays(&open, &project.id, on_index) {
+        let elsewhere = self.route.with_untracked(Route::holds_no_project);
+        if stays(&open, &project.id, elsewhere) {
             return;
         }
         let Some(next) = self
@@ -187,9 +187,11 @@ pub fn ProjectMenu() -> impl IntoView {
     let open_id = move || projects.open.with(|config| config.room_id.clone());
     let name = move || projects.open.with(|config| config.room_name.clone());
     let public = move || projects.in_public();
-    let label = move || match public() {
-        true => "Public catalogues".to_owned(),
-        false => name(),
+    let at_home = move || projects.route.with(|route| *route == Route::Home);
+    let label = move || match (at_home(), public()) {
+        (true, _) => "Projects".to_owned(),
+        (false, true) => "Public catalogues".to_owned(),
+        (false, false) => name(),
     };
     let actions = move || {
         projects
@@ -212,7 +214,7 @@ pub fn ProjectMenu() -> impl IntoView {
     };
     let entry = move |project: Project| {
         let id = project.id.clone();
-        let here = move || !public() && id == open_id();
+        let here = move || !public() && !at_home() && id == open_id();
         let role = project.role.as_str();
         let target = project.clone();
         view! {

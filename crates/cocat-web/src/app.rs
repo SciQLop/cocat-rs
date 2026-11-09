@@ -12,6 +12,7 @@ use crate::views::event_panel::{EventPanel, Shown};
 use crate::views::groups::GroupsPage;
 use crate::views::header::Header;
 use crate::views::history::HistoryPage;
+use crate::views::home::HomeSpace;
 use crate::views::notice::{Notice, NoticeBar};
 use crate::views::projects::Projects;
 use crate::views::projects::set_title;
@@ -69,8 +70,12 @@ fn Shell(config: RoomConfig) -> impl IntoView {
     let _ = window_event_listener(leptos::ev::popstate, move |_| projects.arrived());
     let _ = window_event_listener(leptos::ev::hashchange, move |_| projects.follow_hash());
     let on_index = Memo::new(move |_| projects.route.with(Route::is_public_index));
+    let at_home = Memo::new(move |_| projects.route.with(|route| *route == Route::Home));
     let opened = Memo::new(move |_| projects.open.with(|config| config.room_id.clone()));
     move || {
+        if at_home.get() {
+            return view! { <HomeSpace/> }.into_any();
+        }
         if on_index.get() {
             return view! { <PublicSpace/> }.into_any();
         }

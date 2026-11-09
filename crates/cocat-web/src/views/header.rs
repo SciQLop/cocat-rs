@@ -76,8 +76,9 @@ pub fn PublicHeader(shown: Memo<Route>) -> impl IntoView {
 /// The brand, the project switcher and where the page is after it.
 #[component]
 fn Crumbs(shown: Memo<Route>) -> impl IntoView {
+    let page = window().location().pathname().unwrap_or_default();
     view! {
-        <a class="brand" href="../app">
+        <a class="brand" href=Route::Home.href(&page) title="Home">
             <img src="mark.png" alt="" width="24" height="28"/>
             "cocat"
         </a>
@@ -134,6 +135,7 @@ fn UserMenu() -> impl IntoView {
     let (email, admin) = expect_context::<Projects>()
         .open
         .with_untracked(|config| (config.user_email.clone(), config.admin));
+    let page = window().location().pathname().unwrap_or_default();
     let menu = NodeRef::<Details>::new();
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
@@ -150,6 +152,7 @@ fn UserMenu() -> impl IntoView {
             <div class="menu" role="menu" aria-label="Your account">
                 <p class="signed-in">"Signed in as"<strong>{email.clone()}</strong></p>
                 <hr/>
+                <a role="menuitem" href=Route::Home.href(&page)>"Home"</a>
                 <a role="menuitem" href="../account">"Account settings"</a>
                 {admin.then(|| view! { <a role="menuitem" href="../admin">"Admin"</a> })}
                 <hr/>

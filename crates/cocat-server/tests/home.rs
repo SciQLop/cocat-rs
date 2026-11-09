@@ -47,6 +47,10 @@ struct World {
 
 impl World {
     async fn start() -> Self {
+        Self::with_budget(None).await
+    }
+
+    async fn with_budget(budget: Option<u64>) -> Self {
         let dir = TempDir::new().unwrap();
         let update_dir = dir.path().join("rooms");
         fs::create_dir_all(&update_dir).unwrap();
@@ -54,7 +58,7 @@ impl World {
         let state = AppState {
             pool,
             secret: "test-secret".to_owned(),
-            rooms: RoomManager::new(update_dir.clone(), None),
+            rooms: RoomManager::new(update_dir.clone(), budget),
             before_attach: None,
             login_limit: LoginLimit::default(),
             mailer: None,
@@ -528,4 +532,61 @@ async fn authors_see_their_pending_and_recently_decided_submissions() {
     assert_eq!(titles(mine), ["pending", "declined", "accepted"]);
     assert_eq!(mine[1]["review_note"], "thanks");
     assert_eq!(mine[1]["reviewer"], "a curator");
+}
+
+#[tokio::test]
+async fn a_project_too_big_to_read_still_has_its_card() {
+    let world = World::with_budget(Some(1)).await;
+    world.write(LAB, world.bob, now_ms() - MINUTE, "too big");
+
+    let card = world.project_card(world.alice, LAB).await;
+
+    assert_eq!(card["name"], "Lab");
+    assert_eq!(card["changes"], Value::Array(Vec::new()));
+}
+
+#[tokio::test]
+async fn leaving_a_project_marks_it_seen() {
+    let world = World::start().await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served = world.state.clone();
+    tokio::spawn(async move { axum::serve(listener, ws::router(served)).await.unwrap() });
+    let token = auth::start_session(&world.state.pool, world.bob)
+        .await
+        .unwrap();
+    let mut request = format!("ws://{addr}/room/{LAB}")
+        .into_client_request()
+        .unwrap();
+    let headers = request.headers_mut();
+    headers.insert(
+        "cookie",
+        format!("fastapiusersauth={token}").parse().unwrap(),
+    );
+    headers.insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        cocat_core::SUBPROTOCOL.parse().unwrap(),
+    );
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let opened = world.project_card(world.bob, LAB).await["seen_ms"]
+        .as_i64()
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+    socket.close(None).await.unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let seen = world.project_card(world.bob, LAB).await["seen_ms"]
+            .as_i64()
+            .unwrap();
+        if seen > opened {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "leaving did not mark it seen"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }

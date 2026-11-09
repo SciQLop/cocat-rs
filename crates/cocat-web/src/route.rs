@@ -7,6 +7,8 @@ pub enum Route {
     /// Nothing picked: the page shows the first catalogue.
     #[default]
     Default,
+    /// What needs the visitor: invitations, reviews, and what changed in their projects.
+    Home,
     Catalogue(String),
     Trash,
     /// The visitor's groups, and one of them.
@@ -39,6 +41,7 @@ impl Route {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
             Some(("submission", id)) => id.parse().map_or(Route::Default, Route::Submission),
+            None if hash == "home" => Route::Home,
             None if hash == "trash" => Route::Trash,
             None if hash == "groups" => Route::Groups,
             None if hash == "public" => Route::Public(None),
@@ -64,16 +67,23 @@ impl Route {
         )
     }
 
+    /// Pages that hold no project: the public catalogues' own pages and the home page. A
+    /// project picked from one of them opens even when it is the last one open.
+    pub fn holds_no_project(&self) -> bool {
+        *self == Route::Home || self.is_public_index()
+    }
+
     /// The page is in the public catalogues, which the switcher then names: on their pages,
     /// and anywhere in a public catalogue.
     pub fn in_public_catalogues(&self, public_project: bool) -> bool {
-        public_project || self.is_public_index()
+        *self != Route::Home && (public_project || self.is_public_index())
     }
 
     /// What the header's breadcrumb names after the project switcher. The public index has
     /// none: the switcher already reads "Public catalogues".
     pub fn crumb(&self) -> Option<&'static str> {
         match self {
+            Route::Home => Some("Home"),
             Route::History { .. } => Some("History"),
             Route::Groups | Route::Group(_) => Some("Groups"),
             Route::Submissions | Route::Submission(_) => Some("Submissions"),
@@ -119,6 +129,7 @@ impl Route {
         match self {
             Route::Default => "#".to_owned(),
             Route::Catalogue(uuid) => format!("#c={uuid}"),
+            Route::Home => "#home".to_owned(),
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
             Route::Public(None) => "#public".to_owned(),
@@ -235,6 +246,10 @@ mod tests {
         assert!(Route::Submission(12).is_public_index());
         assert!(Route::Public(None).is_public_index());
         assert!(!Route::Trash.is_public_index());
+        assert!(Route::Home.holds_no_project());
+        assert!(Route::Submissions.holds_no_project());
+        assert!(!Route::Trash.holds_no_project());
+        assert!(!Route::Home.in_public_catalogues(true));
         assert_eq!(Route::Submissions.history(), history(None, None));
     }
 
@@ -315,6 +330,7 @@ mod tests {
     #[test]
     fn a_route_writes_the_hash_it_reads() {
         for route in [
+            Route::Home,
             Route::Catalogue("abc".into()),
             Route::Trash,
             Route::Groups,

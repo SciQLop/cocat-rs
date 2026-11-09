@@ -138,8 +138,9 @@ async fn lobby_role(
     Ok((user, role))
 }
 
-/// The home page counts others' changes from here. A failure costs only that count, so the
-/// socket is accepted anyway.
+/// The home page counts others' changes from here, on opening and on leaving: what others
+/// did while the visitor had the project open is not news either. A failure costs only that
+/// count, so the socket is accepted anyway.
 async fn mark_seen(state: &AppState, room_id: &str, user: Uuid) {
     if let Err(error) = db::touch_room_seen(&state.pool, user, room_id, room::now_ms()).await {
         tracing::warn!(%error, room = %room_id, "cannot mark the project seen");
@@ -246,6 +247,7 @@ async fn bridge(
     // client for an oversized message before the bridge gives up on it.
     drop(stream);
     room.detach(client).await;
+    mark_seen(&state, &room_id, user.id).await;
     crate::telemetry::ws_connected(-1);
     if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();

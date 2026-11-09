@@ -149,7 +149,7 @@ async fn project_news(
     horizon: i64,
 ) -> Result<ProjectNews, ApiError> {
     let since = seen_ms.map_or(horizon, |seen| seen.max(horizon));
-    let versions = room_versions(state, &room.id).await?;
+    let versions = readable_versions(state, &room.id).await;
     let last_change_ms = versions.iter().filter_map(|version| version.ended_ms).max();
     let news: Vec<Version> = versions
         .into_iter()
@@ -165,6 +165,15 @@ async fn project_news(
         last_change_ms,
         seen_ms,
         more,
+    })
+}
+
+/// The room's versions, or none when they cannot be read (a room past the memory budget):
+/// one such project must not take the whole page down, it only goes without its news.
+async fn readable_versions(state: &AppState, room_id: &str) -> Vec<Version> {
+    room_versions(state, room_id).await.unwrap_or_else(|error| {
+        tracing::warn!(?error, room = %room_id, "the home page skips a project's history");
+        Vec::new()
     })
 }
 

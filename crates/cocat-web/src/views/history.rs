@@ -763,7 +763,7 @@ fn page() -> String {
 }
 
 /// The visitor's offset from UTC, in minutes, at an instant.
-fn offset(ms: i64) -> i32 {
+pub(crate) fn offset(ms: i64) -> i32 {
     let date = js_sys::Date::new(&JsValue::from_f64(ms as f64));
     -(date.get_timezone_offset() as i32)
 }

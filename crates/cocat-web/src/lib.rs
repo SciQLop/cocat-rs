@@ -9,6 +9,7 @@ pub mod edit;
 pub mod format;
 pub mod help;
 pub mod history;
+pub mod home;
 pub mod layout;
 pub mod period;
 pub mod presence;

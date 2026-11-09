@@ -8,6 +8,7 @@ pub mod event_panel;
 pub mod groups;
 pub mod header;
 pub mod history;
+pub mod home;
 pub mod invite;
 pub mod notice;
 pub mod project_dialogs;
