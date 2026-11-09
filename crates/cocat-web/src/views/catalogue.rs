@@ -5,13 +5,17 @@ use leptos::prelude::*;
 use crate::help::{Shown, empty_text};
 use crate::period::Period;
 use crate::route::Route;
-use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
+use crate::rows::{
+    Row, SortKey, attribute_keys, filter, matching, rows, search_rows, sort, trash_rows,
+};
+use crate::search::{self, Query};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
+use crate::views::search::{SearchBuilder, SearchLine, saved_search};
 use crate::views::submissions::{CopyForm, ProposeForm, SubmitForm, UpdateForm};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
@@ -50,21 +54,61 @@ pub fn CataloguePage(
     screen: RwSignal<Option<OnScreen>>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
+    let query = RwSignal::new(String::new());
+    let building = RwSignal::new(false);
     let reader = room.clone();
-    let members: Members = Memo::new(move |_| match shown.get() {
-        Route::Catalogue(uuid) => reader
+    let saved = Memo::new(move |_| saved_search(&reader, &shown.get()));
+    let reader = room.clone();
+    let parsed = Memo::new(move |_| {
+        let names = reader.read(|txn| cocat_core::model::catalogue_names(txn));
+        query.with(|text| search::read(text, &names))
+    });
+    // A smart catalogue's search, once edited, shows what it would hold before it is saved.
+    let preview = move || {
+        let source = saved.with(|saved| {
+            saved
+                .as_ref()
+                .filter(|saved| query.with(|text| text.trim() != saved.text))
+                .map(|saved| saved.source.clone())
+        })?;
+        let text = query.get();
+        Some((text, source))
+    };
+    let reader = room.clone();
+    let members: Members = Memo::new(move |_| match (shown.get(), preview()) {
+        (Route::Catalogue(_), Some((text, source))) => reader.read(|txn| {
+            let names = cocat_core::model::catalogue_names(txn);
+            match cocat_core::query::parse(&text, &names) {
+                Ok(predicate) => search_rows(txn, &predicate, source.as_deref())
+                    .map_err(|error| error.to_string()),
+                Err(_) => Ok(Vec::new()),
+            }
+        }),
+        (Route::Catalogue(uuid), None) => reader
             .read(|txn| rows(txn, &uuid))
             .map_err(|error| error.to_string()),
-        Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
+        (Route::Trash, _) => Ok(reader.read(|txn| trash_rows(txn))),
         _ => Ok(Vec::new()),
     });
-    let query = RwSignal::new(String::new());
     let period = RwSignal::new(None::<Period>);
     let sorting = RwSignal::new((SortKey::Start, false));
+    let reader = room.clone();
     let matching = Memo::new(move |_| {
-        members.with(|members| match members {
-            Ok(rows) => query.with(|query| filter(rows, query)),
-            Err(_) => Vec::new(),
+        members.with(|members| {
+            let Ok(rows) = members else {
+                return Vec::new();
+            };
+            let everything = || (0..rows.len()).collect();
+            if saved.with(Option::is_some) {
+                return everything();
+            }
+            parsed.with(|parsed| match parsed {
+                Query::Words => query.with(|query| filter(rows, query)),
+                Query::Rule(predicate) => reader
+                    .read(|txn| matching(txn, rows, predicate))
+                    .unwrap_or_else(|_| everything()),
+                Query::Empty | Query::Broken(_) => everything(),
+            })
         })
     });
     let visible = Memo::new(move |_| {
@@ -107,9 +151,15 @@ pub fn CataloguePage(
         shown.track();
         form.set(Form::Closed);
         picked.set(None);
-        query.set(String::new());
+        building.set(false);
         period.set(None);
         selected.set(None);
+    });
+    // The box holds the smart catalogue's search, again once it is saved.
+    Effect::new(move |_| {
+        shown.track();
+        let text = saved.with(|saved| saved.as_ref().map(|saved| saved.text.clone()));
+        query.set(text.unwrap_or_default());
     });
     let can_write = room.can_write();
     let reader = room.clone();
@@ -133,17 +183,31 @@ pub fn CataloguePage(
                     <SearchIcon/>
                     <input
                         type="search"
-                        placeholder="Filter events"
-                        aria-label="Filter events"
+                        placeholder="Search events"
+                        aria-label="Search events"
+                        title="Words, or fields: tag:shock confidence:>=0.8 start:2015 created:now-7d"
                         prop:value=move || query.get()
                         on:input=move |event| query.set(event_target_value(&event))
                     />
+                    <button type="button" class="build-search" aria-label="Build a search"
+                        title="Build a search" aria-pressed=move || building.get().to_string()
+                        on:click=move |_| building.update(|open| *open = !*open)>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" aria-hidden="true">
+                            <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/>
+                            <circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>
+                        </svg>
+                    </button>
                 </label>
                 <ColumnPicker keys columns picked/>
                 <Actions shown selected form proposals/>
                 {public.then(|| view! { <PublicButtons shown form editor=can_write/> })}
             </div>
         </div>
+        <SearchLine shown query parsed saved/>
+        <Show when=move || building.get()>
+            <SearchBuilder query building keys/>
+        </Show>
         {move || match (form.get(), shown.get()) {
             (Form::Rule, Route::Catalogue(uuid)) => Some(view! { <RuleEditor uuid form/> }.into_any()),
             (Form::Freeze, Route::Catalogue(uuid)) => Some(view! { <Freeze uuid form/> }.into_any()),

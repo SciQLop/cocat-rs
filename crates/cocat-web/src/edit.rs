@@ -37,6 +37,8 @@ pub enum EditError {
     #[error(transparent)]
     Rule(#[from] RuleError),
     #[error(transparent)]
+    Search(#[from] cocat_core::query::QueryError),
+    #[error(transparent)]
     Write(#[from] WriteError),
 }
 
@@ -250,6 +252,29 @@ pub fn set_rule(txn: &mut TransactionMut<'_>, uuid: &str, text: &str) -> Result<
     let rule = check_rule(text)?;
     found(
         model::set_catalogue_rule(txn, uuid, Some(&rule))?,
+        EditError::NoCatalogue,
+    )
+}
+
+/// A smart catalogue named `name` with `rule`. Answers its uuid.
+pub fn new_smart_catalogue(
+    txn: &mut TransactionMut<'_>,
+    name: &str,
+    author: &str,
+    rule: &Value,
+) -> Result<String, EditError> {
+    let uuid = new_catalogue(txn, name, author)?;
+    replace_rule(txn, &uuid, rule)?;
+    Ok(uuid)
+}
+
+pub fn replace_rule(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    rule: &Value,
+) -> Result<(), EditError> {
+    found(
+        model::set_catalogue_rule(txn, uuid, Some(rule))?,
         EditError::NoCatalogue,
     )
 }

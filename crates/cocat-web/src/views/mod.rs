@@ -16,6 +16,7 @@ pub mod projects;
 pub mod public;
 pub mod rule;
 pub mod rule_editor;
+pub mod search;
 pub mod share;
 pub mod sidebar;
 pub mod stats;

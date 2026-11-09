@@ -6,7 +6,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
 use cocat_core::model::{self, EventRecord, Member, Status};
-use cocat_core::rules::RuleError;
+use cocat_core::rules::{Predicate, RuleError};
+use cocat_core::time::Timestamp;
 use serde_json::{Map, Value};
 use yrs::ReadTxn;
 
@@ -80,6 +81,50 @@ pub fn trash_rows<T: ReadTxn>(txn: &T) -> Vec<Row> {
         .into_iter()
         .map(|record| event_row(record, &mut origins))
         .collect()
+}
+
+/// The positions of the rows a search keeps, tested as a smart catalogue would test them.
+pub fn matching<T: ReadTxn>(
+    txn: &T,
+    rows: &[Row],
+    predicate: &Predicate,
+) -> Result<Vec<usize>, RuleError> {
+    let search = model::Search::new(txn, predicate, Timestamp::now())?;
+    Ok((0..rows.len())
+        .filter(|&index| {
+            let row = &rows[index];
+            search.matches(txn, row.uuid.as_deref(), row.start, row.stop)
+        })
+        .collect())
+}
+
+/// The events a search finds, in all of the project or among one catalogue's members: what a
+/// smart catalogue with that search would hold, before it is saved.
+pub fn search_rows<T: ReadTxn>(
+    txn: &T,
+    predicate: &Predicate,
+    source: Option<&str>,
+) -> Result<Vec<Row>, RuleError> {
+    let found = model::search(txn, predicate, Timestamp::now())?;
+    let within: Option<Vec<String>> = match source {
+        Some(catalogue) => Some(
+            rows(txn, catalogue)?
+                .into_iter()
+                .filter_map(|row| row.uuid)
+                .collect(),
+        ),
+        None => None,
+    };
+    let mut origins = OriginNames::new(txn);
+    Ok(found
+        .into_iter()
+        .filter(|record| {
+            within
+                .as_ref()
+                .is_none_or(|within| within.contains(&record.uuid))
+        })
+        .map(|record| event_row(record, &mut origins))
+        .collect())
 }
 
 /// The positions of the rows every word of `query` matches, in order. A word matches a
@@ -221,6 +266,32 @@ mod tests {
 
     fn catalogue(uuid: &str) -> Vec<Row> {
         rows(&room().transact(), uuid).unwrap()
+    }
+
+    fn search(text: &str) -> Predicate {
+        cocat_core::query::parse(text, &[]).unwrap()
+    }
+
+    #[test]
+    fn a_search_keeps_the_rows_a_smart_catalogue_would() {
+        let doc = room();
+        let txn = doc.transact();
+        let rows = rows(&txn, "c-static").unwrap();
+        let kept = matching(&txn, &rows, &search("confidence:>=0.9")).unwrap();
+        assert_eq!(uuids(&rows, &kept), ["e3"]);
+    }
+
+    #[test]
+    fn a_search_finds_live_events_in_all_the_project_or_one_catalogue() {
+        let doc = room();
+        let txn = doc.transact();
+        let ids = |rows: Vec<Row>| -> Vec<String> {
+            rows.into_iter().filter_map(|row| row.uuid).collect()
+        };
+        let everywhere = search_rows(&txn, &search("tag:sw"), None).unwrap();
+        assert_eq!(ids(everywhere), ["e1", "e2", "e3"], "e4 is deleted");
+        let within = search_rows(&txn, &search("tag:sw"), Some("c-static")).unwrap();
+        assert_eq!(ids(within), ["e1", "e3"]);
     }
 
     #[test]

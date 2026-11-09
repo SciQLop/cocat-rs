@@ -18,6 +18,7 @@ pub mod public;
 pub mod route;
 pub mod rows;
 pub mod rule_text;
+pub mod search;
 pub mod session;
 pub mod sharing;
 pub mod stats;

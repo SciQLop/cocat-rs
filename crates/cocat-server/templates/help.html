@@ -11,6 +11,7 @@ together, in the browser, in SciQLop and from Python.</p>
     <li><a href="#catalogues">Catalogues and events</a></li>
     <li><a href="#statistics">Statistics</a></li>
     <li><a href="#import-export">Import and export</a></li>
+    <li><a href="#searching">Searching</a></li>
     <li><a href="#smart-catalogues">Smart catalogues</a></li>
     <li><a href="#history">History</a></li>
     <li><a href="#sharing">Sharing</a></li>
@@ -120,11 +121,43 @@ press <strong>Import</strong>.</p>
 </section>
 
 <section>
+<h2 id="searching">Searching</h2>
+<p>The box above a catalogue's events searches them as you type. Plain words find events
+whose tags, status, author or attributes contain them, or whose start time begins with
+them.</p>
+<p>Name a field to be precise. A space between two terms means both;
+<code>OR</code>, <code>NOT</code> and parentheses work as in a library search.</p>
+<table class="search-syntax">
+  <tr><td><code>tag:shock</code></td><td>tagged “shock”</td></tr>
+  <tr><td><code>confidence:&gt;=0.8</code></td><td>confidence 0.8 or more (also <code>&gt;</code>, <code>&lt;</code>, <code>&lt;=</code>)</td></tr>
+  <tr><td><code>status:reviewed</code></td><td>with that status</td></tr>
+  <tr><td><code>author:alice</code></td><td>author contains “alice”; <code>author:=alice@lab.fr</code> for exactly that</td></tr>
+  <tr><td><code>start:2015</code>, <code>start:2015-03</code></td><td>starts during that year or month</td></tr>
+  <tr><td><code>start:[2015-01-01 TO 2016-06-30]</code></td><td>starts between two dates; <code>*</code> leaves one end open</td></tr>
+  <tr><td><code>created:now-7d</code></td><td>added in the last 7 days (units s, m, h, d, M, y)</td></tr>
+  <tr><td><code>duration:&gt;10min</code></td><td>lasts more than 10 minutes (s, min, h, d)</td></tr>
+  <tr><td><code>#density:&gt;10</code></td><td>an attribute, by its name after <code>#</code></td></tr>
+  <tr><td><code>catalogue:"Bow shocks"</code></td><td>listed in that catalogue</td></tr>
+  <tr><td><code>_exists_:shape</code></td><td>has a time–frequency shape; <code>NOT _exists_:author</code> has no author</td></tr>
+</table>
+<p>The button at the right of the box, <strong>Build a search</strong>, writes a search
+for you from rows of field, test and value.</p>
+<p>A search can become a smart catalogue: press <strong>Save as smart catalogue…</strong>
+under the box, name it, and choose whether it searches the whole project or only the
+catalogue you are in. Opening a smart catalogue puts its search back in the box; change it
+and press <strong>Save changes</strong>. The <strong>+</strong> next to Catalogues also offers
+ready-made ones: recently added, mine, not reviewed yet, low confidence, with a shape.</p>
+<p>A search with <code>now</code> in it is checked again whenever the project changes, not on
+a timer: “added in the last 7 days” drops an old event at the next edit.</p>
+</section>
+
+<section>
 <h2 id="smart-catalogues">Smart catalogues</h2>
 <p>A smart catalogue has a rule. The rule picks events from the whole project. Its list
 updates by itself while people edit. You can still add events to it by hand.</p>
-<p>To make one in the catalogue browser, open a catalogue and use <strong>More → Add a
-rule…</strong>. The editor starts with an example to change. The catalogue keeps the events
+<p>The easiest way to make one is to <a href="#searching">search</a> and save the search.
+For rules a search cannot say (joining, shifting or comparing sets of intervals), open a
+catalogue and use <strong>More → Add a rule…</strong>. The editor starts with an example to change. The catalogue keeps the events
 it lists and adds the ones the rule picks. On a smart catalogue, <strong>Edit rule</strong>
 changes the rule. Before you save, the editor says in words what the rule picks, or what is
 wrong with it. Python and a tscat dynamic catalogue import make smart catalogues too.</p>

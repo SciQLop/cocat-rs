@@ -5,11 +5,12 @@ use cocat_server::groups;
 use ui_support::{Fixture, PUBLIC_URL, body_text};
 
 const MEMBER: &str = "member@example.org";
-const ANCHORS: [&str; 13] = [
+const ANCHORS: [&str; 14] = [
     "projects",
     "catalogues",
     "statistics",
     "import-export",
+    "searching",
     "smart-catalogues",
     "history",
     "sharing",
@@ -132,7 +133,12 @@ fn section_text(page: &str, anchor: &str) -> String {
             _ => {}
         }
     }
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
 }
 
 #[tokio::test]
@@ -248,5 +254,28 @@ async fn the_import_help_says_which_files_and_what_updates() {
     ];
     for words in words {
         assert!(section.contains(words), "{words}: {section}");
+    }
+}
+
+#[tokio::test]
+async fn the_search_help_gives_the_syntax_and_how_to_save_one() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let searching = section_text(&help, "searching");
+    for expected in [
+        "tag:shock",
+        "confidence:>=0.8",
+        "created:now-7d",
+        "_exists_:shape",
+        "Save as smart catalogue…",
+        "Build a search",
+        "not on a timer",
+    ] {
+        assert!(
+            searching.contains(expected),
+            "{expected} missing: {searching}"
+        );
     }
 }

@@ -61,13 +61,33 @@ fn NewCatalogue() -> impl IntoView {
             menu.set_open(false);
         }
     };
+    let writer = room.clone();
     let submit = move |name: String| {
+        let room = &writer;
         let author = room.config.user_email.clone();
         let made = room.write(|txn| edit::new_catalogue(txn, &name, &author))?;
         go_to(&Route::Catalogue(made).hash());
         Ok(())
     };
     let submit = StoredValue::new_local(submit);
+    let me = room.config.user_email.clone();
+    let preset = {
+        let room = room.clone();
+        move |name: &str, text: &str| {
+            let author = room.config.user_email.clone();
+            let made = room.write(|txn| {
+                let names = cocat_core::model::catalogue_names(txn);
+                let predicate = cocat_core::query::parse(text, &names)?;
+                let rule = cocat_core::query::rule(&predicate, None);
+                edit::new_smart_catalogue(txn, name, &author, &rule)
+            });
+            if let Ok(made) = made {
+                go_to(&Route::Catalogue(made).hash());
+            }
+        }
+    };
+    let preset = StoredValue::new_local(preset);
+    let presets = crate::search::presets(&me);
     view! {
         <details class="menu-button add-menu" node_ref=menu>
             <summary class="icon add-catalogue" aria-label="Add a catalogue">
@@ -77,6 +97,12 @@ fn NewCatalogue() -> impl IntoView {
             <div class="menu">
                 <button type="button" on:click=move |_| { close(); open.set(true); }>"New catalogue…"</button>
                 <button type="button" on:click=move |_| { close(); importer.open(None); }>"Import a file…"</button>
+                <p class="menu-group">"New smart catalogue"</p>
+                {presets.into_iter().map(|(name, text)| view! {
+                    <button type="button" class="preset" title=text.clone()
+                        on:click=move |_| { close(); preset.with_value(|preset| preset(name, &text)); }>{name}</button>
+                }).collect_view()}
+                <p class="menu-hint">"Or search, then “Save as smart catalogue…”."</p>
             </div>
         </details>
         <Show when=move || open.get()>

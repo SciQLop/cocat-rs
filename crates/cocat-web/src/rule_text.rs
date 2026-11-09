@@ -79,7 +79,7 @@ impl Words<'_> {
                     "{} {} {}",
                     field_name(field),
                     symbol(*op),
-                    operand_text(value)
+                    operand_text(field, value)
                 )
             }
             Predicate::Match(field, pattern) => {
@@ -124,10 +124,18 @@ impl Words<'_> {
     }
 }
 
-fn operand_text(value: &Value) -> String {
-    match relative::offset_of(value) {
-        Some(offset) => format!("now{offset}"),
-        None => value_text(value),
+/// A compared value as people read it: a time a search wrote in nanoseconds as a date, a
+/// duration in seconds as a length.
+fn operand_text(field: &str, value: &Value) -> String {
+    const TIMES: [&str; 3] = ["start", "stop", "created"];
+    let number = value.as_f64();
+    match (relative::offset_of(value), field, number) {
+        (Some(offset), ..) => format!("now{offset}"),
+        (None, "duration", Some(seconds)) => crate::format::duration_text((seconds * 1e9) as i64),
+        (None, field, Some(_)) if TIMES.contains(&field) => value
+            .as_i64()
+            .map_or_else(|| value_text(value), crate::format::time_text),
+        _ => value_text(value),
     }
 }
 
@@ -227,8 +235,23 @@ mod tests {
         });
         assert_eq!(
             words(rule),
-            "events where mentions “shock” and duration > 600 and created > now-7d \
+            "events where mentions “shock” and duration > 10 min 00 s and created > now-7d \
              and start < now"
+        );
+    }
+
+    #[test]
+    fn times_and_durations_from_a_search_read_as_dates_and_lengths() {
+        let rule = json!({
+            "filter": {"all": true},
+            "where": {"and": [
+                {"cmp": ["start", ">=", 1_420_070_400_000_000_000_i64]},
+                {"cmp": ["duration", ">", 600]},
+            ]}
+        });
+        assert_eq!(
+            words(rule),
+            "events where start ≥ 2015-01-01 00:00:00 and duration > 10 min 00 s"
         );
     }
 
