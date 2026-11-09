@@ -280,6 +280,16 @@ class Client:
     def history(self, project_id: str, catalogue: str | None = None) -> list[dict[str, Any]]:
         return self._call(_native.history, project_id, catalogue)
 
+    def version_changes(
+        self,
+        project_id: str,
+        version: int,
+        catalogue: str | None = None,
+        since: int | None = None,
+    ) -> dict[str, Any]:
+        """What a version changed; with `since`, what changed between the two versions."""
+        return self._call(_native.version_changes, project_id, version, catalogue, since)
+
     def commit(self, project_id: str, name: str | None = None, message: str | None = None) -> int:
         return self._call(_native.commit, project_id, name, message)
 

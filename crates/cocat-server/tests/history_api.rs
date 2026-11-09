@@ -358,6 +358,55 @@ async fn the_diff_of_a_version_names_its_changes() {
 }
 
 #[tokio::test]
+async fn the_diff_since_an_older_version_spans_every_version_after_it() {
+    let fixture = two_versions().await;
+    fixture.write(fixture.alice, 2 * MINUTE, create("c"));
+    let changed = |diff: &Value| -> Vec<(String, String)> {
+        diff["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| {
+                let field = |key: &str| event[key].as_str().unwrap().to_owned();
+                (field("uuid"), field("change"))
+            })
+            .collect()
+    };
+
+    let (status, since) = fixture
+        .get(
+            &format!("/api/rooms/{ROOM}/history/2?since=0"),
+            fixture.carol,
+        )
+        .await;
+    let (_, either_way) = fixture
+        .get(
+            &format!("/api/rooms/{ROOM}/history/0?since=2"),
+            fixture.carol,
+        )
+        .await;
+    let (_, alone) = fixture
+        .get(&format!("/api/rooms/{ROOM}/history/2"), fixture.carol)
+        .await;
+    let (missing, _) = fixture
+        .get(
+            &format!("/api/rooms/{ROOM}/history/2?since=7"),
+            fixture.carol,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{since}");
+    let both = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+    assert_eq!(
+        changed(&since),
+        [both("a", "changed"), both("b", "added"), both("c", "added")]
+    );
+    assert_eq!(since, either_way);
+    assert_eq!(changed(&alone), [both("c", "added")]);
+    assert_eq!(missing, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn the_state_of_a_version_replays_to_that_point() {
     let fixture = two_versions().await;
 

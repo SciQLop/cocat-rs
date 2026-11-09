@@ -28,6 +28,27 @@ pub async fn history(
     Ok(history.versions)
 }
 
+/// What a version changed, or with `since` what changed between two versions (from the
+/// older's end to the newer's), as the server's diff; with `catalogue`, only that catalogue.
+pub async fn version_changes(
+    url: &str,
+    cookie: &str,
+    room_id: &str,
+    version: u64,
+    catalogue: Option<&str>,
+    since: Option<u64>,
+) -> Result<Value, LoginError> {
+    let version = version.to_string();
+    let mut request = request(Method::GET, url, cookie, room_id, &[&version])?;
+    if let Some(catalogue) = catalogue {
+        request = request.query(&[("catalogue", catalogue)]);
+    }
+    if let Some(since) = since {
+        request = request.query(&[("since", since)]);
+    }
+    Ok(send(request).await?.json().await?)
+}
+
 /// The room as of the version, as one update to apply to an empty document.
 pub async fn version_state(
     url: &str,

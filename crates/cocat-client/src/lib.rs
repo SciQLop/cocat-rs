@@ -16,7 +16,9 @@ mod submissions;
 mod sync;
 
 pub use changes::Change;
-pub use history::{commit, copy_version, history, name_version, restore, version_state};
+pub use history::{
+    commit, copy_version, history, name_version, restore, version_changes, version_state,
+};
 pub use login::{Account, Credentials, LoginError, RoomInfo, account, account_id, login, rooms};
 pub use projects::{
     CreatedInvitation, INVITATION_DAYS, Invitation, Member, NewInvitation, NewPublicCatalogue,

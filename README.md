@@ -746,7 +746,11 @@ still written, with a warning that the file is not strict TFCat.
 **History.** The server keeps every version of a project: a run of changes by one person with
 no gap over five minutes, and no longer than an hour. Each version says who made it, when, and how many events it added,
 changed or removed. `project.history()` lists them, newest first, as dicts; `catalogue=` keeps
-the versions that touched one catalogue or its events. `Project.at` fetches the project as it
+the versions that touched one catalogue or its events. `project.version_changes(version)` says
+what one version changed, as a dict: `events` (each with `uuid`, `change`: added, changed or
+removed, the changed `fields`, and the event `before` and `after`) and `catalogues` (with
+`name` and `change`). With `since=` another version, it says what changed between the two,
+from the end of the older to the end of the newer. `Project.at` fetches the project as it
 was at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
 fetched. `project.restore(version)` makes the project, or one catalogue, equal to a version again, as one
 new change by you, so a restore can itself be undone; events created since go to the trash.
@@ -766,6 +770,7 @@ your storage quota. The original and its history stay as they were.
 ```python
 versions = project.history()
 first = versions[-1]["id"]
+project.version_changes(versions[0]["id"], since=first)   # what changed since the first
 project.name_version(first, "before the import")
 project.commit(name="paper v1", message="as submitted")
 project.restore(first)                         # False when nothing differed

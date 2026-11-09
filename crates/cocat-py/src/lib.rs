@@ -1918,6 +1918,34 @@ fn history(
         .collect()
 }
 
+/// What a version changed as a dict (events and catalogues, each with its change, and the
+/// event's fields before and after); with `since`, what changed between the two versions.
+#[pyfunction]
+#[pyo3(signature = (url, cookie, project_id, version, catalogue=None, since=None))]
+fn version_changes(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    project_id: String,
+    version: u64,
+    catalogue: Option<String>,
+    since: Option<u64>,
+) -> Result<Py<PyAny>> {
+    let diff = py
+        .detach(|| {
+            block_on(cocat_client::version_changes(
+                &url,
+                &cookie,
+                &project_id,
+                version,
+                catalogue.as_deref(),
+                since,
+            ))
+        })?
+        .map_err(http_error)?;
+    to_python(py, &diff)
+}
+
 #[pyfunction]
 #[pyo3(signature = (url, cookie, project_id, version, catalogue=None))]
 fn restore(
@@ -2045,6 +2073,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(account_id, module)?)?;
     module.add_function(wrap_pyfunction!(account, module)?)?;
     module.add_function(wrap_pyfunction!(history, module)?)?;
+    module.add_function(wrap_pyfunction!(version_changes, module)?)?;
     module.add_function(wrap_pyfunction!(restore, module)?)?;
     module.add_function(wrap_pyfunction!(name_version, module)?)?;
     module.add_function(wrap_pyfunction!(commit, module)?)?;

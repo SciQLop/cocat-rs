@@ -39,8 +39,23 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct CatalogueQuery {
+struct ChangesQuery {
     catalogue: Option<String>,
+    since: Option<u64>,
+}
+
+/// The records a diff replays: the version's own, or, with `since`, those from the end of the
+/// older version to the end of the newer, whichever order they are given in.
+fn compared(
+    version: Range<usize>,
+    since: Option<u64>,
+    span_of: impl Fn(u64) -> Option<Range<usize>>,
+) -> Option<(usize, usize)> {
+    let Some(since) = since else {
+        return Some((version.start, version.end));
+    };
+    let other = span_of(since)?;
+    Some((version.end.min(other.end), version.end.max(other.end)))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -139,10 +154,11 @@ async fn list(
         ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
         ("catalogue" = Option<String>, Query, description = "Only this catalogue and its members"),
+        ("since" = Option<u64>, Query, description = "Another version: what changed from the end of the older of the two to the end of the newer"),
     ),
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "What the version changed", body = Diff),
+        (status = 200, description = "What the version changed, or what changed between two versions", body = Diff),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, version or membership", body = Detail),
     )
@@ -151,15 +167,17 @@ async fn changes(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
-    Query(query): Query<CatalogueQuery>,
+    Query(query): Query<ChangesQuery>,
 ) -> Result<Json<Diff>, ApiError> {
     membership(&state, &room_id, user.id).await?;
     let saved = saved(&state, &room_id).await?;
     let changes = state
         .rooms
         .read_log(&room_id, 2, move |records, slots| {
-            let span = span(slots, &saved, version)?;
-            let (before, after) = before_and_after(records, span.start, span.end);
+            let (start, end) = compared(span(slots, &saved, version)?, query.since, |since| {
+                span(slots, &saved, since)
+            })?;
+            let (before, after) = before_and_after(records, start, end);
             Some(diff(&before, &after, query.catalogue.as_deref()))
         })
         .await?

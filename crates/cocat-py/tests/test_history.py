@@ -5,6 +5,8 @@ import pytest
 
 import cocat_rs as cc
 
+from conftest import PASSWORD
+
 UTC = datetime.timezone.utc
 START = datetime.datetime(2025, 1, 31, 10, 0, tzinfo=UTC)
 STOP = datetime.datetime(2025, 1, 31, 10, 1, tzinfo=UTC)
@@ -183,3 +185,33 @@ def test_copying_a_version_makes_a_new_project_holding_it(server, project, colle
     assert version["name"].startswith("Copied from ")
     assert history(server) == before
     assert project.event(a.uuid).confidence == 0.9
+
+
+def test_the_changes_of_a_version_come_as_plain_dicts(server, project, colleague):
+    a, b, first, second = two_versions(server, project, colleague)
+
+    diff = cc.raw.version_changes(server.url, server.cookie, server.project_id, second)
+
+    changes = {event["uuid"]: event for event in diff["events"]}
+    assert changes[a.uuid]["change"] == "changed"
+    assert changes[a.uuid]["fields"] == ["confidence"]
+    assert changes[a.uuid]["after"]["confidence"] == 0.9
+    assert changes[b.uuid]["change"] == "added"
+
+
+def test_the_changes_since_an_older_version_span_the_versions_after_it(
+    server, project, colleague
+):
+    a, b, first, second = two_versions(server, project, colleague)
+    c = project.create_event(start=START, stop=STOP)
+    project.save(15)
+    newest = max(version["id"] for version in history(server))
+
+    since = cc.raw.version_changes(
+        server.url, server.cookie, server.project_id, newest, since=first
+    )
+    client = cc.Client(server.url)
+    client.login(server.email, PASSWORD)
+
+    assert {event["uuid"] for event in since["events"]} == {a.uuid, b.uuid, c.uuid}
+    assert since == client.version_changes(server.project_id, newest, since=first)

@@ -196,6 +196,10 @@ class Project:
         """The saved versions, newest first; with a catalogue's uuid, those that changed it."""
         return self._server_call("history", catalogue)
 
+    def version_changes(self, version, catalogue=None, since=None):
+        """What a version changed; with `since`, what changed between the two versions."""
+        return self._server_call("version_changes", version, catalogue, since)
+
     def commit(self, name=None, message=None, timeout=None):
         """Sends every change made here, then saves them as a version; returns its id."""
         self.save(timeout)
