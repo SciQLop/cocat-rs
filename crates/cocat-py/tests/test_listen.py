@@ -58,6 +58,11 @@ class Recorder:
         self._record("changes_done")
 
 
+class RoleRecorder(Recorder):
+    def role(self, value):
+        self._record("role", value)
+
+
 async def until(predicate, timeout=15.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -264,5 +269,32 @@ async def test_a_listener_hears_that_the_project_is_gone(server, colleague):
         cc.raw.remove_member(server.url, server.cookie, server.project_id, user_id)
 
         await until(lambda: ("status", "no_access") in recorder.calls)
+    finally:
+        handle.close()
+
+
+async def test_a_listener_hears_the_current_role_when_it_registers(colleague):
+    recorder = RoleRecorder()
+    handle = colleague.listen(recorder)
+    try:
+        await until(lambda: ("role", "editor") in recorder.calls)
+    finally:
+        handle.close()
+
+
+async def test_a_listener_hears_a_demotion(server, colleague):
+    recorder = RoleRecorder()
+    handle = colleague.listen(recorder)
+    try:
+        await until(lambda: ("role", "editor") in recorder.calls)
+        members = cc.raw.members(server.url, server.cookie, server.project_id)
+        user_id = next(
+            m["user_id"] for m in members if m["email"] == "colleague@example.org"
+        )
+
+        cc.raw.set_role(server.url, server.cookie, server.project_id, user_id, "viewer")
+
+        await until(lambda: ("role", "viewer") in recorder.calls)
+        assert colleague.read_only
     finally:
         handle.close()

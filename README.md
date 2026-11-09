@@ -798,7 +798,9 @@ handle.close()
 ```
 
 `status` is called once with the current status right after registration, then on every
-change; a method the listener does not have is skipped, and one that raises is logged without
+change. `role` works the same way with your role in the project (`"viewer"`, `"editor"`,
+`"owner"`, or `None` before the first connection): when an owner changes it, the project
+reconnects by itself and `role` is called with the new one. A method the listener does not have is skipped, and one that raises is logged without
 stopping the batch. Unknown catalogues and events raise `cocat_rs.NotFound`, which subclasses
 both `LookupError` (what Python's mappings raise) and `RuntimeError` (what this package raised
 before it named the case), so both `except LookupError` and old `except RuntimeError` code

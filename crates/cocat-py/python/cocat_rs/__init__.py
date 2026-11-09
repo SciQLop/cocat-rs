@@ -103,6 +103,7 @@ _METHODS = (
     "event_fields",
     "event_removed",
     "status",
+    "role",
     "changes_done",
 )
 
@@ -121,6 +122,8 @@ _ARGUMENTS = {
 }
 
 _POLL = 0.1
+# What a listener hears as a value: once when it registers, then on every change.
+_WATCHED = ("status", "role")
 
 
 class _Registration:
@@ -263,10 +266,11 @@ class Project:
         registration = _Registration(listener, loop)
         with self._lock:
             self._registrations.append(registration)
-            if (status := registration.methods.get("status")) is not None:
-                loop.call_soon_threadsafe(
-                    self._call, registration, "status", status, (self._native.status,)
-                )
+            for name in _WATCHED:
+                if (method := registration.methods.get(name)) is not None:
+                    loop.call_soon_threadsafe(
+                        self._call, registration, name, method, (getattr(self._native, name),)
+                    )
             if self._thread is None:
                 self._running = True
                 self._thread = threading.Thread(
@@ -281,14 +285,17 @@ class Project:
                 self._registrations.remove(registration)
 
     def _dispatch(self):
-        # Only later status changes are broadcast from here; listen() sends the current one.
-        status = self._native.status
+        # Only later changes are broadcast from here; listen() sends the current values.
+        # Compared between polls: a reconnect can pass through "connecting" within one poll,
+        # so a role change is announced by its own call, not by the status.
+        last = {name: getattr(self._native, name) for name in _WATCHED}
         while self._running:
             batch = self._native.next_batch(_POLL)
-            current = self._native.status
-            if current != status:
-                status = current
-                self._broadcast("status", (current,))
+            for name in _WATCHED:
+                current = getattr(self._native, name)
+                if current != last[name]:
+                    last[name] = current
+                    self._broadcast(name, (current,))
             if not batch:
                 continue
             for change in batch:
