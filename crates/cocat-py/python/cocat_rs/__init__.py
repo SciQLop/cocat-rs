@@ -407,6 +407,7 @@ def _shortcut(name):
 
 
 for _name in (
+    "account",
     "account_id",
     "commit",
     "copy_public_catalogue",
@@ -444,6 +445,7 @@ from . import raw  # noqa: E402
 __all__ += [
     "DEFAULT_SERVER",
     "raw",
+    "account",
     "Client",
     "NotSignedIn",
     "SignIn",

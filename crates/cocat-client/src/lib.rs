@@ -17,7 +17,7 @@ mod sync;
 
 pub use changes::Change;
 pub use history::{commit, copy_version, history, name_version, restore, version_state};
-pub use login::{Credentials, LoginError, RoomInfo, account_id, login, rooms};
+pub use login::{Account, Credentials, LoginError, RoomInfo, account, account_id, login, rooms};
 pub use projects::{
     CreatedInvitation, INVITATION_DAYS, Invitation, Member, NewInvitation, NewPublicCatalogue,
     ProjectGroup, PublicCatalogue, PublicCatalogueChanges, create_project, create_public_catalogue,

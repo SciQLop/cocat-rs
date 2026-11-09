@@ -523,6 +523,7 @@ project.history()                   # every version, newest first
 More of what you can do:
 
 ```python
+cc.account()                                   # who you are: id, email, is_curator
 cc.projects()                                  # your projects: id, name, role
 cc.public_catalogues()                         # the shared reference catalogues
 cc.copy_public_catalogue("public.shocks")      # a copy in a new project of yours, to use

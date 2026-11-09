@@ -173,6 +173,10 @@ class Client:
             self._account = self._call(_native.account_id)
         return self._account
 
+    def account(self) -> dict[str, Any]:
+        """The signed-in account: `id`, `email` and `is_curator`."""
+        return self._call(_native.account)
+
     def projects(self) -> list[ProjectInfo]:
         return self._call(_native.projects)
 

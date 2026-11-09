@@ -88,16 +88,25 @@ pub async fn rooms(url: &str, cookie: &str) -> Result<Vec<RoomInfo>, LoginError>
 
 /// The id of the account behind the session.
 pub async fn account_id(url: &str, cookie: &str) -> Result<String, LoginError> {
-    #[derive(Deserialize)]
-    struct Me {
-        id: String,
-    }
+    Ok(account(url, cookie).await?.id)
+}
+
+/// The account behind a session: its id, its address, and whether it curates the public
+/// catalogues (a Python cocat server says nothing of curators: `false`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Account {
+    pub id: String,
+    pub email: String,
+    #[serde(default)]
+    pub is_curator: bool,
+}
+
+pub async fn account(url: &str, cookie: &str) -> Result<Account, LoginError> {
     let request = authorized(
         reqwest::Client::new().get(base(url)?.join("api/me")?),
         cookie,
     );
-    let me: Me = send(request).await?.json().await?;
-    Ok(me.id)
+    Ok(send(request).await?.json().await?)
 }
 
 /// The names Python cocat and this server gave an account's own project.

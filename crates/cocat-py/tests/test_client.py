@@ -248,3 +248,12 @@ def test_raw_functions_take_the_server_and_session(server):
     assert "bench" in [project.name for project in cc.raw.projects(server.url, cookie)]
     with pytest.raises(TypeError):
         cc.projects(server.url, cookie)
+
+
+def test_the_signed_in_account_names_its_email(server, signed_in):
+    account = signed_in.account()
+
+    assert account["email"] == server.email
+    assert account["id"] == signed_in.account_id()
+    assert account["is_curator"] is False
+    assert cc.raw.account(server.url, server.cookie)["email"] == server.email

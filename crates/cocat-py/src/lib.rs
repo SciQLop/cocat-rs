@@ -1726,6 +1726,19 @@ fn account_id(py: Python<'_>, url: String, cookie: String) -> Result<String> {
     id.map_err(http_error)
 }
 
+/// The account behind the cookie: `id`, `email` and `is_curator`.
+#[pyfunction]
+fn account<'py>(py: Python<'py>, url: String, cookie: String) -> Result<Bound<'py, PyDict>> {
+    let account = py
+        .detach(|| block_on(cocat_client::account(&url, &cookie)))?
+        .map_err(http_error)?;
+    let dict = PyDict::new(py);
+    dict.set_item("id", account.id)?;
+    dict.set_item("email", account.email)?;
+    dict.set_item("is_curator", account.is_curator)?;
+    Ok(dict)
+}
+
 #[pyfunction]
 fn projects(py: Python<'_>, url: String, cookie: String) -> Result<Vec<ProjectInfo>> {
     let projects = py
@@ -1877,6 +1890,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(login, module)?)?;
     module.add_function(wrap_pyfunction!(projects, module)?)?;
     module.add_function(wrap_pyfunction!(account_id, module)?)?;
+    module.add_function(wrap_pyfunction!(account, module)?)?;
     module.add_function(wrap_pyfunction!(history, module)?)?;
     module.add_function(wrap_pyfunction!(restore, module)?)?;
     module.add_function(wrap_pyfunction!(name_version, module)?)?;

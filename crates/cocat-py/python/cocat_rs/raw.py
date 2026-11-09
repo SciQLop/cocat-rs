@@ -6,6 +6,7 @@ cookie `login` returns, or `cocat_rs.Client(url).session` once signed in.
 """
 
 from ._native import (
+    account,
     account_id,
     commit,
     copy_public_catalogue,
@@ -40,6 +41,7 @@ from ._native import (
 )
 
 __all__ = [
+    "account",
     "account_id",
     "commit",
     "copy_public_catalogue",
