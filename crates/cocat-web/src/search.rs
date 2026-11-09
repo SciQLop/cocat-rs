@@ -735,3 +735,85 @@ mod piece_tests {
         assert_eq!(pieces("14:02"), [Piece::Word("14:02".into())]);
     }
 }
+
+/// A smart catalogue's search: its text, and the catalogue it searches in (`None`: all
+/// events).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Saved {
+    pub text: String,
+    pub source: Option<String>,
+}
+
+/// What a catalogue page lists before its search filters the rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listing {
+    /// The shown catalogue's own events.
+    Members,
+    /// Every event of the project.
+    All,
+    /// What the edited smart catalogue would hold, in the chosen scope.
+    Preview,
+}
+
+/// `scope` is the catalogue the search looks in, `None` for all events; `saved` is the
+/// shown smart catalogue's search, if it is one.
+pub fn listing(saved: Option<&Saved>, text: &str, scope: Option<&str>) -> Listing {
+    let text = text.trim();
+    match saved {
+        Some(saved) if saved.text != text || saved.source.as_deref() != scope => Listing::Preview,
+        Some(_) => Listing::Members,
+        None if scope.is_none() && !text.is_empty() => Listing::All,
+        None => Listing::Members,
+    }
+}
+
+#[cfg(test)]
+mod listing_tests {
+    use super::{Listing, Saved, listing};
+
+    fn saved(text: &str, source: Option<&str>) -> Saved {
+        Saved {
+            text: text.into(),
+            source: source.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn a_catalogue_searched_in_itself_lists_its_events() {
+        assert_eq!(listing(None, "tag:shock", Some("c")), Listing::Members);
+    }
+
+    #[test]
+    fn a_catalogue_searching_all_events_lists_them_all() {
+        assert_eq!(listing(None, "tag:shock", None), Listing::All);
+    }
+
+    #[test]
+    fn without_a_search_a_catalogue_lists_its_events_whatever_the_scope() {
+        assert_eq!(listing(None, "  ", None), Listing::Members);
+    }
+
+    #[test]
+    fn a_smart_catalogue_as_saved_lists_its_events() {
+        let saved = saved("tag:shock", Some("c"));
+        assert_eq!(
+            listing(Some(&saved), "tag:shock ", Some("c")),
+            Listing::Members
+        );
+    }
+
+    #[test]
+    fn a_smart_catalogue_edited_previews_its_new_search() {
+        let saved = saved("tag:shock", None);
+        assert_eq!(listing(Some(&saved), "tag:wave", None), Listing::Preview);
+    }
+
+    #[test]
+    fn a_smart_catalogue_given_another_scope_previews_it() {
+        let saved = saved("tag:shock", None);
+        assert_eq!(
+            listing(Some(&saved), "tag:shock", Some("c")),
+            Listing::Preview
+        );
+    }
+}

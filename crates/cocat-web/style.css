@@ -1345,7 +1345,17 @@ a.home-project:hover { color: var(--accent); }
 .search-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .search-line .quiet { font-size: 14px; }
 .search-save, .search-builder { margin-top: 10px; max-width: 760px; }
-.search-save .choice { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.scope { display: flex; align-items: center; flex-wrap: wrap; font-size: 14px; margin-right: 8px; }
+.search-line:empty { display: none; }
+.scope .quiet { margin-right: 8px; }
+.scope-option {
+  height: 28px; padding: 0 10px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); font: inherit; cursor: pointer; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scope-option:first-of-type { border-radius: var(--radius) 0 0 var(--radius); }
+.scope-option:last-of-type { border-radius: 0 var(--radius) var(--radius) 0; border-left: 0; }
+.scope-option[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .search-builder .builder-head { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .search-builder .condition { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 1.5fr) auto; gap: 6px; align-items: center; }
 .search-builder :is(select, input) {

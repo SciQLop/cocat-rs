@@ -266,3 +266,50 @@ mod tests {
         );
     }
 }
+
+/// The line under a page's title: what it is, its size, and what the search shows.
+/// `everywhere`: the search looks in all events, not in the page's own.
+pub fn counts_text(
+    kind: &str,
+    unit: &str,
+    total: usize,
+    visible: usize,
+    everywhere: bool,
+) -> String {
+    let plural = if total == 1 { "" } else { "s" };
+    let size = format!("{kind} · {total} {unit}{plural}");
+    match (everywhere, visible == total) {
+        (true, _) => format!("{size} · searching all events: {visible} found"),
+        (false, true) => size,
+        (false, false) => format!("{size} · {visible} shown"),
+    }
+}
+
+#[cfg(test)]
+mod counts_tests {
+    use super::counts_text;
+
+    #[test]
+    fn a_search_in_the_catalogue_says_how_many_it_shows() {
+        assert_eq!(
+            counts_text("Catalogue", "event", 6, 2, false),
+            "Catalogue · 6 events · 2 shown"
+        );
+    }
+
+    #[test]
+    fn an_unfiltered_catalogue_gives_its_size_alone() {
+        assert_eq!(
+            counts_text("Catalogue", "event", 1, 1, false),
+            "Catalogue · 1 event"
+        );
+    }
+
+    #[test]
+    fn a_search_in_all_events_says_where_it_found_them() {
+        assert_eq!(
+            counts_text("Catalogue", "event", 6, 3, true),
+            "Catalogue · 6 events · searching all events: 3 found"
+        );
+    }
+}

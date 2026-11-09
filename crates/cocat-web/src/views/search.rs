@@ -8,19 +8,11 @@ use leptos::prelude::*;
 use crate::edit;
 use crate::route::Route;
 use crate::search::{
-    Choice, Completion, Piece, Query, Vocabulary, accept, choices, clause, complete, label,
+    Choice, Completion, Piece, Query, Saved, Vocabulary, accept, choices, clause, complete, label,
     needs_value, pieces, search_text,
 };
 use crate::state::Room;
 use crate::views::controls::{Error, commit, error_line, go_to};
-
-/// The shown smart catalogue's search: its text, and the catalogue it searches in (`None`:
-/// all events).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Saved {
-    pub text: String,
-    pub source: Option<String>,
-}
 
 /// What the shown catalogue's rule reads as, when it is a smart catalogue with a search.
 pub fn saved_search(room: &Room, shown: &Route) -> Option<Saved> {
@@ -42,6 +34,8 @@ pub fn SearchLine(
     query: RwSignal<String>,
     parsed: Memo<Query>,
     saved: Memo<Option<Saved>>,
+    scope: RwSignal<Option<String>>,
+    home: Memo<Option<(String, String)>>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let can_write = room.can_write();
@@ -50,22 +44,21 @@ pub fn SearchLine(
     let readable = move || parsed.with(|parsed| matches!(parsed, Query::Words | Query::Rule(_)));
     let edited = move || {
         saved.with(|saved| {
-            saved
-                .as_ref()
-                .is_some_and(|saved| query.with(|text| text.trim() != saved.text))
+            saved.as_ref().is_some_and(|saved| {
+                query.with(|text| text.trim() != saved.text)
+                    || scope.with(|scope| *scope != saved.source)
+            })
         })
     };
     let smart = move || saved.with(Option::is_some);
     let offer_save = move || can_write && !smart() && readable();
     let writer = room.clone();
     let save_changes = move |()| {
-        let Some(Saved { source, .. }) = saved.get_untracked() else {
-            return;
-        };
         let Route::Catalogue(uuid) = shown.get_untracked() else {
             return;
         };
         let text = query.get_untracked();
+        let source = scope.get_untracked();
         commit(&writer, error, |txn| {
             let names = model::catalogue_names(txn);
             let predicate = query::parse(&text, &names)?;
@@ -76,6 +69,7 @@ pub fn SearchLine(
     let revert = move |_| {
         if let Some(saved) = saved.get_untracked() {
             query.set(saved.text);
+            scope.set(saved.source);
         }
     };
     view! {
@@ -83,50 +77,55 @@ pub fn SearchLine(
             Query::Broken(why) => Some(view! { <p class="field-error search-error" role="alert">{why.clone()}</p> }),
             _ => None,
         })}
-        <Show when=move || edited()>
-            <div class="search-line">
+        <div class="search-line">
+            <ScopeSwitch scope home/>
+            <Show when=move || edited()>
                 <span class="quiet">"The table shows what this search would hold."</span>
                 <Show when=move || can_write && readable()>
                     <button type="button" class="button primary" on:click=move |_| save_changes.with_value(|save| save(()))>"Save changes"</button>
                 </Show>
                 <button type="button" class="button" on:click=revert>"Revert"</button>
-            </div>
-        </Show>
-        <Show when=move || offer_save() && !saving.get()>
-            <div class="search-line">
+            </Show>
+            <Show when=move || offer_save() && !saving.get()>
                 <button type="button" class="button" on:click=move |_| saving.set(true)>"Save as smart catalogue…"</button>
-            </div>
-        </Show>
+            </Show>
+        </div>
         <Show when=move || saving.get()>
-            <SaveSearch shown query saving/>
+            <SaveSearch query scope saving/>
         </Show>
         {error_line(error)}
     }
 }
 
-/// Names the new smart catalogue, and says where it searches.
+/// Names the new smart catalogue: it searches where the table does.
 #[component]
 fn SaveSearch(
-    shown: Memo<Route>,
     query: RwSignal<String>,
+    scope: RwSignal<Option<String>>,
     saving: RwSignal<bool>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let name = RwSignal::new(String::new());
-    let within = RwSignal::new(false);
     let error: Error = RwSignal::new(None);
-    let here = match shown.get_untracked() {
-        Route::Catalogue(uuid) => room
-            .read_untracked(|txn| model::catalogue(txn, &uuid))
-            .map(|catalogue| (uuid, catalogue.name)),
-        _ => None,
+    let reader = room.clone();
+    let keeps = move || match scope.get() {
+        Some(uuid) => {
+            let name = reader
+                .read(|txn| model::catalogue(txn, &uuid))
+                .map(|catalogue| catalogue.name)
+                .unwrap_or_default();
+            format!(
+                "It keeps the events of “{name}” that match the search, as people edit the project."
+            )
+        }
+        None => "It keeps every event of the project that matches the search, as people edit it."
+            .to_owned(),
     };
-    let source = here.clone().map(|(uuid, _)| uuid);
     let create = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
         let text = query.get_untracked();
         let name = name.get_untracked();
-        let source = within.get_untracked().then(|| source.clone()).flatten();
+        let source = scope.get_untracked();
         let author = room.config.user_email.clone();
         let made = room.write(|txn| {
             let names = model::catalogue_names(txn);
@@ -149,21 +148,37 @@ fn SaveSearch(
                 <input type="text" required prop:value=move || name.get()
                     on:input=move |event| name.set(event_target_value(&event))/>
             </label>
-            {here.map(|(_, catalogue)| view! {
-                <fieldset class="choice">
-                    <label><input type="radio" name="within" prop:checked=move || !within.get()
-                        on:change=move |_| within.set(false)/>" Search all the project's events"</label>
-                    <label><input type="radio" name="within" prop:checked=move || within.get()
-                        on:change=move |_| within.set(true)/>{format!(" Only events of “{catalogue}”")}</label>
-                </fieldset>
-            })}
-            <p class="quiet">"It keeps every event that matches the search, as people edit the project."</p>
+            <p class="quiet">{keeps}</p>
             {error_line(error)}
             <div class="row-buttons">
                 <button type="submit" class="button primary">"Create"</button>
                 <button type="button" class="button" on:click=move |_| saving.set(false)>"Cancel"</button>
             </div>
         </form>
+    }
+}
+
+/// Where the search looks: one catalogue, or every event of the project.
+#[component]
+pub fn ScopeSwitch(
+    scope: RwSignal<Option<String>>,
+    home: Memo<Option<(String, String)>>,
+) -> impl IntoView {
+    move || {
+        home.get().map(|(uuid, name)| {
+            let here = uuid.clone();
+            let inside = move || scope.with(|scope| scope.as_deref() == Some(here.as_str()));
+            let outside = move || scope.with(Option::is_none);
+            view! {
+                <div class="scope" role="group" aria-label="Search in">
+                    <span class="quiet">"Search in"</span>
+                    <button type="button" class="scope-option" aria-pressed=move || inside().to_string()
+                        on:click=move |_| scope.set(Some(uuid.clone()))>{format!("“{name}”")}</button>
+                    <button type="button" class="scope-option" aria-pressed=move || outside().to_string()
+                        on:click=move |_| scope.set(None)>"All events"</button>
+                </div>
+            }
+        })
     }
 }
 

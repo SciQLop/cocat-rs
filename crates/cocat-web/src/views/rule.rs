@@ -5,7 +5,8 @@ use cocat_core::model;
 use leptos::prelude::*;
 
 use crate::route::Route;
-use crate::rule_text::describe;
+use crate::rows::rows;
+use crate::rule_text::{counts_text, describe};
 use crate::state::Room;
 use crate::views::catalogue::Members;
 
@@ -18,11 +19,23 @@ struct About {
 }
 
 #[component]
-pub fn Heading(shown: Memo<Route>, members: Members, order: Memo<Vec<usize>>) -> impl IntoView {
+pub fn Heading(
+    shown: Memo<Route>,
+    members: Members,
+    order: Memo<Vec<usize>>,
+    everywhere: Signal<bool>,
+) -> impl IntoView {
     let room = expect_context::<Room>();
-    let about = Memo::new(move |_| room.read(|txn| about(txn, &shown.get())));
+    let reader = room.clone();
+    let about = Memo::new(move |_| reader.read(|txn| about(txn, &shown.get())));
+    let own_size = move || match shown.get() {
+        Route::Catalogue(uuid) => room.read(|txn| rows(txn, &uuid).map_or(0, |rows| rows.len())),
+        _ => 0,
+    };
     let counts = move || {
-        let total = members.with(|members| members.as_ref().ok().map(Vec::len))?;
+        let listed = members.with(|members| members.as_ref().ok().map(Vec::len))?;
+        let everywhere = everywhere.get();
+        let total = if everywhere { own_size() } else { listed };
         let visible = order.with(Vec::len);
         let (kind, unit) = match (shown.get(), about.with(|about| about.smart)) {
             (Route::Trash, _) => ("In the trash", "event"),
@@ -30,13 +43,7 @@ pub fn Heading(shown: Memo<Route>, members: Members, order: Memo<Vec<usize>>) ->
             (_, true) => ("Smart catalogue, recomputed live", "member"),
             _ => ("Catalogue", "event"),
         };
-        let plural = if total == 1 { "" } else { "s" };
-        let filtered = if visible == total {
-            String::new()
-        } else {
-            format!(" · {visible} shown")
-        };
-        Some(format!("{kind} · {total} {unit}{plural}{filtered}"))
+        Some(counts_text(kind, unit, total, visible, everywhere))
     };
     view! {
         <div class="heading">

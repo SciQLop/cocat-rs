@@ -8,7 +8,7 @@ use crate::route::Route;
 use crate::rows::{
     Row, SortKey, all_rows, attribute_keys, filter, matching, rows, search_rows, sort, trash_rows,
 };
-use crate::search::{self, Query};
+use crate::search::{self, Listing, Query, listing};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
@@ -63,35 +63,53 @@ pub fn CataloguePage(
         let names = reader.read(|txn| cocat_core::model::catalogue_names(txn));
         query.with(|text| search::read(text, &names))
     });
-    // A smart catalogue's search, once edited, shows what it would hold before it is saved.
-    let preview = move || {
-        let source = saved.with(|saved| {
-            saved
-                .as_ref()
-                .filter(|saved| query.with(|text| text.trim() != saved.text))
-                .map(|saved| saved.source.clone())
-        })?;
-        let text = query.get();
-        Some((text, source))
-    };
+    let scope = RwSignal::new(None::<String>);
+    let how = Memo::new(move |_| {
+        saved.with(|saved| {
+            query.with(|text| scope.with(|scope| listing(saved.as_ref(), text, scope.as_deref())))
+        })
+    });
+    let everywhere = Signal::derive(move || {
+        matches!(shown.get(), Route::Catalogue(_)) && how.get() == Listing::All
+    });
     let reader = room.clone();
-    let members: Members = Memo::new(move |_| match (shown.get(), preview()) {
-        (Route::Catalogue(_), Some((text, source))) => reader.read(|txn| {
-            let names = cocat_core::model::catalogue_names(txn);
-            match cocat_core::query::parse(&text, &names) {
-                Ok(predicate) => search_rows(txn, &predicate, source.as_deref())
-                    .map_err(|error| error.to_string()),
-                Err(_) => Ok(Vec::new()),
-            }
-        }),
-        (Route::Catalogue(uuid), None) => reader
-            .read(|txn| rows(txn, &uuid))
-            .map_err(|error| error.to_string()),
-        (Route::Trash, _) => Ok(reader.read(|txn| trash_rows(txn))),
-        (Route::AllEvents, _) => reader
+    let members: Members = Memo::new(move |_| match shown.get() {
+        Route::Catalogue(uuid) => {
+            let how = how.get();
+            reader.read(|txn| match how {
+                Listing::Members => rows(txn, &uuid).map_err(|error| error.to_string()),
+                Listing::All => all_rows(txn).map_err(|error| error.to_string()),
+                Listing::Preview => {
+                    let names = cocat_core::model::catalogue_names(txn);
+                    match query.with(|text| cocat_core::query::parse(text, &names)) {
+                        Ok(predicate) => scope
+                            .with(|scope| search_rows(txn, &predicate, scope.as_deref()))
+                            .map_err(|error| error.to_string()),
+                        Err(_) => Ok(Vec::new()),
+                    }
+                }
+            })
+        }
+        Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
+        Route::AllEvents => reader
             .read(|txn| all_rows(txn))
             .map_err(|error| error.to_string()),
         _ => Ok(Vec::new()),
+    });
+    let reader = room.clone();
+    let home = Memo::new(move |_| {
+        let uuid = match shown.get() {
+            Route::Catalogue(_) if saved.with(Option::is_some) => {
+                saved.with(|saved| saved.as_ref().and_then(|saved| saved.source.clone()))?
+            }
+            Route::Catalogue(_) if query.with(|text| text.trim().is_empty()) => return None,
+            Route::Catalogue(uuid) => uuid,
+            _ => return None,
+        };
+        let name = reader
+            .read(|txn| cocat_core::model::catalogue(txn, &uuid))?
+            .name;
+        Some((uuid, name))
     });
     let period = RwSignal::new(None::<Period>);
     let sorting = RwSignal::new((SortKey::Start, false));
@@ -158,11 +176,19 @@ pub fn CataloguePage(
         period.set(None);
         selected.set(None);
     });
-    // The box holds the smart catalogue's search, again once it is saved.
+    // The box holds the smart catalogue's search, again once it is saved; a plain catalogue
+    // searches in itself until told otherwise.
     Effect::new(move |_| {
-        shown.track();
-        let text = saved.with(|saved| saved.as_ref().map(|saved| saved.text.clone()));
-        query.set(text.unwrap_or_default());
+        let shown = shown.get();
+        let (text, source) = match saved.get() {
+            Some(saved) => (saved.text, saved.source),
+            None => match shown {
+                Route::Catalogue(uuid) => (String::new(), Some(uuid)),
+                _ => (String::new(), None),
+            },
+        };
+        query.set(text);
+        scope.set(source);
     });
     let can_write = room.can_write();
     let reader = room.clone();
@@ -180,7 +206,7 @@ pub fn CataloguePage(
     });
     view! {
         <div class="page-head">
-            <Heading shown members order/>
+            <Heading shown members order everywhere/>
             <div class="tools">
                 <SearchBox query building>
                     <SearchIcon/>
@@ -190,7 +216,7 @@ pub fn CataloguePage(
                 {public.then(|| view! { <PublicButtons shown form editor=can_write/> })}
             </div>
         </div>
-        <SearchLine shown query parsed saved/>
+        <SearchLine shown query parsed saved scope home/>
         <Show when=move || building.get()>
             <SearchBuilder query building keys/>
         </Show>
