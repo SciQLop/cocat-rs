@@ -21,7 +21,7 @@ use cocat_core::model::{
     Used, Vertex,
 };
 use cocat_core::time::Timestamp;
-use cocat_core::{tscat_json, votable};
+use cocat_core::{tfcat, tscat_json, votable};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -1510,6 +1510,34 @@ impl Project {
         Ok(written.catalogues.len())
     }
 
+    /// Imports a TFCat file as a new catalogue and returns it. The catalogue is named `name`,
+    /// else by the file's title, else by the file's name. What could not come across as it
+    /// was is said as warnings.
+    #[pyo3(signature = (path, name=None))]
+    fn import_tfcat(
+        &self,
+        py: Python<'_>,
+        path: String,
+        name: Option<String>,
+    ) -> Result<Py<Catalogue>> {
+        let text = std::fs::read_to_string(&path).map_err(value_error)?;
+        let import = tfcat::parse(&text).map_err(value_error)?;
+        let name = import.name(name.as_deref(), &path);
+        let now = now()?;
+        let written = write(&self.room, |txn| tfcat::write(txn, &import, &name, now))?
+            .map_err(value_error)?;
+        let module = py.import("warnings")?;
+        for warning in &import.warnings {
+            module.call_method1("warn", (warning,))?;
+        }
+        warn(py, &written.warnings)?;
+        let uuid = written
+            .catalogues
+            .first()
+            .ok_or_else(|| unknown("catalogue"))?;
+        Py::new(py, Catalogue::of(&self.room, uuid))
+    }
+
     /// Imports a file in tscat's JSON format and returns the uuids of its catalogues, in the
     /// file's order. What could not come across as it was is said as warnings.
     fn import_tscat_json(&self, py: Python<'_>, text: &str) -> Result<Vec<String>> {
@@ -1557,6 +1585,21 @@ fn catalogues_with_events<T: yrs::ReadTxn>(
         exported.push((catalogue, events));
     }
     Ok(exported)
+}
+
+/// The catalogue as TFCat JSON. Events with no place in frequency are drawn over
+/// `frequency_range` (low, high), else over the band of the catalogue's other events.
+#[pyfunction]
+#[pyo3(signature = (catalogue, frequency_range=None))]
+fn tfcat_json(
+    catalogue: PyRef<'_, Catalogue>,
+    frequency_range: Option<(f64, f64)>,
+) -> Result<String> {
+    let doc = catalogue.room.doc();
+    let txn = doc.transact();
+    let exported = catalogues_with_events(&txn, std::slice::from_ref(&catalogue.uuid))?;
+    let (summary, events) = exported.first().ok_or_else(|| unknown("catalogue"))?;
+    tfcat::export(&txn, summary, events, frequency_range).map_err(value_error)
 }
 
 /// The catalogues and their member events in tscat's JSON format.
@@ -1898,6 +1941,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(commit, module)?)?;
     module.add_function(wrap_pyfunction!(copy_version, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
+    module.add_function(wrap_pyfunction!(tfcat_json, module)?)?;
     module.add_function(wrap_pyfunction!(export_tscat_json, module)?)?;
     module.add_function(wrap_pyfunction!(rule_from_tscat, module)?)?;
     module.add("NotFound", not_found(module.py())?)?;

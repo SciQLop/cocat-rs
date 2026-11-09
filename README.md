@@ -672,6 +672,23 @@ tscat.export_json(project, [smart], "out.json")
 tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `import_json`
 keeps such a catalogue's members without a rule, and warns.
 
+**TFCat** files (radio catalogues of time–frequency shapes, doi:10.25935/6068-8528) import
+as one catalogue each, next to VOTable. A polygon becomes the event's `shape`; any other
+geometry is kept as it is, in the event attribute `tfcat_geometry`, and gives the event its
+time span. The feature's `id` becomes `source_id`. The file's coordinate system and field
+descriptions stay on the catalogue (`tfcat_crs`, `tfcat_fields`), so an export writes them
+back. A file without a coordinate system (`crs`) is refused.
+
+```python
+bursts = project.import_tfcat("bursts.json")            # named by the file's title
+cocat_rs.export_tfcat(bursts, "out.json")
+cocat_rs.export_tfcat(plain, "out.json", frequency_range=(1e3, 2e4))
+text = cocat_rs.tfcat_json(bursts)                      # the same, as text
+```
+
+An event without a shape is written as a rectangle over `frequency_range`, else over the band
+of the catalogue's shaped events; with neither, the export raises `ValueError`.
+
 **History.** The server keeps every version of a project: a run of changes by one person with
 no gap over five minutes, and no longer than an hour. Each version says who made it, when, and how many events it added,
 changed or removed. `project.history()` lists them, newest first, as dicts; `catalogue=` keeps

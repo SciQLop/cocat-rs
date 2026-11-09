@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import keyring
 
 from . import Project
-from ._native import ProjectInfo, export_votable as _export_votable
+from ._native import ProjectInfo, export_votable as _export_votable, tfcat_json
 from ._native import account_id as _account_id
 from ._native import login as _login
 from ._native import projects as _projects
@@ -244,6 +244,14 @@ def import_votable(file_path: str | Path, table_name: str | None = None) -> set:
 def export_votable(catalogues, file_path: str | Path) -> None:
     """Writes the catalogues to a VOTable file."""
     Path(file_path).write_text(_export_votable(catalogues), encoding="utf-8")
+
+
+def export_tfcat(
+    catalogue, file_path: str | Path, frequency_range: tuple[float, float] | None = None
+) -> None:
+    """Writes the catalogue to a TFCat file. Events with no place in frequency are drawn
+    over `frequency_range` (low, high), else over the band of the catalogue's other events."""
+    Path(file_path).write_text(tfcat_json(catalogue, frequency_range), encoding="utf-8")
 
 
 def save_on_exit() -> None:

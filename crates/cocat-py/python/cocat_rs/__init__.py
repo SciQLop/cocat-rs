@@ -42,6 +42,7 @@ from ._native import (
     submissions,
     submit_catalogue,
     submit_update,
+    tfcat_json,
     update_public_catalogue,
     withdraw_submission,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "submissions",
     "submit_catalogue",
     "submit_update",
+    "tfcat_json",
     "update_public_catalogue",
     "withdraw_submission",
 ]
@@ -331,6 +333,7 @@ from . import api  # noqa: E402
 from .api import (  # noqa: E402
     create_catalogue,
     create_event,
+    export_tfcat,
     export_votable,
     get_catalogue,
     get_event,
@@ -346,6 +349,7 @@ __all__ += [
     "api",
     "create_catalogue",
     "create_event",
+    "export_tfcat",
     "export_votable",
     "get_catalogue",
     "get_event",
