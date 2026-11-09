@@ -6,7 +6,7 @@ option; this page says which ones an operator needs and how they fit together.
 
 ## The image
 
-Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.4.0`) and
+Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.5.0`) and
 `latest`. The release workflow (`.github/workflows/publish.yml`) builds it from
 `docker/Dockerfile` when a `v*` tag is pushed.
 
@@ -57,7 +57,7 @@ values, and which mistakes stop the server at startup. The ones an operator sets
 
 | Group | Variables | What for |
 |---|---|---|
-| Public address | `COCAT_PUBLIC_URL`, `COCAT_PROXY_PREFIX` | the scheme and host users reach; the path the proxy mounts the server under. Mailed links and provider redirects are built from both. |
+| Public address | `COCAT_PUBLIC_URL`, `COCAT_PROXY_PREFIX` | the scheme and host users reach; the path the proxy mounts the server under. Mailed links, provider redirects and the sign-in links apps show are built from both. |
 | Proxy | `COCAT_TRUSTED_PROXIES` | how many proxies stand in front, so rate limits see the real client. The image sets 1. |
 | Secret | `COCAT_SECRET` | signs mailed links and the provider sign-in cookie. Unset, the server keeps one in `/db/cocat-rs.db.secret`: back it up with the database. |
 | Mail | `COCAT_SMTP_HOST`, `COCAT_SMTP_PORT`, `COCAT_SMTP_STARTTLS`, `COCAT_SMTP_USERNAME`, `COCAT_SMTP_PASSWORD`, `COCAT_MAIL_FROM`, `COCAT_MAIL_DIR` | see [Mail](#mail) |
