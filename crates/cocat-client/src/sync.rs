@@ -269,25 +269,28 @@ fn drop_unshared_changes(inner: &Arc<Inner>, server_hello: &[u8]) -> Result<(), 
     inner.start_over()
 }
 
-/// The handshake request: the websocket address, the v2 subprotocol and the session cookie
-/// the server reads.
+/// The handshake request: the websocket address, the v2 subprotocol and the session, as a
+/// cookie and a bearer token (see `login::authorized`).
 fn request(
     url: &Url,
     cookie: &str,
 ) -> Option<tokio_tungstenite::tungstenite::handshake::client::Request> {
     let mut request = url.as_str().into_client_request().ok()?;
-    request.headers_mut().insert(
+    let headers = request.headers_mut();
+    headers.insert(
         header::SEC_WEBSOCKET_PROTOCOL,
         HeaderValue::from_static(cocat_core::SUBPROTOCOL),
     );
-    let value = crate::login::cookie_header(cookie);
-    match HeaderValue::from_str(&value) {
-        Ok(value) => {
-            request.headers_mut().insert(header::COOKIE, value);
+    let as_cookie = HeaderValue::from_str(&crate::login::cookie_header(cookie));
+    let as_bearer = HeaderValue::from_str(&format!("Bearer {cookie}"));
+    match (as_cookie, as_bearer) {
+        (Ok(cookie), Ok(bearer)) => {
+            headers.insert(header::COOKIE, cookie);
+            headers.insert(header::AUTHORIZATION, bearer);
             Some(request)
         }
-        Err(error) => {
-            tracing::warn!(%error, "the cookie cannot be sent in a header");
+        (Err(error), _) | (_, Err(error)) => {
+            tracing::warn!(%error, "the session cannot be sent in a header");
             None
         }
     }

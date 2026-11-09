@@ -11,6 +11,7 @@ mod history;
 mod login;
 mod projects;
 mod room;
+mod sign_in;
 mod submissions;
 mod sync;
 
@@ -24,6 +25,7 @@ pub use projects::{
     revoke_invitation, set_editors_can_share, set_role, update_public_catalogue,
 };
 pub use room::{Room, RoomError, Status};
+pub use sign_in::{SignInRequest, SignInStatus, poll_sign_in, sign_out, start_sign_in};
 pub use submissions::{
     Copied, NewSubmission, Submission, copy_public_catalogue, propose_change, review_submission,
     submissions, submit_catalogue, submit_update, withdraw_submission,

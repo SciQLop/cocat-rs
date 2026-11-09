@@ -7,7 +7,7 @@ use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::login::{LoginError, RoomInfo, base, cookie_header, send};
+use crate::login::{LoginError, RoomInfo, authorized, base, send};
 
 /// How long an invitation stays valid when the caller does not say: the server's default.
 pub const INVITATION_DAYS: u32 = 14;
@@ -297,15 +297,19 @@ pub(crate) fn api_request(
     cookie: &str,
     path: &[&str],
 ) -> Result<RequestBuilder, LoginError> {
+    let request = reqwest::Client::new().request(method, api_url(url, path)?);
+    Ok(authorized(request, cookie))
+}
+
+/// `api/` and the path under the server url, each part its own escaped segment.
+pub(crate) fn api_url(url: &str, path: &[&str]) -> Result<Url, LoginError> {
     let mut url: Url = base(url)?;
     url.path_segments_mut()
         .map_err(|_| url::ParseError::RelativeUrlWithCannotBeABaseBase)?
         .pop_if_empty()
         .push("api")
         .extend(path);
-    Ok(reqwest::Client::new()
-        .request(method, url)
-        .header(reqwest::header::COOKIE, cookie_header(cookie)))
+    Ok(url)
 }
 
 #[cfg(test)]

@@ -78,9 +78,10 @@ pub async fn login(url: &str, user: &str, password: &str) -> Result<String, Logi
 
 /// Lists the rooms the session may enter, with the role it holds in each.
 pub async fn rooms(url: &str, cookie: &str) -> Result<Vec<RoomInfo>, LoginError> {
-    let request = reqwest::Client::new()
-        .get(base(url)?.join("api/rooms")?)
-        .header(reqwest::header::COOKIE, cookie_header(cookie));
+    let request = authorized(
+        reqwest::Client::new().get(base(url)?.join("api/rooms")?),
+        cookie,
+    );
     let rows: Vec<RoomRow> = send(request).await?.json().await?;
     rows.into_iter().map(room_info).collect()
 }
@@ -91,9 +92,10 @@ pub async fn account_id(url: &str, cookie: &str) -> Result<String, LoginError> {
     struct Me {
         id: String,
     }
-    let request = reqwest::Client::new()
-        .get(base(url)?.join("api/me")?)
-        .header(reqwest::header::COOKIE, cookie_header(cookie));
+    let request = authorized(
+        reqwest::Client::new().get(base(url)?.join("api/me")?),
+        cookie,
+    );
     let me: Me = send(request).await?.json().await?;
     Ok(me.id)
 }
@@ -149,6 +151,15 @@ fn detail(status: StatusCode, body: &[u8]) -> String {
 
 pub(crate) fn cookie_header(cookie: &str) -> String {
     Cookie::new(COOKIE, cookie).encoded().to_string()
+}
+
+/// The session sent both ways: this server reads the bearer token first, a Python cocat
+/// server only the cookie. A token from a browser sign-in and a login cookie are the same kind
+/// of secret here, so one value serves both.
+pub(crate) fn authorized(request: RequestBuilder, session: &str) -> RequestBuilder {
+    request
+        .header(reqwest::header::COOKIE, cookie_header(session))
+        .bearer_auth(session)
 }
 
 #[derive(Deserialize)]
