@@ -26,6 +26,7 @@ pub fn Heading(shown: Memo<Route>, members: Members, order: Memo<Vec<usize>>) ->
         let visible = order.with(Vec::len);
         let (kind, unit) = match (shown.get(), about.with(|about| about.smart)) {
             (Route::Trash, _) => ("In the trash", "event"),
+            (Route::AllEvents, _) => ("Every event of the project", "event"),
             (_, true) => ("Smart catalogue, recomputed live", "member"),
             _ => ("Catalogue", "event"),
         };
@@ -68,6 +69,7 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
             None => titled("No such catalogue"),
         },
         Route::Trash => titled("Trash"),
+        Route::AllEvents => titled("All events"),
         _ => titled("No catalogue yet"),
     }
 }

@@ -9,6 +9,8 @@ pub enum Route {
     Default,
     /// What needs the visitor: invitations, reviews, and what changed in their projects.
     Home,
+    /// Every event of the open project, where a search covers the whole project.
+    AllEvents,
     Catalogue(String),
     Trash,
     /// The visitor's groups, and one of them.
@@ -42,6 +44,7 @@ impl Route {
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
             Some(("submission", id)) => id.parse().map_or(Route::Default, Route::Submission),
             None if hash == "home" => Route::Home,
+            None if hash == "all" => Route::AllEvents,
             None if hash == "trash" => Route::Trash,
             None if hash == "groups" => Route::Groups,
             None if hash == "public" => Route::Public(None),
@@ -130,6 +133,7 @@ impl Route {
             Route::Default => "#".to_owned(),
             Route::Catalogue(uuid) => format!("#c={uuid}"),
             Route::Home => "#home".to_owned(),
+            Route::AllEvents => "#all".to_owned(),
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
             Route::Public(None) => "#public".to_owned(),
@@ -331,6 +335,7 @@ mod tests {
     fn a_route_writes_the_hash_it_reads() {
         for route in [
             Route::Home,
+            Route::AllEvents,
             Route::Catalogue("abc".into()),
             Route::Trash,
             Route::Groups,

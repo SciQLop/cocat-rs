@@ -272,6 +272,8 @@ async fn the_search_help_gives_the_syntax_and_how_to_save_one() {
         "Save as smart catalogue…",
         "Build a search",
         "not on a timer",
+        "All events",
+        "suggests as you type",
     ] {
         assert!(
             searching.contains(expected),

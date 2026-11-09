@@ -55,7 +55,11 @@ pub fn Actions(
     };
     let trash = move |_| {
         if let Some(uuid) = catalogue.get_untracked() {
-            room.with_value(|room| trash_catalogue(room, &uuid, error));
+            room.with_value(|room| {
+                if let Err(failure) = trash_catalogue(room, &uuid, true) {
+                    error.set(Some(failure));
+                }
+            });
         }
     };
     let linked = move || {
@@ -106,7 +110,7 @@ pub fn Actions(
                         <button type="button" on:click=move |_| toggle(Form::Update)>{format!("Submit as an update to “{name}”…")}</button>
                     })}
                     {editor.then(|| view! {
-                        <button type="button" class="danger" on:click=trash>"Move catalogue to trash…"</button>
+                        <button type="button" class="danger" on:click=trash>"Delete catalogue…"</button>
                     })}
                 </div>
             </details>
@@ -155,20 +159,25 @@ fn add_event(
     }
 }
 
-fn trash_catalogue(room: &Room, uuid: &str, error: Error) {
+/// Asks, then moves the catalogue to the trash; `shown`: it is the one on screen, so the page
+/// moves on to the first catalogue.
+pub fn trash_catalogue(room: &Room, uuid: &str, shown: bool) -> Result<(), String> {
     let name = room
         .read_untracked(|txn| model::catalogue(txn, uuid))
         .map(|found| found.name)
         .unwrap_or_default();
     if !confirm(&format!(
-        "Move the catalogue “{name}” to the trash? It can be restored from there."
+        "Delete the catalogue “{name}”? Its events stay in the project. The catalogue waits in \
+         the trash, where it can be restored."
     )) {
-        return;
+        return Ok(());
     }
-    match room.write(|txn| edit::trash_catalogue(txn, uuid)) {
-        Ok(()) => go_to(""),
-        Err(failure) => error.set(Some(failure.to_string())),
+    room.write(|txn| edit::trash_catalogue(txn, uuid))
+        .map_err(|failure| failure.to_string())?;
+    if shown {
+        go_to("");
     }
+    Ok(())
 }
 
 /// Asks the name of the normal catalogue to freeze the smart one on screen into, then shows it.

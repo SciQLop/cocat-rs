@@ -83,6 +83,11 @@ pub fn trash_rows<T: ReadTxn>(txn: &T) -> Vec<Row> {
         .collect()
 }
 
+/// Every live event of the project, in time order: the "All events" page.
+pub fn all_rows<T: ReadTxn>(txn: &T) -> Result<Vec<Row>, RuleError> {
+    search_rows(txn, &Predicate::And(Vec::new()), None)
+}
+
 /// The positions of the rows a search keeps, tested as a smart catalogue would test them.
 pub fn matching<T: ReadTxn>(
     txn: &T,
@@ -270,6 +275,14 @@ mod tests {
 
     fn search(text: &str) -> Predicate {
         cocat_core::query::parse(text, &[]).unwrap()
+    }
+
+    #[test]
+    fn all_events_are_the_projects_live_events() {
+        let doc = room();
+        let rows = all_rows(&doc.transact()).unwrap();
+        let ids: Vec<_> = rows.iter().filter_map(|row| row.uuid.clone()).collect();
+        assert_eq!(ids, ["e1", "e2", "e3"], "e4 is in the trash");
     }
 
     #[test]

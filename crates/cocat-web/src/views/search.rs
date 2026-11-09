@@ -7,7 +7,10 @@ use leptos::prelude::*;
 
 use crate::edit;
 use crate::route::Route;
-use crate::search::{Choice, Query, choices, clause, label, needs_value, search_text};
+use crate::search::{
+    Choice, Completion, Piece, Query, Vocabulary, accept, choices, clause, complete, label,
+    needs_value, pieces, search_text,
+};
 use crate::state::Room;
 use crate::views::controls::{Error, commit, error_line, go_to};
 
@@ -352,5 +355,196 @@ pub fn SearchBuilder(
                 <button type="button" class="button" on:click=move |_| building.set(false)>"Cancel"</button>
             </div>
         </section>
+    }
+}
+
+/// What the project holds that a search can name: read when the completions open.
+fn vocabulary(room: &Room) -> Vocabulary {
+    room.read(|txn| {
+        let has_author = cocat_core::rules::Predicate::Has("author".to_owned());
+        let now = cocat_core::time::Timestamp::now();
+        let authors: std::collections::BTreeSet<String> = model::search(txn, &has_author, now)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|event| event.author)
+            .collect();
+        Vocabulary {
+            tags: model::existing_tags(txn),
+            authors: authors.into_iter().collect(),
+            catalogues: model::catalogue_names(txn)
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect(),
+            attributes: model::attribute_types(txn).into_keys().collect(),
+        }
+    })
+}
+
+/// The search box: it suggests fields and the project's own values as one types, and holds
+/// the button that opens the builder.
+#[component]
+pub fn SearchBox(
+    query: RwSignal<String>,
+    building: RwSignal<bool>,
+    children: Children,
+) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let input = NodeRef::<leptos::html::Input>::new();
+    let open = RwSignal::new(false);
+    let cursor = RwSignal::new(0usize);
+    let active = RwSignal::new(0usize);
+    let words = Memo::new(move |_| open.get().then(|| vocabulary(&room)));
+    let completion = Memo::new(move |_| {
+        let vocabulary = words.get()?;
+        query.with(|text| complete(text, cursor.get(), &vocabulary))
+    });
+    let caret = move || {
+        input
+            .get_untracked()
+            .and_then(|input| input.selection_start().ok().flatten())
+            .map_or(0, |at| at as usize)
+    };
+    let take = move |index: usize| {
+        let Some(found) = completion.get_untracked() else {
+            return;
+        };
+        let Some(chosen) = found.suggestions.get(index) else {
+            return;
+        };
+        let (text, at) = query.with_untracked(|text| accept(text, &found, chosen));
+        if let Some(input) = input.get_untracked() {
+            input.set_value(&text);
+            let _ = input.set_selection_range(at as u32, at as u32);
+        }
+        query.set(text);
+        cursor.set(at);
+        active.set(0);
+    };
+    let keys = move |event: leptos::ev::KeyboardEvent| {
+        let count = completion
+            .with_untracked(|found| found.as_ref().map_or(0, |found| found.suggestions.len()));
+        if count == 0 || !open.get_untracked() {
+            return;
+        }
+        match event.key().as_str() {
+            "ArrowDown" => active.update(|at| *at = (*at + 1) % count),
+            "ArrowUp" => active.update(|at| *at = (*at + count - 1) % count),
+            "Enter" | "Tab" => take(active.get_untracked()),
+            "Escape" => open.set(false),
+            _ => return,
+        }
+        event.prevent_default();
+    };
+    let list = move || {
+        let found: Completion = completion.get().filter(|_| open.get())?;
+        Some(view! {
+            <ul class="completions" id="search-completions" role="listbox" aria-label="Suggestions">
+                {found.suggestions.into_iter().enumerate().map(|(index, suggestion)| view! {
+                    <li role="option" aria-selected=move || (active.get() == index).to_string()
+                        on:mousedown=move |event| { event.prevent_default(); take(index); }
+                        on:mouseenter=move |_| active.set(index)>
+                        <code>{suggestion.insert.trim_end().to_owned()}</code>
+                        <span class="kind">{suggestion.kind}</span>
+                    </li>
+                }).collect_view()}
+            </ul>
+        })
+    };
+    let scroll = RwSignal::new(0i32);
+    let follow = move || {
+        if let Some(input) = input.get_untracked() {
+            scroll.set(input.scroll_left());
+        }
+    };
+    let painted =
+        move || query.with(|text| pieces(text).into_iter().map(painted_piece).collect_view());
+    view! {
+        <label class="search">
+            {children()}
+            <span class="search-field">
+            <span class="search-paint" aria-hidden="true">
+                <span class="search-paint-line" style=move || format!("transform: translateX({}px)", -scroll.get())>
+                    {painted}
+                </span>
+            </span>
+            <input
+                node_ref=input
+                type="text"
+                on:scroll=move |_| follow()
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls="search-completions"
+                aria-expanded=move || completion.with(|found| (open.get() && found.is_some()).to_string())
+                placeholder="Search events"
+                aria-label="Search events"
+                autocomplete="off"
+                spellcheck="false"
+                prop:value=move || query.get()
+                on:input=move |event| {
+                    query.set(event_target_value(&event));
+                    cursor.set(caret());
+                    active.set(0);
+                    open.set(true);
+                    follow();
+                }
+                on:focus=move |_| { cursor.set(caret()); open.set(true); }
+                on:blur=move |_| open.set(false)
+                on:click=move |_| cursor.set(caret())
+                on:keyup=move |event| {
+                    if matches!(event.key().as_str(), "ArrowLeft" | "ArrowRight" | "Home" | "End") {
+                        cursor.set(caret());
+                    }
+                    follow();
+                }
+                on:keydown=keys
+            />
+            </span>
+            <button type="button" class="build-search" aria-label="Build a search"
+                title="Build a search" aria-pressed=move || building.get().to_string()
+                on:click=move |_| building.update(|open| *open = !*open)>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" aria-hidden="true">
+                    <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/>
+                    <circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>
+                </svg>
+            </button>
+            {list}
+        </label>
+    }
+}
+
+/// One piece of the search, coloured: a term as a token in its field's colour, keywords and
+/// brackets in their own, an unknown field in red.
+fn painted_piece(piece: Piece) -> AnyView {
+    match piece {
+        Piece::Term { field, op, value } => {
+            let kind = term_kind(&field);
+            view! {
+                <span class=format!("term term-{kind}")>
+                    <span class="term-field">{field}</span>
+                    <span class="term-op">{op}</span>
+                    <span class="term-value">{value}</span>
+                </span>
+            }
+            .into_any()
+        }
+        Piece::Keyword(text) => view! { <span class="keyword">{text}</span> }.into_any(),
+        Piece::Bracket(text) => view! { <span class="bracket">{text}</span> }.into_any(),
+        Piece::Word(text) => view! { <span class="term term-word">{text}</span> }.into_any(),
+        Piece::Space(text) => view! { <span>{text}</span> }.into_any(),
+    }
+}
+
+fn term_kind(field: &str) -> &'static str {
+    match (field, query::kind_of(field)) {
+        ("_exists_", _) => "exists",
+        (_, None) => "unknown",
+        (_, Some(Kind::Tags)) => "tag",
+        (_, Some(Kind::Enum(_))) => "status",
+        (_, Some(Kind::Catalogue)) => "catalogue",
+        (_, Some(Kind::Time | Kind::Duration)) => "time",
+        (_, Some(Kind::Number)) => "number",
+        (_, Some(Kind::Attribute)) => "attribute",
+        _ => "text",
     }
 }

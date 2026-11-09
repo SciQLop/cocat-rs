@@ -6,7 +6,7 @@ use crate::help::{Shown, empty_text};
 use crate::period::Period;
 use crate::route::Route;
 use crate::rows::{
-    Row, SortKey, attribute_keys, filter, matching, rows, search_rows, sort, trash_rows,
+    Row, SortKey, all_rows, attribute_keys, filter, matching, rows, search_rows, sort, trash_rows,
 };
 use crate::search::{self, Query};
 use crate::state::Room;
@@ -15,7 +15,7 @@ use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
-use crate::views::search::{SearchBuilder, SearchLine, saved_search};
+use crate::views::search::{SearchBox, SearchBuilder, SearchLine, saved_search};
 use crate::views::submissions::{CopyForm, ProposeForm, SubmitForm, UpdateForm};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
@@ -88,6 +88,9 @@ pub fn CataloguePage(
             .read(|txn| rows(txn, &uuid))
             .map_err(|error| error.to_string()),
         (Route::Trash, _) => Ok(reader.read(|txn| trash_rows(txn))),
+        (Route::AllEvents, _) => reader
+            .read(|txn| all_rows(txn))
+            .map_err(|error| error.to_string()),
         _ => Ok(Vec::new()),
     });
     let period = RwSignal::new(None::<Period>);
@@ -179,26 +182,9 @@ pub fn CataloguePage(
         <div class="page-head">
             <Heading shown members order/>
             <div class="tools">
-                <label class="search">
+                <SearchBox query building>
                     <SearchIcon/>
-                    <input
-                        type="search"
-                        placeholder="Search events"
-                        aria-label="Search events"
-                        title="Words, or fields: tag:shock confidence:>=0.8 start:2015 created:now-7d"
-                        prop:value=move || query.get()
-                        on:input=move |event| query.set(event_target_value(&event))
-                    />
-                    <button type="button" class="build-search" aria-label="Build a search"
-                        title="Build a search" aria-pressed=move || building.get().to_string()
-                        on:click=move |_| building.update(|open| *open = !*open)>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2" aria-hidden="true">
-                            <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/>
-                            <circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>
-                        </svg>
-                    </button>
-                </label>
+                </SearchBox>
                 <ColumnPicker keys columns picked/>
                 <Actions shown selected form proposals/>
                 {public.then(|| view! { <PublicButtons shown form editor=can_write/> })}
@@ -259,6 +245,7 @@ fn showing(room: &Room, shown: &Route) -> Shown {
                 .is_some_and(|catalogue| catalogue.rule.is_some()),
         },
         Route::Trash => Shown::Trash,
+        Route::AllEvents => Shown::Catalogue { smart: false },
         _ => Shown::NoCatalogue,
     }
 }

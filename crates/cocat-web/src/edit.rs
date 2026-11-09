@@ -298,6 +298,21 @@ pub fn trash_catalogue(txn: &mut TransactionMut<'_>, uuid: &str) -> Result<(), E
     found(model::delete_catalogue(txn, uuid), EditError::NoCatalogue)
 }
 
+pub fn rename_catalogue(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    name: &str,
+) -> Result<(), EditError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(EditError::NoName);
+    }
+    found(
+        model::rename_catalogue(txn, uuid, name),
+        EditError::NoCatalogue,
+    )
+}
+
 pub fn restore_catalogue(txn: &mut TransactionMut<'_>, uuid: &str) -> Result<(), EditError> {
     found(model::restore_catalogue(txn, uuid), EditError::NoCatalogue)
 }
@@ -646,6 +661,25 @@ mod tests {
         assert_eq!(catalogue.name, "Waves, frozen");
         assert_eq!(catalogue.rule, None);
         assert_eq!(catalogue.event_count, 3);
+    }
+
+    #[test]
+    fn a_catalogue_is_renamed_and_a_blank_name_is_refused() {
+        let doc = room();
+        edited(&doc, |txn| {
+            rename_catalogue(txn, "c-static", "  Bow shocks 2015 ")
+        })
+        .unwrap();
+        let name = model::catalogue(&doc.transact(), "c-static").unwrap().name;
+        assert_eq!(name, "Bow shocks 2015");
+        assert!(matches!(
+            edited(&doc, |txn| rename_catalogue(txn, "c-static", "  ")),
+            Err(EditError::NoName)
+        ));
+        assert!(matches!(
+            edited(&doc, |txn| rename_catalogue(txn, "missing", "x")),
+            Err(EditError::NoCatalogue)
+        ));
     }
 
     #[test]

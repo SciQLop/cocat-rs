@@ -16,6 +16,10 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let list = Memo::new(move |_| reader.read(|txn| catalogue_list(txn)));
     let page = window().location().pathname().unwrap_or_default();
     let trash = Route::Trash.href(&page);
+    let all = Route::AllEvents.href(&page);
+    let reader = room.clone();
+    let everything =
+        Memo::new(move |_| reader.read(|txn| cocat_core::model::live_event_count(txn)));
     let public = page.clone();
     let entries = NodeRef::<leptos::html::Nav>::new();
     keep_current_in_view(entries, move || shown.track());
@@ -26,6 +30,14 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 {room.can_write().then(|| view! { <NewCatalogue/> })}
             </div>
             <nav class="catalogue-list" node_ref=entries>
+                <a class="catalogue all-events" href=all
+                    aria-current=move || current(shown.get() == Route::AllEvents)>
+                    <span class="name">
+                        <AllIcon/>
+                        <span class="label">"All events"</span>
+                    </span>
+                    <span class="count">{move || everything.get()}</span>
+                </a>
                 <For each=move || list.get().catalogues key=Clone::clone let:item>
                     <Entry item shown page=page.clone()/>
                 </For>
@@ -116,22 +128,75 @@ fn NewCatalogue() -> impl IntoView {
 
 #[component]
 fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let editor = room.can_write();
     let route = Route::Catalogue(item.uuid.clone());
     let href = route.href(&page);
+    let here = route.clone();
     let count = item
         .count
         .map_or_else(|| "!".to_owned(), |count| count.to_string());
     let count_title = item.count.is_none().then_some("The rule does not evaluate");
+    let menu = NodeRef::<leptos::html::Details>::new();
+    let renaming = RwSignal::new(false);
+    let failure = RwSignal::new(None::<String>);
+    let close = move || {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+    };
+    let open_menu = move |event: leptos::ev::MouseEvent| {
+        if let Some(menu) = menu.get_untracked().filter(|_| editor) {
+            event.prevent_default();
+            menu.set_open(true);
+        }
+    };
+    let uuid = StoredValue::new(item.uuid.clone());
+    let deleter = room.clone();
+    let delete = move |_| {
+        close();
+        let shown_now = shown.get_untracked() == here;
+        let uuid = uuid.get_value();
+        failure.set(crate::views::actions::trash_catalogue(&deleter, &uuid, shown_now).err());
+    };
+    let renamer = room.clone();
+    let rename = move |name: String| {
+        let uuid = uuid.get_value();
+        renamer.write(|txn| edit::rename_catalogue(txn, &uuid, &name))
+    };
+    let rename = StoredValue::new_local(rename);
+    let name = item.name.clone();
     view! {
-        <a class="catalogue" href=href aria-current=move || current(shown.get() == route)>
-            <span class="name">
-                <Show when=move || item.smart>
-                    <SmartIcon/>
-                </Show>
-                <span class="label">{item.name.clone()}</span>
-            </span>
-            <span class="count" title=count_title>{count}</span>
-        </a>
+        <div class="entry">
+            <a class="catalogue" href=href aria-current=move || current(shown.get() == route)
+                on:contextmenu=open_menu>
+                <span class="name">
+                    <Show when=move || item.smart>
+                        <SmartIcon/>
+                    </Show>
+                    <span class="label">{item.name.clone()}</span>
+                </span>
+                <span class="count" title=count_title>{count}</span>
+            </a>
+            {editor.then(|| view! {
+                <details class="entry-menu" node_ref=menu
+                    on:keydown=move |event| if event.key() == "Escape" { close(); }>
+                    <summary aria-label=format!("Actions for “{}”", name)>"⋯"</summary>
+                    <div class="menu" role="menu">
+                        <button type="button" role="menuitem"
+                            on:click=move |_| { close(); renaming.set(true); }>"Rename…"</button>
+                        <button type="button" role="menuitem" class="danger" on:click=delete>"Delete…"</button>
+                    </div>
+                </details>
+            })}
+        </div>
+        <Show when=move || renaming.get()>
+            <div class="sidebar-form">
+                <NameForm label="New name of the catalogue" action="Rename" initial=item.name.clone()
+                    open=renaming submit=move |name| rename.with_value(|rename| rename(name))/>
+            </div>
+        </Show>
+        {move || failure.get().map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
     }
 }
 
@@ -225,6 +290,17 @@ pub fn PublicIcon(size: u32) -> impl IntoView {
             stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="9"></circle>
             <path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z"></path>
+        </svg>
+    }
+}
+
+#[component]
+fn AllIcon() -> impl IntoView {
+    view! {
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/>
+            <rect x="3" y="16" width="18" height="4" rx="1"/>
         </svg>
     }
 }
