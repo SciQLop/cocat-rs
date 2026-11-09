@@ -25,6 +25,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, ReadTxn, StateVector, Transact, Update};
 
+use crate::history::cache::VersionCache;
 use crate::history::stamps::{
     ENTRY, Stamp, StampFile, read_stamps, stamp_for, stamps_file, valid_stamps,
 };
@@ -201,6 +202,7 @@ pub struct RoomManager {
     storage: StorageLimits,
     /// The hashes of revoked tokens, for the sockets they opened to close themselves.
     ended_sessions: broadcast::Sender<String>,
+    versions: VersionCache,
 }
 
 impl RoomManager {
@@ -217,6 +219,7 @@ impl RoomManager {
             cold_reads: Arc::new(Semaphore::new(cold_reads.max(1))),
             storage: StorageLimits::default(),
             ended_sessions: broadcast::channel(ENDED_SESSIONS_BACKLOG).0,
+            versions: VersionCache::default(),
         }
     }
 
@@ -229,6 +232,11 @@ impl RoomManager {
     /// What a socket listens to for `end_session`.
     pub fn ended_sessions(&self) -> broadcast::Receiver<String> {
         self.ended_sessions.subscribe()
+    }
+
+    /// The rooms' versions as last grouped, dropped with the room.
+    pub fn version_cache(&self) -> &VersionCache {
+        &self.versions
     }
 
     pub fn with_storage(mut self, storage: StorageLimits) -> Self {
@@ -351,6 +359,7 @@ impl RoomManager {
     /// Deletes the room and its file, whether or not it is open. An open room unloads the
     /// same way a last detach does, except that it writes nothing more.
     pub async fn delete(&self, room_id: &str) {
+        self.versions.forget(room_id);
         // The room can unload between the lookup and the command, so the handle reports
         // that and the next turn finds either the room that replaced it or the bare file.
         loop {
@@ -1643,7 +1652,7 @@ impl Author {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
 }
 

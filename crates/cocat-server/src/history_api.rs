@@ -22,7 +22,7 @@ use yrs::{Doc, ReadTxn, StateVector, Transact};
 use crate::api::{self, ApiError, ApiPath, CurrentUser, JsonBody, membership};
 use crate::db::RoomRow;
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
-use crate::history::versions::{Saved, Version, span, spans, versions};
+use crate::history::versions::{Saved, Version, span, spans};
 use crate::openapi::Detail;
 use crate::room::Author;
 use crate::{AppState, db, lifecycle, presence};
@@ -50,7 +50,7 @@ struct HistoryQuery {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-struct VersionView {
+pub(crate) struct VersionView {
     #[serde(flatten)]
     version: Version,
     author_email: Option<String>,
@@ -118,16 +118,7 @@ async fn list(
         Some(uuid) => Some(Filter::new(&state, &room_id, uuid).await?),
         None => None,
     };
-    let commits = db::version_commits(&state.pool, &room_id).await?;
-    let saved = marks(&commits);
-    // simplify: every request replays the whole log (0.7 s on the largest production
-    // room); cache the versions per room keyed by its record count when that hurts.
-    let mut versions = state
-        .rooms
-        .read_log(&room_id, 1, move |records, slots| {
-            versions(records, slots, &saved)
-        })
-        .await?;
+    let mut versions = room_versions(&state, &room_id).await?;
     if let Some(filter) = filter {
         versions.retain(|version| filter.keeps(version));
         for version in &mut versions {
@@ -137,18 +128,7 @@ async fn list(
     if let Some(event) = query.event {
         versions.retain(|version| version.events.contains(&event));
     }
-    let names = db::version_names(&state.pool, &room_id).await?;
-    let anonymous = db::is_public(&state.pool, &room_id).await? && !role.can_write();
-    let emails = if anonymous {
-        author_labels(&state, &versions).await?
-    } else {
-        author_emails(&state, &versions).await?
-    };
-    let versions = versions
-        .into_iter()
-        .map(|version| view(version, &names, &commits, &emails))
-        .map(|view| author_unless_anonymous(anonymous, view))
-        .collect();
+    let versions = views(&state, &room_id, role, versions).await?;
     Ok(Json(History { versions }))
 }
 
@@ -649,6 +629,45 @@ impl Filter {
 
 fn has_rule<T: ReadTxn>(txn: &T, catalogue: &str) -> bool {
     model::catalogue(txn, catalogue).is_some_and(|summary| summary.rule.is_some())
+}
+
+/// The room's versions, newest first, grouped again only when its log changed.
+pub(crate) async fn room_versions(
+    state: &AppState,
+    room_id: &str,
+) -> Result<Vec<Version>, ApiError> {
+    let saved = saved(state, room_id).await?;
+    let cache = state.rooms.version_cache().clone();
+    let id = room_id.to_owned();
+    Ok(state
+        .rooms
+        .read_log(room_id, 1, move |records, slots| {
+            cache.versions(&id, records, slots, &saved)
+        })
+        .await?)
+}
+
+/// The versions as a member with `role` sees them: named, with their authors, who stay
+/// anonymous to a public catalogue's readers.
+pub(crate) async fn views(
+    state: &AppState,
+    room_id: &str,
+    role: Role,
+    versions: Vec<Version>,
+) -> Result<Vec<VersionView>, ApiError> {
+    let commits = db::version_commits(&state.pool, room_id).await?;
+    let names = db::version_names(&state.pool, room_id).await?;
+    let anonymous = db::is_public(&state.pool, room_id).await? && !role.can_write();
+    let emails = if anonymous {
+        author_labels(state, &versions).await?
+    } else {
+        author_emails(state, &versions).await?
+    };
+    Ok(versions
+        .into_iter()
+        .map(|version| view(version, &names, &commits, &emails))
+        .map(|view| author_unless_anonymous(anonymous, view))
+        .collect())
 }
 
 /// The emails of the versions' authors; an account deleted since has none.

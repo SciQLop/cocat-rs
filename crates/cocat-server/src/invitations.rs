@@ -18,8 +18,9 @@ use crate::mail::{self, Mailer};
 use crate::room::CloseReason;
 
 /// One predicate, used by preview, accept, consume and list: an invitation nobody revoked,
-/// that has not expired, and that still has a use left. It is the only text these queries
-/// build dynamically, hence the `AssertSqlSafe` around each `format!`. Group invitations use
+/// that has not expired, and that still has a use left. It and the constant query heads
+/// below are the only text these queries build dynamically, hence the `AssertSqlSafe` around
+/// each `format!`. Group invitations use
 /// the same rule over their own table.
 pub(crate) fn usable(table: &str) -> String {
     format!(
@@ -146,20 +147,26 @@ pub(crate) async fn suggestions(
     Ok(people)
 }
 
+/// What a guest sees of an invitation: the predicate follows in each query.
+const PREVIEW: &str = r#"SELECT invitation.id, invitation.room_id, invitation.role,
+        invitation.expires_at, room.name, "user".email AS inviter_email
+    FROM invitation
+    JOIN room ON room.id = invitation.room_id
+    LEFT JOIN "user" ON "user".id = invitation.created_by"#;
+
 pub async fn preview(state: &AppState, token: &str) -> Result<Preview, LifecycleError> {
     let predicate = usable("invitation");
     let row = sqlx::query(AssertSqlSafe(format!(
-        "SELECT invitation.room_id, invitation.role, invitation.expires_at, room.name,
-                \"user\".email AS inviter_email
-         FROM invitation
-         JOIN room ON room.id = invitation.room_id
-         LEFT JOIN \"user\" ON \"user\".id = invitation.created_by
-         WHERE invitation.token_hash = ? AND {predicate}"
+        "{PREVIEW} WHERE invitation.token_hash = ? AND {predicate}"
     )))
     .bind(hash(token))
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(invitation_not_found)?;
+    preview_from_row(&row)
+}
+
+fn preview_from_row(row: &SqliteRow) -> Result<Preview, LifecycleError> {
     Ok(Preview {
         room_id: row.try_get("room_id")?,
         room_name: row.try_get("name")?,
@@ -169,8 +176,12 @@ pub async fn preview(state: &AppState, token: &str) -> Result<Preview, Lifecycle
     })
 }
 
-/// Joins `user` to the invited room, keeping the higher role if they are already a member
-/// and closing the sockets they had there, which were admitted under the old role.
+/// What accepting an invitation reads of it: the predicate follows in each query.
+const OFFER: &str = "SELECT invitation.id, invitation.room_id, invitation.role,
+        invitation.email, room.name
+    FROM invitation JOIN room ON room.id = invitation.room_id";
+
+/// Joins `user` to the room the token invites to.
 pub async fn accept(
     state: &AppState,
     token: &str,
@@ -178,14 +189,86 @@ pub async fn accept(
 ) -> Result<(RoomRow, Role), LifecycleError> {
     let predicate = usable("invitation");
     let row = sqlx::query(AssertSqlSafe(format!(
-        "SELECT invitation.id, invitation.room_id, invitation.role, invitation.email, room.name
-         FROM invitation JOIN room ON room.id = invitation.room_id
-         WHERE invitation.token_hash = ? AND {predicate}"
+        "{OFFER} WHERE invitation.token_hash = ? AND {predicate}"
     )))
     .bind(hash(token))
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(invitation_not_found)?;
+    join(state, &row, user).await
+}
+
+/// Joins `user` to the room invitation `id` invites to, when it is addressed to their
+/// verified email; any other invitation is not found.
+pub async fn accept_addressed(
+    state: &AppState,
+    id: i64,
+    user: &db::User,
+) -> Result<(RoomRow, Role), LifecycleError> {
+    if !user.is_verified {
+        return Err(invitation_not_found());
+    }
+    let predicate = usable("invitation");
+    let row = sqlx::query(AssertSqlSafe(format!(
+        "{OFFER} WHERE invitation.id = ? AND lower(invitation.email) = lower(?) AND {predicate}"
+    )))
+    .bind(id)
+    .bind(&user.email)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(invitation_not_found)?;
+    join(state, &row, user).await
+}
+
+/// Revokes invitation `id`, when it is addressed to `user`'s verified email and still usable.
+pub async fn decline(state: &AppState, id: i64, user: &db::User) -> Result<(), LifecycleError> {
+    if !user.is_verified {
+        return Err(invitation_not_found());
+    }
+    let predicate = usable("invitation");
+    let declined = sqlx::query(AssertSqlSafe(format!(
+        "UPDATE invitation SET revoked = TRUE
+         WHERE invitation.id = ? AND lower(invitation.email) = lower(?) AND {predicate}"
+    )))
+    .bind(id)
+    .bind(&user.email)
+    .execute(&state.pool)
+    .await?;
+    if declined.rows_affected() != 1 {
+        return Err(invitation_not_found());
+    }
+    Ok(())
+}
+
+/// The usable invitations addressed to `user`'s email, newest first; none until the email
+/// is verified.
+pub async fn addressed_to(
+    state: &AppState,
+    user: &db::User,
+) -> Result<Vec<(i64, Preview)>, LifecycleError> {
+    if !user.is_verified {
+        return Ok(Vec::new());
+    }
+    let predicate = usable("invitation");
+    let rows = sqlx::query(AssertSqlSafe(format!(
+        "{PREVIEW} WHERE lower(invitation.email) = lower(?) AND {predicate}
+         ORDER BY invitation.created_at DESC, invitation.id DESC"
+    )))
+    .bind(&user.email)
+    .fetch_all(&state.pool)
+    .await?;
+    rows.iter()
+        .map(|row| Ok((row.try_get("id")?, preview_from_row(row)?)))
+        .collect()
+}
+
+/// Joins `user` to the invited room, keeping the higher role if they are already a member
+/// and closing the sockets they had there, which were admitted under the old role.
+async fn join(
+    state: &AppState,
+    row: &SqliteRow,
+    user: &db::User,
+) -> Result<(RoomRow, Role), LifecycleError> {
     let id: i64 = row.try_get("id")?;
     let room_id: String = row.try_get("room_id")?;
     let role = Role::from_str(&row.try_get::<String, _>("role")?)?;

@@ -73,7 +73,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 
 /// A submission as its author and the curators see it.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-struct SubmissionOut {
+pub(crate) struct SubmissionOut {
     id: i64,
     /// `new`, or `update` for a change to a public catalogue.
     kind: String,
@@ -100,7 +100,7 @@ struct SubmissionOut {
 
 impl SubmissionOut {
     /// Only curators see who reviewed it; its author sees "a curator".
-    fn seen_by(submission: Submission, curator: bool) -> Self {
+    pub(crate) fn seen_by(submission: Submission, curator: bool) -> Self {
         let reviewer = if curator {
             submission.reviewer_email.clone()
         } else {

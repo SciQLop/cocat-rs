@@ -24,6 +24,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(suggestions))
         .routes(routes!(preview_invitation))
         .routes(routes!(accept_invitation))
+        .routes(routes!(accept_addressed))
+        .routes(routes!(decline_addressed))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -125,12 +127,24 @@ struct InvitationOut {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-struct PreviewOut {
+pub(crate) struct PreviewOut {
     room_id: String,
     room_name: String,
     role: &'static str,
     inviter_email: Option<String>,
     expires_at: String,
+}
+
+impl From<invitations::Preview> for PreviewOut {
+    fn from(preview: invitations::Preview) -> Self {
+        Self {
+            room_id: preview.room_id,
+            room_name: preview.room_name,
+            role: preview.role.as_str(),
+            inviter_email: preview.inviter_email,
+            expires_at: preview.expires_at,
+        }
+    }
 }
 
 #[utoipa::path(
@@ -271,13 +285,7 @@ async fn preview_invitation(
     JsonBody(body): JsonBody<TokenBody>,
 ) -> Result<Json<PreviewOut>, ApiError> {
     let preview = invitations::preview(&state, &body.token).await?;
-    Ok(Json(PreviewOut {
-        room_id: preview.room_id,
-        room_name: preview.room_name,
-        role: preview.role.as_str(),
-        inviter_email: preview.inviter_email,
-        expires_at: preview.expires_at,
-    }))
+    Ok(Json(preview.into()))
 }
 
 #[utoipa::path(
@@ -301,6 +309,50 @@ async fn accept_invitation(
 ) -> Result<Json<RoomOut>, ApiError> {
     let (room, role) = invitations::accept(&state, &body.token, &user).await?;
     Ok(Json(RoomOut::new(room, role)))
+}
+
+/// The home page's Accept: no token, the invitation is addressed to the caller.
+#[utoipa::path(
+    post,
+    path = "/api/invitations/{invitation_id}/accept",
+    params(("invitation_id" = i64, Path, description = "Invitation id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The room, joined with the invited role", body = RoomOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No usable invitation with this id addressed to the caller's verified email", body = Detail),
+        (status = 422, description = "The invitation id is not a number", body = Detail),
+    )
+)]
+async fn accept_addressed(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(invitation_id): ApiPath<i64>,
+) -> Result<Json<RoomOut>, ApiError> {
+    let (room, role) = invitations::accept_addressed(&state, invitation_id, &user).await?;
+    Ok(Json(RoomOut::new(room, role)))
+}
+
+/// The home page's Decline: revokes the invitation, so nobody can use it any more.
+#[utoipa::path(
+    post,
+    path = "/api/invitations/{invitation_id}/decline",
+    params(("invitation_id" = i64, Path, description = "Invitation id")),
+    security(("cookie" = [])),
+    responses(
+        (status = 204, description = "The invitation is revoked"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No usable invitation with this id addressed to the caller's verified email", body = Detail),
+        (status = 422, description = "The invitation id is not a number", body = Detail),
+    )
+)]
+async fn decline_addressed(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(invitation_id): ApiPath<i64>,
+) -> Result<StatusCode, ApiError> {
+    invitations::decline(&state, invitation_id, &user).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Python's `actions._address` once `EmailStr` has accepted the address: the only address it

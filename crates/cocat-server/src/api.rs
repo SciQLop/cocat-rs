@@ -34,6 +34,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(legacy_room_users))
         .merge(crate::catalogues_api::router())
         .merge(crate::history_api::router())
+        .merge(crate::home_api::router())
         .merge(crate::groups_api::router())
         .merge(crate::invitations_api::router())
         .merge(crate::public_api::router())

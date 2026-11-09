@@ -19,9 +19,10 @@ use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::timeout;
+use uuid::Uuid;
 
 use crate::db::User;
-use crate::room::{ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
+use crate::room::{self, ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
 use crate::{AppState, auth, db, ui};
 
 pub const INTERNAL_ERROR: u16 = 1011;
@@ -91,6 +92,7 @@ async fn room_socket(
     let Some(session) = auth::request_token_hash(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    mark_seen(&state, &room_id, user.id).await;
     let mut response = upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
@@ -134,6 +136,14 @@ async fn lobby_role(
         .map_err(|error| server_failed(&error))?
         .ok_or(StatusCode::UNAUTHORIZED)?;
     Ok((user, role))
+}
+
+/// The home page counts others' changes from here. A failure costs only that count, so the
+/// socket is accepted anyway.
+async fn mark_seen(state: &AppState, room_id: &str, user: Uuid) {
+    if let Err(error) = db::touch_room_seen(&state.pool, user, room_id, room::now_ms()).await {
+        tracing::warn!(%error, room = %room_id, "cannot mark the project seen");
+    }
 }
 
 fn server_failed(error: &db::DbError) -> StatusCode {

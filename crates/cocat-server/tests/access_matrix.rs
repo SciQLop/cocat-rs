@@ -149,6 +149,7 @@ const ROWS: &[Row] = &[
     row("PATCH", "/users/{user}", Guard::Superuser, Style::Api),
     row("DELETE", "/users/{user}", Guard::Superuser, Style::Api),
     row("GET", "/api/me", Guard::SignedIn, Style::Api),
+    row("GET", "/api/me/home", Guard::SignedIn, Style::Api),
     row("GET", "/api/tokens", Guard::SignedIn, Style::Api),
     row("POST", "/api/sign-in-requests", Guard::Public, Style::Api),
     row(
@@ -487,6 +488,20 @@ const ROWS: &[Row] = &[
         Guard::SignedIn,
         Style::Api,
     ),
+    row(
+        "POST",
+        "/api/invitations/{invitation}/accept",
+        Guard::SignedIn,
+        Style::Api,
+    )
+    .tolerant(),
+    row(
+        "POST",
+        "/api/invitations/{invitation}/decline",
+        Guard::SignedIn,
+        Style::Api,
+    )
+    .tolerant(),
     row("GET", "/ui/", Guard::Public, Style::UiAction),
     row("GET", "/ui/help", Guard::Public, Style::UiPage),
     row("GET", "/ui/login", Guard::Public, Style::UiPage),

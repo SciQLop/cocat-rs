@@ -1,6 +1,6 @@
 //! The server's SQLite schema, applied by sqlx migrations, and the queries on it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
@@ -1056,6 +1056,35 @@ pub async fn is_public(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError
         .fetch_optional(pool)
         .await?;
     Ok(public.unwrap_or(false))
+}
+
+/// Records that `user` opened `room_id` at `seen_ms`.
+pub async fn touch_room_seen(
+    pool: &SqlitePool,
+    user: Uuid,
+    room_id: &str,
+    seen_ms: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO room_seen (user_id, room_id, seen_ms) VALUES (?, ?, ?)
+         ON CONFLICT (user_id, room_id) DO UPDATE SET seen_ms = excluded.seen_ms",
+    )
+    .bind(user.to_string())
+    .bind(room_id)
+    .bind(seen_ms)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// When `user` last opened each project they opened, by project.
+pub async fn rooms_seen(pool: &SqlitePool, user: Uuid) -> Result<HashMap<String, i64>, DbError> {
+    let rows: Vec<(String, i64)> =
+        sqlx::query_as("SELECT room_id, seen_ms FROM room_seen WHERE user_id = ?")
+            .bind(user.to_string())
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Refuses a database where a project that is not public has a public catalogue's id: it

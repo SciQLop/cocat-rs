@@ -140,6 +140,31 @@ pub async fn list(pool: &SqlitePool, author: Option<Uuid>) -> Result<Vec<Submiss
     .await?)
 }
 
+/// What waits for a curator, oldest first.
+pub async fn waiting(pool: &SqlitePool) -> Result<Vec<Submission>, DbError> {
+    Ok(sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} {FROM} WHERE submission.status = 'pending' ORDER BY submission.id"
+    )))
+    .fetch_all(pool)
+    .await?)
+}
+
+/// `author`'s submissions still pending, and those accepted or declined in the last 30
+/// days: pending first, then the newest.
+pub async fn recent(pool: &SqlitePool, author: Uuid) -> Result<Vec<Submission>, DbError> {
+    Ok(sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} {FROM}
+         WHERE submission.author = ?
+           AND (submission.status = 'pending'
+                OR (submission.status IN ('accepted', 'declined')
+                    AND submission.decided_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-30 days')))
+         ORDER BY submission.status != 'pending', submission.id DESC"
+    )))
+    .bind(author.to_string())
+    .fetch_all(pool)
+    .await?)
+}
+
 /// A curator's decision, or an author's withdrawal: only a pending submission takes one.
 pub struct Decision<'a> {
     pub status: &'static str,
