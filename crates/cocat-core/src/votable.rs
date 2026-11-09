@@ -509,6 +509,7 @@ fn read(xml: &str) -> Result<(String, Vec<Table>), VotableError> {
     let mut reader = Reader::from_str(xml);
     let mut description = String::new();
     let mut in_description = false;
+    let mut parents: Vec<String> = Vec::new();
     let mut cell: Option<String> = None;
     let mut row: Option<Vec<String>> = None;
     let mut table: Option<Table> = None;
@@ -516,20 +517,23 @@ fn read(xml: &str) -> Result<(String, Vec<Table>), VotableError> {
 
     loop {
         match reader.read_event().map_err(malformed)? {
-            Event::Start(element) => match element.name().as_ref() {
-                "DESCRIPTION" => in_description = true,
-                "TABLE" => {
-                    table = Some(Table::new(attribute(&element, "name").unwrap_or_default()));
-                }
-                "FIELD" | "PARAM" => {
-                    if let Some(table) = table.as_mut() {
-                        read_column(table, &element);
+            Event::Start(element) => {
+                match element.name().as_ref() {
+                    "DESCRIPTION" => in_description = describes_the_document(&parents),
+                    "TABLE" => {
+                        table = Some(Table::new(attribute(&element, "name").unwrap_or_default()));
                     }
+                    "FIELD" | "PARAM" => {
+                        if let Some(table) = table.as_mut() {
+                            read_column(table, &element);
+                        }
+                    }
+                    "TR" => row = Some(Vec::new()),
+                    "TD" => cell = Some(String::new()),
+                    _ => {}
                 }
-                "TR" => row = Some(Vec::new()),
-                "TD" => cell = Some(String::new()),
-                _ => {}
-            },
+                parents.push(element.name().as_ref().to_owned());
+            }
             Event::Empty(element) => {
                 if let Some(table) = table.as_mut() {
                     read_column(table, &element);
@@ -551,31 +555,43 @@ fn read(xml: &str) -> Result<(String, Vec<Table>), VotableError> {
                     &reference_text(&reference),
                 );
             }
-            Event::End(element) => match element.name().as_ref() {
-                "DESCRIPTION" => in_description = false,
-                "TD" => {
-                    if let (Some(done), Some(row)) = (cell.take(), row.as_mut()) {
-                        row.push(done.trim().to_owned());
+            Event::End(element) => {
+                parents.pop();
+                match element.name().as_ref() {
+                    "DESCRIPTION" => in_description = false,
+                    "TD" => {
+                        if let (Some(done), Some(row)) = (cell.take(), row.as_mut()) {
+                            row.push(done.trim().to_owned());
+                        }
                     }
-                }
-                "TR" => {
-                    if let (Some(done), Some(table)) = (row.take(), table.as_mut()) {
-                        table.rows.push(done);
+                    "TR" => {
+                        if let (Some(done), Some(table)) = (row.take(), table.as_mut()) {
+                            table.rows.push(done);
+                        }
                     }
-                }
-                "TABLE" => {
-                    if let Some(done) = table.take() {
-                        tables.push(done);
+                    "TABLE" => {
+                        if let Some(done) = table.take() {
+                            tables.push(done);
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             Event::Eof => break,
             _ => {}
         }
     }
 
     Ok((description, tables))
+}
+
+/// Only the document's own description (in `VOTABLE` or a `RESOURCE`) names the catalogue
+/// and its author; a table's, a column's or a parameter's describes only that.
+fn describes_the_document(parents: &[String]) -> bool {
+    matches!(
+        parents.last().map(String::as_str),
+        Some("VOTABLE" | "RESOURCE")
+    )
 }
 
 fn push_text(
@@ -1128,6 +1144,34 @@ mod tests {
             error.to_string(),
             "Export VOTable: not all value types are identical for all events for attribute a"
         );
+    }
+
+    #[test]
+    fn only_the_documents_description_names_the_catalogue() {
+        let xml = r#"<?xml version="1.0"?>
+<VOTABLE version="1.3">
+  <DESCRIPTION>Contact:a@x.org;Name:Shocks</DESCRIPTION>
+  <RESOURCE>
+    <TABLE name="t">
+      <DESCRIPTION>The shocks seen by ACE</DESCRIPTION>
+      <PARAM name="mission" datatype="char" arraysize="*" value="ACE">
+        <DESCRIPTION>Which spacecraft</DESCRIPTION>
+      </PARAM>
+      <FIELD name="Start Time" datatype="char" arraysize="*" xtype="dateTime">
+        <DESCRIPTION>Start of the shock</DESCRIPTION>
+      </FIELD>
+      <FIELD name="Stop Time" datatype="char" arraysize="*" xtype="dateTime"/>
+      <DATA><TABLEDATA>
+        <TR><TD>2025-01-31T10:00:00</TD><TD>2025-01-31T10:05:00</TD></TR>
+      </TABLEDATA></DATA>
+    </TABLE>
+  </RESOURCE>
+</VOTABLE>"#;
+
+        let imported = import(xml).expect("an import");
+
+        assert_eq!(imported.name.as_deref(), Some("Shocks"));
+        assert_eq!(imported.author.as_deref(), Some("a@x.org"));
     }
 
     #[test]
