@@ -2,6 +2,8 @@ from datetime import datetime
 from typing import Any, Literal
 
 Status = Literal["preliminary", "confirmed", "reviewed", "final", "rejected", "deleted"]
+# unauthorized: sign in again. no_access: this account is no longer in the project.
+Connection = Literal["offline", "connecting", "synced", "unauthorized", "no_access"]
 Vertex = tuple[datetime, float]
 
 class NotFound(LookupError, RuntimeError): ...
@@ -84,7 +86,7 @@ class Project:
     def open(cache_dir: str, project_id: str) -> Project: ...
     @staticmethod
     def at(url: str, cookie: str, project_id: str, version: int) -> Project: ...
-    status: str
+    status: Connection
     role: str | None
     read_only: bool
     def connect(

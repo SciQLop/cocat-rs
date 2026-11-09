@@ -8,6 +8,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::room::CloseReason;
 use cocat_core::role::Role;
 
 use crate::db::{self, DbError};
@@ -673,7 +674,10 @@ async fn granted_rooms(
 
 async fn revoke_pairs(state: &AppState, pairs: Vec<(String, Uuid)>) {
     for (room_id, user) in pairs {
-        state.rooms.revoke(&room_id, user).await;
+        state
+            .rooms
+            .revoke(&room_id, user, CloseReason::AccessChanged)
+            .await;
     }
 }
 

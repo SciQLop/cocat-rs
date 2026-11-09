@@ -43,6 +43,9 @@ pub enum Status {
     Synced,
     /// The server refused the session; the room will not retry until it is given a new cookie.
     Unauthorized,
+    /// The session is fine but the account is no longer in this project; the room will not
+    /// retry.
+    NoAccess,
 }
 
 #[derive(Debug, Error)]
@@ -63,6 +66,8 @@ pub enum RoomError {
     Observer,
     #[error("the server refused the session")]
     Unauthorized,
+    #[error("this account is no longer in the project")]
+    NoAccess,
     #[error("the room did not reach {0:?} in time")]
     TimedOut(Status),
     #[error("the room is not connected")]
@@ -216,8 +221,10 @@ impl StatusCell {
         let deadline = Instant::now() + timeout;
         let mut status = lock(&self.status);
         while *status != wanted {
-            if *status == Status::Unauthorized {
-                return Err(RoomError::Unauthorized);
+            match *status {
+                Status::Unauthorized => return Err(RoomError::Unauthorized),
+                Status::NoAccess => return Err(RoomError::NoAccess),
+                _ => {}
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {

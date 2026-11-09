@@ -304,8 +304,8 @@ async fn removed_from_group_mid_handshake_is_closed() {
             WsMessage::Close(frame) => {
                 assert_eq!(
                     frame.map(|frame| u16::from(frame.code)),
-                    Some(1008),
-                    "a socket whose group membership vanished before the attach must close 1008"
+                    Some(4403),
+                    "a socket whose group membership vanished before the attach must close 4403"
                 );
                 break;
             }

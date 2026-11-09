@@ -155,3 +155,33 @@ def test_a_promotion_while_connected_is_picked_up_with_credentials(
     assert not viewer.read_only
     viewer.create_catalogue(name="now an editor")
     viewer.close()
+
+
+def member_id(server, email):
+    members = cc.raw.members(server.url, server.cookie, server.project_id)
+    return next(m["user_id"] for m in members if m["email"] == email)
+
+
+def test_a_demotion_while_connected_makes_the_project_read_only(
+    server, shared, colleague
+):
+    assert not colleague.read_only
+    user_id = member_id(server, "colleague@example.org")
+
+    cc.raw.set_role(server.url, server.cookie, server.project_id, user_id, "viewer")
+
+    wait_until(lambda: colleague.role == "viewer")
+    assert colleague.read_only
+    wait_until(lambda: colleague.status == "synced")
+    with pytest.raises(RuntimeError, match=READ_ONLY):
+        colleague.create_catalogue(name="too late")
+
+
+def test_a_removed_member_has_no_access(server, shared, colleague):
+    user_id = member_id(server, "colleague@example.org")
+
+    cc.raw.remove_member(server.url, server.cookie, server.project_id, user_id)
+
+    wait_until(lambda: colleague.status == "no_access")
+    with pytest.raises(RuntimeError, match="no longer in the project"):
+        colleague.wait_synced(1)

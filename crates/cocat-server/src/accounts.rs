@@ -16,6 +16,7 @@ use crate::auth::{self, AuthError};
 use crate::db::{self, DbError, User};
 use crate::mail::{self, Mailer};
 use crate::password;
+use crate::room::CloseReason;
 
 /// The audiences that keep one kind of link from being spent as another.
 const VERIFY_AUDIENCE: &str = "cocat:verify";
@@ -231,8 +232,10 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
         )
         .await;
     }
-    if (was_active && !updated.is_active) || was_superuser != updated.is_superuser {
-        revoke_public(state, updated.id).await?;
+    if deactivated {
+        revoke_public(state, updated.id, CloseReason::SessionEnded).await?;
+    } else if was_superuser != updated.is_superuser {
+        revoke_public(state, updated.id, CloseReason::AccessChanged).await?;
     }
     if moved && let Some(mailer) = &state.mailer {
         send_verification(state, mailer, updated.id, &updated.email).await;
@@ -260,7 +263,7 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, AccountError> {
     let deleted = db::delete_user(&mut *tx, id).await?;
     tx.commit().await.map_err(DbError::from)?;
     revoke_sockets(state, id, rooms).await;
-    revoke_public(state, id).await?;
+    revoke_public(state, id, CloseReason::SessionEnded).await?;
     Ok(deleted)
 }
 
@@ -268,15 +271,22 @@ pub async fn delete(state: &AppState, id: Uuid) -> Result<bool, AccountError> {
 /// committed.
 async fn revoke_sockets(state: &AppState, id: Uuid, rooms: Vec<(db::RoomRow, Role)>) {
     for (room, _) in rooms {
-        state.rooms.revoke(&room.id, id).await;
+        state
+            .rooms
+            .revoke(&room.id, id, CloseReason::SessionEnded)
+            .await;
     }
 }
 
 /// Close the account's sockets on every public catalogue, once its role there changed: it
 /// became or stopped being a curator, or it can no longer sign in.
-pub(crate) async fn revoke_public(state: &AppState, id: Uuid) -> Result<(), DbError> {
+pub(crate) async fn revoke_public(
+    state: &AppState,
+    id: Uuid,
+    reason: CloseReason,
+) -> Result<(), DbError> {
     for room in db::public_rooms(&state.pool).await? {
-        state.rooms.revoke(&room.id, id).await;
+        state.rooms.revoke(&room.id, id, reason).await;
     }
     Ok(())
 }

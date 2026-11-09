@@ -18,3 +18,9 @@ pub const SUBPROTOCOL: &str = "cocat.v2";
 /// client knows before it writes whether the server would drop its changes. Older clients
 /// ignore it.
 pub const ROLE_HEADER: &str = "cocat-role";
+
+/// The websocket close code for "this account's access to the project changed": its role
+/// changed, it left the project, or the project went away. The session is still good, so a
+/// client reconnects at once and the handshake tells it what it may do now. `1008` stays the
+/// code for a session that ended.
+pub const ACCESS_CHANGED_CLOSE: u16 = 4403;

@@ -78,11 +78,14 @@ impl Default for StorageLimits {
     }
 }
 
-/// Why the room closed a socket. `1008` is a policy violation, `1013` means try again
-/// later, `1011` is the server failing on its side, and `4507` is the room's storage limit.
+/// Why the room closed a socket. `1008` is a policy violation (the session ended: sign in
+/// again), `1013` means try again later, `1011` is the server failing on its side, `4403`
+/// means the account's access to the project changed (reconnect to learn the new role), and
+/// `4507` is the room's storage limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
-    Revoked,
+    SessionEnded,
+    AccessChanged,
     TooSlow,
     OverBudget,
     TooLarge,
@@ -93,7 +96,8 @@ pub enum CloseReason {
 impl CloseReason {
     pub fn code(self) -> u16 {
         match self {
-            Self::Revoked => 1008,
+            Self::SessionEnded => 1008,
+            Self::AccessChanged => cocat_core::ACCESS_CHANGED_CLOSE,
             Self::TooLarge => 1009,
             Self::TooSlow | Self::OverBudget => 1013,
             Self::Full => 4507,
@@ -103,7 +107,8 @@ impl CloseReason {
 
     pub fn reason(self) -> &'static str {
         match self {
-            Self::Revoked => "access revoked",
+            Self::SessionEnded => "session ended",
+            Self::AccessChanged => "access changed",
             Self::TooSlow => "client too slow",
             Self::OverBudget => "server memory budget reached",
             Self::TooLarge => "message too large",
@@ -115,7 +120,8 @@ impl CloseReason {
     /// The label the metrics carry; fixed strings only, never a room id.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Revoked => "revoked",
+            Self::SessionEnded => "session_ended",
+            Self::AccessChanged => "access_changed",
             Self::TooSlow => "too_slow",
             Self::OverBudget => "over_budget",
             Self::TooLarge => "too_large",
@@ -326,7 +332,7 @@ impl RoomManager {
 
     /// Closes every socket this user has in the room, whatever their client ids. A room
     /// that is not open holds no sockets, so revoking there is a no-op.
-    pub async fn revoke(&self, room_id: &str, user: Uuid) {
+    pub async fn revoke(&self, room_id: &str, user: Uuid, reason: CloseReason) {
         let handle = match self.rooms.lock() {
             Ok(rooms) => rooms.get(room_id).cloned(),
             Err(_) => {
@@ -337,7 +343,7 @@ impl RoomManager {
         let Some(handle) = handle else {
             return;
         };
-        if handle.revoke(user).await.is_err() {
+        if handle.revoke(user, reason).await.is_err() {
             tracing::debug!(room = %room_id, "the room unloaded before the revoke");
         }
     }
@@ -717,10 +723,10 @@ impl RoomHandle {
     }
 
     /// Waits for the room thread to close every socket this user has here.
-    pub async fn revoke(&self, user: Uuid) -> Result<(), RoomGone> {
+    pub async fn revoke(&self, user: Uuid, reason: CloseReason) -> Result<(), RoomGone> {
         let (done, processed) = oneshot::channel();
         self.commands
-            .send(RoomCommand::Revoke { user, done })
+            .send(RoomCommand::Revoke { user, reason, done })
             .map_err(|_| RoomGone)?;
         let _ = processed.await;
         Ok(())
@@ -811,6 +817,7 @@ enum RoomCommand {
     },
     Revoke {
         user: Uuid,
+        reason: CloseReason,
         done: oneshot::Sender<()>,
     },
     Delete {
@@ -990,13 +997,13 @@ fn room_loop(
                             Step::Serving
                         }
                     }
-                    RoomCommand::Revoke { user, done } => {
-                        close_user(&mut clients, user, CloseReason::Revoked);
+                    RoomCommand::Revoke { user, reason, done } => {
+                        close_user(&mut clients, user, reason);
                         let _ = done.send(());
                         Step::Serving
                     }
                     RoomCommand::Delete { done } => {
-                        close_all(&mut clients, CloseReason::Revoked);
+                        close_all(&mut clients, CloseReason::AccessChanged);
                         Step::Delete(done)
                     }
                     RoomCommand::Flush { done } => {
@@ -1730,6 +1737,12 @@ mod tests {
     use cocat_core::store::sync_count;
 
     const WAIT: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn a_changed_access_and_an_ended_session_close_with_different_codes() {
+        assert_eq!(CloseReason::AccessChanged.code(), 4403);
+        assert_eq!(CloseReason::SessionEnded.code(), 1008);
+    }
 
     fn update_with(key: &str, value: &str) -> Vec<u8> {
         let doc = Doc::new();

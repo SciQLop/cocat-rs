@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::accounts::{self, AccountError, Change};
 use crate::db::{self, DbError, User};
+use crate::room::CloseReason;
 
 /// The largest quota an administrator may set, in MB (one terabyte).
 const MAX_QUOTA_MB: u64 = 1_048_576;
@@ -287,7 +288,7 @@ pub async fn set_curator(
     if !db::set_curator(&state.pool, user, curator).await? {
         return Err(AdminError::UnknownUser);
     }
-    accounts::revoke_public(state, user).await?;
+    accounts::revoke_public(state, user, CloseReason::AccessChanged).await?;
     Ok(())
 }
 
@@ -353,7 +354,10 @@ pub async fn set_room_owner(
     db::add_member(&state.pool, room, target.id, Role::Editor).await?;
     db::set_owner(&state.pool, room, target.id).await?;
     for changed in previous.into_iter().chain([target.id]) {
-        state.rooms.revoke(room, changed).await;
+        state
+            .rooms
+            .revoke(room, changed, CloseReason::AccessChanged)
+            .await;
     }
     Ok(())
 }

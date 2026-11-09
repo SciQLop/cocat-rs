@@ -152,23 +152,25 @@ restart.
 
 | Code | Meaning |
 |---|---|
-| 1008 | access revoked: the member was removed, their role changed, the project was deleted, the token the socket was opened with was revoked, or the role the handshake granted was no longer confirmed right after the socket attached |
+| 1008 | session ended: the token the socket was opened with was revoked, its password was reset, the account was deactivated or deleted, or it logged out. Sign in again |
+| 4403 | access changed: the member was removed or left, their role changed (directly, through a group, or as a curator), ownership moved, or the project was deleted. The session is still good: reconnect at once, and the handshake names the new role or refuses with 403 |
 | 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
 | 1013 | try again later: the client fell more than 1024 frames behind, or the project would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
-| 1011 | internal error while attaching the socket |
+| 1011 | internal error while attaching the socket, or the role could not be read again right after it attached |
 | 4507 | project storage limit reached: an update would take the project file and its history stamps past `COCAT_ROOM_MAX_MB` or its owner's quota |
 
 A handshake that does not offer the websocket subprotocol `cocat.v2` is refused before the
 upgrade with HTTP 426: it comes from a client of the first layout (see
-[Project layout v2](#project-layout-v2)). A handshake without a valid cookie or bearer token, or from a user who is
-not a member of the project, is refused before the upgrade with HTTP 403.
+[Project layout v2](#project-layout-v2)). A handshake without a valid cookie or bearer token is refused before the
+upgrade with HTTP 401 (sign in again); one from a signed-in user who is not a member of the
+project with HTTP 403.
 
 The upgrade answer (HTTP 101) carries a `cocat-role` header: `owner`, `editor` or `viewer`, the
 role the socket was admitted with. The server drops the updates of a viewer, so a client
 uses the header to refuse a viewer's edits before they reach its document, and to drop
 local changes a viewer's cache holds that the server never took (see the Python package's
 read-only projects). Clients that do not read it work as before. A role change closes the
-member's sockets with 1008, so the next handshake reports the new role.
+member's sockets with 4403, so the next handshake reports the new role.
 
 ## Catalogue API
 
@@ -222,7 +224,7 @@ A group has one owner and any number of members. A project is shared with a grou
 (`editor` or `viewer`), and the role a user holds on a project is the highest of their direct
 membership and every grant to a group they belong to. A grant can never be `owner`:
 ownership only exists as a direct membership. Losing a group, a membership or a grant closes
-the sockets that carried it (1008) immediately.
+the sockets that carried it (4403) immediately.
 
 | Route | Who | What |
 |---|---|---|
@@ -589,7 +591,7 @@ project = cocat_rs.Project.open("/tmp/cocat", "my-project")
 project.connect(url, credentials=("you@example.org", "secret"))
 project.wait_synced(10)
 
-print(project.status)                   # offline, connecting, synced, unauthorized
+print(project.status)                   # offline, connecting, synced, unauthorized, no_access
 print(project.role, project.read_only)  # "editor", False
 
 event = project.event("<a uuid>")
@@ -598,7 +600,7 @@ print(project.event_arrays([event], attributes=True))
 ```
 
 `connect` signs in with the credentials and keeps them, so the project signs in again by
-itself when the session expires or your role changes. A wrong password raises
+itself when the session expires. A wrong password raises
 `Unauthorized` right away. If you already have a session cookie (SciQLop gets one from the
 browser sign-in), pass it instead: `project.connect(url, cookie)`. Without credentials, a
 session the server drops leaves the project `unauthorized` until `set_cookie` gives it a
@@ -613,8 +615,14 @@ you (viewer)") before it touches the project, since the server would drop it. Wh
 connects with a cache holding changes the server never took (made before the role was known,
 or by cocat_rs 0.3.0), the cache is dropped and the project reloaded from the server, with one
 warning in the `cocat_client` log. Give each account its own cache folder (script mode does):
-the drop clears whatever that folder holds for the project. A role changed while connected closes the socket; with
-`credentials` the project signs in again and picks up the new role.
+the drop clears whatever that folder holds for the project.
+
+When an owner changes your role while you are connected, the project reconnects at once and
+picks up the new role: `role` and `read_only` follow, and a project that became read-only drops
+the changes the server never took, as above. Two statuses mean the project stopped for good:
+`unauthorized` means your session is gone, so sign in again; `no_access` means you are no
+longer in this project (you were removed, or it was deleted), and signing in again will not
+help.
 
 Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made

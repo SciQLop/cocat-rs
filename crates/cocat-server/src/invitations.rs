@@ -15,6 +15,7 @@ use crate::AppState;
 use crate::db::{self, RoomRow};
 use crate::lifecycle::{LifecycleError, require_sharer};
 use crate::mail::{self, Mailer};
+use crate::room::CloseReason;
 
 /// One predicate, used by preview, accept, consume and list: an invitation nobody revoked,
 /// that has not expired, and that still has a use left. It is the only text these queries
@@ -205,7 +206,10 @@ pub async fn accept(
         }
     };
     tx.commit().await?;
-    state.rooms.revoke(&room_id, user.id).await;
+    state
+        .rooms
+        .revoke(&room_id, user.id, CloseReason::AccessChanged)
+        .await;
     Ok((
         RoomRow {
             id: room_id,

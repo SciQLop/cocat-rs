@@ -30,10 +30,11 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
-/// Keeps one room connected until the server refuses the session.
+/// Keeps one room connected until the server refuses the session or the project.
 ///
 /// A refusal with credentials logs in once and tries again; a refusal of the cookie that
-/// login just gave, or a failed login, is final.
+/// login just gave, or a failed login, is final. A changed access reconnects at once, to
+/// learn the new role, and a project the account left is final.
 pub(crate) async fn run(
     inner: Arc<Inner>,
     url: Url,
@@ -44,7 +45,10 @@ pub(crate) async fn run(
     let mut fresh_login = false;
     loop {
         inner.status.set(Status::Connecting);
-        match session(&inner, &url, &cookie).await {
+        let ending = session(&inner, &url, &cookie).await;
+        // No socket, so nothing can be sent: a local edit belongs to the handshake diff.
+        inner.online.store(false, Ordering::Relaxed);
+        match ending {
             Ending::Refused => {
                 let Some(credentials) = &credentials else {
                     inner.status.set(Status::Unauthorized);
@@ -67,7 +71,18 @@ pub(crate) async fn run(
                     }
                 }
             }
-            Ending::Lost { synced } => {
+            Ending::NoAccess => {
+                inner.status.set(Status::NoAccess);
+                return;
+            }
+            // Only after a synced session: one closed before it synced could be a server
+            // that keeps closing, and that is what the backoff is for.
+            Ending::AccessChanged { synced: true } => {
+                backoff = INITIAL_BACKOFF;
+                fresh_login = false;
+                continue;
+            }
+            Ending::AccessChanged { synced } | Ending::Lost { synced } => {
                 if synced {
                     backoff = INITIAL_BACKOFF;
                     // The cookie opened a session, so a refusal from now on is news.
@@ -75,8 +90,6 @@ pub(crate) async fn run(
                 }
             }
         }
-        // No socket, so nothing can be sent: a local edit belongs to the handshake diff.
-        inner.online.store(false, Ordering::Relaxed);
         // The status says "connecting" through the wait: a caller waiting for a reconnect
         // should not see the room look offline while the backoff runs.
         inner.status.set(Status::Connecting);
@@ -121,6 +134,10 @@ fn http_base(url: &Url) -> Option<Url> {
 enum Ending {
     /// The server will not accept this cookie; retrying would only hammer it.
     Refused,
+    /// The session is good but the account is not in this project.
+    NoAccess,
+    /// The server closed the socket because the account's role or membership changed.
+    AccessChanged { synced: bool },
     /// The connection closed or broke; `synced` says whether it had got as far as exchanging
     /// state, which decides whether the backoff starts over.
     Lost { synced: bool },
@@ -134,8 +151,11 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
         Ok((socket, response)) => (socket, announced_role(&response)),
         Err(SocketError::Http(response)) => {
             let status = response.status();
-            if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            if status == StatusCode::UNAUTHORIZED {
                 return Ending::Refused;
+            }
+            if status == StatusCode::FORBIDDEN {
+                return Ending::NoAccess;
             }
             tracing::warn!(%status, "the server refused the websocket handshake");
             return Ending::Lost { synced: false };
@@ -188,12 +208,7 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                         }
                     }
                     Ok(Frame::Close(close)) => {
-                        return if close.as_ref().map(|frame| frame.code) == Some(CloseCode::Policy)
-                        {
-                            Ending::Refused
-                        } else {
-                            Ending::Lost { synced }
-                        };
+                        return closed(close.map(|frame| frame.code), synced);
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -220,6 +235,16 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                 }
             }
         }
+    }
+}
+
+/// How a close frame ends the session: `1008` is a session the server ended, the access
+/// code a role or membership that changed, anything else a connection to retry.
+fn closed(code: Option<CloseCode>, synced: bool) -> Ending {
+    match code.map(u16::from) {
+        Some(code) if code == u16::from(CloseCode::Policy) => Ending::Refused,
+        Some(cocat_core::ACCESS_CHANGED_CLOSE) => Ending::AccessChanged { synced },
+        _ => Ending::Lost { synced },
     }
 }
 

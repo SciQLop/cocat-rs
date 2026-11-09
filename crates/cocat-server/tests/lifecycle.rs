@@ -197,7 +197,7 @@ fn content(payload: &[u8], key: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn removed_member_is_closed_1008_and_refused_403_on_reconnect() {
+async fn removed_member_is_closed_4403_and_refused_403_on_reconnect() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     fixture.room("room-kick", owner).await;
@@ -211,7 +211,7 @@ async fn removed_member_is_closed_1008_and_refused_403_on_reconnect() {
         .await
         .unwrap();
 
-    expect_close(&mut socket, 1008).await;
+    expect_close(&mut socket, 4403).await;
     let refused = fixture
         .handshake("room-kick", Some(&fixture.token(editor).await))
         .await
@@ -243,8 +243,8 @@ async fn delete_room_closes_every_member_and_removes_the_file() {
         .await
         .unwrap();
 
-    expect_close(&mut owner_socket, 1008).await;
-    expect_close(&mut editor_socket, 1008).await;
+    expect_close(&mut owner_socket, 4403).await;
+    expect_close(&mut editor_socket, 4403).await;
     assert!(!path.exists(), "the deleted room left its file behind");
     assert_eq!(fixture.state.rooms.open_rooms(), 0);
     let remaining = db::role_in(&fixture.state.pool, "room-gone", editor)
@@ -268,7 +268,7 @@ async fn downgrading_a_member_closes_their_socket_and_the_next_one_is_read_only(
         .await
         .unwrap();
 
-    expect_close(&mut socket, 1008).await;
+    expect_close(&mut socket, 4403).await;
 
     let mut viewer = fixture.connect("room-down", editor).await;
     join(&mut viewer).await;
@@ -306,7 +306,7 @@ async fn changing_a_role_does_not_close_other_members() {
         .await
         .unwrap();
 
-    expect_close(&mut first_socket, 1008).await;
+    expect_close(&mut first_socket, 4403).await;
     second_socket
         .send(update_frame(&update_with("key", "value")))
         .await
@@ -397,7 +397,7 @@ async fn a_kick_does_not_reach_the_same_user_in_another_room() {
         .await
         .unwrap();
 
-    expect_close(&mut first, 1008).await;
+    expect_close(&mut first, 4403).await;
     second
         .send(update_frame(&update_with("key", "value")))
         .await
@@ -425,7 +425,7 @@ async fn transferring_ownership_kicks_the_new_owner() {
         .await
         .unwrap();
 
-    expect_close(&mut editor_socket, 1008).await;
+    expect_close(&mut editor_socket, 4403).await;
     owner_socket
         .send(update_frame(&update_with("key", "value")))
         .await
@@ -495,7 +495,7 @@ async fn a_member_can_leave() {
         .await
         .unwrap();
 
-    expect_close(&mut socket, 1008).await;
+    expect_close(&mut socket, 4403).await;
     let gone = db::role_in(&fixture.state.pool, "room-leave", viewer)
         .await
         .unwrap();

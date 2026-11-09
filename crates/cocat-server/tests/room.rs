@@ -416,14 +416,16 @@ async fn revoke_closes_only_that_users_clients() {
         next(inbox).await;
     }
 
-    manager.revoke("room-revoke", revoked).await;
+    manager
+        .revoke("room-revoke", revoked, CloseReason::AccessChanged)
+        .await;
 
     for inbox in [&mut first, &mut second] {
         let reason = timeout(WAIT, &mut inbox.close)
             .await
             .expect("the room never closed a revoked client")
             .expect("the room dropped the close signal");
-        assert_eq!(reason, CloseReason::Revoked);
+        assert_eq!(reason, CloseReason::AccessChanged);
     }
     room.frame(3, update_frame(&update_with("key", "value")));
     assert!(matches!(
@@ -437,7 +439,9 @@ async fn revoke_closes_only_that_users_clients() {
 async fn revoke_on_a_closed_room_is_a_no_op() {
     let (dir, manager) = manager();
 
-    manager.revoke("room-closed", Uuid::new_v4()).await;
+    manager
+        .revoke("room-closed", Uuid::new_v4(), CloseReason::AccessChanged)
+        .await;
 
     assert_eq!(manager.open_rooms(), 0);
     assert!(!dir.path().join("room-closed.y").exists());
@@ -461,7 +465,7 @@ async fn a_deleted_room_does_not_resurrect_its_file() {
         .await
         .expect("the room never closed the deleted client")
         .expect("the room dropped the close signal");
-    assert_eq!(reason, CloseReason::Revoked);
+    assert_eq!(reason, CloseReason::AccessChanged);
 
     let reopened = manager.get_or_open("room-delete").unwrap();
     let mut viewer = attach(&reopened, 2, Role::Viewer);

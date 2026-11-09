@@ -85,11 +85,11 @@ async fn room_socket(
         return old_client();
     }
     let (user, role) = match lobby_role(&state, &room_id, &headers).await {
-        Some(admitted) => admitted,
-        None => return StatusCode::FORBIDDEN.into_response(),
+        Ok(admitted) => admitted,
+        Err(refusal) => return refusal.into_response(),
     };
     let Some(session) = auth::request_token_hash(&headers) else {
-        return StatusCode::FORBIDDEN.into_response();
+        return StatusCode::UNAUTHORIZED.into_response();
     };
     let mut response = upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
@@ -113,11 +113,32 @@ fn old_client() -> Response {
         .into_response()
 }
 
-async fn lobby_role(state: &AppState, room_id: &str, headers: &HeaderMap) -> Option<(User, Role)> {
-    let id = auth::authenticate(&state.pool, headers).await.ok()?;
-    let role = db::role_in(&state.pool, room_id, id).await.ok()??;
-    let user = db::user_by_id(&state.pool, id).await.ok()??;
-    Some((user, role))
+/// The account and its role, or the refusal a client can act on: 401 means the session is
+/// gone (sign in again), 403 that the account has no place in this project.
+async fn lobby_role(
+    state: &AppState,
+    room_id: &str,
+    headers: &HeaderMap,
+) -> Result<(User, Role), StatusCode> {
+    let id = match auth::authenticate(&state.pool, headers).await {
+        Ok(id) => id,
+        Err(auth::AuthError::Db(error)) => return Err(server_failed(&error)),
+        Err(_) => return Err(StatusCode::UNAUTHORIZED),
+    };
+    let role = db::role_in(&state.pool, room_id, id)
+        .await
+        .map_err(|error| server_failed(&error))?
+        .ok_or(StatusCode::FORBIDDEN)?;
+    let user = db::user_by_id(&state.pool, id)
+        .await
+        .map_err(|error| server_failed(&error))?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    Ok((user, role))
+}
+
+fn server_failed(error: &db::DbError) -> StatusCode {
+    tracing::warn!(%error, "cannot read who may open the room");
+    StatusCode::INTERNAL_SERVER_ERROR
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -164,16 +185,7 @@ async fn bridge(
         }
     };
 
-    // The room only knows the role the handshake granted; a revocation can land while the
-    // socket is being attached. A role that cannot be re-read is not trusted either.
-    let close_now = match db::role_in(&state.pool, &room_id, user.id).await {
-        Ok(Some(current)) if current == role && session_alive(&state, &session).await => None,
-        Ok(_) => Some(CloseReason::Revoked),
-        Err(error) => {
-            tracing::warn!(%error, room = %room_id, "cannot re-read the role after the attach");
-            Some(CloseReason::Revoked)
-        }
-    };
+    let close_now = recheck_after_attach(&state, &room_id, user.id, role, &session).await;
 
     crate::telemetry::ws_connected(1);
     let (mut sink, mut stream) = socket.split();
@@ -211,7 +223,7 @@ async fn bridge(
             },
             ended = ended_sessions.recv() => {
                 if this_session_ended(&state, &session, ended).await {
-                    let _ = close_request.send(CloseReason::Revoked);
+                    let _ = close_request.send(CloseReason::SessionEnded);
                     break;
                 }
             }
@@ -228,6 +240,29 @@ async fn bridge(
     if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
         let _ = writer.await;
+    }
+}
+
+/// The room only knows the role the handshake granted; a revocation can land while the
+/// socket is being attached. A role that cannot be re-read is not trusted either, but that is
+/// the server failing, so the client retries with a backoff instead of reconnecting at once.
+async fn recheck_after_attach(
+    state: &AppState,
+    room_id: &str,
+    user: uuid::Uuid,
+    role: Role,
+    session: &str,
+) -> Option<CloseReason> {
+    if !session_alive(state, session).await {
+        return Some(CloseReason::SessionEnded);
+    }
+    match db::role_in(&state.pool, room_id, user).await {
+        Ok(current) if current == Some(role) => None,
+        Ok(_) => Some(CloseReason::AccessChanged),
+        Err(error) => {
+            tracing::warn!(%error, room = %room_id, "cannot re-read the role after the attach");
+            Some(CloseReason::Failed)
+        }
     }
 }
 
@@ -375,7 +410,12 @@ pub async fn check_roles(state: &AppState) {
     for (room_id, user, role) in sockets {
         match db::role_in(&state.pool, &room_id, user).await {
             Ok(current) if current == Some(role) => {}
-            Ok(_) => state.rooms.revoke(&room_id, user).await,
+            Ok(_) => {
+                state
+                    .rooms
+                    .revoke(&room_id, user, CloseReason::AccessChanged)
+                    .await
+            }
             Err(error) => tracing::warn!(%error, room = %room_id, "cannot re-read a role"),
         }
     }

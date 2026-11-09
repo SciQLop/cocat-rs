@@ -307,7 +307,7 @@ async fn deleting_a_user_revokes_group_rooms() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the room closed the socket of the deleted account");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::SessionEnded));
 }
 
 #[tokio::test]
@@ -331,5 +331,5 @@ async fn a_room_joined_just_before_the_account_delete_is_revoked() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the delete must revoke a room it found in the same transaction");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::SessionEnded));
 }

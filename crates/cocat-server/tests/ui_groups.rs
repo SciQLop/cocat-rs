@@ -226,7 +226,7 @@ async fn remove_closes_sockets_in_shared_rooms() {
     let closed = tokio::time::timeout(Duration::from_secs(5), &mut inbox.close)
         .await
         .expect("the removal closed the socket the group carried");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
     assert_eq!(
         db::role_in(&fixture.state.pool, &room, member)
             .await

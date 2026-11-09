@@ -558,7 +558,7 @@ async fn the_socket_names_the_role_and_a_curator_unmarked_is_cut_off() {
     assert_eq!(answer.headers()[cocat_core::ROLE_HEADER], "viewer");
     match connect_async(request(None)).await {
         Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
-            assert_eq!(response.status().as_u16(), 403)
+            assert_eq!(response.status().as_u16(), 401)
         }
         other => panic!("an anonymous socket was not refused: {other:?}"),
     }
@@ -597,7 +597,7 @@ async fn the_socket_names_the_role_and_a_curator_unmarked_is_cut_off() {
             other => panic!("expected a close, got {other:?}"),
         }
     };
-    assert_eq!(close.map(|frame| u16::from(frame.code)), Some(1008));
+    assert_eq!(close.map(|frame| u16::from(frame.code)), Some(4403));
 }
 
 #[tokio::test]
@@ -809,5 +809,5 @@ async fn a_curator_unmarked_from_the_command_line_is_cut_off_at_the_next_role_ch
             other => panic!("expected a close, got {other:?}"),
         }
     };
-    assert_eq!(close.map(|frame| u16::from(frame.code)), Some(1008));
+    assert_eq!(close.map(|frame| u16::from(frame.code)), Some(4403));
 }

@@ -50,6 +50,7 @@ pub struct Server {
     pub logins: Arc<AtomicUsize>,
     dir: TempDir,
     rooms_dir: PathBuf,
+    state: Option<AppState>,
     stop: Option<oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -66,6 +67,7 @@ impl Server {
             logins: Arc::new(AtomicUsize::new(0)),
             dir,
             rooms_dir,
+            state: None,
             stop: None,
             thread: None,
         };
@@ -75,6 +77,11 @@ impl Server {
 
     pub fn url(&self) -> String {
         format!("http://{}", self.addr)
+    }
+
+    /// What the running server's routes act on, for calls that close its sockets.
+    pub fn state(&self) -> &AppState {
+        self.state.as_ref().expect("the server is serving")
     }
 
     /// Stops the server, waiting until its port and its sockets are gone.
@@ -109,6 +116,7 @@ impl Server {
             oidc: Vec::new(),
             web_dir: None,
         };
+        self.state = Some(state.clone());
         let (ready, listening) = std::sync::mpsc::channel();
         let logins = Arc::clone(&self.logins);
         let thread = std::thread::spawn(move || {
@@ -154,7 +162,8 @@ impl Drop for Server {
     }
 }
 
-/// Answers every websocket handshake with 403 and counts the attempts.
+/// Answers every websocket handshake with 401, a session the server does not know, and
+/// counts the attempts.
 pub struct Refuser {
     pub addr: SocketAddr,
     pub hits: Arc<AtomicUsize>,
@@ -171,7 +180,7 @@ impl Refuser {
                 let counter = counter.clone();
                 async move {
                     counter.fetch_add(1, Ordering::SeqCst);
-                    StatusCode::FORBIDDEN
+                    StatusCode::UNAUTHORIZED
                 }
             }),
         );

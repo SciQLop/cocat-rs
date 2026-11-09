@@ -78,7 +78,7 @@ enum Guard {
 enum Style {
     /// JSON route: 401, 403 or 404 when refused, never 401/403/404 when admitted.
     Api,
-    /// The websocket handshake: 403 when refused.
+    /// The websocket handshake: 401 without a session, 403 when the account has no role.
     Ws,
     /// A rendered page: 200 when admitted, 404 or a login redirect when refused.
     UiPage,
@@ -1422,6 +1422,7 @@ fn check(
                     },
                 "the row's refusal",
             ),
+            Style::Ws if !caps.signed_in => expect(status == StatusCode::UNAUTHORIZED, "401"),
             Style::Ws => expect(status == StatusCode::FORBIDDEN, "403"),
             Style::UiPage | Style::UiAction | Style::UiMoved if !caps.signed_in => expect(
                 matches!(
@@ -1446,7 +1447,10 @@ fn check(
             ),
             "not 401/403/404",
         ),
-        Style::Ws => expect(status != StatusCode::FORBIDDEN, "an accepted handshake"),
+        Style::Ws => expect(
+            !matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+            "an accepted handshake",
+        ),
         Style::UiPage => expect(status == StatusCode::OK, "200"),
         Style::UiAction | Style::UiMoved => expect(
             status.is_success() || status.is_redirection(),

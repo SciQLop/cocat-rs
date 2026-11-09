@@ -152,7 +152,7 @@ class Client:
         try:
             project.wait_synced(OPEN_TIMEOUT)
         except RuntimeError:
-            if project.status != "unauthorized":
+            if project.status not in ("unauthorized", "no_access"):
                 warnings.warn(
                     f"Could not reach {self.server}: working on the local copy, "
                     "it syncs when the server answers.",
@@ -160,7 +160,7 @@ class Client:
                 )
                 return project
             project.close()
-            # The server refuses a stale session and a stranger alike: ask which one this is.
+            # A stale session raises here; otherwise the account is not in the project.
             self.account_id(fresh=True)
             raise _forbidden(
                 f"You cannot open {project_id!r} on {self.server}: "

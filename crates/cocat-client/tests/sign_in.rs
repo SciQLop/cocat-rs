@@ -38,7 +38,7 @@ async fn bearer_only() -> (String, Arc<Mutex<Option<String>>>) {
             "/room/{room_id}",
             get(move |headers: HeaderMap| async move {
                 *kept.lock().unwrap() = bearer(&headers);
-                StatusCode::FORBIDDEN
+                StatusCode::UNAUTHORIZED
             }),
         );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

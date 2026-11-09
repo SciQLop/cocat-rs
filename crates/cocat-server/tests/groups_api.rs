@@ -376,7 +376,7 @@ async fn owner_removes_member_and_their_sockets_close() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the room closed the socket of the member who left");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
     assert_eq!(members_of(&fixture.pool, &id).await, 1);
 }
 
@@ -412,7 +412,7 @@ async fn delete_group_revokes_every_member_in_every_room() {
         let closed = timeout(WAIT, &mut inbox.close)
             .await
             .expect("the room closed the socket of a member of the deleted group");
-        assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+        assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
     }
     let grants: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM room_group")
         .fetch_one(&fixture.pool)
@@ -454,7 +454,7 @@ async fn a_member_joined_just_before_the_delete_is_revoked() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the delete must revoke a member it found in the same transaction");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
 }
 
 #[tokio::test]
@@ -602,7 +602,7 @@ async fn changing_a_grant_revokes_the_group_in_that_room() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the room closed a socket that carried the old grant");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
     let (status, body) = fixture.get("/api/rooms", Some(bob)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body[0]["role"], "viewer");
@@ -631,7 +631,7 @@ async fn ungrant_revokes() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the room closed a socket whose grant was removed");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
     let (_, body) = fixture.get("/api/rooms", Some(bob)).await;
     assert_eq!(body, json!([]));
 }
@@ -760,7 +760,7 @@ async fn accept_joins_as_member() {
     let closed = timeout(WAIT, &mut inbox.close)
         .await
         .expect("the rooms the group carries revoke the new member");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
 }
 
 #[tokio::test]

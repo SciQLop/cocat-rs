@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+import cocat_rs as cc
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -247,3 +249,20 @@ def _has_event(project, uuid):
     except LookupError:
         return False
     return True
+
+
+async def test_a_listener_hears_that_the_project_is_gone(server, colleague):
+    recorder = Recorder()
+    handle = colleague.listen(recorder)
+    try:
+        await until(lambda: ("status", "synced") in recorder.calls)
+        members = cc.raw.members(server.url, server.cookie, server.project_id)
+        user_id = next(
+            m["user_id"] for m in members if m["email"] == "colleague@example.org"
+        )
+
+        cc.raw.remove_member(server.url, server.cookie, server.project_id, user_id)
+
+        await until(lambda: ("status", "no_access") in recorder.calls)
+    finally:
+        handle.close()

@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::db::{self, DbError, RoomRow};
+use crate::room::CloseReason;
 
 const OWNER_KEEPS_OWNER_ROLE: &str = "The owner keeps the owner role";
 const OWNER_CANNOT_LEAVE: &str = "The owner cannot leave or be removed";
@@ -162,7 +163,10 @@ pub async fn set_member_role(
     if !db::set_role(&state.pool, room_id, member, role).await? {
         return Err(not_a_member(room_id, member));
     }
-    state.rooms.revoke(room_id, member).await;
+    state
+        .rooms
+        .revoke(room_id, member, CloseReason::AccessChanged)
+        .await;
     Ok(())
 }
 
@@ -181,7 +185,10 @@ pub async fn remove_member(
     if !db::remove_member(&state.pool, room_id, member).await? {
         return Err(not_a_member(room_id, member));
     }
-    state.rooms.revoke(room_id, member).await;
+    state
+        .rooms
+        .revoke(room_id, member, CloseReason::AccessChanged)
+        .await;
     Ok(())
 }
 
@@ -196,7 +203,10 @@ pub async fn transfer_ownership(
     require_role(state, room_id, actor, Role::Owner).await?;
     member_role(state, room_id, new_owner).await?;
     db::set_owner(&state.pool, room_id, new_owner).await?;
-    state.rooms.revoke(room_id, new_owner).await;
+    state
+        .rooms
+        .revoke(room_id, new_owner, CloseReason::AccessChanged)
+        .await;
     Ok(())
 }
 

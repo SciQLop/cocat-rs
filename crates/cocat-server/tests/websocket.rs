@@ -227,12 +227,12 @@ fn content(doc: &Doc, key: &str) -> Option<String> {
 }
 
 #[tokio::test]
-async fn an_anonymous_handshake_is_refused_with_403() {
+async fn an_anonymous_handshake_is_refused_with_401() {
     let fixture = Fixture::start().await;
 
     let status = fixture.handshake("room-anonymous", None).await.err();
 
-    assert_eq!(status, Some(403));
+    assert_eq!(status, Some(401));
 }
 
 #[tokio::test]
@@ -532,8 +532,8 @@ async fn a_downgrade_between_handshake_and_attach_is_honoured() {
             WsMessage::Close(frame) => {
                 assert_eq!(
                     frame.map(|frame| u16::from(frame.code)),
-                    Some(1008),
-                    "a socket whose role changed before the attach must close 1008"
+                    Some(4403),
+                    "a socket whose role changed before the attach must close 4403"
                 );
                 break;
             }
@@ -618,7 +618,7 @@ async fn deleting_over_http_closes_the_sockets_and_the_file() {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     loop {
         if let WsMessage::Close(frame) = next_ws(&mut socket).await {
-            assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(1008));
+            assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(4403));
             break;
         }
     }
@@ -656,7 +656,7 @@ async fn accepting_a_higher_invitation_closes_the_old_socket() {
 
     loop {
         if let WsMessage::Close(frame) = next_ws(&mut socket).await {
-            assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(1008));
+            assert_eq!(frame.map(|frame| u16::from(frame.code)), Some(4403));
             break;
         }
     }
@@ -745,8 +745,8 @@ async fn deleting_a_user_refuses_the_next_handshake() {
     );
     assert_eq!(
         fixture.handshake("room-a", Some(&victim_token)).await.err(),
-        Some(403),
-        "a deleted account cannot join a room it no longer belongs to"
+        Some(401),
+        "a deleted account's session is gone: sign in again"
     );
 }
 
@@ -798,7 +798,7 @@ async fn deactivating_a_user_closes_their_sockets() {
             .handshake("room-a", Some(&fixture.token(victim).await))
             .await
             .err(),
-        Some(403),
+        Some(401),
         "the deactivated account cannot reconnect"
     );
     wait_for_unload(&fixture).await;
@@ -1029,7 +1029,7 @@ async fn a_bearer_token_opens_a_socket() {
         shake(bearer_request(&fixture, "room-bearer", "not-a-token"))
             .await
             .err(),
-        Some(403)
+        Some(401)
     );
 }
 

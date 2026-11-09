@@ -32,6 +32,24 @@ impl Status {
     }
 }
 
+/// What the page does once its socket closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterClose {
+    /// Try again after the backoff.
+    Reconnect,
+    /// The account's role or membership changed: the server renders the page again with the
+    /// new role, or says the project is gone.
+    Reload,
+}
+
+pub fn after_close(code: u16) -> AfterClose {
+    if code == cocat_core::ACCESS_CHANGED_CLOSE {
+        AfterClose::Reload
+    } else {
+        AfterClose::Reconnect
+    }
+}
+
 /// The waits between reconnections: one second, doubling up to thirty.
 #[derive(Debug)]
 pub struct Backoff {
@@ -128,6 +146,16 @@ mod tests {
 
     fn seconds(backoff: &mut Backoff, count: usize) -> Vec<u64> {
         (0..count).map(|_| backoff.next_delay().as_secs()).collect()
+    }
+
+    #[test]
+    fn a_changed_access_reloads_the_page_and_anything_else_reconnects() {
+        assert_eq!(
+            after_close(cocat_core::ACCESS_CHANGED_CLOSE),
+            AfterClose::Reload
+        );
+        assert_eq!(after_close(1008), AfterClose::Reconnect);
+        assert_eq!(after_close(1006), AfterClose::Reconnect);
     }
 
     #[test]

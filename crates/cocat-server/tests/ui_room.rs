@@ -256,7 +256,7 @@ async fn change_role_closes_their_socket() {
     let closed = tokio::time::timeout(Duration::from_secs(5), &mut inbox.close)
         .await
         .expect("the room closed the socket of the member whose role changed");
-    assert_eq!(closed.ok(), Some(CloseReason::Revoked));
+    assert_eq!(closed.ok(), Some(CloseReason::AccessChanged));
     assert_eq!(
         db::role_in(&fixture.state.pool, &id, member).await.unwrap(),
         Some(Role::Viewer)

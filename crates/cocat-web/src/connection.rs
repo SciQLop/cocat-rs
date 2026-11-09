@@ -8,18 +8,20 @@ use js_sys::{ArrayBuffer, Uint8Array};
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
-use web_sys::{BinaryType, MessageEvent, WebSocket};
+use web_sys::{BinaryType, CloseEvent, MessageEvent, WebSocket};
 use yrs::TransactionAcqError;
 
 use crate::presence::Presence;
 use crate::session::login_url;
 use crate::state::Room;
-use crate::sync::{Backoff, Status, hello, is_remote, receive, update_frame};
+use crate::sync::{
+    AfterClose, Backoff, Status, after_close, hello, is_remote, receive, update_frame,
+};
 
 struct Handlers {
     open: Closure<dyn FnMut()>,
     message: Closure<dyn FnMut(MessageEvent)>,
-    close: Closure<dyn FnMut()>,
+    close: Closure<dyn FnMut(CloseEvent)>,
 }
 
 struct Link {
@@ -86,9 +88,15 @@ fn handlers(link: &Weak<Link>) -> Handlers {
                 link.receive(&event);
             }
         }),
-        close: Closure::new(move || {
-            if let Some(link) = close.upgrade() {
-                link.closed();
+        close: Closure::new(move |event: CloseEvent| {
+            let Some(link) = close.upgrade() else {
+                return;
+            };
+            match after_close(event.code()) {
+                AfterClose::Reload => {
+                    let _ = window().location().reload();
+                }
+                AfterClose::Reconnect => link.closed(),
             }
         }),
     }
