@@ -150,6 +150,22 @@ pub fn rule_query(
     Some((print(&predicate, catalogues)?, source))
 }
 
+/// A rule's query as one search of all events, its source catalogue written as a
+/// `catalogue:` clause, or `None` when the rule has no query form.
+pub fn rule_search(rule: &Value, catalogues: &[(String, String)]) -> Option<String> {
+    let Ok(Set::Filter { filter, predicate }) = rules::parse(rule) else {
+        return None;
+    };
+    let predicate = match *filter {
+        Set::All { .. } => predicate,
+        Set::Catalogue { catalogue } => {
+            Predicate::And(vec![Predicate::InCatalogue(Some(catalogue)), predicate])
+        }
+        _ => return None,
+    };
+    print(&canonical(predicate), catalogues)
+}
+
 /// The rule that searches `source` (`None`: all events) with `predicate`.
 pub fn rule(predicate: &Predicate, source: Option<&str>) -> Value {
     let filter = match source {

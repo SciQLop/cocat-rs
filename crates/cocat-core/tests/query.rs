@@ -455,3 +455,27 @@ fn every_field_has_a_kind_and_attributes_are_attributes() {
         }
     }
 }
+
+#[test]
+fn a_search_rule_reads_as_one_search_of_all_events() {
+    let all = json!({"filter": {"all": true}, "where": {"contains": ["tags", "x"]}});
+    assert_eq!(
+        query::rule_search(&all, &catalogues()),
+        Some("tag:x".to_owned())
+    );
+    let within =
+        json!({"filter": {"catalogue": SHOCKS}, "where": {"or": [{"text": "y"}, {"text": "z"}]}});
+    let text = query::rule_search(&within, &catalogues());
+    assert_eq!(text.as_deref(), Some(r#"catalogue:"Bow shocks" (y OR z)"#));
+    let merged = json!({"merge": {"all": true}, "gap": 1});
+    assert_eq!(query::rule_search(&merged, &catalogues()), None);
+}
+
+#[test]
+fn a_search_rule_with_nothing_but_its_source_reads_as_that_catalogue() {
+    let within = json!({"filter": {"catalogue": SHOCKS}, "where": {"and": []}});
+    assert_eq!(
+        query::rule_search(&within, &catalogues()).as_deref(),
+        Some(r#"catalogue:"Bow shocks""#)
+    );
+}

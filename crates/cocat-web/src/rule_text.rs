@@ -267,21 +267,27 @@ mod tests {
     }
 }
 
-/// The line under a page's title: what it is, its size, and what the search shows.
-/// `everywhere`: the search looks in all events, not in the page's own.
+/// The line under a page's title: what it is, its size, and how many the filter shows.
+/// `picked`: how many of the `total` were picked by hand, when the catalogue has a search.
 pub fn counts_text(
     kind: &str,
     unit: &str,
     total: usize,
+    picked: Option<usize>,
     visible: usize,
-    everywhere: bool,
 ) -> String {
     let plural = if total == 1 { "" } else { "s" };
-    let size = format!("{kind} · {total} {unit}{plural}");
-    match (everywhere, visible == total) {
-        (true, _) => format!("{size} · searching all events: {visible} found"),
-        (false, true) => size,
-        (false, false) => format!("{size} · {visible} shown"),
+    let size = match picked {
+        None => format!("{kind} · {total} {unit}{plural}"),
+        Some(0) => format!("{kind} · {total} {unit}{plural} found by its search"),
+        Some(picked) => {
+            let found = total.saturating_sub(picked);
+            format!("{kind} · {total} {unit}{plural}: {picked} picked, {found} from its search")
+        }
+    };
+    match visible == total {
+        true => size,
+        false => format!("{size} · {visible} shown"),
     }
 }
 
@@ -290,9 +296,9 @@ mod counts_tests {
     use super::counts_text;
 
     #[test]
-    fn a_search_in_the_catalogue_says_how_many_it_shows() {
+    fn a_filter_says_how_many_it_shows() {
         assert_eq!(
-            counts_text("Catalogue", "event", 6, 2, false),
+            counts_text("Catalogue", "event", 6, None, 2),
             "Catalogue · 6 events · 2 shown"
         );
     }
@@ -300,16 +306,28 @@ mod counts_tests {
     #[test]
     fn an_unfiltered_catalogue_gives_its_size_alone() {
         assert_eq!(
-            counts_text("Catalogue", "event", 1, 1, false),
+            counts_text("Catalogue", "event", 1, None, 1),
             "Catalogue · 1 event"
         );
     }
 
     #[test]
-    fn a_search_in_all_events_says_where_it_found_them() {
+    fn a_catalogue_with_a_search_says_what_it_picked_and_what_the_search_brought() {
         assert_eq!(
-            counts_text("Catalogue", "event", 6, 3, true),
-            "Catalogue · 6 events · searching all events: 3 found"
+            counts_text("Catalogue", "event", 14, Some(6), 14),
+            "Catalogue · 14 events: 6 picked, 8 from its search"
+        );
+        assert_eq!(
+            counts_text("Catalogue", "event", 14, Some(6), 3),
+            "Catalogue · 14 events: 6 picked, 8 from its search · 3 shown"
+        );
+    }
+
+    #[test]
+    fn a_catalogue_holding_only_what_its_search_finds_says_so() {
+        assert_eq!(
+            counts_text("Smart catalogue", "event", 8, Some(0), 8),
+            "Smart catalogue · 8 events found by its search"
         );
     }
 }

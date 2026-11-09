@@ -6,16 +6,16 @@ use crate::help::{Shown, empty_text};
 use crate::period::Period;
 use crate::route::Route;
 use crate::rows::{
-    Row, SortKey, all_rows, attribute_keys, filter, matching, rows, search_rows, sort, trash_rows,
+    Row, SortKey, all_rows, attribute_keys, filter, matching, preview_rows, rows, sort, trash_rows,
 };
-use crate::search::{self, Listing, Query, listing};
+use crate::search::{self, Listing, Query, Side, listing};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
-use crate::views::search::{SearchBox, SearchBuilder, SearchLine, saved_search};
+use crate::views::search::{Boxed, SearchBox, SearchBuilder, SearchLine, own_search};
 use crate::views::submissions::{CopyForm, ProposeForm, SubmitForm, UpdateForm};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
@@ -54,62 +54,49 @@ pub fn CataloguePage(
     screen: RwSignal<Option<OnScreen>>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
-    let query = RwSignal::new(String::new());
+    let boxed = Boxed::new();
+    let query = boxed.query;
     let building = RwSignal::new(false);
     let reader = room.clone();
-    let saved = Memo::new(move |_| saved_search(&reader, &shown.get()));
+    let own = Memo::new(move |_| own_search(&reader, &shown.get()));
     let reader = room.clone();
     let parsed = Memo::new(move |_| {
         let names = reader.read(|txn| cocat_core::model::catalogue_names(txn));
         query.with(|text| search::read(text, &names))
     });
-    let scope = RwSignal::new(None::<String>);
     let how = Memo::new(move |_| {
-        saved.with(|saved| {
-            query.with(|text| scope.with(|scope| listing(saved.as_ref(), text, scope.as_deref())))
-        })
-    });
-    let everywhere = Signal::derive(move || {
-        matches!(shown.get(), Route::Catalogue(_)) && how.get() == Listing::All
+        let saved = own.get().flatten();
+        query.with(|text| listing(boxed.side.get(), saved.as_deref(), text))
     });
     let reader = room.clone();
     let members: Members = Memo::new(move |_| match shown.get() {
-        Route::Catalogue(uuid) => {
-            let how = how.get();
-            reader.read(|txn| match how {
-                Listing::Members => rows(txn, &uuid).map_err(|error| error.to_string()),
-                Listing::All => all_rows(txn).map_err(|error| error.to_string()),
-                Listing::Preview => {
+        Route::Catalogue(uuid) => reader.read(|txn| {
+            let previewed = match (how.get(), parsed.get()) {
+                (Listing::Preview, Query::Empty) => Some(None),
+                (Listing::Preview, Query::Words | Query::Rule(_)) => {
                     let names = cocat_core::model::catalogue_names(txn);
-                    match query.with(|text| cocat_core::query::parse(text, &names)) {
-                        Ok(predicate) => scope
-                            .with(|scope| search_rows(txn, &predicate, scope.as_deref()))
-                            .map_err(|error| error.to_string()),
-                        Err(_) => Ok(Vec::new()),
-                    }
+                    query
+                        .with(|text| cocat_core::query::parse(text, &names))
+                        .ok()
+                        .map(Some)
                 }
-            })
-        }
+                _ => None,
+            };
+            match previewed {
+                Some(search) => preview_rows(txn, &uuid, search.as_ref()),
+                None => rows(txn, &uuid),
+            }
+            .map_err(|error| error.to_string())
+        }),
         Route::Trash => Ok(reader.read(|txn| trash_rows(txn))),
         Route::AllEvents => reader
             .read(|txn| all_rows(txn))
             .map_err(|error| error.to_string()),
         _ => Ok(Vec::new()),
     });
-    let reader = room.clone();
-    let home = Memo::new(move |_| {
-        let uuid = match shown.get() {
-            Route::Catalogue(_) if saved.with(Option::is_some) => {
-                saved.with(|saved| saved.as_ref().and_then(|saved| saved.source.clone()))?
-            }
-            Route::Catalogue(_) if query.with(|text| text.trim().is_empty()) => return None,
-            Route::Catalogue(uuid) => uuid,
-            _ => return None,
-        };
-        let name = reader
-            .read(|txn| cocat_core::model::catalogue(txn, &uuid))?
-            .name;
-        Some((uuid, name))
+    let with_search = Signal::derive(move || match how.get() {
+        Listing::Members => own.with(|own| matches!(own, Some(Some(_)))),
+        Listing::Preview => query.with(|text| !text.trim().is_empty()),
     });
     let period = RwSignal::new(None::<Period>);
     let sorting = RwSignal::new((SortKey::Start, false));
@@ -120,7 +107,7 @@ pub fn CataloguePage(
                 return Vec::new();
             };
             let everything = || (0..rows.len()).collect();
-            if saved.with(Option::is_some) {
+            if boxed.side.get() == Side::Search {
                 return everything();
             }
             parsed.with(|parsed| match parsed {
@@ -176,19 +163,25 @@ pub fn CataloguePage(
         period.set(None);
         selected.set(None);
     });
-    // The box holds the smart catalogue's search, again once it is saved; a plain catalogue
-    // searches in itself until told otherwise.
+    // A page opens on the catalogue's own search; the filter's text stays when it is saved.
     Effect::new(move |_| {
-        let shown = shown.get();
-        let (text, source) = match saved.get() {
-            Some(saved) => (saved.text, saved.source),
-            None => match shown {
-                Route::Catalogue(uuid) => (String::new(), Some(uuid)),
-                _ => (String::new(), None),
-            },
-        };
-        query.set(text);
-        scope.set(source);
+        shown.track();
+        boxed.open(own.get_untracked());
+    });
+    Effect::new(move |_| {
+        let saved = own.get().flatten();
+        if boxed.side.get_untracked() == Side::Search {
+            query.set(saved.unwrap_or_default());
+        }
+    });
+    let placeholder = Signal::derive(move || match (shown.get(), boxed.side.get()) {
+        (Route::Catalogue(_), Side::Search) => "Search all events for this catalogue".to_owned(),
+        (Route::Catalogue(_), Side::Filter) => {
+            let held = members.with(|members| members.as_ref().map_or(0, Vec::len));
+            format!("Filter these {held} events")
+        }
+        (Route::Trash, _) => "Filter the trash".to_owned(),
+        _ => "Search all events".to_owned(),
     });
     let can_write = room.can_write();
     let reader = room.clone();
@@ -206,9 +199,9 @@ pub fn CataloguePage(
     });
     view! {
         <div class="page-head">
-            <Heading shown members order everywhere/>
+            <Heading shown members order with_search/>
             <div class="tools">
-                <SearchBox query building>
+                <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>
                     <SearchIcon/>
                 </SearchBox>
                 <ColumnPicker keys columns picked/>
@@ -216,7 +209,7 @@ pub fn CataloguePage(
                 {public.then(|| view! { <PublicButtons shown form editor=can_write/> })}
             </div>
         </div>
-        <SearchLine shown query parsed saved scope home/>
+        <SearchLine shown boxed parsed own/>
         <Show when=move || building.get()>
             <SearchBuilder query building keys/>
         </Show>

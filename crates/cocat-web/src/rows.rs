@@ -3,7 +3,7 @@
 //! rows themselves are read once per room change.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use cocat_core::model::{self, EventRecord, Member, Status};
 use cocat_core::rules::{Predicate, RuleError};
@@ -105,6 +105,30 @@ pub fn matching<T: ReadTxn>(
 
 /// The events a search finds, in all of the project or among one catalogue's members: what a
 /// smart catalogue with that search would hold, before it is saved.
+/// What catalogue `catalogue` would hold with `search` as its search: its picked live events
+/// and every event the search finds, in time order.
+pub fn preview_rows<T: ReadTxn>(
+    txn: &T,
+    catalogue: &str,
+    search: Option<&Predicate>,
+) -> Result<Vec<Row>, RuleError> {
+    let now = Timestamp::now();
+    let picked: HashSet<String> = model::listed_events(txn, catalogue).into_iter().collect();
+    let found: HashSet<String> = match search {
+        Some(search) => model::search(txn, search, now)?
+            .into_iter()
+            .map(|record| record.uuid)
+            .collect(),
+        None => HashSet::new(),
+    };
+    let mut origins = OriginNames::new(txn);
+    Ok(model::search(txn, &Predicate::And(Vec::new()), now)?
+        .into_iter()
+        .filter(|record| picked.contains(&record.uuid) || found.contains(&record.uuid))
+        .map(|record| event_row(record, &mut origins))
+        .collect())
+}
+
 pub fn search_rows<T: ReadTxn>(
     txn: &T,
     predicate: &Predicate,
@@ -292,6 +316,19 @@ mod tests {
         let rows = rows(&txn, "c-static").unwrap();
         let kept = matching(&txn, &rows, &search("confidence:>=0.9")).unwrap();
         assert_eq!(uuids(&rows, &kept), ["e3"]);
+    }
+
+    #[test]
+    fn a_preview_holds_the_picked_events_and_what_the_search_finds() {
+        let doc = room();
+        let txn = doc.transact();
+        let ids = |rows: Vec<Row>| -> Vec<String> {
+            rows.into_iter().filter_map(|row| row.uuid).collect()
+        };
+        let found = preview_rows(&txn, "c-static", Some(&search("status:preliminary"))).unwrap();
+        assert_eq!(ids(found), ["e1", "e2", "e3"], "e4 is picked but deleted");
+        let picked = preview_rows(&txn, "c-static", None).unwrap();
+        assert_eq!(ids(picked), ["e1", "e3"]);
     }
 
     #[test]

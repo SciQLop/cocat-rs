@@ -8,68 +8,127 @@ use leptos::prelude::*;
 use crate::edit;
 use crate::route::Route;
 use crate::search::{
-    Choice, Completion, Piece, Query, Saved, Vocabulary, accept, choices, clause, complete, label,
+    Choice, Completion, Piece, Query, Side, Vocabulary, accept, choices, clause, complete, label,
     needs_value, pieces, search_text,
 };
 use crate::state::Room;
 use crate::views::controls::{Error, commit, error_line, go_to};
 
-/// What the shown catalogue's rule reads as, when it is a smart catalogue with a search.
-pub fn saved_search(room: &Room, shown: &Route) -> Option<Saved> {
+/// The shown catalogue's own search: `None` when the box cannot edit it (not a catalogue,
+/// or a rule with time operations), `Some(None)` when it has none yet.
+pub fn own_search(room: &Room, shown: &Route) -> Option<Option<String>> {
     let Route::Catalogue(uuid) = shown else {
         return None;
     };
-    room.read(|txn| {
-        let rule = model::catalogue(txn, uuid)?.rule?;
-        let names = model::catalogue_names(txn);
-        let (text, source) = query::rule_query(&rule, &names)?;
-        Some(Saved { text, source })
+    room.read(|txn| match model::catalogue(txn, uuid)?.rule {
+        None => Some(None),
+        Some(rule) => query::rule_search(&rule, &model::catalogue_names(txn)).map(Some),
     })
 }
 
-/// The line under the box: the search's problem, and the buttons that save it.
+/// The box of a page: its text, the side it is on, and the text the other side keeps.
+#[derive(Clone, Copy)]
+pub struct Boxed {
+    pub query: RwSignal<String>,
+    pub side: RwSignal<Side>,
+    pub other: RwSignal<String>,
+}
+
+impl Boxed {
+    pub fn new() -> Self {
+        Self {
+            query: RwSignal::new(String::new()),
+            side: RwSignal::new(Side::Filter),
+            other: RwSignal::new(String::new()),
+        }
+    }
+
+    /// Opens a page: on its own search when it has one, else on an empty filter.
+    pub fn open(&self, own: Option<Option<String>>) {
+        let (side, text) = match own {
+            Some(Some(text)) => (Side::Search, text),
+            _ => (Side::Filter, String::new()),
+        };
+        self.side.set(side);
+        self.query.set(text);
+        self.other.set(String::new());
+    }
+
+    fn turn(&self, side: Side) {
+        if self.side.get_untracked() == side {
+            return;
+        }
+        let shown = self.query.get_untracked();
+        self.query.set(self.other.get_untracked());
+        self.other.set(shown);
+        self.side.set(side);
+    }
+
+    /// Whether the box edits the catalogue's own search.
+    pub fn searching(&self) -> bool {
+        self.side.get() == Side::Search
+    }
+}
+
+/// The line under the box: where it searches, the search's problem, and the buttons that
+/// save it.
 #[component]
 pub fn SearchLine(
     shown: Memo<Route>,
-    query: RwSignal<String>,
+    boxed: Boxed,
     parsed: Memo<Query>,
-    saved: Memo<Option<Saved>>,
-    scope: RwSignal<Option<String>>,
-    home: Memo<Option<(String, String)>>,
+    own: Memo<Option<Option<String>>>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let can_write = room.can_write();
     let saving = RwSignal::new(false);
     let error: Error = RwSignal::new(None);
+    let query = boxed.query;
+    let reader = room.clone();
+    let name = Memo::new(move |_| match shown.get() {
+        Route::Catalogue(uuid) => reader
+            .read(|txn| model::catalogue(txn, &uuid))
+            .map(|catalogue| catalogue.name)
+            .unwrap_or_default(),
+        _ => String::new(),
+    });
+    let saved = move || own.get().flatten();
+    let typed = move || query.with(|text| !text.trim().is_empty());
     let readable = move || parsed.with(|parsed| matches!(parsed, Query::Words | Query::Rule(_)));
     let edited = move || {
-        saved.with(|saved| {
-            saved.as_ref().is_some_and(|saved| {
-                query.with(|text| text.trim() != saved.text)
-                    || scope.with(|scope| *scope != saved.source)
-            })
-        })
+        boxed.searching()
+            && own.with(Option::is_some)
+            && query.with(|text| text.trim() != saved().unwrap_or_default())
     };
-    let smart = move || saved.with(Option::is_some);
-    let offer_save = move || can_write && !smart() && readable();
+    let savable = move || can_write && (readable() || !typed());
+    let source = move || match (shown.get(), boxed.side.get()) {
+        (Route::Catalogue(uuid), Side::Filter) => Some(uuid),
+        _ => None,
+    };
+    let offer_new = move || can_write && readable() && shown.get() != Route::Trash;
     let writer = room.clone();
-    let save_changes = move |()| {
+    let save_into = move |()| {
         let Route::Catalogue(uuid) = shown.get_untracked() else {
             return;
         };
         let text = query.get_untracked();
-        let source = scope.get_untracked();
         commit(&writer, error, |txn| {
             let names = model::catalogue_names(txn);
-            let predicate = query::parse(&text, &names)?;
-            edit::replace_rule(txn, &uuid, &query::rule(&predicate, source.as_deref()))
+            edit::save_search(txn, &uuid, &text, &names)
         });
     };
-    let save_changes = StoredValue::new_local(save_changes);
-    let revert = move |_| {
-        if let Some(saved) = saved.get_untracked() {
-            query.set(saved.text);
-            scope.set(saved.source);
+    let save_into = StoredValue::new_local(save_into);
+    let revert = move |_| query.set(saved().unwrap_or_default());
+    let hint = move || {
+        let name = name.get();
+        match (edited(), saved().is_some()) {
+            (true, _) => format!("The table shows what “{name}” would hold."),
+            (false, true) => {
+                format!("“{name}” holds its picked events and every event this search finds.")
+            }
+            (false, false) => format!(
+                "Type a search: “{name}” will also hold every event of the project it finds."
+            ),
         }
     };
     view! {
@@ -78,20 +137,29 @@ pub fn SearchLine(
             _ => None,
         })}
         <div class="search-line">
-            <ScopeSwitch scope home/>
+            <Show when=move || own.with(Option::is_some)>
+                <SideSwitch boxed/>
+            </Show>
+            <Show when=move || boxed.searching()>
+                <span class="quiet">{hint}</span>
+            </Show>
             <Show when=move || edited()>
-                <span class="quiet">"The table shows what this search would hold."</span>
-                <Show when=move || can_write && readable()>
-                    <button type="button" class="button primary" on:click=move |_| save_changes.with_value(|save| save(()))>"Save changes"</button>
+                <Show when=savable>
+                    <button type="button" class="button primary" on:click=move |_| save_into.with_value(|save| save(()))>
+                        {move || match saved() {
+                            Some(_) => "Save changes".to_owned(),
+                            None => format!("Save to “{}”", name.get()),
+                        }}
+                    </button>
                 </Show>
                 <button type="button" class="button" on:click=revert>"Revert"</button>
             </Show>
-            <Show when=move || offer_save() && !saving.get()>
-                <button type="button" class="button" on:click=move |_| saving.set(true)>"Save as smart catalogue…"</button>
+            <Show when=move || offer_new() && !saving.get()>
+                <button type="button" class="button" on:click=move |_| saving.set(true)>"Save as new smart catalogue…"</button>
             </Show>
         </div>
         <Show when=move || saving.get()>
-            <SaveSearch query scope saving/>
+            <SaveSearch query source=Signal::derive(source) saving/>
         </Show>
         {error_line(error)}
     }
@@ -101,14 +169,14 @@ pub fn SearchLine(
 #[component]
 fn SaveSearch(
     query: RwSignal<String>,
-    scope: RwSignal<Option<String>>,
+    source: Signal<Option<String>>,
     saving: RwSignal<bool>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let name = RwSignal::new(String::new());
     let error: Error = RwSignal::new(None);
     let reader = room.clone();
-    let keeps = move || match scope.get() {
+    let keeps = move || match source.get() {
         Some(uuid) => {
             let name = reader
                 .read(|txn| model::catalogue(txn, &uuid))
@@ -125,7 +193,7 @@ fn SaveSearch(
         event.prevent_default();
         let text = query.get_untracked();
         let name = name.get_untracked();
-        let source = scope.get_untracked();
+        let source = source.get_untracked();
         let author = room.config.user_email.clone();
         let made = room.write(|txn| {
             let names = model::catalogue_names(txn);
@@ -158,27 +226,18 @@ fn SaveSearch(
     }
 }
 
-/// Where the search looks: one catalogue, or every event of the project.
+/// Filter what the catalogue holds, or edit the search that brings events into it.
 #[component]
-pub fn ScopeSwitch(
-    scope: RwSignal<Option<String>>,
-    home: Memo<Option<(String, String)>>,
-) -> impl IntoView {
-    move || {
-        home.get().map(|(uuid, name)| {
-            let here = uuid.clone();
-            let inside = move || scope.with(|scope| scope.as_deref() == Some(here.as_str()));
-            let outside = move || scope.with(Option::is_none);
-            view! {
-                <div class="scope" role="group" aria-label="Search in">
-                    <span class="quiet">"Search in"</span>
-                    <button type="button" class="scope-option" aria-pressed=move || inside().to_string()
-                        on:click=move |_| scope.set(Some(uuid.clone()))>{format!("“{name}”")}</button>
-                    <button type="button" class="scope-option" aria-pressed=move || outside().to_string()
-                        on:click=move |_| scope.set(None)>"All events"</button>
-                </div>
-            }
-        })
+fn SideSwitch(boxed: Boxed) -> impl IntoView {
+    let on = move |side: Side| move || (boxed.side.get() == side).to_string();
+    view! {
+        <div class="scope" role="group" aria-label="Search in">
+            <span class="quiet">"Search in"</span>
+            <button type="button" class="scope-option" aria-pressed=on(Side::Filter)
+                on:click=move |_| boxed.turn(Side::Filter)>"This catalogue"</button>
+            <button type="button" class="scope-option" aria-pressed=on(Side::Search)
+                on:click=move |_| boxed.turn(Side::Search)>"All events"</button>
+        </div>
     }
 }
 
@@ -401,6 +460,10 @@ fn vocabulary(room: &Room) -> Vocabulary {
 pub fn SearchBox(
     query: RwSignal<String>,
     building: RwSignal<bool>,
+    #[prop(into)] placeholder: Signal<String>,
+    /// The box edits a catalogue's own search, not a passing filter.
+    #[prop(into)]
+    own: Signal<bool>,
     children: Children,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
@@ -474,7 +537,7 @@ pub fn SearchBox(
     let painted =
         move || query.with(|text| pieces(text).into_iter().map(painted_piece).collect_view());
     view! {
-        <label class="search">
+        <label class="search" class:own-search=move || own.get()>
             {children()}
             <span class="search-field">
             <span class="search-paint" aria-hidden="true">
@@ -490,7 +553,7 @@ pub fn SearchBox(
                 aria-autocomplete="list"
                 aria-controls="search-completions"
                 aria-expanded=move || completion.with(|found| (open.get() && found.is_some()).to_string())
-                placeholder="Search events"
+                placeholder=move || placeholder.get()
                 aria-label="Search events"
                 autocomplete="off"
                 spellcheck="false"

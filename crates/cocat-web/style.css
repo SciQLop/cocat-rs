@@ -1381,6 +1381,7 @@ a.home-project:hover { color: var(--accent); }
 /* The search box: a transparent input over a coloured copy of its text. */
 
 .search { position: relative; }
+.search.own-search { border-color: var(--accent); background: var(--accent-soft); }
 .search-field { position: relative; flex: 1; min-width: 0; display: grid; }
 .search-field > * { grid-area: 1 / 1; }
 .search-field input {

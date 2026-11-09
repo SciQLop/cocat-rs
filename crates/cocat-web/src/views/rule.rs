@@ -1,11 +1,13 @@
 //! The heading of what is on screen: its name, what kind it is, and a smart catalogue's
 //! rule in words or its error.
 
-use cocat_core::model;
+use std::collections::HashSet;
+
+use cocat_core::{model, query};
 use leptos::prelude::*;
 
 use crate::route::Route;
-use crate::rows::rows;
+use crate::rows::Row;
 use crate::rule_text::{counts_text, describe};
 use crate::state::Room;
 use crate::views::catalogue::Members;
@@ -23,27 +25,37 @@ pub fn Heading(
     shown: Memo<Route>,
     members: Members,
     order: Memo<Vec<usize>>,
-    everywhere: Signal<bool>,
+    with_search: Signal<bool>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let reader = room.clone();
     let about = Memo::new(move |_| reader.read(|txn| about(txn, &shown.get())));
-    let own_size = move || match shown.get() {
-        Route::Catalogue(uuid) => room.read(|txn| rows(txn, &uuid).map_or(0, |rows| rows.len())),
+    let picked = move |rows: &[Row]| match shown.get() {
+        Route::Catalogue(uuid) => {
+            let listed: HashSet<String> = room
+                .read(|txn| model::listed_events(txn, &uuid))
+                .into_iter()
+                .collect();
+            rows.iter()
+                .filter(|row| row.uuid.as_ref().is_some_and(|uuid| listed.contains(uuid)))
+                .count()
+        }
         _ => 0,
     };
     let counts = move || {
-        let listed = members.with(|members| members.as_ref().ok().map(Vec::len))?;
-        let everywhere = everywhere.get();
-        let total = if everywhere { own_size() } else { listed };
+        let (total, picked) = members.with(|members| {
+            let rows = members.as_ref().ok()?;
+            Some((rows.len(), with_search.get().then(|| picked(rows))))
+        })?;
         let visible = order.with(Vec::len);
-        let (kind, unit) = match (shown.get(), about.with(|about| about.smart)) {
+        let smart = about.with(|about| about.smart) && picked.is_none_or(|picked| picked == 0);
+        let (kind, unit) = match (shown.get(), smart) {
             (Route::Trash, _) => ("In the trash", "event"),
             (Route::AllEvents, _) => ("Every event of the project", "event"),
-            (_, true) => ("Smart catalogue, recomputed live", "member"),
+            (_, true) => ("Smart catalogue", "event"),
             _ => ("Catalogue", "event"),
         };
-        Some(counts_text(kind, unit, total, visible, everywhere))
+        Some(counts_text(kind, unit, total, picked, visible))
     };
     view! {
         <div class="heading">
@@ -71,7 +83,10 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
             Some(catalogue) => About {
                 title: catalogue.name,
                 smart: catalogue.rule.is_some(),
-                rule: catalogue.rule.and_then(|rule| describe(&rule, &name).ok()),
+                rule: catalogue
+                    .rule
+                    .filter(|rule| query::rule_search(rule, &model::catalogue_names(txn)).is_none())
+                    .and_then(|rule| describe(&rule, &name).ok()),
             },
             None => titled("No such catalogue"),
         },

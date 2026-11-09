@@ -268,6 +268,24 @@ pub fn new_smart_catalogue(
     Ok(uuid)
 }
 
+/// Makes `text` the search of catalogue `uuid`, beside its picked events: it then also holds
+/// every event of the project the search finds. An empty text removes its search.
+pub fn save_search(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    text: &str,
+    catalogues: &[(String, String)],
+) -> Result<(), EditError> {
+    if text.trim().is_empty() {
+        return found(
+            model::set_catalogue_rule(txn, uuid, None)?,
+            EditError::NoCatalogue,
+        );
+    }
+    let predicate = cocat_core::query::parse(text, catalogues)?;
+    replace_rule(txn, uuid, &cocat_core::query::rule(&predicate, None))
+}
+
 pub fn replace_rule(
     txn: &mut TransactionMut<'_>,
     uuid: &str,
@@ -724,5 +742,19 @@ mod tests {
         );
         assert_eq!(mine, theirs);
         assert!(mine == Some(0.1) || mine == Some(0.9));
+    }
+
+    #[test]
+    fn a_search_saved_into_a_catalogue_becomes_its_rule_and_an_empty_one_removes_it() {
+        let doc = room();
+        let names = model::catalogue_names(&doc.transact());
+        edited(&doc, |txn| save_search(txn, "c-static", " tag:sw ", &names)).unwrap();
+        let rule = |doc: &Doc| model::catalogue(&doc.transact(), "c-static").unwrap().rule;
+        let sw = json!({"filter": {"all": true}, "where": {"contains": ["tags", "sw"]}});
+        assert_eq!(rule(&doc), Some(sw));
+        edited(&doc, |txn| save_search(txn, "c-static", "  ", &names)).unwrap();
+        assert_eq!(rule(&doc), None);
+        let listed = model::listed_events(&doc.transact(), "c-static");
+        assert_eq!(listed, ["e1", "e3", "e4"], "the picked events stay");
     }
 }

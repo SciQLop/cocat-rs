@@ -736,84 +736,60 @@ mod piece_tests {
     }
 }
 
-/// A smart catalogue's search: its text, and the catalogue it searches in (`None`: all
-/// events).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Saved {
-    pub text: String,
-    pub source: Option<String>,
+/// What the box on a catalogue's page does: filter what the catalogue holds, or edit the
+/// search that brings events of the whole project into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Filter,
+    Search,
 }
 
-/// What a catalogue page lists before its search filters the rows.
+/// What a catalogue page lists before the box filters it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Listing {
-    /// The shown catalogue's own events.
+    /// What the catalogue holds now.
     Members,
-    /// Every event of the project.
-    All,
-    /// What the edited smart catalogue would hold, in the chosen scope.
+    /// What it would hold with the box's search: its picked events and what the search finds.
     Preview,
 }
 
-/// `scope` is the catalogue the search looks in, `None` for all events; `saved` is the
-/// shown smart catalogue's search, if it is one.
-pub fn listing(saved: Option<&Saved>, text: &str, scope: Option<&str>) -> Listing {
-    let text = text.trim();
-    match saved {
-        Some(saved) if saved.text != text || saved.source.as_deref() != scope => Listing::Preview,
-        Some(_) => Listing::Members,
-        None if scope.is_none() && !text.is_empty() => Listing::All,
-        None => Listing::Members,
+/// `saved` is the catalogue's own search, if it has one.
+pub fn listing(side: Side, saved: Option<&str>, text: &str) -> Listing {
+    match side {
+        Side::Search if text.trim() != saved.unwrap_or_default() => Listing::Preview,
+        _ => Listing::Members,
     }
 }
 
 #[cfg(test)]
 mod listing_tests {
-    use super::{Listing, Saved, listing};
-
-    fn saved(text: &str, source: Option<&str>) -> Saved {
-        Saved {
-            text: text.into(),
-            source: source.map(Into::into),
-        }
-    }
+    use super::{Listing, Side, listing};
 
     #[test]
-    fn a_catalogue_searched_in_itself_lists_its_events() {
-        assert_eq!(listing(None, "tag:shock", Some("c")), Listing::Members);
-    }
-
-    #[test]
-    fn a_catalogue_searching_all_events_lists_them_all() {
-        assert_eq!(listing(None, "tag:shock", None), Listing::All);
-    }
-
-    #[test]
-    fn without_a_search_a_catalogue_lists_its_events_whatever_the_scope() {
-        assert_eq!(listing(None, "  ", None), Listing::Members);
-    }
-
-    #[test]
-    fn a_smart_catalogue_as_saved_lists_its_events() {
-        let saved = saved("tag:shock", Some("c"));
+    fn a_filter_never_changes_what_the_catalogue_lists() {
         assert_eq!(
-            listing(Some(&saved), "tag:shock ", Some("c")),
+            listing(Side::Filter, Some("tag:x"), "tag:y"),
             Listing::Members
         );
+        assert_eq!(listing(Side::Filter, None, "tag:y"), Listing::Members);
     }
 
     #[test]
-    fn a_smart_catalogue_edited_previews_its_new_search() {
-        let saved = saved("tag:shock", None);
-        assert_eq!(listing(Some(&saved), "tag:wave", None), Listing::Preview);
-    }
-
-    #[test]
-    fn a_smart_catalogue_given_another_scope_previews_it() {
-        let saved = saved("tag:shock", None);
+    fn its_search_as_saved_lists_what_it_holds() {
         assert_eq!(
-            listing(Some(&saved), "tag:shock", Some("c")),
+            listing(Side::Search, Some("tag:x"), " tag:x "),
+            Listing::Members
+        );
+        assert_eq!(listing(Side::Search, None, " "), Listing::Members);
+    }
+
+    #[test]
+    fn an_edited_search_previews_what_it_would_hold() {
+        assert_eq!(
+            listing(Side::Search, Some("tag:x"), "tag:y"),
             Listing::Preview
         );
+        assert_eq!(listing(Side::Search, None, "tag:y"), Listing::Preview);
+        assert_eq!(listing(Side::Search, Some("tag:x"), ""), Listing::Preview);
     }
 }
