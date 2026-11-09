@@ -151,7 +151,8 @@ impl Meaning<'_> {
     }
 
     /// A year, month or day without an operator is the span it covers; with one, its start
-    /// or its end, whichever the operator means.
+    /// or its end, whichever the operator means. A bare `now-7d` means since then: nobody
+    /// means the one nanosecond.
     fn time(&self, field: &str, term: &Term) -> Result<Predicate> {
         let cmp = |op, nanos: Value| Predicate::Cmp(field.to_owned(), op, nanos);
         let read = |scalar: &Scalar| {
@@ -162,6 +163,7 @@ impl Meaning<'_> {
                 (None, Time::Span(low, high)) => {
                     Predicate::And(vec![cmp(Op::Ge, low.into()), cmp(Op::Lt, high.into())])
                 }
+                (None, Time::Instant(value)) if value.get("now").is_some() => cmp(Op::Ge, value),
                 (op, time) => {
                     let (op, value) = time.bound(op.unwrap_or(Op::Eq));
                     cmp(op, value)

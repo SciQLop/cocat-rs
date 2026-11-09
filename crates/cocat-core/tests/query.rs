@@ -220,6 +220,14 @@ fn now_is_relative() {
 }
 
 #[test]
+fn a_bare_relative_time_means_since_then() {
+    assert_eq!(
+        read("created:now-7d"),
+        cmp("created", Op::Ge, json!({"now": "-7d"}))
+    );
+}
+
+#[test]
 fn existence_and_catalogues() {
     assert_eq!(read("_exists_:shape"), Predicate::Has("shape".to_owned()));
     assert_eq!(
