@@ -157,8 +157,11 @@ pub async fn reset_password(
     if !db::replace_password(&mut *tx, user.id, &user.hashed_password, &new_hash).await? {
         return Err(AccountError::BadResetToken);
     }
-    db::end_browser_sessions_of(&mut *tx, user.id).await?;
+    // A reset is what someone does when they think the account was taken: unlike a password
+    // change, it signs every app out too.
+    let ended = db::end_sessions_of(&mut *tx, user.id).await?;
     tx.commit().await.map_err(DbError::from)?;
+    ended.iter().for_each(|hash| state.rooms.end_session(hash));
     Ok(())
 }
 
@@ -209,7 +212,8 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
             .await
             .map_err(account_error)?;
         if deactivated {
-            db::end_sessions_of(&mut *tx, updated.id).await?;
+            let ended = db::end_sessions_of(&mut *tx, updated.id).await?;
+            ended.iter().for_each(|hash| state.rooms.end_session(hash));
         } else {
             db::end_browser_sessions_of(&mut *tx, updated.id).await?;
         }

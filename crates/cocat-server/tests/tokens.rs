@@ -1,5 +1,5 @@
 //! Named sessions: the tokens apps sign in with. They last until revoked or six months
-//! unused, travel as `Authorization: Bearer`, and survive a password change.
+//! unused, travel as `Authorization: Bearer`, and survive a password change, not a reset.
 
 mod ui_support;
 
@@ -235,6 +235,41 @@ async fn a_password_change_keeps_tokens_and_ends_browser_sessions() {
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(me_status(&fixture, &token).await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_password_reset_ends_every_sign_in_and_its_sockets() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = new_token(&fixture, user, "Python on laptop").await;
+    let browser = fixture.token(user).await;
+    let account = cocat_server::db::user_by_id(&fixture.state.pool, user)
+        .await
+        .unwrap()
+        .unwrap();
+    let link = cocat_server::accounts::reset_token(
+        user,
+        &account.hashed_password,
+        &fixture.state.secret,
+        std::time::SystemTime::now(),
+    )
+    .unwrap();
+    let ended = fixture.state.rooms.ended_sessions();
+
+    cocat_server::accounts::reset_password(&fixture.state, &link, NEW_PASSWORD)
+        .await
+        .unwrap();
+
+    assert_eq!(me_status(&fixture, &token).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        me_status(&fixture, &browser).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        ended.len(),
+        2,
+        "the token's and the browser's sockets close"
+    );
 }
 
 #[tokio::test]

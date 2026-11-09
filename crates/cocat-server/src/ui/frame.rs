@@ -66,7 +66,10 @@ const MESSAGES: [(&str, &str); 11] = [
         "Check your inbox: this account is not verified yet.",
     ),
     ("created", "Account created. Check your inbox to verify it."),
-    ("reset", "Password changed. Sign in with the new one."),
+    (
+        "reset",
+        "Password changed, and every app signed out. Sign in with the new one.",
+    ),
     (
         "sent",
         "If that address has an account, a reset link is on its way.",
@@ -518,7 +521,10 @@ mod tests {
                 "Check your inbox: this account is not verified yet.",
             ),
             ("created", "Account created. Check your inbox to verify it."),
-            ("reset", "Password changed. Sign in with the new one."),
+            (
+                "reset",
+                "Password changed, and every app signed out. Sign in with the new one.",
+            ),
             (
                 "sent",
                 "If that address has an account, a reset link is on its way.",

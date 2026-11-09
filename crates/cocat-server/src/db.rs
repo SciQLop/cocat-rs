@@ -834,16 +834,18 @@ pub async fn delete_session(pool: &SqlitePool, token_hash: &str) -> Result<(), D
 }
 
 /// Drop every session and token of an account, for the writes that must leave nothing
-/// working, such as a deactivation.
+/// working, such as a deactivation or a password reset; answers their hashes, so the
+/// caller can close what they opened.
 pub async fn end_sessions_of<'e, E: Executor<'e, Database = Sqlite>>(
     executor: E,
     user_id: Uuid,
-) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM session WHERE user_id = ?")
-        .bind(user_id.to_string())
-        .execute(executor)
-        .await?;
-    Ok(())
+) -> Result<Vec<String>, DbError> {
+    Ok(
+        sqlx::query_scalar("DELETE FROM session WHERE user_id = ? RETURNING token_hash")
+            .bind(user_id.to_string())
+            .fetch_all(executor)
+            .await?,
+    )
 }
 
 /// Drop the account's browser sessions and keep its tokens: after a password change the
