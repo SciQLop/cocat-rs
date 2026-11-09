@@ -171,6 +171,12 @@ const ROWS: &[Row] = &[
         Style::Api,
     ),
     row(
+        "POST",
+        "/api/public/{public}/copies",
+        Guard::SignedIn,
+        Style::Api,
+    ),
+    row(
         "GET",
         "/api/public/submissions",
         Guard::SignedIn,
@@ -1080,7 +1086,9 @@ impl World {
             ("POST", "/api/public/submissions/{submission}/review") => {
                 (json, r#"{"accept":false}"#.to_owned())
             }
-            ("POST", "/api/public/{public}/proposals") => (json, "{}".to_owned()),
+            ("POST", "/api/public/{public}/proposals" | "/api/public/{public}/copies") => {
+                (json, "{}".to_owned())
+            }
             ("POST", "/api/rooms/{room}/owner") => {
                 (json, format!(r#"{{"user_id":"{}"}}"#, self.target))
             }

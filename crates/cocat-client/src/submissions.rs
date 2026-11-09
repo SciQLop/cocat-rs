@@ -1,5 +1,5 @@
 //! Submissions to the public catalogues: offering a catalogue, copying a public one to
-//! propose a change, and the curators' review.
+//! propose a change or to use it, and the curators' review.
 
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -42,9 +42,9 @@ pub struct NewSubmission<'a> {
     pub note: Option<&'a str>,
 }
 
-/// Where a proposed change was copied to.
+/// Where a copy of a public catalogue went.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Proposed {
+pub struct Copied {
     #[serde(rename(deserialize = "room"))]
     pub project_id: String,
     /// The project's name.
@@ -70,7 +70,7 @@ pub async fn propose_change(
     public_id: &str,
     project_id: Option<&str>,
     name: Option<&str>,
-) -> Result<Proposed, LoginError> {
+) -> Result<Copied, LoginError> {
     #[derive(Serialize)]
     struct Body<'a> {
         room: Option<&'a str>,
@@ -82,6 +82,23 @@ pub async fn propose_change(
     };
     let path = ["public", public_id, "proposals"];
     let request = api_request(Method::POST, url, cookie, &path)?.json(&body);
+    Ok(send(request).await?.json().await?)
+}
+
+/// Copies the public catalogue, keeping its name, into `project_id` or a new project, to
+/// use it there; unlike [`propose_change`], the copy is not offered back.
+pub async fn copy_public_catalogue(
+    url: &str,
+    cookie: &str,
+    public_id: &str,
+    project_id: Option<&str>,
+) -> Result<Copied, LoginError> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        room: Option<&'a str>,
+    }
+    let path = ["public", public_id, "copies"];
+    let request = api_request(Method::POST, url, cookie, &path)?.json(&Body { room: project_id });
     Ok(send(request).await?.json().await?)
 }
 

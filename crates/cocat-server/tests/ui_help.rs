@@ -166,6 +166,8 @@ async fn the_public_help_says_how_to_submit_and_what_curators_do() {
         "Submit…",
         "Submit update…",
         "Propose a change…",
+        "Copy to a project…",
+        "next to it in the list",
         "My submissions",
         "Submissions",
         "What changed",

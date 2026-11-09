@@ -239,6 +239,9 @@ def propose_change(
     project_id: str | None = None,
     name: str | None = None,
 ) -> dict[str, str]: ...
+def copy_public_catalogue(
+    url: str, cookie: str, public_id: str, project_id: str | None = None
+) -> dict[str, str]: ...
 def submit_update(
     url: str, cookie: str, project_id: str, catalogue_uuid: str, note: str | None = None
 ) -> int: ...

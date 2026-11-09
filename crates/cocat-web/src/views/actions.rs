@@ -9,7 +9,9 @@ use crate::edit;
 use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
-use crate::submissions::{Offer, Proposal, proposal_for, submit_offer};
+use crate::submissions::{
+    Offer, Proposal, PublicAction, proposal_for, public_actions, submit_offer,
+};
 use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
 use cocat_core::room_id::is_public_id;
 
@@ -22,6 +24,7 @@ pub enum Form {
     Submit,
     Update,
     Propose,
+    Copy,
     Export,
 }
 
@@ -115,24 +118,23 @@ pub fn Actions(
     }
 }
 
-/// In a public catalogue, for its readers: copy it to change it, then submit the change.
+/// In a public catalogue: copy it to use it, and for its readers, copy it to change it
+/// and submit the change.
 #[component]
-pub fn ProposeButton(shown: Memo<Route>, form: RwSignal<Form>) -> impl IntoView {
+pub fn PublicButtons(shown: Memo<Route>, form: RwSignal<Form>, editor: bool) -> impl IntoView {
     let on_catalogue = move || matches!(shown.get(), Route::Catalogue(_));
-    let toggle = move |_| {
-        form.update(|open| {
-            *open = match *open {
-                Form::Propose => Form::Closed,
-                _ => Form::Propose,
-            }
-        })
-    };
-    view! {
-        <Show when=on_catalogue>
-            <button type="button" class="button primary" aria-pressed=move || (form.get() == Form::Propose).to_string()
-                on:click=toggle>"Propose a change…"</button>
-        </Show>
-    }
+    let buttons = public_actions(true, editor).iter().map(|&(action, main)| {
+        let which = match action {
+            PublicAction::Copy => Form::Copy,
+            PublicAction::Propose => Form::Propose,
+        };
+        let toggle = move |_| form.update(|open| *open = if *open == which { Form::Closed } else { which });
+        view! {
+            <button type="button" class="button" class:primary=main aria-pressed=move || (form.get() == which).to_string()
+                on:click=toggle>{action.label()}</button>
+        }
+    }).collect_view();
+    view! { <Show when=on_catalogue>{buttons.clone()}</Show> }
 }
 
 /// A new event in the catalogue, selected so its panel opens.

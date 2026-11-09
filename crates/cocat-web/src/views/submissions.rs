@@ -16,7 +16,7 @@ use crate::public::PublicCatalogue;
 use crate::route::Route;
 use crate::state::Room;
 use crate::submissions::{
-    Detail, Proposal, Submission, SubmitFields, copy_href, folders, pending, propose_body,
+    Detail, Proposal, Submission, SubmitFields, copy_body, copy_href, folders, pending,
     review_body, submit_body, update_body,
 };
 use crate::views::actions::Form;
@@ -163,8 +163,9 @@ fn Sent(form: RwSignal<Form>) -> impl IntoView {
     }
 }
 
+/// Where a copy of a public catalogue went.
 #[derive(Debug, Clone, Deserialize)]
-struct Proposed {
+struct Copied {
     room: String,
     name: String,
     catalogue: String,
@@ -174,38 +175,8 @@ struct Proposed {
 #[component]
 pub fn ProposeForm(form: RwSignal<Form>) -> impl IntoView {
     let room = expect_context::<Room>();
-    let projects = expect_context::<Projects>();
-    let api = room.config.api_url.clone();
-    let public = room.config.room_id.clone();
     let public_name = room.config.room_name.clone();
-    let writable = move || {
-        projects.list.with(|listed| {
-            listed
-                .iter()
-                .filter(|project| project.role.can_write() && !is_public_id(&project.id))
-                .cloned()
-                .collect::<Vec<Project>>()
-        })
-    };
-    let into = NodeRef::<Select>::new();
-    let error: Error = RwSignal::new(None);
-    let made = RwSignal::new(None::<Proposed>);
-    let send = move |event: leptos::ev::SubmitEvent| {
-        event.prevent_default();
-        let picked = into.get().map(|select| select.value()).unwrap_or_default();
-        let body = propose_body(Some(picked.as_str()).filter(|id| !id.is_empty()));
-        let (api, public) = (api.clone(), public.clone());
-        spawn_local(async move {
-            let path = ["public", public.as_str(), "proposals"];
-            match api::create::<Proposed>(&api, &path, body).await {
-                Ok(proposed) => {
-                    projects.reload();
-                    made.set(Some(proposed));
-                }
-                Err(failure) => error.set(Some(failure.to_string())),
-            }
-        });
-    };
+    let made = RwSignal::new(None::<Copied>);
     let done = move || {
         made.get().map(|proposed| {
             let href = copy_href(&proposed.room, &proposed.catalogue);
@@ -225,25 +196,101 @@ pub fn ProposeForm(form: RwSignal<Form>) -> impl IntoView {
     };
     view! {
         <Show when=move || made.with(Option::is_none) fallback=done>
-            <form class="inline-form name-form submit-form" on:submit=send.clone()>
+            <ProjectPicker public=room.config.room_id.clone() route="proposals" made action="Make the copy"
+                close=Callback::new(move |()| form.set(Form::Closed))>
                 <Hint anchor="public" topic="proposing a change"
                     text="This catalogue is copied into a project of yours. Change it there, then submit it as an update for the curators to review."/>
-                <label>
-                    <span class="field-label">"Copy it into"</span>
-                    <select node_ref=into>
-                        <option value="">"A new project"</option>
-                        {move || writable().into_iter().map(|project| view! {
-                            <option value=project.id.clone()>{project.name.clone()}</option>
-                        }).collect_view()}
-                    </select>
-                </label>
-                {error_line(error)}
-                <div class="row-buttons">
-                    <button type="submit" class="button primary">"Make the copy"</button>
-                    <button type="button" class="button" on:click=move |_| form.set(Form::Closed)>"Cancel"</button>
-                </div>
-            </form>
+            </ProjectPicker>
         </Show>
+    }
+}
+
+/// Copies public catalogue `public` into one of the visitor's projects, or a new one, to
+/// use it there.
+#[component]
+pub fn CopyForm(public: String, close: Callback<()>) -> impl IntoView {
+    let made = RwSignal::new(None::<Copied>);
+    let done = move || {
+        made.get().map(|copied| {
+            let href = copy_href(&copied.room, &copied.catalogue);
+            view! {
+                <div class="inline-form submit-form" role="status">
+                    <p>"Copied into “" {copied.name} "”."</p>
+                    <div class="row-buttons">
+                        <a class="button primary" href=href>"Open it"</a>
+                        <button type="button" class="button" on:click=move |_| close.run(())>"Close"</button>
+                    </div>
+                </div>
+            }
+        })
+    };
+    view! {
+        <Show when=move || made.with(Option::is_none) fallback=done>
+            <ProjectPicker public=public.clone() route="copies" made action="Copy" close>
+                <Hint anchor="public" topic="copying a public catalogue"
+                    text="The catalogue and its events go into a project of yours, under the same name, to use and change as you like. The public catalogue does not change."/>
+            </ProjectPicker>
+        </Show>
+    }
+}
+
+/// Picks one of the visitor's writable projects, or a new one, and asks the server to copy
+/// public catalogue `public` there through `route` (`copies` or `proposals`).
+#[component]
+fn ProjectPicker(
+    public: String,
+    route: &'static str,
+    made: RwSignal<Option<Copied>>,
+    action: &'static str,
+    close: Callback<()>,
+    children: Children,
+) -> impl IntoView {
+    let projects = expect_context::<Projects>();
+    let writable = move || {
+        projects.list.with(|listed| {
+            listed
+                .iter()
+                .filter(|project| project.role.can_write() && !is_public_id(&project.id))
+                .cloned()
+                .collect::<Vec<Project>>()
+        })
+    };
+    let into = NodeRef::<Select>::new();
+    let error: Error = RwSignal::new(None);
+    let send = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        let picked = into.get().map(|select| select.value()).unwrap_or_default();
+        let body = copy_body(Some(picked.as_str()).filter(|id| !id.is_empty()));
+        let (api, public) = (projects.api(), public.clone());
+        spawn_local(async move {
+            let path = ["public", public.as_str(), route];
+            match api::create::<Copied>(&api, &path, body).await {
+                Ok(copied) => {
+                    projects.reload();
+                    made.set(Some(copied));
+                }
+                Err(failure) => error.set(Some(failure.to_string())),
+            }
+        });
+    };
+    view! {
+        <form class="inline-form name-form submit-form" on:submit=send>
+            {children()}
+            <label>
+                <span class="field-label">"Copy it into"</span>
+                <select node_ref=into>
+                    <option value="">"A new project"</option>
+                    {move || writable().into_iter().map(|project| view! {
+                        <option value=project.id.clone()>{project.name.clone()}</option>
+                    }).collect_view()}
+                </select>
+            </label>
+            {error_line(error)}
+            <div class="row-buttons">
+                <button type="submit" class="button primary">{action}</button>
+                <button type="button" class="button" on:click=move |_| close.run(())>"Cancel"</button>
+            </div>
+        </form>
     }
 }
 

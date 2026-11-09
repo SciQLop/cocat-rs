@@ -15,7 +15,7 @@ use crate::views::header::PublicHeader;
 use crate::views::projects::{Projects, set_title};
 use crate::views::sidebar::{PublicIcon, keep_current_in_view};
 use crate::views::submissions::{
-    MySubmissionsPage, SubmissionPage, SubmissionsPage, waiting_submissions,
+    CopyForm, MySubmissionsPage, SubmissionPage, SubmissionsPage, waiting_submissions,
 };
 
 /// The index and the submissions pages. No project is open here, so no connection either.
@@ -306,8 +306,11 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let project = catalogue.project();
     let day = catalogue.day().map(|day| format!("changed {day}"));
+    let copying = RwSignal::new(false);
+    let close = Callback::new(move |()| copying.set(false));
+    let public = catalogue.id.clone();
     view! {
-        <li>
+        <li class="public-item">
             <button type="button" class="public-row" on:click=move |_| projects.switch(&project)>
                 <span class="name">{catalogue.name.clone()}</span>
                 {catalogue.description.clone().map(|text| view! { <span class="description" title=text.clone()>{text.clone()}</span> })}
@@ -317,6 +320,12 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
                     {day.map(|day| view! { <span>{day}</span> })}
                 </span>
             </button>
+            <button type="button" class="button copy-button" aria-expanded=move || copying.get().to_string()
+                aria-label=format!("Copy “{}” to a project", catalogue.name)
+                on:click=move |_| copying.update(|open| *open = !*open)>"Copy…"</button>
+            <Show when=move || copying.get()>
+                <CopyForm public=public.clone() close/>
+            </Show>
         </li>
     }
 }

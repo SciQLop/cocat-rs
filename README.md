@@ -287,6 +287,7 @@ projects, whatever became of them. One snapshot holds at most 50 MB, and an auth
 |---|---|---|
 | `POST /api/public/submissions` | editors of the project | `{"room", "catalogue", "title"?, "folder"?, "description"?, "note"?}` → 201, a new catalogue (the title defaults to its name); 413 when it is over 50 MB or over what your storage has left |
 | `POST /api/public/{id}/proposals` | any user | `{"room"?, "name"?}` → 201 `{room, name, catalogue}`: a copy of the public catalogue (same uuids) in one of your projects or a new one; the server remembers where it came from |
+| `POST /api/public/{id}/copies` | any user | `{"room"?}` → 201 `{room, name, catalogue}`: a copy of the public catalogue (same uuids and name) in one of your projects or a new one named after it, to use; it does not link back |
 | `GET /api/rooms/{id}/proposals` | members | the project's catalogues copied that way: `catalogue`, `target`, `name` |
 | `POST /api/public/submissions/updates` | editors of the project | `{"room", "catalogue", "note"?}` → 201, the copy as the public catalogue's next version |
 | `GET /api/public/submissions` | any user | your own; a curator's lists everyone's unless `?mine=true`. Pending first |
@@ -633,7 +634,9 @@ with `create_public_catalogue(url, cookie, name, folder=None, source=None, descr
 key=None)`, which answers its id (`public.<key>`, or a random one); anyone else gets
 `Forbidden`, a key already taken `Conflict`. `update_public_catalogue(url, cookie, id,
 name=None, folder=None, source=None, description=None)` changes its entry: `None` keeps a
-field, `""` clears it.
+field, `""` clears it. `copy_public_catalogue(url, cookie, public_id, project_id=None)`
+copies one, with its name and events, into one of your projects (a new one named after it
+without `project_id`) to use there, and answers `{"project_id", "name", "catalogue"}`.
 
 Submitting: `submit_catalogue(url, cookie, project_id, catalogue_uuid, title=None,
 folder=None, description=None, note=None)` offers one of your catalogues and answers the

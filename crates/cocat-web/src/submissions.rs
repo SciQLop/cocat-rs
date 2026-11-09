@@ -113,10 +113,33 @@ pub fn submit_offer(public: bool, editor: bool, linked: bool) -> Option<Offer> {
     }
 }
 
-/// A reader of a public catalogue can only propose a change: it gets the header's main button.
-/// A curator edits the catalogue directly and finds Propose in More.
-pub fn propose_is_main(public: bool, editor: bool) -> bool {
-    public && !editor
+/// What a public catalogue's header offers next to More.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicAction {
+    /// A copy to use in a project of one's own.
+    Copy,
+    /// A copy to change, then submit back.
+    Propose,
+}
+
+impl PublicAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            PublicAction::Copy => "Copy to a project…",
+            PublicAction::Propose => "Propose a change…",
+        }
+    }
+}
+
+/// The public catalogue's header buttons, each with whether it is the main one. Everyone
+/// copies; a reader also proposes a change. A curator edits the catalogue directly, finds
+/// Propose in More, and has New event as the main button.
+pub fn public_actions(public: bool, editor: bool) -> &'static [(PublicAction, bool)] {
+    match (public, editor) {
+        (true, false) => &[(PublicAction::Copy, true), (PublicAction::Propose, false)],
+        (true, true) => &[(PublicAction::Copy, false)],
+        (false, _) => &[],
+    }
 }
 
 pub fn pending(all: &[Submission]) -> usize {
@@ -155,7 +178,7 @@ pub fn review_body(accept: bool, note: &str) -> Value {
 }
 
 /// Copies into `project`, or a new project when it is `None`.
-pub fn propose_body(project: Option<&str>) -> Value {
+pub fn copy_body(project: Option<&str>) -> Value {
     json!({ "room": project })
 }
 
@@ -223,10 +246,20 @@ mod tests {
     }
 
     #[test]
-    fn proposing_is_the_main_action_of_a_reader_of_a_public_catalogue() {
-        assert!(propose_is_main(true, false));
-        assert!(!propose_is_main(true, true), "a curator edits it directly");
-        assert!(!propose_is_main(false, false));
+    fn everyone_copies_a_public_catalogue_and_its_readers_also_propose_a_change() {
+        use PublicAction::{Copy, Propose};
+        assert_eq!(
+            public_actions(true, false),
+            [(Copy, true), (Propose, false)]
+        );
+        assert_eq!(
+            public_actions(true, true),
+            [(Copy, false)],
+            "a curator edits it directly, New event is their main button"
+        );
+        assert_eq!(public_actions(false, true), []);
+        assert_eq!(Copy.label(), "Copy to a project…");
+        assert_eq!(Propose.label(), "Propose a change…");
     }
 
     #[test]
@@ -298,8 +331,8 @@ mod tests {
             review_body(false, "needs sources"),
             json!({"accept": false, "note": "needs sources"})
         );
-        assert_eq!(propose_body(None), json!({"room": null}));
-        assert_eq!(propose_body(Some("lab")), json!({"room": "lab"}));
+        assert_eq!(copy_body(None), json!({"room": null}));
+        assert_eq!(copy_body(Some("lab")), json!({"room": "lab"}));
     }
 
     #[test]

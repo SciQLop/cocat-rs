@@ -883,3 +883,167 @@ async fn proposing_a_change_to_a_catalogue_with_a_long_name_names_the_copy_withi
     assert_eq!(name.chars().count(), 200, "{name}");
     assert!(name.ends_with("é (proposed change)"), "{name}");
 }
+
+impl World {
+    /// `caller` copies `public` into `room`, or a new project for `None`.
+    async fn copy(&self, caller: Uuid, public: &str, room: Option<&str>) -> (StatusCode, Value) {
+        let path = format!("/api/public/{public}/copies");
+        self.call(caller, Method::POST, &path, Some(json!({"room": room})))
+            .await
+    }
+
+    async fn links(&self, room: &str) -> Value {
+        let path = format!("/api/rooms/{room}/proposals");
+        let (status, links) = self.call(self.author, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK, "{links}");
+        links
+    }
+}
+
+#[tokio::test]
+async fn a_copy_into_a_new_project_is_named_after_the_public_catalogue_and_links_nowhere() {
+    let world = World::start().await;
+    let public = world.public().await;
+
+    let (status, copied) = world.copy(world.author, &public, None).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    assert_eq!(copied["name"], "Shocks");
+    assert_eq!(copied["catalogue"], "pub");
+    let room = copied["room"].as_str().unwrap();
+    assert_eq!(
+        db::role_in(&world.state.pool, room, world.author)
+            .await
+            .unwrap(),
+        Some(Role::Owner)
+    );
+    let doc = world.doc(room).await;
+    let found = model::catalogue(&doc.transact(), "pub").unwrap();
+    assert_eq!(found.name, "pub name");
+    assert_eq!(found.event_count, 2);
+    assert_eq!(world.links(room).await, json!([]), "no Submit update on it");
+}
+
+#[tokio::test]
+async fn a_copy_into_a_project_of_ones_own_lands_there_once() {
+    let world = World::start().await;
+    let public = world.public().await;
+
+    let (status, copied) = world
+        .copy(world.author, &public, Some(&world.project))
+        .await;
+    let (twice, said) = world
+        .copy(world.author, &public, Some(&world.project))
+        .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    assert_eq!(
+        copied,
+        json!({"room": world.project, "name": "Lab", "catalogue": "pub"})
+    );
+    let doc = world.doc(&world.project).await;
+    assert_eq!(
+        model::catalogue(&doc.transact(), "pub")
+            .unwrap()
+            .event_count,
+        2
+    );
+    assert_eq!(world.links(&world.project).await, json!([]));
+    assert_eq!(twice, StatusCode::CONFLICT);
+    assert_eq!(
+        said["detail"],
+        "This project already holds a copy of this catalogue"
+    );
+}
+
+#[tokio::test]
+async fn copying_needs_a_project_one_can_write_to() {
+    let world = World::start().await;
+    let public = world.public().await;
+    db::add_member(
+        &world.state.pool,
+        &world.project,
+        world.stranger,
+        Role::Viewer,
+    )
+    .await
+    .unwrap();
+    let theirs = lifecycle::create_room(&world.state, world.curator, "Theirs")
+        .await
+        .unwrap()
+        .id;
+
+    let (viewer, _) = world
+        .copy(world.stranger, &public, Some(&world.project))
+        .await;
+    let (stranger, _) = world.copy(world.author, &public, Some(&theirs)).await;
+    let (into_public, _) = world.copy(world.curator, &public, Some(&public)).await;
+    let (unknown, said) = world.copy(world.author, "public.nope", None).await;
+    let (anyone, _) = world.copy(world.stranger, &public, None).await;
+
+    assert_eq!(viewer, StatusCode::FORBIDDEN);
+    assert_eq!(stranger, StatusCode::NOT_FOUND);
+    assert_eq!(into_public, StatusCode::CONFLICT);
+    assert_eq!(unknown, StatusCode::NOT_FOUND);
+    assert_eq!(said["detail"], "No such public catalogue");
+    assert_eq!(anyone, StatusCode::CREATED, "every account may copy one");
+}
+
+#[tokio::test]
+async fn a_copy_counts_against_the_destination_owners_storage() {
+    let world = World::with_limits(StorageLimits {
+        room: 1 << 30,
+        owner: 10,
+    })
+    .await;
+    let public = world.public().await;
+    let before = db::owned_rooms(&world.state.pool, world.author)
+        .await
+        .unwrap()
+        .len();
+
+    let (into_own, said) = world
+        .copy(world.author, &public, Some(&world.project))
+        .await;
+    let (into_new, _) = world.copy(world.author, &public, None).await;
+
+    assert_eq!(into_own, StatusCode::CONFLICT);
+    assert_eq!(said["detail"], "The project reached its storage limit");
+    assert_eq!(into_new, StatusCode::CONFLICT);
+    let doc = world.doc(&world.project).await;
+    assert!(model::catalogue(&doc.transact(), "pub").is_none());
+    let after = db::owned_rooms(&world.state.pool, world.author)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(after, before, "the failed new project is removed");
+}
+
+#[tokio::test]
+async fn a_copy_of_a_public_catalogue_with_a_long_name_names_its_project_within_the_limit() {
+    let world = World::start().await;
+    let room = db::PublicRoom {
+        id: "public.long".to_owned(),
+        name: "é".repeat(250),
+        folder: None,
+        source: None,
+        description: None,
+        public_count: None,
+        counted_file: None,
+    };
+    assert!(
+        db::create_public_room(&world.state.pool, &room, world.curator)
+            .await
+            .unwrap()
+    );
+    world
+        .edit(&room.id, world.curator, |txn| {
+            catalogue(txn, "pub", &["p1"])
+        })
+        .await;
+
+    let (status, copied) = world.copy(world.author, "public.long", None).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    assert_eq!(copied["name"], "é".repeat(200));
+}

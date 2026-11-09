@@ -64,6 +64,24 @@ fn propose_change(
     )
 }
 
+/// Copies a public catalogue, same uuids and name, into `project_id` or a new project named
+/// after it, to use it there; a dict with `project_id`, `name` (the project's) and
+/// `catalogue`. The copy is not linked back, so it cannot be submitted as an update.
+#[pyfunction]
+#[pyo3(signature = (url, cookie, public_id, project_id=None))]
+fn copy_public_catalogue(
+    py: Python<'_>,
+    url: String,
+    cookie: String,
+    public_id: String,
+    project_id: Option<String>,
+) -> Result<Py<PyAny>> {
+    answer(
+        py,
+        cocat_client::copy_public_catalogue(&url, &cookie, &public_id, project_id.as_deref()),
+    )
+}
+
 /// Offers a copy made with `propose_change`, as it is now, as the public catalogue's next
 /// version; the submission's id.
 #[pyfunction]
@@ -125,6 +143,7 @@ fn withdraw_submission(py: Python<'_>, url: String, cookie: String, id: i64) -> 
 pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(submit_catalogue, module)?)?;
     module.add_function(wrap_pyfunction!(propose_change, module)?)?;
+    module.add_function(wrap_pyfunction!(copy_public_catalogue, module)?)?;
     module.add_function(wrap_pyfunction!(submit_update, module)?)?;
     module.add_function(wrap_pyfunction!(submissions, module)?)?;
     module.add_function(wrap_pyfunction!(review_submission, module)?)?;

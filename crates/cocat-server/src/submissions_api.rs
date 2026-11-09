@@ -1,6 +1,7 @@
 //! Submissions to the public catalogues under `/api/public`: anyone signed in offers one of
 //! their catalogues, or a change to a public one made on a copy of it; curators accept or
-//! decline; authors withdraw. Only the author and the curators see a submission.
+//! decline; authors withdraw. Only the author and the curators see a submission. A plain
+//! copy of a public catalogue, to use it rather than change it, goes through here too.
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -66,6 +67,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(review))
         .routes(routes!(withdraw))
         .routes(routes!(propose))
+        .routes(routes!(copy))
         .routes(routes!(proposals))
 }
 
@@ -179,14 +181,22 @@ struct ProposeBody {
     name: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+struct CopyBody {
+    /// One of the caller's projects; a new project, named after the public catalogue, when
+    /// left out.
+    room: Option<String>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ListQuery {
     #[serde(default)]
     mine: bool,
 }
 
+/// Where a copy of a public catalogue went.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-struct Proposed {
+struct Copied {
     /// The project holding the copy.
     room: String,
     /// That project's name.
@@ -430,7 +440,7 @@ async fn withdraw(
     request_body = ProposeBody,
     security(("cookie" = [])),
     responses(
-        (status = 201, description = "A copy of the public catalogue, same uuids, in the project given or a new one; it remembers where it came from", body = Proposed),
+        (status = 201, description = "A copy of the public catalogue, same uuids, in the project given or a new one; it remembers where it came from", body = Copied),
         (status = 400, description = "The new project's name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the project given", body = Detail),
@@ -444,31 +454,46 @@ async fn propose(
     CurrentUser(user): CurrentUser,
     ApiPath(room_id): ApiPath<String>,
     JsonBody(body): JsonBody<ProposeBody>,
-) -> Result<(StatusCode, Json<Proposed>), ApiError> {
-    let public = db::public_room(&state.pool, &room_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(NO_SUCH_PUBLIC.to_owned()))?;
-    let (catalogue, update, base) = public_copy(&state, &public.id).await?;
-    let (room, name) = match body.room {
-        Some(room) => copy_into(&state, &room, user.id, &catalogue, update).await?,
-        None => {
-            let name = body.name.unwrap_or_else(|| proposal_name(&public.name));
-            let first = copy_name(&public.name, None);
-            let making = make_copy(state.clone(), user.id, name, update, first);
-            let made = tokio::spawn(making).await.map_err(|error| {
-                tracing::warn!(%error, "a proposal stopped half way");
-                ApiError::Internal
-            })??;
-            (made.id, made.name)
-        }
-    };
-    submissions::link(&state.pool, &room, &catalogue, &public.id, base).await?;
-    let proposed = Proposed {
-        room,
-        name,
-        catalogue,
-    };
-    Ok((StatusCode::CREATED, Json(proposed)))
+) -> Result<(StatusCode, Json<Copied>), ApiError> {
+    let public = public_room(&state, &room_id).await?;
+    let name = body.name.unwrap_or_else(|| proposal_name(&public.name));
+    let (copied, base) = copy_public(&state, user.id, &public, body.room, name).await?;
+    submissions::link(
+        &state.pool,
+        &copied.room,
+        &copied.catalogue,
+        &public.id,
+        base,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(copied)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/{room_id}/copies",
+    params(("room_id" = String, Path, description = "The public catalogue's id")),
+    request_body = CopyBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "A copy of the public catalogue, same uuids and name, in the project given or a new one; it does not link back", body = Copied),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller cannot write to the project given", body = Detail),
+        (status = 404, description = "No such public catalogue, project or membership", body = Detail),
+        (status = 409, description = "The project is public, holds a copy already, or is full; or the public catalogue is empty", body = Detail),
+        (status = 422, description = "The body is not a copy", body = Detail),
+    )
+)]
+async fn copy(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+    JsonBody(body): JsonBody<CopyBody>,
+) -> Result<(StatusCode, Json<Copied>), ApiError> {
+    let public = public_room(&state, &room_id).await?;
+    let name = public.name.chars().take(lifecycle::MAX_NAME).collect();
+    let (copied, _) = copy_public(&state, user.id, &public, body.room, name).await?;
+    Ok((StatusCode::CREATED, Json(copied)))
 }
 
 #[utoipa::path(
@@ -598,6 +623,42 @@ async fn public_copy(state: &AppState, public: &str) -> Result<(String, Vec<u8>,
         })
         .await?
         .ok_or_else(|| ApiError::Conflict(EMPTY_PUBLIC.to_owned()))
+}
+
+async fn public_room(state: &AppState, room_id: &str) -> Result<PublicRoom, ApiError> {
+    db::public_room(&state.pool, room_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(NO_SUCH_PUBLIC.to_owned()))
+}
+
+/// Copies the public catalogue into `room`, or a new project named `name`; where it went
+/// and the copy's base.
+async fn copy_public(
+    state: &AppState,
+    user: Uuid,
+    public: &PublicRoom,
+    room: Option<String>,
+    name: String,
+) -> Result<(Copied, i64), ApiError> {
+    let (catalogue, update, base) = public_copy(state, &public.id).await?;
+    let (room, name) = match room {
+        Some(room) => copy_into(state, &room, user, &catalogue, update).await?,
+        None => {
+            let first = copy_name(&public.name, None);
+            let making = make_copy(state.clone(), user, name, update, first);
+            let made = tokio::spawn(making).await.map_err(|error| {
+                tracing::warn!(%error, "a copy stopped half way");
+                ApiError::Internal
+            })??;
+            (made.id, made.name)
+        }
+    };
+    let copied = Copied {
+        room,
+        name,
+        catalogue,
+    };
+    Ok((copied, base))
 }
 
 /// Writes the copy into one of the caller's projects; its id and name.

@@ -7,12 +7,12 @@ use crate::period::Period;
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys, filter, rows, sort, trash_rows};
 use crate::state::Room;
-use crate::submissions::{Proposal, proposal_for, propose_is_main};
-use crate::views::actions::{Actions, Form, Freeze, ProposeButton};
+use crate::submissions::{Proposal, proposal_for};
+use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
 use crate::views::rule_editor::RuleEditor;
-use crate::views::submissions::{ProposeForm, SubmitForm, UpdateForm};
+use crate::views::submissions::{CopyForm, ProposeForm, SubmitForm, UpdateForm};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
 use crate::views::transfer::ExportForm;
@@ -101,6 +101,7 @@ pub fn CataloguePage(
     });
     let form = RwSignal::new(Form::Closed);
     let public = is_public_id(&room.config.room_id);
+    let public_id = room.config.room_id.clone();
     let proposals = copies_of(&room, public);
     Effect::new(move |_| {
         shown.track();
@@ -140,7 +141,7 @@ pub fn CataloguePage(
                 </label>
                 <ColumnPicker keys columns picked/>
                 <Actions shown selected form proposals/>
-                {propose_is_main(public, can_write).then(|| view! { <ProposeButton shown form/> })}
+                {public.then(|| view! { <PublicButtons shown form editor=can_write/> })}
             </div>
         </div>
         {move || match (form.get(), shown.get()) {
@@ -151,6 +152,10 @@ pub fn CataloguePage(
                 .with(|listed| proposal_for(listed, &uuid).cloned())
                 .map(|proposal| view! { <UpdateForm uuid proposal form/> }.into_any()),
             (Form::Propose, Route::Catalogue(_)) => Some(view! { <ProposeForm form/> }.into_any()),
+            (Form::Copy, Route::Catalogue(_)) => {
+                let close = Callback::new(move |()| form.set(Form::Closed));
+                Some(view! { <CopyForm public=public_id.clone() close/> }.into_any())
+            }
             (Form::Export, Route::Catalogue(uuid)) => Some(view! { <ExportForm uuid form/> }.into_any()),
             _ => None,
         }}

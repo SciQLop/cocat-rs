@@ -121,3 +121,29 @@ def test_a_declined_submission_tells_its_author_why(server, tmp_path):
     assert statuses[second]["status"] == "withdrawn"
     assert cc.submissions(server.url, stranger) == []
     assert cc.public_catalogues(server.url, server.cookie) == []
+
+
+def test_a_public_catalogue_copies_into_a_project_to_use_it(server, tmp_path):
+    curator = account(server, "curator@example.org", "set-curator")
+    public_id = cc.create_public_catalogue(server.url, curator, "Shocks")
+    keeper = connected(tmp_path / "curator", public_id, server.url, curator)
+    shock = keeper.create_event("2020-01-01T00:00:00", "2020-01-01T01:00:00")
+    keeper.create_catalogue(name="ACE shocks", events=[shock])
+    keeper.save(15)
+    keeper.close()
+
+    into_new = cc.copy_public_catalogue(server.url, server.cookie, public_id)
+    into_mine = cc.copy_public_catalogue(
+        server.url, server.cookie, public_id, project_id=server.project_id
+    )
+    with pytest.raises(cc.Conflict):
+        cc.copy_public_catalogue(server.url, server.cookie, public_id, server.project_id)
+
+    assert into_new["name"] == "Shocks"
+    assert into_mine["project_id"] == server.project_id
+    assert into_mine["catalogue"] == into_new["catalogue"]
+    name, found = events_of(tmp_path / "copy", into_new["project_id"], server, server.cookie)
+    assert name == "ACE shocks"
+    assert set(found) == {shock.uuid}
+    with pytest.raises(cc.ServerNotFound):
+        cc.submit_update(server.url, server.cookie, into_new["project_id"], into_new["catalogue"])

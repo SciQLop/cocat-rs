@@ -25,6 +25,6 @@ pub use projects::{
 };
 pub use room::{Room, RoomError, Status};
 pub use submissions::{
-    NewSubmission, Proposed, Submission, propose_change, review_submission, submissions,
-    submit_catalogue, submit_update, withdraw_submission,
+    Copied, NewSubmission, Submission, copy_public_catalogue, propose_change, review_submission,
+    submissions, submit_catalogue, submit_update, withdraw_submission,
 };

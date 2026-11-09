@@ -698,6 +698,7 @@ a.button { text-decoration: none; }
 .button.danger { color: var(--danger); }
 .button[disabled] { opacity: 0.5; cursor: not-allowed; }
 .button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.button.primary[aria-pressed="true"] { color: var(--accent); }
 
 .icon {
   border: 0;
@@ -1068,6 +1069,9 @@ a.button { text-decoration: none; }
 }
 .public-row .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
 .public-row .source { color: var(--accent); font-weight: 500; }
+.public-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.public-item .copy-button { margin-top: 6px; }
+.public-item .submit-form { grid-column: 1 / -1; margin: 0; }
 
 /* Submissions to the public catalogues: the forms, the lists and one submission. */
 .public-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
