@@ -29,6 +29,7 @@ struct Head<'a> {
     socket: String,
     api: String,
     email: &'a str,
+    admin: bool,
     flash: Option<String>,
     share_link: Option<String>,
 }
@@ -67,6 +68,7 @@ pub(crate) async fn browse(
         socket: state.links.socket(&format!("/room/{}", segment(&room.id))),
         api: state.links.app("/api"),
         email: &user.email,
+        admin: user.is_superuser,
         flash,
         share_link,
     };

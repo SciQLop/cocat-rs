@@ -105,10 +105,40 @@ async fn browse_serves_index_with_the_room_meta() {
     ] {
         assert!(body.contains(&expected), "{expected} missing from {body}");
     }
+    assert!(
+        !body.contains("cocat-admin"),
+        "only an admin's page offers the admin pages"
+    );
     let base = body.find("<base").unwrap();
     assert!(
         base < body.find("<title>").unwrap(),
         "the base must come before anything that loads"
+    );
+}
+
+#[tokio::test]
+async fn an_admins_page_says_so() {
+    let mut fixture = Fixture::start().await;
+    fixture.state.web_dir = Some(bundle(&fixture));
+    let admin = db::create_user(&fixture.state.pool, "admin@example.org", "p", true, true)
+        .await
+        .unwrap();
+    let room = lifecycle::create_room(&fixture.state, admin, "Lab")
+        .await
+        .unwrap()
+        .id;
+    let token = fixture.token(admin).await;
+
+    let body = body_text(
+        fixture
+            .get(&format!("/ui/rooms/{room}/browse"), Some(&token))
+            .await,
+    )
+    .await;
+
+    assert!(
+        body.contains(r#"<meta name="cocat-admin" content="true">"#),
+        "{body}"
     );
 }
 

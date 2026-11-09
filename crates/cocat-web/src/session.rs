@@ -17,6 +17,8 @@ pub struct RoomConfig {
     pub ws_url: String,
     pub api_url: String,
     pub user_email: String,
+    /// Whether the visitor may open the admin pages.
+    pub admin: bool,
 }
 
 #[derive(Debug, Error)]
@@ -44,6 +46,7 @@ impl RoomConfig {
             ws_url: socket_url(&tag("cocat-ws")?, base_uri)?,
             api_url: resolve(&tag("cocat-api")?, base_uri)?.into(),
             user_email: tag("cocat-user")?,
+            admin: meta("cocat-admin").is_some_and(|value| value == "true"),
         })
     }
 }
@@ -119,8 +122,16 @@ mod tests {
                 ws_url: "wss://cocat.example.org/cocat-dev/room/lab".into(),
                 api_url: "https://cocat.example.org/cocat-dev/api".into(),
                 user_email: "alice@example.org".into(),
+                admin: false,
             }
         );
+    }
+
+    #[test]
+    fn an_admins_page_says_so() {
+        let mut meta = full("/room/lab");
+        meta.insert("cocat-admin".into(), "true".into());
+        assert!(read(&meta, BASE).unwrap().admin);
     }
 
     #[test]

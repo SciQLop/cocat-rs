@@ -1,11 +1,13 @@
 use leptos::prelude::*;
 
+use leptos::html::Details;
+
 use crate::help;
-use crate::presence::Peer;
+use crate::presence::{Peer, initials};
 use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
-use crate::views::projects::ProjectMenu;
+use crate::views::projects::{ProjectMenu, Projects};
 use crate::views::share::ShareButton;
 
 #[component]
@@ -50,6 +52,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                     <span class="dot" aria-hidden="true"></span>
                     {move || status.get().label()}
                 </span>
+                <UserMenu/>
             </div>
         </header>
     }
@@ -64,6 +67,7 @@ pub fn PublicHeader(shown: Memo<Route>) -> impl IntoView {
             <Crumbs shown/>
             <div class="header-end">
                 <HelpButton/>
+                <UserMenu/>
             </div>
         </header>
     }
@@ -120,5 +124,39 @@ fn Avatars() -> impl IntoView {
                 <For each=move || peers.get() key=|peer| peer.email.clone() children=avatar/>
             </div>
         </Show>
+    }
+}
+
+/// The visitor's own avatar: their account, the admin pages for an admin, and signing out.
+/// The links lead out of the app, to the server's pages beside it.
+#[component]
+fn UserMenu() -> impl IntoView {
+    let (email, admin) = expect_context::<Projects>()
+        .open
+        .with_untracked(|config| (config.user_email.clone(), config.admin));
+    let menu = NodeRef::<Details>::new();
+    let close = move || {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+    };
+    view! {
+        <details class="user-menu" node_ref=menu
+            on:keydown=move |event| if event.key() == "Escape" { close(); }>
+            <summary class="avatar me" title=email.clone() aria-label="Your account"
+                style=format!("background: {}", cocat_core::person::color(&email))>
+                {initials(&email)}
+            </summary>
+            <div class="menu" role="menu" aria-label="Your account">
+                <p class="signed-in">"Signed in as"<strong>{email.clone()}</strong></p>
+                <hr/>
+                <a role="menuitem" href="../account">"Account settings"</a>
+                {admin.then(|| view! { <a role="menuitem" href="../admin">"Admin"</a> })}
+                <hr/>
+                <form method="post" action="../logout">
+                    <button type="submit" role="menuitem">"Sign out"</button>
+                </form>
+            </div>
+        </details>
     }
 }

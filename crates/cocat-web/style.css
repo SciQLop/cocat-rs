@@ -860,6 +860,62 @@ a.button { text-decoration: none; }
 .avatar + .avatar { margin-left: -8px; }
 .events tr.row.peer { background: color-mix(in srgb, var(--peer) 9%, transparent); box-shadow: inset 3px 0 0 var(--peer); }
 
+/* The visitor's own avatar, at the far right of the header: account, admin, sign out. */
+
+.user-menu { position: relative; flex: none; }
+.user-menu > summary.avatar {
+  list-style: none;
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+  cursor: pointer;
+  border-color: var(--surface);
+  box-shadow: 0 0 0 1px var(--rule);
+}
+.user-menu > summary::-webkit-details-marker { display: none; }
+.user-menu > summary.avatar:hover,
+.user-menu[open] > summary.avatar { box-shadow: 0 0 0 2px var(--accent); }
+.user-menu[open] > summary::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  cursor: default;
+}
+.user-menu .menu {
+  position: absolute;
+  right: 0;
+  z-index: 4;
+  margin-top: 6px;
+  padding: 6px;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
+}
+.user-menu .signed-in { margin: 0; padding: 6px 8px; color: var(--muted); font-size: 13px; display: flex; flex-direction: column; }
+.user-menu .signed-in strong { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+.user-menu .menu hr { width: 100%; border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
+.user-menu .menu form { margin: 0; display: contents; }
+.user-menu .menu :is(a, button) {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.user-menu .menu :is(a, button):hover { background: var(--chip); }
+
 /* Project menu: the open project's name in the header lists the others. */
 
 .project-menu { position: relative; min-width: 0; }

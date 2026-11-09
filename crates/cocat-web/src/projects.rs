@@ -165,6 +165,7 @@ mod tests {
             ws_url: "wss://cocat.example.org/cocat-dev/room/lab".into(),
             api_url: "https://cocat.example.org/cocat-dev/api".into(),
             user_email: "alice@example.org".into(),
+            admin: true,
         }
     }
 
@@ -278,6 +279,7 @@ mod tests {
                 ws_url: "wss://cocat.example.org/cocat-dev/room/bepi".into(),
                 api_url: "https://cocat.example.org/cocat-dev/api".into(),
                 user_email: "alice@example.org".into(),
+                admin: true,
             }
         );
     }
