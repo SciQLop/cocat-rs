@@ -29,6 +29,7 @@ pub mod room;
 pub mod submissions;
 pub mod submissions_api;
 pub mod telemetry;
+pub mod tokens_api;
 pub mod ui;
 pub mod ws;
 

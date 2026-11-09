@@ -991,3 +991,96 @@ async fn a_socket_relays_awareness_under_the_account_email() {
         serde_json::from_str(&seen.clients[&yrs::ClientID::new(42)].json).unwrap();
     assert_eq!(state["user"]["email"], "viewer@example.org");
 }
+
+fn bearer_request(fixture: &Fixture, room_id: &str, token: &str) -> Request<()> {
+    let mut request = fixture.request(room_id, None);
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
+    request
+}
+
+async fn close_code(socket: &mut Socket) -> Option<u16> {
+    loop {
+        if let WsMessage::Close(frame) = next_ws(socket).await {
+            return frame.map(|frame| u16::from(frame.code));
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_bearer_token_opens_a_socket() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-bearer", "Bearer")
+        .await
+        .unwrap();
+    let token = auth::start_token(&fixture.pool, owner, "Python on laptop")
+        .await
+        .unwrap();
+
+    let mut socket = shake(bearer_request(&fixture, "room-bearer", &token))
+        .await
+        .expect("the bearer token is accepted");
+    next_message(&mut socket).await;
+
+    assert_eq!(
+        shake(bearer_request(&fixture, "room-bearer", "not-a-token"))
+            .await
+            .err(),
+        Some(403)
+    );
+}
+
+#[tokio::test]
+async fn revoking_a_token_closes_its_socket_at_once() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    db::create_room(&fixture.pool, owner, "room-revoke", "Revoke")
+        .await
+        .unwrap();
+    let token = auth::start_token(&fixture.pool, owner, "Python on laptop")
+        .await
+        .unwrap();
+    let browser = fixture.token(owner).await;
+    let mut app = shake(bearer_request(&fixture, "room-revoke", &token))
+        .await
+        .unwrap();
+    next_message(&mut app).await;
+    let mut tab = fixture.connect("room-revoke", Some(&browser)).await;
+    next_message(&mut tab).await;
+
+    let request = Request::builder()
+        .method(Method::DELETE)
+        .uri("/api/tokens/current")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = ws::router(fixture.state.clone())
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(close_code(&mut app).await, Some(1008));
+    wait_for_sockets(&fixture, 1).await;
+    drop(tab);
+}
+
+/// The room detaches a closed socket after the close frame went out, so the count is polled
+/// with a deadline rather than read once.
+async fn wait_for_sockets(fixture: &Fixture, expected: usize) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let open = fixture.rooms.sockets().await.len();
+        if open == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{open} sockets, expected {expected}"
+        );
+        sleep(Duration::from_millis(10)).await;
+    }
+}

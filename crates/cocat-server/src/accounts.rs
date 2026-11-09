@@ -133,6 +133,7 @@ pub async fn forgot_password(state: &AppState, email: &str) {
 }
 
 /// Spend a reset link: the token names the account and the password it was issued against.
+/// Browser sessions end; the apps' tokens stay, for the person to revoke on the account page.
 pub async fn reset_password(
     state: &AppState,
     token: &str,
@@ -156,7 +157,7 @@ pub async fn reset_password(
     if !db::replace_password(&mut *tx, user.id, &user.hashed_password, &new_hash).await? {
         return Err(AccountError::BadResetToken);
     }
-    db::end_sessions_of(&mut *tx, user.id).await?;
+    db::end_browser_sessions_of(&mut *tx, user.id).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(())
 }
@@ -182,7 +183,7 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
     let mut updated = user;
     let was_active = updated.is_active;
     let was_superuser = updated.is_superuser;
-    let mut ends_sessions = false;
+    let mut new_password = false;
     let moved = change
         .email
         .as_deref()
@@ -199,15 +200,19 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
     if let Some(password) = change.password {
         password::check(&password, &updated.email)?;
         updated.hashed_password = db::hash_password(&password).await?;
-        ends_sessions = true;
+        new_password = true;
     }
-    ends_sessions |= was_active && !updated.is_active;
-    if ends_sessions {
+    let deactivated = was_active && !updated.is_active;
+    if new_password || deactivated {
         let mut tx = db::begin_immediate(&state.pool).await?;
         db::save_user(&mut *tx, &updated)
             .await
             .map_err(account_error)?;
-        db::end_sessions_of(&mut *tx, updated.id).await?;
+        if deactivated {
+            db::end_sessions_of(&mut *tx, updated.id).await?;
+        } else {
+            db::end_browser_sessions_of(&mut *tx, updated.id).await?;
+        }
         tx.commit().await.map_err(DbError::from)?;
     } else {
         db::save_user(&state.pool, &updated)

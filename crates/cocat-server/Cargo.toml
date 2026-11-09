@@ -46,6 +46,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
 slug = "0.1.6"
 zxcvbn = { version = "3.1.1", default-features = false }
+headers = "0.4"
 
 [dev-dependencies]
 palette = "0.7"

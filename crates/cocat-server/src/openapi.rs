@@ -10,7 +10,9 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::openapi::security::{
+    ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityRequirement, SecurityScheme,
+};
 use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::Config;
@@ -34,7 +36,7 @@ pub struct Detail {
 struct Root;
 
 /// The session cookie as `apiKey` in a cookie: Swagger UI then sends it if the reader has
-/// signed in in the same browser.
+/// signed in in the same browser. Apps send a token as `Authorization: Bearer` instead.
 struct SessionCookie;
 
 impl Modify for SessionCookie {
@@ -44,6 +46,36 @@ impl Modify for SessionCookie {
             "cookie",
             SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new("fastapiusersauth"))),
         );
+        components.add_security_scheme(
+            "bearer",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .description(Some(
+                        "A token from a browser sign-in request (`/api/sign-in-requests`)",
+                    ))
+                    .build(),
+            ),
+        );
+    }
+}
+
+/// Every operation that takes the cookie takes a bearer token as well: the server reads both
+/// in one place, so the document says so in one place too.
+fn accept_bearer(document: &mut utoipa::openapi::OpenApi) {
+    for item in document.paths.paths.values_mut() {
+        let operations = [
+            &mut item.get,
+            &mut item.put,
+            &mut item.post,
+            &mut item.delete,
+            &mut item.patch,
+        ];
+        for operation in operations.into_iter().flatten() {
+            if let Some(security) = operation.security.as_mut().filter(|s| !s.is_empty()) {
+                security.push(SecurityRequirement::new("bearer", Vec::<String>::new()));
+            }
+        }
     }
 }
 
@@ -62,6 +94,7 @@ pub fn api(limit: &LoginLimit, links: &Links) -> Api {
         .merge(accounts_api::router(limit))
         .merge(auth::router(limit))
         .split_for_parts();
+    accept_bearer(&mut document);
     let prefix = links.app("");
     document.servers = Some(vec![utoipa::openapi::Server::new(if prefix.is_empty() {
         "/".to_owned()

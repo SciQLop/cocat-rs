@@ -18,7 +18,7 @@ use cocat_core::store::{FileRoomStore, StoreError, read_updates, room_file};
 use sqlx::SqlitePool;
 use thiserror::Error;
 use tokio::sync::mpsc::{self as tokio_mpsc, error::TrySendError};
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::{Semaphore, broadcast, oneshot};
 use uuid::Uuid;
 use yrs::sync::{AwarenessUpdate, Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -49,6 +49,9 @@ pub const MEMORY_PER_FILE_BYTE: u64 = 16;
 /// Two cold reads at once: each one parses a whole room file into a fresh document, and
 /// SciQLop syncs over the websocket, so these reads are rare and do not need one per core.
 pub const COLD_READ_SLOTS: usize = 2;
+
+/// How many token revocations a socket may be behind before it re-reads its session instead.
+const ENDED_SESSIONS_BACKLOG: usize = 64;
 
 /// One megabyte, the unit administrators set quotas in.
 const MEGABYTE: u64 = 1024 * 1024;
@@ -190,6 +193,8 @@ pub struct RoomManager {
     cold_reads: Arc<Semaphore>,
     /// The room and owner storage limits, applied to the file when a room opens.
     storage: StorageLimits,
+    /// The hashes of revoked tokens, for the sockets they opened to close themselves.
+    ended_sessions: broadcast::Sender<String>,
 }
 
 impl RoomManager {
@@ -205,7 +210,19 @@ impl RoomManager {
             cold_bytes: Arc::default(),
             cold_reads: Arc::new(Semaphore::new(cold_reads.max(1))),
             storage: StorageLimits::default(),
+            ended_sessions: broadcast::channel(ENDED_SESSIONS_BACKLOG).0,
         }
+    }
+
+    /// Close every socket the session with this token hash opened, wherever it is.
+    pub fn end_session(&self, token_hash: &str) {
+        // No socket listening is the common case and not an error.
+        let _ = self.ended_sessions.send(token_hash.to_owned());
+    }
+
+    /// What a socket listens to for `end_session`.
+    pub fn ended_sessions(&self) -> broadcast::Receiver<String> {
+        self.ended_sessions.subscribe()
     }
 
     pub fn with_storage(mut self, storage: StorageLimits) -> Self {

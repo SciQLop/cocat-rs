@@ -109,6 +109,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/admin/rooms/{room}/delete", post(admin::delete_room))
         .route("/account", get(account::page))
         .route("/account/password", post(account::password))
+        .route("/account/tokens/{id}/revoke", post(account::revoke_app))
         .route(
             "/confirm-email",
             get(account::confirm_page).post(account::confirm),

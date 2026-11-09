@@ -149,6 +149,9 @@ const ROWS: &[Row] = &[
     row("PATCH", "/users/{user}", Guard::Superuser, Style::Api),
     row("DELETE", "/users/{user}", Guard::Superuser, Style::Api),
     row("GET", "/api/me", Guard::SignedIn, Style::Api),
+    row("GET", "/api/tokens", Guard::SignedIn, Style::Api),
+    row("DELETE", "/api/tokens/current", Guard::SignedIn, Style::Api),
+    row("DELETE", "/api/tokens/{token}", Guard::SignedIn, Style::Api).tolerant(),
     row("GET", "/api/rooms", Guard::SignedIn, Style::Api),
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
     row("GET", "/api/public", Guard::SignedIn, Style::Api),
@@ -649,6 +652,12 @@ const ROWS: &[Row] = &[
     row("GET", "/ui/account", Guard::SignedIn, Style::UiPage),
     row(
         "POST",
+        "/ui/account/tokens/{token}/revoke",
+        Guard::SignedIn,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
         "/ui/account/password",
         Guard::SignedIn,
         Style::UiAction,
@@ -961,6 +970,7 @@ impl World {
             .replace("{user}", &self.user.to_string())
             .replace("{member}", &self.target.to_string())
             .replace("{name}", "orcid")
+            .replace("{token}", "missing")
             .replace("{file}", "style.css")
             .replace("{asset}", "app.js")
             .replace("{swagger}", "swagger-ui.css")

@@ -2,12 +2,12 @@
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 
-use crate::ui::frame::{self, Frame, RequireUser};
+use crate::ui::frame::{self, Flash, Frame, RequireUser};
 use crate::{AppState, accounts, auth, db, mail, oidc};
 
 const EMPTY_PASSWORD: &str = "Enter a new password";
@@ -19,6 +19,7 @@ const MALFORMED_EMAIL: &str = "That is not an email address";
 const TAKEN_EMAIL: &str = "That address belongs to an existing account: sign in with it and \
                             reset its password if you do not have one";
 const CONFIRMED: &str = "Your address is confirmed.";
+const NO_SUCH_APP: &str = "That app is already signed out";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PasswordForm {
@@ -45,6 +46,15 @@ struct AccountPage {
     signs_in_with: Option<String>,
     action: String,
     message: String,
+    apps: Vec<AppLine>,
+}
+
+/// A signed-in app as the account page lists it.
+struct AppLine {
+    name: String,
+    created: String,
+    last_used: String,
+    revoke: String,
 }
 
 #[derive(Template)]
@@ -58,8 +68,26 @@ struct ConfirmEmailPage {
 pub(crate) async fn page(
     RequireUser(user): RequireUser,
     State(state): State<AppState>,
+    Flash(flash): Flash,
 ) -> Response {
-    account_page(&state, &user, "").await
+    render(&state, &user, "", flash).await
+}
+
+pub(crate) async fn revoke_app(
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match auth::revoke_token(&state, user.id, &id).await {
+        Ok(Some(name)) => {
+            crate::ui::redirect(&state, "/account", &format!("{name} is signed out."))
+        }
+        Ok(None) => crate::ui::redirect(&state, "/account", NO_SUCH_APP),
+        Err(error) => {
+            tracing::warn!(%error, "cannot revoke a token");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 pub(crate) async fn password(
@@ -113,7 +141,7 @@ async fn too_many(state: &AppState, user: &db::User) -> Response {
     response
 }
 
-/// The change ended every session, this one included, so the browser is sent back to the
+/// The change ended every browser session, this one included, so the browser is sent back to the
 /// sign-in page with the reason.
 fn password_changed(state: &AppState) -> Response {
     (
@@ -173,6 +201,22 @@ pub(crate) async fn confirm(
 }
 
 async fn account_page(state: &AppState, user: &db::User, message: &str) -> Response {
+    render(state, user, message, None).await
+}
+
+async fn render(
+    state: &AppState,
+    user: &db::User,
+    message: &str,
+    flash: Option<String>,
+) -> Response {
+    let apps = match db::list_tokens(&state.pool, user.id).await {
+        Ok(rows) => rows.into_iter().map(|row| app_line(state, row)).collect(),
+        Err(error) => {
+            tracing::warn!(%error, "cannot list the signed-in apps");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let signs_in_with = match oidc::linked_providers(&state.pool, user.id).await {
         Ok(providers) if !providers.is_empty() => Some(providers.join(", ")),
         Ok(_) => None,
@@ -182,13 +226,29 @@ async fn account_page(state: &AppState, user: &db::User, message: &str) -> Respo
         }
     };
     frame::page(AccountPage {
-        frame: Frame::new(&state.links, Some(user), "Account"),
+        frame: Frame::new(&state.links, Some(user), "Account").flashing(flash),
         email: user.email.clone(),
         confirm_href: mail::is_placeholder(&user.email).then(|| state.links.path("/confirm-email")),
         signs_in_with,
         action: state.links.path("/account/password"),
         message: message.to_owned(),
+        apps,
     })
+}
+
+fn app_line(state: &AppState, row: db::TokenRow) -> AppLine {
+    AppLine {
+        revoke: state
+            .links
+            .path(&format!("/account/tokens/{}/revoke", row.id)),
+        created: day(&row.created_at),
+        last_used: day(&row.last_used_at),
+        name: row.name,
+    }
+}
+
+fn day(instant: &str) -> String {
+    instant.get(..10).unwrap_or(instant).to_owned()
 }
 
 fn confirm_email_page(state: &AppState, user: &db::User, message: &str) -> Response {

@@ -22,6 +22,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use cookie::{Cookie, SameSite};
+use headers::authorization::Bearer;
+use headers::{Authorization, HeaderMapExt};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -60,8 +62,8 @@ pub fn dummy_hash() -> Option<&'static str> {
 
 #[derive(Debug, Error)]
 pub enum AuthError {
-    #[error("no fastapiusersauth cookie")]
-    MissingCookie,
+    #[error("no fastapiusersauth cookie and no bearer token")]
+    MissingToken,
     #[error("bad token")]
     BadToken,
     #[error("user is inactive")]
@@ -166,12 +168,37 @@ pub async fn start_session(pool: &SqlitePool, user_id: Uuid) -> Result<String, A
     Ok(token)
 }
 
-/// End the session the request's cookie names, if it names one.
+/// Start a named session for an app and return its token; only its hash is stored.
+pub async fn start_token(
+    pool: &SqlitePool,
+    user_id: Uuid,
+    name: &str,
+) -> Result<String, AuthError> {
+    let (token, hash) = crate::invitations::new_token()?;
+    db::create_token(pool, &hash, user_id, name).await?;
+    Ok(token)
+}
+
+/// Revoke one of the account's tokens and close what it opened; the name it had, or `None`
+/// when the account has no such token. Both the API and the account page revoke through this.
+pub async fn revoke_token(
+    state: &AppState,
+    user: Uuid,
+    id: &str,
+) -> Result<Option<String>, DbError> {
+    let Some((hash, name)) = db::delete_token(&state.pool, user, id).await? else {
+        return Ok(None);
+    };
+    state.rooms.end_session(&hash);
+    Ok(Some(name))
+}
+
+/// End the session the request names, if it names one.
 pub async fn end_session(pool: &SqlitePool, headers: &HeaderMap) -> Result<(), AuthError> {
-    let Some(token) = session_cookie(headers) else {
+    let Some(hash) = request_token_hash(headers) else {
         return Ok(());
     };
-    db::delete_session(pool, &crate::invitations::hash(&token)).await?;
+    db::delete_session(pool, &hash).await?;
     Ok(())
 }
 
@@ -215,15 +242,35 @@ pub fn session_cookie(headers: &HeaderMap) -> Option<String> {
         .map(|cookie| cookie.value().to_owned())
 }
 
+/// The session a request carries: an `Authorization: Bearer` token, as apps send it, or else
+/// the browser's cookie. Every route reads it through `authenticate`, so both work everywhere.
+pub fn request_token(headers: &HeaderMap) -> Option<String> {
+    match headers.typed_get::<Authorization<Bearer>>() {
+        Some(Authorization(bearer)) => Some(bearer.token().to_owned()),
+        None => session_cookie(headers),
+    }
+}
+
+/// The stored form of the request's session token.
+pub fn request_token_hash(headers: &HeaderMap) -> Option<String> {
+    request_token(headers).map(|token| crate::invitations::hash(&token))
+}
+
 pub async fn authenticate(pool: &SqlitePool, headers: &HeaderMap) -> Result<Uuid, AuthError> {
-    let token = session_cookie(headers).ok_or(AuthError::MissingCookie)?;
-    let user = db::session_user(pool, &crate::invitations::hash(&token))
+    let hash = request_token_hash(headers).ok_or(AuthError::MissingToken)?;
+    let holder = db::session_user(pool, &hash)
         .await?
         .ok_or(AuthError::BadToken)?;
-    if !user.is_active {
+    if !holder.user.is_active {
         return Err(AuthError::InactiveUser);
     }
-    Ok(user.id)
+    if holder.stale {
+        // A failed touch leaves a token that still works until its old expiry.
+        if let Err(error) = db::touch_token(pool, &hash).await {
+            tracing::warn!(%error, "cannot mark a token used");
+        }
+    }
+    Ok(holder.user.id)
 }
 
 /// Check the password and start a session.

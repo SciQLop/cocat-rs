@@ -680,47 +680,147 @@ pub async fn replace_password<'e, E: Executor<'e, Database = Sqlite>>(
     Ok(updated.rows_affected() > 0)
 }
 
-/// Record a session for the cookie value whose hash this is. Expired sessions of the same
-/// account go in the same transaction, so the table only holds sessions someone still has.
+/// How long a browser session lasts, and how long a token lasts unused.
+const BROWSER_LIFETIME: &str = "+3600 seconds";
+const TOKEN_IDLE_LIFETIME: &str = "+6 months";
+
+/// Record a browser session for the cookie value whose hash this is. Expired sessions of the
+/// same account go in the same transaction, so the table only holds sessions someone still has.
 pub async fn create_session(
     pool: &SqlitePool,
     token_hash: &str,
     user_id: Uuid,
 ) -> Result<(), DbError> {
+    insert_session(pool, token_hash, user_id, None, BROWSER_LIFETIME).await
+}
+
+/// Record a token an app signs in with, under the name the account page shows.
+pub async fn create_token(
+    pool: &SqlitePool,
+    token_hash: &str,
+    user_id: Uuid,
+    name: &str,
+) -> Result<(), DbError> {
+    insert_session(pool, token_hash, user_id, Some(name), TOKEN_IDLE_LIFETIME).await
+}
+
+async fn insert_session(
+    pool: &SqlitePool,
+    token_hash: &str,
+    user_id: Uuid,
+    name: Option<&str>,
+    lifetime: &str,
+) -> Result<(), DbError> {
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        r#"DELETE FROM session
-           WHERE user_id = ? AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
-    )
+    sqlx::query("DELETE FROM session WHERE user_id = ? AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")
     .bind(user_id.to_string())
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        r#"INSERT INTO session (token_hash, user_id, expires_at)
-           VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+3600 seconds'))"#,
-    )
+    sqlx::query("INSERT INTO session (token_hash, id, user_id, name, created_at, last_used_at, expires_at)
+         VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?))")
     .bind(token_hash)
+    .bind(Uuid::new_v4().simple().to_string())
     .bind(user_id.to_string())
+    .bind(name)
+    .bind(lifetime)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(())
 }
 
+/// Who a live session belongs to, and whether it is a token whose last use is over an hour
+/// old: the caller then moves its expiry, so a token in steady use writes once an hour at most.
+#[derive(Debug)]
+pub struct SessionHolder {
+    pub user: User,
+    pub stale: bool,
+}
+
 /// The account a live session belongs to. An expired or deleted session is the same miss as an
 /// unknown token, so callers have one refusal to answer.
-pub async fn session_user(pool: &SqlitePool, token_hash: &str) -> Result<Option<User>, DbError> {
-    let row = sqlx::query(
-        r#"SELECT "user".id, "user".email, "user".hashed_password, "user".is_active,
-                  "user".is_superuser, "user".is_verified
+pub async fn session_user(
+    pool: &SqlitePool,
+    token_hash: &str,
+) -> Result<Option<SessionHolder>, DbError> {
+    let row = sqlx::query(r#"SELECT "user".id, "user".email, "user".hashed_password, "user".is_active,
+                  "user".is_superuser, "user".is_verified,
+                  session.name IS NOT NULL
+                    AND session.last_used_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds')
+                    AS stale
            FROM session JOIN "user" ON "user".id = session.user_id
-           WHERE session.token_hash = ?
-             AND session.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#,
-    )
+           WHERE session.token_hash = ? AND session.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#)
     .bind(token_hash)
     .fetch_optional(pool)
     .await?;
-    Ok(row.as_ref().map(user_from_row).transpose()?)
+    let holder = row.map(|row| {
+        Ok::<_, sqlx::Error>(SessionHolder {
+            user: user_from_row(&row)?,
+            stale: row.try_get("stale")?,
+        })
+    });
+    Ok(holder.transpose()?)
+}
+
+/// Mark a token used now and give it six more months.
+pub async fn touch_token(pool: &SqlitePool, token_hash: &str) -> Result<(), DbError> {
+    sqlx::query("UPDATE session
+         SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
+         WHERE token_hash = ? AND name IS NOT NULL")
+    .bind(TOKEN_IDLE_LIFETIME)
+    .bind(token_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// A token as the account page and `GET /api/tokens` show it: never the token itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenRow {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub last_used_at: String,
+}
+
+/// The account's live tokens, newest first.
+pub async fn list_tokens(pool: &SqlitePool, user_id: Uuid) -> Result<Vec<TokenRow>, DbError> {
+    let rows = sqlx::query("SELECT id, name, created_at, last_used_at FROM session
+         WHERE user_id = ? AND name IS NOT NULL AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         ORDER BY created_at DESC, id")
+    .bind(user_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok::<_, DbError>(TokenRow {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                created_at: row.try_get("created_at")?,
+                last_used_at: row.try_get("last_used_at")?,
+            })
+        })
+        .collect()
+}
+
+/// Drop one of the account's tokens by its id, answering the hash it had (so its sockets can
+/// be closed) or `None` when the account has no such token.
+pub async fn delete_token(
+    pool: &SqlitePool,
+    user_id: Uuid,
+    id: &str,
+) -> Result<Option<(String, String)>, DbError> {
+    let row = sqlx::query(
+        "DELETE FROM session WHERE user_id = ? AND id = ? AND name IS NOT NULL
+         RETURNING token_hash, name",
+    )
+    .bind(user_id.to_string())
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let deleted =
+        row.map(|row| Ok::<_, sqlx::Error>((row.try_get("token_hash")?, row.try_get("name")?)));
+    Ok(deleted.transpose()?)
 }
 
 /// Drop one session; a token that is not there is not an error, since the cookie is going away
@@ -733,12 +833,26 @@ pub async fn delete_session(pool: &SqlitePool, token_hash: &str) -> Result<(), D
     Ok(())
 }
 
-/// Drop every session of an account, for the writes that must leave no old cookie working.
+/// Drop every session and token of an account, for the writes that must leave nothing
+/// working, such as a deactivation.
 pub async fn end_sessions_of<'e, E: Executor<'e, Database = Sqlite>>(
     executor: E,
     user_id: Uuid,
 ) -> Result<(), DbError> {
     sqlx::query("DELETE FROM session WHERE user_id = ?")
+        .bind(user_id.to_string())
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// Drop the account's browser sessions and keep its tokens: after a password change the
+/// person sees their signed-in apps and revokes them on purpose.
+pub async fn end_browser_sessions_of<'e, E: Executor<'e, Database = Sqlite>>(
+    executor: E,
+    user_id: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM session WHERE user_id = ? AND name IS NULL")
         .bind(user_id.to_string())
         .execute(executor)
         .await?;

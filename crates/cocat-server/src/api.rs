@@ -38,6 +38,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(crate::invitations_api::router())
         .merge(crate::public_api::router())
         .merge(crate::submissions_api::router())
+        .merge(crate::tokens_api::router())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

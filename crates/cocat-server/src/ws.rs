@@ -17,7 +17,7 @@ use cocat_core::{ROLE_HEADER, SUBPROTOCOL};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
 use tokio::time::timeout;
 
 use crate::db::User;
@@ -88,10 +88,13 @@ async fn room_socket(
         Some(admitted) => admitted,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
+    let Some(session) = auth::request_token_hash(&headers) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
     let mut response = upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| bridge(socket, state, room_id, user, role));
+        .on_upgrade(move |socket| bridge(socket, state, room_id, user, role, session));
     response.headers_mut().insert(
         HeaderName::from_static(ROLE_HEADER),
         HeaderValue::from_static(role.as_str()),
@@ -125,7 +128,15 @@ async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
     let _ = socket.send(Message::Close(Some(frame))).await;
 }
 
-async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: User, role: Role) {
+async fn bridge(
+    socket: WebSocket,
+    state: AppState,
+    room_id: String,
+    user: User,
+    role: Role,
+    session: String,
+) {
+    let mut ended_sessions = state.rooms.ended_sessions();
     if let Some(hook) = state.before_attach.clone() {
         hook().await;
     }
@@ -156,7 +167,7 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: User,
     // The room only knows the role the handshake granted; a revocation can land while the
     // socket is being attached. A role that cannot be re-read is not trusted either.
     let close_now = match db::role_in(&state.pool, &room_id, user.id).await {
-        Ok(Some(current)) if current == role => None,
+        Ok(Some(current)) if current == role && session_alive(&state, &session).await => None,
         Ok(_) => Some(CloseReason::Revoked),
         Err(error) => {
             tracing::warn!(%error, room = %room_id, "cannot re-read the role after the attach");
@@ -166,10 +177,9 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: User,
 
     crate::telemetry::ws_connected(1);
     let (mut sink, mut stream) = socket.split();
-    let (too_large, too_large_request) = oneshot::channel();
+    let (close_request, close_requested) = oneshot::channel();
     let mut writer = tokio::spawn(async move {
-        if let Err(error) = write_until_closed(&mut sink, inbox, close_now, too_large_request).await
-        {
+        if let Err(error) = write_until_closed(&mut sink, inbox, close_now, close_requested).await {
             tracing::debug!(%error, "the socket stopped accepting frames");
         }
     });
@@ -192,13 +202,19 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: User,
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Err(error)) => {
                     if is_too_large(&error) {
-                        let _ = too_large.send(CloseReason::TooLarge);
+                        let _ = close_request.send(CloseReason::TooLarge);
                     }
                     tracing::debug!(%error, "the socket failed");
                     break;
                 }
                 Some(Ok(_)) => {}
             },
+            ended = ended_sessions.recv() => {
+                if this_session_ended(&state, &session, ended).await {
+                    let _ = close_request.send(CloseReason::Revoked);
+                    break;
+                }
+            }
         }
     }
 
@@ -212,6 +228,33 @@ async fn bridge(socket: WebSocket, state: AppState, room_id: String, user: User,
     if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
         let _ = writer.await;
+    }
+}
+
+/// Whether a revocation the socket heard of is its own. A socket that fell behind the
+/// broadcast reads its session again rather than guess.
+async fn this_session_ended(
+    state: &AppState,
+    session: &str,
+    ended: Result<String, broadcast::error::RecvError>,
+) -> bool {
+    match ended {
+        Ok(hash) => hash == session,
+        Err(broadcast::error::RecvError::Lagged(_)) => !session_alive(state, session).await,
+        // The manager in `state` holds the sender, so the channel cannot close under us.
+        Err(broadcast::error::RecvError::Closed) => false,
+    }
+}
+
+/// Whether the session the socket was opened with still signs its holder in. One that cannot
+/// be read is not trusted.
+async fn session_alive(state: &AppState, session: &str) -> bool {
+    match db::session_user(&state.pool, session).await {
+        Ok(holder) => holder.is_some_and(|holder| holder.user.is_active),
+        Err(error) => {
+            tracing::warn!(%error, "cannot re-read a socket's session");
+            false
+        }
     }
 }
 
@@ -244,11 +287,11 @@ async fn write_until_closed(
     sink: &mut SplitSink<WebSocket, Message>,
     mut inbox: Inbox,
     close_now: Option<CloseReason>,
-    too_large: oneshot::Receiver<CloseReason>,
+    close_requested: oneshot::Receiver<CloseReason>,
 ) -> Result<(), WriterError> {
     let reason = match close_now {
         Some(reason) => Some(reason),
-        None => drain_until_close(sink, &mut inbox, too_large).await?,
+        None => drain_until_close(sink, &mut inbox, close_requested).await?,
     };
     if let Some(reason) = reason {
         crate::telemetry::ws_closed(reason.label());
@@ -264,13 +307,15 @@ async fn write_until_closed(
 async fn drain_until_close(
     sink: &mut SplitSink<WebSocket, Message>,
     inbox: &mut Inbox,
-    mut too_large: oneshot::Receiver<CloseReason>,
+    mut close_requested: oneshot::Receiver<CloseReason>,
 ) -> Result<Option<CloseReason>, WriterError> {
     loop {
         let frame = tokio::select! {
             biased;
+            // The bridge asks before it detaches, and the detach ends the inbox: its request
+            // must win, or the client gets a close frame without its reason.
+            reason = &mut close_requested => return Ok(reason.ok()),
             reason = &mut inbox.close => return Ok(reason.ok()),
-            reason = &mut too_large => return Ok(reason.ok()),
             frame = inbox.frames.recv() => match frame {
                 Some(frame) => frame,
                 None => return Ok(None),

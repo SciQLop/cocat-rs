@@ -28,4 +28,34 @@
 </form>
 {% endmatch %}
 </article>
+
+<section class="apps">
+<h2>Signed-in apps</h2>
+{% call help::hint(frame.help_href, "apps", "signed-in apps", "Python and SciQLop sign in through a link you open here. Each stays signed in until you revoke it, or after six months unused.") %}{% endcall %}
+{% if apps.is_empty() %}
+<p class="empty">No app is signed in.</p>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>App</th><th>Signed in</th><th>Last used</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
+  </thead>
+  <tbody>
+{% for app in apps %}
+    <tr>
+      <td class="name">{{ app.name }}</td>
+      <td>{{ app.created }}</td>
+      <td>{{ app.last_used }}</td>
+      <td class="actions">
+        <form method="post" action="{{ app.revoke }}" data-confirm="Sign {{ app.name }} out? It will need a new sign-in.">
+          <button type="submit" class="danger">Revoke</button>
+        </form>
+      </td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+</section>
 {% endblock %}

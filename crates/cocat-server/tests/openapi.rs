@@ -325,3 +325,21 @@ async fn docs_redirect_keeps_the_prefix() {
         "the redirect leaves the proxy's prefix"
     );
 }
+
+#[tokio::test]
+async fn every_signed_in_route_takes_a_bearer_token_too() {
+    let fixture = Fixture::start().await;
+    let document = document_of(&fixture).await;
+
+    assert_eq!(
+        document["components"]["securitySchemes"]["bearer"]["scheme"],
+        "bearer"
+    );
+    let tokens = &document["paths"]["/api/tokens"]["get"]["security"];
+    assert_eq!(
+        tokens,
+        &serde_json::json!([{ "cookie": [] }, { "bearer": [] }])
+    );
+    let login = &document["paths"]["/auth/jwt/login"]["post"]["security"];
+    assert!(login.is_null(), "a public route asks for nothing: {login}");
+}
