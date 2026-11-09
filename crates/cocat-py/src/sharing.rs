@@ -22,7 +22,7 @@ pub(crate) fn answer<T: Serialize + Send>(
     to_python(py, &json)
 }
 
-fn done(
+pub(crate) fn done(
     py: Python<'_>,
     call: impl Future<Output = std::result::Result<(), LoginError>> + Send,
 ) -> Result<()> {

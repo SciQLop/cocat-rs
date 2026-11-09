@@ -5,6 +5,7 @@
 
 mod server_errors;
 mod sharing;
+mod sign_in;
 mod submissions;
 
 use std::collections::hash_map::DefaultHasher;
@@ -1888,5 +1889,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     server_errors::register(module)?;
     sharing::register(module)?;
     submissions::register(module)?;
+    sign_in::register(module)?;
     Ok(())
 }

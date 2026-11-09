@@ -9,7 +9,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 description = "Collaborative event catalogues, in Rust with a Python face"
 requires-python = ">=3.10"
-dependencies = ["numpy", "keyring"]
+dependencies = ["numpy", "keyring", "platformdirs"]
 
 [project.optional-dependencies]
 # Only cocat_rs.tscat.import_database reads a tscat database; its JSON needs no tscat.

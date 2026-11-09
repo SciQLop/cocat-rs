@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m venv .venv
-      - run: .venv/bin/pip install maturin pytest pytest-asyncio numpy keyring 'tscat>=0.5,<0.6'
+      - run: .venv/bin/pip install maturin pytest pytest-asyncio numpy keyring platformdirs 'tscat>=0.5,<0.6'
       # The suite starts the server binary, so it has to exist before pytest runs.
       - run: cargo build --workspace
       - run: .venv/bin/maturin develop -m crates/cocat-py/Cargo.toml

@@ -478,15 +478,83 @@ scrape_configs:
 
 ## Python package
 
-`crates/cocat-py` builds `cocat_rs`, a Python package over the same document: a project held in a
-directory, and either read and written locally or synchronised with a server.
+`cocat_rs` is the Python package: catalogues and events, kept on your computer and shared
+with others through a cocat server.
 
 ```sh
-# from a checkout, into the environment you are using
+pip install cocat-rs
+# or, from a checkout of this repository
 maturin develop -m crates/cocat-py/Cargo.toml
-# or install the wheel it builds
-pip install target/wheels/cocat_rs-*.whl
 ```
+
+### Getting started
+
+```python
+import cocat_rs as cc
+
+cc.login()                          # prints a link: open it, sign in, press Allow
+project = cc.open("my-project")     # by name or id; cc.open() is your own project
+
+shocks = project.create_catalogue(name="shocks", author="you@example.org")
+event = project.create_event(start="2020-01-01T00:00:00Z", stop="2020-01-01T00:10:00Z",
+                             author="you@example.org", tags=["shock"])
+shocks.add_events([event])
+
+project.commit(name="first draft")  # a saved version of the project
+project.history()                   # every version, newest first
+```
+
+- `cc.login()` prints a link and a code, and opens the browser when there is one. Sign in on
+  that page and press Allow. The page can be on another device: this works on JupyterHub and
+  over SSH too.
+- The sign-in is kept in your system's keyring, so the next Python session is signed in
+  already. Without a keyring it lasts until Python stops, and a warning says so.
+- No browser at all: `cc.login("you@example.org", "password")`. Nothing is stored; it lasts
+  until Python stops.
+- `cc.logout()` signs out on the server and forgets the sign-in.
+- The server is the public one, `cc.DEFAULT_SERVER`. For another one, use
+  `cc.login("https://...")` or set the `COCAT_SERVER` environment variable.
+- When you are not signed in, or the sign-in was revoked from the account page, a call raises
+  `cc.NotSignedIn`: "Not signed in to <server>: run cocat_rs.login()".
+- `cc.open` waits until the project is in step with the server (30 s at most). The project is
+  kept in your user cache folder, so it also works offline; your changes are sent when the
+  server is back. Give `cache="some/folder"` to keep it elsewhere.
+
+More of what you can do:
+
+```python
+cc.projects()                                  # your projects: id, name, role
+cc.public_catalogues()                         # the shared reference catalogues
+cc.copy_public_catalogue("public.shocks")      # a copy in a new project of yours, to use
+
+info = cc.create_project("Bepi MSA")
+cc.invite(info.id, "editor", email="colleague@example.org")
+cc.members(info.id)                            # who is in it, with their roles
+
+first = project.history()[-1]["id"]
+project.restore(first)                         # the project as it was then
+project.copy_version(first, "trial")           # that version as a new project
+project.submit(shocks, note="from my thesis")  # offer a catalogue to the public ones
+```
+
+Two servers at once: `cc.Client("https://...")` has the same functions as methods
+(`client.login()`, `client.open(...)`, `client.projects()`...).
+
+An application with its own window (SciQLop) signs in in two steps, so it can show the link
+first and wait in a thread:
+
+```python
+sign_in = cc.Client(server).start_sign_in(app="SciQLop")  # named "SciQLop on <machine>"
+show(sign_in.url, sign_in.code)
+sign_in.wait()          # blocks; NotSignedIn when denied, expired or sign_in.cancel()-ed
+```
+
+### Advanced: urls and cookies
+
+Every function that talks to a server also takes the server's url and a session first:
+`cc.projects(url, cookie)`, `cc.history(url, cookie, project_id)`... These are what the
+sections below use. `cookie = cc.login(url, email, password)` gives a session; so does
+`cc.Client(url).session` once signed in. `cc.sign_out(url, cookie)` ends one.
 
 Before 0.3.0 the package said room: `Room`, `RoomInfo`, `rooms()` and `room_id=`. Since
 0.4.0 only `Project`, `ProjectInfo`, `projects()` and `project_id=` exist.

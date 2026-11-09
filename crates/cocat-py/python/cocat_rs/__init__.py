@@ -38,6 +38,7 @@ from ._native import (
     rule_from_tscat,
     set_editors_can_share,
     set_role,
+    sign_out,
     submissions,
     submit_catalogue,
     submit_update,
@@ -79,6 +80,7 @@ __all__ = [
     "rule_from_tscat",
     "set_editors_can_share",
     "set_role",
+    "sign_out",
     "submissions",
     "submit_catalogue",
     "submit_update",
@@ -167,6 +169,52 @@ class Project:
         self._lock = threading.Lock()
         self._thread = None
         self._running = False
+        self._client = None
+        self._id = None
+
+    def _opened_with(self, client, project_id):
+        """Remembers the client `cocat_rs.open` used, for the calls below."""
+        self._client = client
+        self._id = project_id
+
+    def _server_call(self, method, *arguments):
+        if self._client is None:
+            raise RuntimeError(
+                "This project was opened from a folder: open it with cocat_rs.open() "
+                "to reach its history and submissions."
+            )
+        return getattr(self._client, method)(self._id, *arguments)
+
+    def history(self, catalogue=None):
+        """The saved versions, newest first; with a catalogue's uuid, those that changed it."""
+        return self._server_call("history", catalogue)
+
+    def commit(self, name=None, message=None, timeout=None):
+        """Sends every change made here, then saves them as a version; returns its id."""
+        self.save(timeout)
+        return self._server_call("commit", name, message)
+
+    def restore(self, version, catalogue=None):
+        """Makes the project, or one catalogue, as it was at the version again."""
+        return self._server_call("restore", version, catalogue)
+
+    def name_version(self, version, name):
+        """Names a version, or takes its name away with `None`."""
+        return self._server_call("name_version", version, name)
+
+    def copy_version(self, version, name):
+        """A new project of yours holding the version; returns its id."""
+        return self._server_call("copy_version", version, name)
+
+    def submit(self, catalogue, title=None, folder=None, description=None, note=None):
+        """Offers a catalogue (or its uuid) as a new public catalogue; the submission's id."""
+        uuid = getattr(catalogue, "uuid", catalogue)
+        return self._server_call("submit_catalogue", uuid, title, folder, description, note)
+
+    def submit_update(self, catalogue, note=None):
+        """Offers a copy made with `propose_change` as the public catalogue's next version."""
+        uuid = getattr(catalogue, "uuid", catalogue)
+        return self._server_call("submit_update", uuid, note)
 
     @classmethod
     def open(cls, cache_dir, project_id):
@@ -300,4 +348,114 @@ __all__ += [
     "refresh",
     "save",
     "set_config",
+]
+
+
+# The short form: one default client behind module functions, `cc.login()` then `cc.open()`.
+from . import client  # noqa: E402
+from .client import (  # noqa: E402
+    DEFAULT_SERVER,
+    Client,
+    NotSignedIn,
+    SignIn,
+    default_client,
+)
+
+
+def login(*arguments, server=None, email=None, password=None):
+    """Signs in to `server` (default: `$COCAT_SERVER`, else the public server).
+
+    - `login()` or `login(server)`: in the browser; remembered for the next sessions.
+    - `login(email, password)`: without a browser, for this Python session.
+    - `login(url, email, password)`, the older form, returns the session cookie and changes
+      nothing else.
+    """
+    if len(arguments) == 3:
+        return _native.login(*arguments)
+    if len(arguments) == 1:
+        (server,) = arguments
+    elif len(arguments) == 2:
+        email, password = arguments
+    elif arguments:
+        raise TypeError("login() takes a server, or an email and a password")
+    chosen = client.use_server(server) if server is not None else default_client()
+    chosen.login(email, password)
+
+
+def logout():
+    """Signs out of the default server and forgets the sign-in."""
+    default_client().logout()
+
+
+def open(project_id=None, cache=None):  # noqa: A001 - `cc.open` is the name scientists type
+    """The project, by id or name, synced; without one, your own project."""
+    return default_client().open(project_id, cache)
+
+
+def start_sign_in(app="Python"):
+    """A browser sign-in in two steps, for applications: show its link, then `wait()`."""
+    return default_client().start_sign_in(app)
+
+
+def _shortcut(name):
+    """The module function `name`: with a server url first (or `url=`/`cookie=`), the older
+    `(url, cookie, ...)` form; otherwise the default client's method."""
+    older = getattr(_native, name)
+
+    def shortcut(*arguments, **keywords):
+        first = arguments[0] if arguments else None
+        if (isinstance(first, str) and first.startswith(("http://", "https://"))) or (
+            "url" in keywords or "cookie" in keywords
+        ):
+            return older(*arguments, **keywords)
+        return getattr(default_client(), name)(*arguments, **keywords)
+
+    shortcut.__name__ = shortcut.__qualname__ = name
+    shortcut.__doc__ = getattr(Client, name).__doc__
+    return shortcut
+
+
+for _name in (
+    "account_id",
+    "commit",
+    "copy_public_catalogue",
+    "copy_version",
+    "create_project",
+    "create_public_catalogue",
+    "history",
+    "invitations",
+    "invite",
+    "members",
+    "name_version",
+    "project_groups",
+    "project_url",
+    "projects",
+    "propose_change",
+    "public_catalogues",
+    "remove_member",
+    "restore",
+    "review_submission",
+    "revoke_invitation",
+    "set_editors_can_share",
+    "set_role",
+    "submissions",
+    "submit_catalogue",
+    "submit_update",
+    "update_public_catalogue",
+    "withdraw_submission",
+):
+    globals()[_name] = _shortcut(_name)
+del _name
+
+# `open` stays out of `__all__`: a star import must not hide the builtin.
+__all__ += [
+    "DEFAULT_SERVER",
+    "Client",
+    "NotSignedIn",
+    "SignIn",
+    "account_id",
+    "client",
+    "default_client",
+    "logout",
+    "start_sign_in",
 ]
