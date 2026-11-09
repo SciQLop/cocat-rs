@@ -69,7 +69,7 @@ def until(predicate, timeout: float = 15.0) -> None:
 
 def test_user_project(server, tmp_path) -> None:
     configure(server, tmp_path)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
 
     listed = cocat_rs.projects(api.SESSION.base_url(), api.SESSION.cookie)
     assert api.SESSION.project_id in [project.id for project in listed]
@@ -79,7 +79,7 @@ def test_user_project(server, tmp_path) -> None:
 
 def test_api(server, tmp_path) -> None:
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
 
     catalogue = api.create_catalogue(name="cat0", author="Paul")
     event = api.create_event(
@@ -123,7 +123,7 @@ def test_login(server, tmp_path) -> None:
     with pytest.raises(RuntimeError, match="Username or password not provided"):
         api.log_in(server.email, connect=False)
 
-    api.log_in(server.email, "hunter2", connect=False)
+    api.log_in(server.email, "plum orbit lantern cello", connect=False)
     api.log_in(connect=False)
 
 
@@ -140,7 +140,7 @@ def test_login_with_port_in_host(server, tmp_path) -> None:
 def test_atexit(server, tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda _: "yes")
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
     api.create_catalogue(name="cat0", author="Paul Newton")
     api.save_on_exit()
     assert capsys.readouterr().out == "Changes have been saved.\n"
@@ -182,7 +182,7 @@ def test_default_project_is_the_own_one_whatever_its_name(monkeypatch) -> None:
 
 def test_save_waits_for_the_server(server, tmp_path) -> None:
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
     api.create_catalogue(name="ack", author="Paul")
 
     api.save()
@@ -198,19 +198,19 @@ def test_save_waits_for_the_server(server, tmp_path) -> None:
 
 def test_a_save_after_a_relogin_keeps_the_cache(server, tmp_path) -> None:
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
     api.create_catalogue(name="kept", author="Paul")
     api.save()
 
     api.log_out()
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
 
     assert api.get_catalogue("kept").name == "kept"
 
 
 def test_create_event_takes_naive_datetimes_as_utc(server, tmp_path) -> None:
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
 
     event = api.create_event(
         start=datetime(2025, 3, 1, 10, 0, 0, 500000),
@@ -247,7 +247,7 @@ def caches(tmp_path) -> list:
 def test_two_accounts_sharing_a_cache_folder_keep_their_own_caches(server, tmp_path) -> None:
     add_viewer(server, "viewer@example.org")
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in(server.email, "hunter2")
+    api.log_in(server.email, "plum orbit lantern cello")
     api.create_catalogue(name="sent")
     api.save()
     api.log_out()
@@ -258,7 +258,7 @@ def test_two_accounts_sharing_a_cache_folder_keep_their_own_caches(server, tmp_p
 
     api._reset()
     configure(server, tmp_path, project_id=server.project_id)
-    api.log_in("viewer@example.org", "hunter2")
+    api.log_in("viewer@example.org", "plum orbit lantern cello")
     assert api.SESSION.project.read_only
     until(lambda: api.get_catalogue("sent").name == "sent")
     api.log_out()
@@ -282,7 +282,7 @@ def test_a_cache_from_before_accounts_had_folders_is_kept_and_named(
     before = {path: path.read_bytes() for path in (tmp_path / "cache").glob("*.y")}
 
     with caplog.at_level("WARNING", logger="cocat_rs"):
-        api.log_in(server.email, "hunter2")
+        api.log_in(server.email, "plum orbit lantern cello")
     api.log_out()
 
     assert before and all(path.read_bytes() == data for path, data in before.items())

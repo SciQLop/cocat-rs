@@ -37,7 +37,7 @@ use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 
-pub const PASSWORD: &str = "hunter2";
+pub const PASSWORD: &str = "plum orbit lantern cello";
 pub const WAIT: Duration = Duration::from_secs(15);
 
 /// A cocat server on its own runtime and thread, so stopping it is a real restart: the

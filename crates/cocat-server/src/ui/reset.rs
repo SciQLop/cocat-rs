@@ -47,7 +47,7 @@ struct ForgotPage {
 struct ResetPage {
     frame: Frame,
     action: String,
-    message: &'static str,
+    message: String,
 }
 
 pub(crate) async fn forgot_page(
@@ -82,7 +82,7 @@ pub(crate) async fn reset_page(State(state): State<AppState>) -> Response {
     frame::page(ResetPage {
         frame: Frame::new(&state.links, None, "Choose a new password"),
         action: state.links.path("/reset-password"),
-        message: "",
+        message: String::new(),
     })
 }
 
@@ -97,6 +97,9 @@ pub(crate) async fn reset(State(state): State<AppState>, Form(form): Form<ResetF
         Ok(()) => Redirect::to(&format!("{}?reset=1", state.links.path("/login"))).into_response(),
         Err(accounts::AccountError::BadResetToken) => {
             rejected(&state, INVALID, StatusCode::BAD_REQUEST)
+        }
+        Err(accounts::AccountError::WeakPassword(refusal)) => {
+            rejected(&state, &refusal.0, StatusCode::OK)
         }
         Err(error) => {
             tracing::warn!(%error, "cannot reset a password");
@@ -120,11 +123,11 @@ fn to_forgot(state: &AppState, query: &str) -> Response {
     Redirect::to(&format!("{}?{query}", state.links.path("/forgot-password"))).into_response()
 }
 
-fn rejected(state: &AppState, message: &'static str, status: StatusCode) -> Response {
+fn rejected(state: &AppState, message: &str, status: StatusCode) -> Response {
     let page = ResetPage {
         frame: Frame::new(&state.links, None, "Choose a new password"),
         action: state.links.path("/reset-password"),
-        message,
+        message: message.to_owned(),
     };
     (status, frame::page(page)).into_response()
 }

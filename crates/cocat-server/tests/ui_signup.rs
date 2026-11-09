@@ -162,3 +162,32 @@ async fn the_signup_page_shows_the_message() {
 
     assert!(page.contains("That email is already registered."), "{page}");
 }
+
+#[tokio::test]
+async fn a_weak_password_is_refused_with_a_hint() {
+    let fixture = Fixture::start().await;
+
+    let response = fixture.sign_up(NEW, "password123").await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let page = body_text(response).await;
+    assert!(
+        page.contains("This password is too easy to guess."),
+        "{page}"
+    );
+    assert!(
+        db::user_by_email(&fixture.state.pool, NEW)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn the_signup_page_states_the_rule() {
+    let fixture = Fixture::start().await;
+
+    let page = body_text(fixture.get("/ui/signup", None).await).await;
+
+    assert!(page.contains("At least 8 characters"), "{page}");
+}

@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-const PASSWORD: &str = "hunter2";
+const PASSWORD: &str = "plum orbit lantern cello";
 const PEER: &str = "203.0.113.7:41000";
 
 /// Every POST the web UI answers, so the same-site table grows with each page.

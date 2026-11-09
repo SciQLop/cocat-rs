@@ -24,18 +24,22 @@ struct SignupPage {
     frame: Frame,
     action: String,
     login_url: String,
-    message: &'static str,
+    message: String,
 }
 
 pub(crate) async fn page(
     Query(query): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Response {
+    signup_page(&state, frame::message(&query))
+}
+
+fn signup_page(state: &AppState, message: &str) -> Response {
     frame::page(SignupPage {
         frame: Frame::new(&state.links, None, "Sign up"),
         action: state.links.path("/signup"),
         login_url: state.links.path("/login"),
-        message: frame::message(&query),
+        message: message.to_owned(),
     })
 }
 
@@ -65,6 +69,7 @@ pub(crate) async fn signup(
             created(&state)
         }
         Err(accounts::AccountError::Duplicate) => failed(&state, "exists"),
+        Err(accounts::AccountError::WeakPassword(refusal)) => signup_page(&state, &refusal.0),
         Err(error) => {
             tracing::warn!(%error, "cannot register an account");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()

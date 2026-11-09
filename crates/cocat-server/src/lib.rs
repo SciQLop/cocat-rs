@@ -21,6 +21,7 @@ pub mod links;
 pub mod mail;
 pub mod oidc;
 pub mod openapi;
+pub mod password;
 pub mod presence;
 pub mod public_api;
 pub mod ratelimit;

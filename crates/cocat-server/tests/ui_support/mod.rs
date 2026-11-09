@@ -20,7 +20,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-pub const PASSWORD: &str = "hunter2";
+pub const PASSWORD: &str = "plum orbit lantern cello";
 pub const PUBLIC_URL: &str = "https://cocat.example.org";
 const PEER: &str = "203.0.113.7:41000";
 

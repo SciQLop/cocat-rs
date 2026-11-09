@@ -158,6 +158,8 @@ pub enum CliError {
     Oidc(#[from] oidc::OidcError),
     #[error(transparent)]
     Import(#[from] import::ImportError),
+    #[error("{0}")]
+    WeakPassword(#[from] crate::password::WeakPassword),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -243,6 +245,7 @@ async fn create_user(
     password: &str,
     is_superuser: bool,
 ) -> Result<(), CliError> {
+    crate::password::check(password, email)?;
     let pool = db::open(db_path).await?;
     let id = db::create_user(&pool, email, password, is_superuser, true).await?;
     db::create_personal_room(&pool, id).await?;

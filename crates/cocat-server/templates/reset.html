@@ -8,6 +8,7 @@
   <input id="link" name="link" type="text" autocomplete="off">
   <label for="password">New password</label>
   <input id="password" name="password" type="password" autocomplete="new-password">
+  {% include "password_rule.html" %}
   <label for="repeat">Repeat password</label>
   <input id="repeat" name="repeat" type="password" autocomplete="new-password">
   <button type="submit">Change password</button>

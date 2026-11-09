@@ -127,6 +127,7 @@ impl From<AccountError> for ApiError {
         match error {
             AccountError::Duplicate => Self::BadRequest("REGISTER_USER_ALREADY_EXISTS".to_owned()),
             AccountError::Db(error) => Self::from(error),
+            AccountError::WeakPassword(refusal) => Self::BadRequest(refusal.0),
             AccountError::BadVerifyToken => Self::BadRequest("VERIFY_USER_BAD_TOKEN".to_owned()),
             AccountError::AlreadyVerified => {
                 Self::BadRequest("VERIFY_USER_ALREADY_VERIFIED".to_owned())

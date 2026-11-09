@@ -15,7 +15,7 @@ def wait_until(predicate, timeout=15.0):
 
 
 def test_login_returns_the_session_cookie(server):
-    cookie = cc.login(server.url, server.email, "hunter2")
+    cookie = cc.login(server.url, server.email, "plum orbit lantern cello")
     assert cookie
     assert ";" not in cookie
 
@@ -57,7 +57,7 @@ def test_a_refused_handshake_is_unauthorized_and_set_cookie_recovers(server, cac
 def test_credentials_log_in_again_when_the_cookie_is_stale(server, cache):
     project = cc.Project.open(str(cache), server.project_id)
     try:
-        project.connect(server.url, "not-a-session", (server.email, "hunter2"))
+        project.connect(server.url, "not-a-session", (server.email, "plum orbit lantern cello"))
         project.wait_synced(15)
         assert project.status == "synced"
     finally:
@@ -67,7 +67,7 @@ def test_credentials_log_in_again_when_the_cookie_is_stale(server, cache):
 def test_credentials_alone_connect(server, cache):
     project = cc.Project.open(str(cache), server.project_id)
     try:
-        project.connect(server.url, credentials=(server.email, "hunter2"))
+        project.connect(server.url, credentials=(server.email, "plum orbit lantern cello"))
         project.wait_synced(15)
         assert project.status == "synced"
     finally:

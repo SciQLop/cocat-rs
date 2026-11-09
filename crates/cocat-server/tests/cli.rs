@@ -6,6 +6,8 @@ use cocat_server::db;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
+const STRONG_PASSWORD: &str = "plum orbit lantern cello";
+
 async fn seeded_db() -> (TempDir, SqlitePool) {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
@@ -89,7 +91,7 @@ async fn the_cli_creates_a_database_the_server_can_read() {
             "--email",
             "owner@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
     run_cli(
@@ -99,7 +101,7 @@ async fn the_cli_creates_a_database_the_server_can_read() {
             "--email",
             "viewer@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
     run_cli(
@@ -156,7 +158,7 @@ async fn creating_a_user_creates_their_personal_room() {
             "--email",
             "owner@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
 
@@ -193,7 +195,7 @@ async fn remove_user_from_room_drops_the_membership() {
             "--email",
             "owner@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
     run_cli(
@@ -203,7 +205,7 @@ async fn remove_user_from_room_drops_the_membership() {
             "--email",
             "member@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
     run_cli(
@@ -262,7 +264,7 @@ async fn set_room_owner_transfers() {
             "--email",
             "owner@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
     run_cli(
@@ -272,7 +274,7 @@ async fn set_room_owner_transfers() {
             "--email",
             "member@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
     run_cli(
@@ -372,7 +374,7 @@ async fn the_cli_grants_and_revokes_superuser() {
             "--email",
             "admin@example.org",
             "--password",
-            "hunter2",
+            STRONG_PASSWORD,
         ],
     );
 
@@ -464,4 +466,25 @@ async fn create_room_refuses_an_id_kept_for_public_catalogues() {
         db::refuse_reserved_ids(&pool).await.is_ok(),
         "a room was made"
     );
+}
+
+#[test]
+fn create_user_refuses_a_weak_password_and_says_why() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+
+    let output = run_cli_output(
+        &db_path,
+        &[
+            "create-user",
+            "--email",
+            "weak@example.org",
+            "--password",
+            "hunter2",
+        ],
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Use at least 8 characters."), "{stderr}");
 }

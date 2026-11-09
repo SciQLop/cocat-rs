@@ -13,7 +13,7 @@ import cocat_rs as cc
 
 ROOT = Path(__file__).resolve().parents[3]
 BINARY = ROOT / "target" / "debug" / "cocat-server"
-PASSWORD = "hunter2"
+PASSWORD = "plum orbit lantern cello"
 
 
 def free_port() -> int:

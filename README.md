@@ -52,7 +52,7 @@ documented step by step in [docs/deploy.md](docs/deploy.md).
 ## Seeding
 
 ```sh
-cocat-server create-user --email you@example.org --password secret [--is-superuser]
+cocat-server create-user --email you@example.org --password 'plum orbit lantern cello' [--is-superuser]
 cocat-server set-superuser --email you@example.org [--revoke]
 cocat-server set-curator --email them@example.org [--revoke]
 cocat-server create-room --owner you@example.org [--room-id my-project] [--name "My project"]
@@ -61,7 +61,8 @@ cocat-server remove-user-from-room --email them@example.org --room_id my-project
 cocat-server set-room-owner --email them@example.org --room_id my-project
 ```
 
-Every command takes `--db_path` (default `./test.db`). Project ids match
+Every command takes `--db_path` (default `./test.db`). `create-user` refuses a weak
+password the same way the sign-up page does (see [Passwords](#passwords)). Project ids match
 `[A-Za-z0-9_-]{1,64}`. `add-user-to-room` takes `--role owner|editor|viewer` and never
 lowers an existing role; the owner role is not assignable that way, `set-room-owner` is.
 
@@ -95,6 +96,15 @@ gracefully on SIGINT or SIGTERM, after flushing every open project. Project file
 | `COCAT_SMTP_STARTTLS` | Whether to upgrade the connection before sending, on by default. `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`, case-insensitive and trimmed; any other value stops the server at startup. |
 | `COCAT_MAIL_DIR` | Write one `.eml` file per message instead of talking to a relay, for tests and demos. The directory must already exist (a send that cannot write names the path). Mutually exclusive with `COCAT_SMTP_HOST`: setting both stops the server at startup. |
 | `COCAT_OAUTH_PROVIDERS` | JSON list of OpenID Connect providers, empty or unset for none (see [Provider sign-in](#provider-sign-in)). Every provider needs `COCAT_PUBLIC_URL`; a value that is not a JSON list, or a provider whose name is not `^[a-z0-9_-]{1,32}$`, stops the server at startup. A provider whose discovery document cannot be read at startup is skipped with a warning and the server still starts. |
+
+### Passwords
+
+Every password that is set (sign-up, reset, change, `create-user`) has at least 8
+characters and a [zxcvbn](https://github.com/shssoichiro/zxcvbn-rs) score of 3 or more,
+with the account's address counted as known to an attacker. No composition rules. A refusal
+says why in plain words, with zxcvbn's suggestion (the API answers 400 with it as `detail`).
+Passwords stored before the rule keep working: it is checked when a password is set, never
+at login.
 
 ### Login rate limit
 

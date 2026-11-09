@@ -20,6 +20,7 @@
          autocomplete="current-password">
   <label for="new">New password</label>
   <input id="new" name="new" type="password" autocomplete="new-password">
+  {% include "password_rule.html" %}
   <label for="repeat">Repeat password</label>
   <input id="repeat" name="repeat" type="password" autocomplete="new-password">
   <button type="submit">Change password</button>

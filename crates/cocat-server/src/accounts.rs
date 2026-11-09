@@ -15,6 +15,7 @@ use crate::AppState;
 use crate::auth::{self, AuthError};
 use crate::db::{self, DbError, User};
 use crate::mail::{self, Mailer};
+use crate::password;
 
 /// The audiences that keep one kind of link from being spent as another.
 const VERIFY_AUDIENCE: &str = "cocat:verify";
@@ -35,6 +36,8 @@ pub enum AccountError {
     BadResetToken,
     #[error("the address belongs to another account")]
     EmailInUse,
+    #[error(transparent)]
+    WeakPassword(#[from] password::WeakPassword),
     #[error("cannot sign a link")]
     Sign(#[from] AuthError),
     #[error(transparent)]
@@ -50,6 +53,7 @@ pub enum AccountError {
 /// relay that refuses the message must not fail the registration, and the caller's reply is
 /// the same either way.
 pub async fn register(state: &AppState, email: &str, password: &str) -> Result<Uuid, AccountError> {
+    password::check(password, email)?;
     let id = db::create_user(&state.pool, email, password, false, state.mailer.is_none())
         .await
         .map_err(|error| match error {
@@ -146,6 +150,7 @@ pub async fn reset_password(
     if !user.is_active {
         return Err(AccountError::BadResetToken);
     }
+    password::check(password, &user.email)?;
     let new_hash = db::hash_password(password).await?;
     let mut tx = db::begin_immediate(&state.pool).await?;
     if !db::replace_password(&mut *tx, user.id, &user.hashed_password, &new_hash).await? {
@@ -192,6 +197,7 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
         updated.is_verified = false;
     }
     if let Some(password) = change.password {
+        password::check(&password, &updated.email)?;
         updated.hashed_password = db::hash_password(&password).await?;
         ends_sessions = true;
     }

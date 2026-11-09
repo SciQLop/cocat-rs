@@ -367,3 +367,31 @@ async fn a_lost_session_is_reported_to_the_login_page() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn a_weak_new_password_is_refused_with_a_hint() {
+    let fixture = Fixture::start().await;
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+
+    let response = fixture
+        .post(
+            "/ui/account/password",
+            Some(&token),
+            &form(&[
+                ("current", PASSWORD),
+                ("new", "password123"),
+                ("repeat", "password123"),
+            ]),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let page = body_text(response).await;
+    assert!(
+        page.contains("This password is too easy to guess."),
+        "{page}"
+    );
+    let old = fixture.login(MEMBER, PASSWORD, None).await;
+    assert_eq!(location(&old), "/ui/app");
+}

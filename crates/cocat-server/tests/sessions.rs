@@ -15,7 +15,7 @@ use tower::ServiceExt;
 use ui_support::{Fixture, PASSWORD};
 
 const PEER: &str = "203.0.113.7:41000";
-const NEW_PASSWORD: &str = "next-password";
+const NEW_PASSWORD: &str = "violet canyon ferry drum";
 
 async fn send(fixture: &Fixture, request: Request<Body>) -> Response {
     let mut request = request;

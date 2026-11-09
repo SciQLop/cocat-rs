@@ -103,7 +103,7 @@ async fn the_cli_marks_and_unmarks_a_curator() {
             "--email",
             "curator@example.org",
             "--password",
-            "hunter2",
+            "plum orbit lantern cello",
         ],
     );
     assert!(created.status.success());

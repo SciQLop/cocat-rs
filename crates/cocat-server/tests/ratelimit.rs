@@ -42,9 +42,15 @@ impl Fixture {
     }
 
     async fn user(&self, email: &str) -> uuid::Uuid {
-        db::create_user(&self.state.pool, email, "hunter2", false, true)
-            .await
-            .unwrap()
+        db::create_user(
+            &self.state.pool,
+            email,
+            "plum orbit lantern cello",
+            false,
+            true,
+        )
+        .await
+        .unwrap()
     }
 
     async fn token(&self, user: uuid::Uuid) -> String {
@@ -101,7 +107,9 @@ impl Fixture {
                 peer,
                 None,
                 Some("application/x-www-form-urlencoded"),
-                Some(format!("username={email}&password=hunter2")),
+                Some(format!(
+                    "username={email}&password=plum+orbit+lantern+cello"
+                )),
             )
             .await;
         let status = response.status();
@@ -187,7 +195,7 @@ async fn profile_changes_are_rate_limited() {
 async fn ui_password_form_is_rate_limited() {
     let fixture = Fixture::start().await;
     let user = fixture.user("form@example.org").await;
-    let form = "current=hunter2&new=hunter2&repeat=hunter2";
+    let form = "current=plum+orbit+lantern+cello&new=plum+orbit+lantern+cello&repeat=plum+orbit+lantern+cello";
 
     for attempt in 1..=10 {
         let cookie = format!("fastapiusersauth={}", fixture.token(user).await);

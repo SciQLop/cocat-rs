@@ -19,7 +19,8 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-const PASSWORD: &str = "hunter2";
+const PASSWORD: &str = "plum orbit lantern cello";
+const NEW_PASSWORD: &str = "violet canyon ferry drum";
 const PUBLIC_URL: &str = "https://cocat.example.org";
 const VERIFY_BAD: &str = "VERIFY_USER_BAD_TOKEN";
 const ALREADY_VERIFIED: &str = "VERIFY_USER_ALREADY_VERIFIED";
@@ -638,10 +639,10 @@ async fn reset_flow() {
     fixture.forgot("known@example.org").await;
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
 
-    let response = fixture.reset(&token, "new-password").await;
+    let response = fixture.reset(&token, NEW_PASSWORD).await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    let logged_in = fixture.login("known@example.org", "new-password").await;
+    let logged_in = fixture.login("known@example.org", NEW_PASSWORD).await;
     assert_eq!(logged_in.status(), StatusCode::NO_CONTENT);
     let old = fixture.login("known@example.org", PASSWORD).await;
     assert_eq!(old.status(), StatusCode::BAD_REQUEST);
@@ -654,17 +655,17 @@ async fn a_reset_token_works_once() {
     fixture.forgot("known@example.org").await;
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
     assert_eq!(
-        fixture.reset(&token, "new-password").await.status(),
+        fixture.reset(&token, NEW_PASSWORD).await.status(),
         StatusCode::OK
     );
 
-    let again = fixture.reset(&token, "another-password").await;
+    let again = fixture.reset(&token, "amber quiver tundra oak").await;
 
     assert_eq!(again.status(), StatusCode::BAD_REQUEST);
     assert_eq!(body(again).await, json!({ "detail": RESET_BAD }));
     assert_eq!(
         fixture
-            .login("known@example.org", "new-password")
+            .login("known@example.org", NEW_PASSWORD)
             .await
             .status(),
         StatusCode::NO_CONTENT
@@ -681,8 +682,8 @@ async fn two_resets_of_one_link_cannot_both_win() {
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
 
     let (first, second) = tokio::join!(
-        fixture.reset(&token, "first-password"),
-        fixture.reset(&token, "second-password"),
+        fixture.reset(&token, "first quiet harbor lamp"),
+        fixture.reset(&token, "second rusty meadow kite"),
     );
 
     let statuses = [first.status(), second.status()];
@@ -712,7 +713,7 @@ async fn an_expired_token_is_bad() {
     let reset =
         accounts::reset_token(known, &user.hashed_password, &fixture.state.secret, past).unwrap();
 
-    let response = fixture.reset(&reset, "new-password").await;
+    let response = fixture.reset(&reset, NEW_PASSWORD).await;
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(body(response).await, json!({ "detail": RESET_BAD }));
@@ -733,7 +734,7 @@ async fn tokens_are_not_interchangeable() {
     let reset =
         accounts::reset_token(pending, &user.hashed_password, &fixture.state.secret, now).unwrap();
 
-    let as_reset = fixture.reset(&verify, "new-password").await;
+    let as_reset = fixture.reset(&verify, NEW_PASSWORD).await;
     assert_eq!(as_reset.status(), StatusCode::BAD_REQUEST);
     assert_eq!(body(as_reset).await, json!({ "detail": RESET_BAD }));
 
@@ -748,7 +749,7 @@ async fn tokens_are_not_interchangeable() {
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        fixture.reset(&session, "new-password").await.status(),
+        fixture.reset(&session, NEW_PASSWORD).await.status(),
         StatusCode::BAD_REQUEST
     );
 }
@@ -824,7 +825,7 @@ async fn users_me_reads_and_updates() {
             Method::PATCH,
             "/users/me",
             Some(&token),
-            json!({ "email": "moved@example.org", "password": "new-password" }),
+            json!({ "email": "moved@example.org", "password": NEW_PASSWORD }),
         )
         .await;
     assert_eq!(updated.status(), StatusCode::OK);
@@ -835,7 +836,7 @@ async fn users_me_reads_and_updates() {
         "a new address is unproven until the link is opened"
     );
 
-    let logged_in = fixture.login("moved@example.org", "new-password").await;
+    let logged_in = fixture.login("moved@example.org", NEW_PASSWORD).await;
     assert_eq!(
         logged_in.status(),
         StatusCode::NO_CONTENT,
@@ -860,7 +861,7 @@ async fn a_user_cannot_raise_their_own_flags() {
                 "is_superuser": true,
                 "is_active": false,
                 "is_verified": false,
-                "password": "new-password",
+                "password": NEW_PASSWORD,
             }),
         )
         .await;
@@ -880,7 +881,7 @@ async fn a_user_cannot_raise_their_own_flags() {
         "the password change ended the session that made it"
     );
 
-    let reissued = fixture.login("known@example.org", "new-password").await;
+    let reissued = fixture.login("known@example.org", NEW_PASSWORD).await;
     assert_eq!(reissued.status(), StatusCode::NO_CONTENT);
     let token = cookie_token(&reissued);
 
@@ -894,7 +895,7 @@ async fn a_user_cannot_raise_their_own_flags() {
     );
     assert_eq!(
         fixture
-            .login("known@example.org", "new-password")
+            .login("known@example.org", NEW_PASSWORD)
             .await
             .status(),
         StatusCode::NO_CONTENT
@@ -1113,5 +1114,90 @@ async fn a_failed_invitation_mail_creates_nothing() {
         body(listed).await,
         json!([]),
         "the invitation was undone, not left for nobody to use"
+    );
+}
+
+#[tokio::test]
+async fn register_refuses_a_weak_password_and_says_why() {
+    let fixture = Fixture::start().await;
+
+    let short = fixture
+        .post_json(
+            "/auth/register",
+            json!({ "email": "new@example.org", "password": "hunter2" }),
+        )
+        .await;
+    assert_eq!(short.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body(short).await,
+        json!({ "detail": "Use at least 8 characters." })
+    );
+
+    let common = fixture
+        .post_json(
+            "/auth/register",
+            json!({ "email": "new@example.org", "password": "password123" }),
+        )
+        .await;
+    assert_eq!(common.status(), StatusCode::BAD_REQUEST);
+    let detail = body(common).await["detail"].as_str().unwrap().to_owned();
+    assert!(
+        detail.starts_with("This password is too easy to guess."),
+        "{detail}"
+    );
+    assert!(
+        db::user_by_email(fixture.pool(), "new@example.org")
+            .await
+            .unwrap()
+            .is_none(),
+        "a refused password creates no account"
+    );
+}
+
+#[tokio::test]
+async fn reset_refuses_a_weak_password_and_keeps_the_link() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+    fixture.forgot("known@example.org").await;
+    let token = link_token(&fixture.mails(), "/ui/reset-password#");
+
+    let weak = fixture.reset(&token, "known1234").await;
+
+    assert_eq!(weak.status(), StatusCode::BAD_REQUEST);
+    let detail = body(weak).await["detail"].as_str().unwrap().to_owned();
+    assert!(
+        detail.starts_with("This password is too easy to guess."),
+        "{detail}"
+    );
+    assert_eq!(
+        fixture.reset(&token, NEW_PASSWORD).await.status(),
+        StatusCode::OK,
+        "the refusal did not spend the link"
+    );
+}
+
+#[tokio::test]
+async fn a_profile_edit_refuses_a_weak_password() {
+    let fixture = Fixture::start().await;
+    fixture.verified("known@example.org").await;
+    let token = fixture.session("known@example.org").await;
+
+    let response = fixture
+        .json_request(
+            Method::PATCH,
+            "/users/me",
+            Some(&token),
+            json!({ "password": "short" }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body(response).await,
+        json!({ "detail": "Use at least 8 characters." })
+    );
+    assert_eq!(
+        fixture.login("known@example.org", PASSWORD).await.status(),
+        StatusCode::NO_CONTENT
     );
 }

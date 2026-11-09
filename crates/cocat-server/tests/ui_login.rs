@@ -17,7 +17,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-const PASSWORD: &str = "hunter2";
+const PASSWORD: &str = "plum orbit lantern cello";
 const PEER: &str = "203.0.113.7:41000";
 const PUBLIC_URL: &str = "https://cocat.example.org";
 
@@ -559,7 +559,7 @@ async fn login_flood_does_not_block_signup() {
         .post(
             "/ui/signup",
             None,
-            "email=fresh%40example.org&password=pwd123",
+            "email=fresh%40example.org&password=plum+orbit+lantern+cello",
         )
         .await;
 

@@ -8,6 +8,7 @@
   <label for="password">Password</label>
   <input id="password" name="password" type="password"
          autocomplete="new-password" required>
+  {% include "password_rule.html" %}
   <button type="submit">Sign up</button>
   {% include "message.html" %}
 </form>

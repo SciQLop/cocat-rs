@@ -21,7 +21,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-const PASSWORD: &str = "hunter2";
+const PASSWORD: &str = "plum orbit lantern cello";
 const PEER: &str = "203.0.113.7:41000";
 
 /// What a caller is allowed to be. The ladder is capability, not identity: a group owner
@@ -1010,7 +1010,7 @@ impl World {
             ),
             ("POST", "/auth/register") => (
                 json,
-                r#"{"email":"fresh@example.org","password":"another-password"}"#.to_owned(),
+                r#"{"email":"fresh@example.org","password":"amber quiver tundra oak"}"#.to_owned(),
             ),
             ("POST", "/auth/request-verify-token" | "/auth/forgot-password") => {
                 (json, r#"{"email":"owner@example.org"}"#.to_owned())
@@ -1025,9 +1025,11 @@ impl World {
             ),
             ("POST", "/auth/reset-password") => (
                 json,
-                r#"{"token":"nope","password":"another-password"}"#.to_owned(),
+                r#"{"token":"nope","password":"amber quiver tundra oak"}"#.to_owned(),
             ),
-            ("PATCH", "/users/me") => (json, r#"{"password":"another-password"}"#.to_owned()),
+            ("PATCH", "/users/me") => {
+                (json, r#"{"password":"amber quiver tundra oak"}"#.to_owned())
+            }
             ("PATCH", "/users/{user}") => (json, r#"{"is_active":true}"#.to_owned()),
             ("POST", "/api/rooms" | "/api/groups" | "/api/public") => {
                 (json, r#"{"name":"another"}"#.to_owned())
@@ -1072,12 +1074,12 @@ impl World {
             ),
             ("POST", "/ui/signup") => (
                 form,
-                "email=brand-new@example.org&password=another-password".to_owned(),
+                "email=brand-new@example.org&password=amber quiver tundra oak".to_owned(),
             ),
             ("POST", "/ui/request-verify") => (form, "email=owner@example.org".to_owned()),
             ("POST", "/ui/reset-password") => (
                 form,
-                "password=another-password&repeat=another-password".to_owned(),
+                "password=amber quiver tundra oak&repeat=amber quiver tundra oak".to_owned(),
             ),
             (
                 "POST",
@@ -1103,7 +1105,9 @@ impl World {
             ("POST", "/ui/groups/{group}/invitations") => (form, "kind=link".to_owned()),
             ("POST", "/ui/account/password") => (
                 form,
-                format!("current={PASSWORD}&new=another-password&repeat=another-password"),
+                format!(
+                    "current={PASSWORD}&new=amber quiver tundra oak&repeat=amber quiver tundra oak"
+                ),
             ),
             ("POST", "/ui/confirm-email") => (form, "email=fresh@example.org".to_owned()),
             ("POST", "/ui/admin/users/{user}/flag") => {

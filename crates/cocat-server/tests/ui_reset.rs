@@ -237,3 +237,35 @@ async fn a_mismatched_repeat_is_refused() {
     let old = fixture.login(MEMBER, PASSWORD, None).await;
     assert_eq!(location(&old), "/ui/app");
 }
+
+#[tokio::test]
+async fn a_weak_password_is_refused_with_a_hint() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified(MEMBER).await;
+    let user = db::user_by_email(&fixture.state.pool, MEMBER)
+        .await
+        .unwrap()
+        .expect("the account exists");
+    let token = accounts::reset_token(
+        user.id,
+        &user.hashed_password,
+        &fixture.state.secret,
+        SystemTime::now(),
+    )
+    .unwrap();
+
+    let response = fixture
+        .post(
+            "/ui/reset-password",
+            None,
+            &form(&[("token", &token), ("password", "abc"), ("repeat", "abc")]),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let page = body_text(response).await;
+    assert!(page.contains("Use at least 8 characters."), "{page}");
+    let old = fixture.login(MEMBER, PASSWORD, None).await;
+    assert_eq!(old.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&old), "/ui/app");
+}

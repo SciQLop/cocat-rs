@@ -94,8 +94,11 @@ pub(crate) async fn password(
         password: Some(form.new),
         ..accounts::Change::default()
     };
-    match accounts::change(&state, user, change).await {
+    match accounts::change(&state, user.clone(), change).await {
         Ok(_) => password_changed(&state),
+        Err(accounts::AccountError::WeakPassword(refusal)) => {
+            account_page(&state, &user, &refusal.0).await
+        }
         Err(error) => {
             tracing::warn!(%error, "cannot change a password");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
