@@ -146,10 +146,10 @@ def test_a_promotion_while_connected_is_picked_up_with_credentials(
     viewer.connect(server.url, cookie, credentials=("viewer@example.org", PASSWORD))
     viewer.wait_synced(15)
     assert viewer.read_only
-    members = cc.members(server.url, server.cookie, server.project_id)
+    members = cc.raw.members(server.url, server.cookie, server.project_id)
     user_id = next(m["user_id"] for m in members if m["email"] == "viewer@example.org")
 
-    cc.set_role(server.url, server.cookie, server.project_id, user_id, "editor")
+    cc.raw.set_role(server.url, server.cookie, server.project_id, user_id, "editor")
 
     wait_until(lambda: viewer.role == "editor")
     assert not viewer.read_only

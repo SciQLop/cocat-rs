@@ -416,4 +416,4 @@ def test_room_id_is_an_unknown_keyword(cache):
     with pytest.raises(TypeError):
         cc.Project.open(cache, room_id="lab")
     with pytest.raises(TypeError):
-        cc.history("http://127.0.0.1:1", "cookie", room_id="lab")
+        cc.raw.history("http://127.0.0.1:1", "cookie", room_id="lab")

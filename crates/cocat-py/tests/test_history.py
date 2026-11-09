@@ -28,7 +28,7 @@ def holds(project, uuid):
 
 
 def history(server):
-    return cc.history(server.url, server.cookie, server.project_id)
+    return cc.raw.history(server.url, server.cookie, server.project_id)
 
 
 def two_versions(server, project, colleague):
@@ -91,13 +91,13 @@ def test_a_past_project_is_read_only(server, project):
 def test_restore_from_python_undoes_an_edit(server, project, colleague):
     a, b, first, _ = two_versions(server, project, colleague)
 
-    assert cc.restore(server.url, server.cookie, server.project_id, first)
+    assert cc.raw.restore(server.url, server.cookie, server.project_id, first)
 
     wait_until(lambda: project.event(a.uuid).confidence is None)
     wait_until(lambda: project.event(b.uuid).status == "deleted")
     assert history(server)[0]["author_email"] == server.email
     assert history(server)[0]["restored_from"] == first
-    assert not cc.restore(server.url, server.cookie, server.project_id, first)
+    assert not cc.raw.restore(server.url, server.cookie, server.project_id, first)
 
 
 def test_a_named_version_comes_back_named(server, project):
@@ -105,10 +105,10 @@ def test_a_named_version_comes_back_named(server, project):
     project.save(15)
     (version,) = [version["id"] for version in history(server)]
 
-    cc.name_version(server.url, server.cookie, server.project_id, version, "paper v1")
+    cc.raw.name_version(server.url, server.cookie, server.project_id, version, "paper v1")
     assert history(server)[0]["name"] == "paper v1"
 
-    cc.name_version(server.url, server.cookie, server.project_id, version, None)
+    cc.raw.name_version(server.url, server.cookie, server.project_id, version, None)
     assert history(server)[0]["name"] is None
 
 
@@ -116,7 +116,7 @@ def test_a_version_keeps_its_id_and_name_while_its_author_keeps_editing(server, 
     project.create_event(start=START, stop=STOP)
     project.save(15)
     (version,) = [version["id"] for version in history(server)]
-    cc.name_version(server.url, server.cookie, server.project_id, version, "paper v1")
+    cc.raw.name_version(server.url, server.cookie, server.project_id, version, "paper v1")
 
     project.create_event(start=START, stop=STOP)
     project.save(15)
@@ -132,7 +132,7 @@ def test_a_catalogue_filter_narrows_the_history(server, project, colleague):
     catalogue = project.create_catalogue(name="alpha", events=[b])
     project.save(15)
 
-    versions = cc.history(
+    versions = cc.raw.history(
         server.url, server.cookie, server.project_id, catalogue=catalogue.uuid
     )
 
@@ -144,7 +144,7 @@ def test_saving_a_version_names_it_and_ends_it(server, project):
     project.create_event(start=START, stop=STOP)
     project.save(15)
 
-    version = cc.commit(
+    version = cc.raw.commit(
         server.url, server.cookie, server.project_id, name="checked", message="all good"
     )
     project.create_event(start=START, stop=STOP)
@@ -161,21 +161,21 @@ def test_saving_a_version_names_it_and_ends_it(server, project):
 def test_saving_twice_without_changes_is_refused(server, project):
     project.create_event(start=START, stop=STOP)
     project.save(15)
-    cc.commit(server.url, server.cookie, server.project_id)
+    cc.raw.commit(server.url, server.cookie, server.project_id)
 
     with pytest.raises(cc.Conflict, match="Nothing changed"):
-        cc.commit(server.url, server.cookie, server.project_id)
+        cc.raw.commit(server.url, server.cookie, server.project_id)
 
 
 def test_copying_a_version_makes_a_new_project_holding_it(server, project, colleague):
     a, b, first, _ = two_versions(server, project, colleague)
     before = history(server)
 
-    copy = cc.copy_version(server.url, server.cookie, server.project_id, first, "try")
+    copy = cc.raw.copy_version(server.url, server.cookie, server.project_id, first, "try")
 
     assert copy != server.project_id
-    assert "try" in [info.name for info in cc.projects(server.url, server.cookie)]
-    (version,) = cc.history(server.url, server.cookie, copy)
+    assert "try" in [info.name for info in cc.raw.projects(server.url, server.cookie)]
+    (version,) = cc.raw.history(server.url, server.cookie, copy)
     copied = cc.Project.at(server.url, server.cookie, copy, version["id"])
     assert copied.event(a.uuid).confidence is None
     with pytest.raises(cc.NotFound):

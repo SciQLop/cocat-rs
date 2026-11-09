@@ -155,7 +155,7 @@ def test_logout_revokes_the_token_and_forgets_it(server, signed_in):
 
     assert not WALLET
     with pytest.raises(cc.Unauthorized):
-        cc.projects(server.url, token)
+        cc.raw.projects(server.url, token)
     with pytest.raises(cc.NotSignedIn):
         signed_in.projects()
 
@@ -168,7 +168,7 @@ def test_without_a_sign_in_a_call_says_how_to_sign_in(server):
 
 
 def test_a_revoked_token_says_how_to_sign_in_again(server, signed_in):
-    cc.sign_out(server.url, WALLET[("cocat_rs", server.url)])
+    cc.raw.sign_out(server.url, WALLET[("cocat_rs", server.url)])
 
     with pytest.raises(cc.NotSignedIn, match=r"run cocat_rs\.login\(\)"):
         signed_in.projects()
@@ -240,5 +240,11 @@ def test_the_module_shortcuts_use_the_default_client(server, browser):
     cc.login(server.url)
 
     assert "bench" in [project.name for project in cc.projects()]
-    assert "bench" in [project.name for project in cc.projects(server.url, server.cookie)]
-    assert cc.login(server.url, server.email, PASSWORD)
+
+
+def test_raw_functions_take_the_server_and_session(server):
+    cookie = cc.raw.login(server.url, server.email, PASSWORD)
+
+    assert "bench" in [project.name for project in cc.raw.projects(server.url, cookie)]
+    with pytest.raises(TypeError):
+        cc.projects(server.url, cookie)

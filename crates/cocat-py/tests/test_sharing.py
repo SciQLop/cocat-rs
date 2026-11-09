@@ -29,7 +29,7 @@ def account(server, email, role=None):
 
 
 def member(server, email):
-    members = cc.members(server.url, server.cookie, server.project_id)
+    members = cc.raw.members(server.url, server.cookie, server.project_id)
     return next(item for item in members if item["email"] == email)
 
 
@@ -48,19 +48,19 @@ def call(server, method, path, body):
 
 
 def test_a_created_project_is_owned_and_listed(server):
-    created = cc.create_project(server.url, server.cookie, "Bepi MSA")
+    created = cc.raw.create_project(server.url, server.cookie, "Bepi MSA")
 
     assert isinstance(created, cc.ProjectInfo)
     assert created.name == "Bepi MSA"
     assert created.role == "owner"
     assert created.personal is False
-    listed = {item.id: item.name for item in cc.projects(server.url, server.cookie)}
+    listed = {item.id: item.name for item in cc.raw.projects(server.url, server.cookie)}
     assert listed[created.id] == "Bepi MSA"
 
 
 def test_an_empty_project_name_is_refused(server):
     with pytest.raises(cc.ServerError) as refused:
-        cc.create_project(server.url, server.cookie, "")
+        cc.raw.create_project(server.url, server.cookie, "")
 
     assert refused.value.status == 422
 
@@ -68,7 +68,7 @@ def test_an_empty_project_name_is_refused(server):
 def test_members_lists_each_account_with_its_role(server):
     account(server, "viewer@example.org", "viewer")
 
-    members = cc.members(server.url, server.cookie, server.project_id)
+    members = cc.raw.members(server.url, server.cookie, server.project_id)
 
     roles = {item["email"]: item["role"] for item in members}
     assert roles == {server.email: "owner", "viewer@example.org": "viewer"}
@@ -79,7 +79,7 @@ def test_a_stranger_cannot_see_the_members(server):
     stranger = account(server, "stranger@example.org")
 
     with pytest.raises(cc.ServerNotFound) as refused:
-        cc.members(server.url, stranger, server.project_id)
+        cc.raw.members(server.url, stranger, server.project_id)
 
     assert refused.value.status == 404
 
@@ -88,7 +88,7 @@ def test_the_owner_sets_a_role(server):
     account(server, "colleague@example.org", "viewer")
     colleague = member(server, "colleague@example.org")
 
-    cc.set_role(server.url, server.cookie, server.project_id, colleague["user_id"], "editor")
+    cc.raw.set_role(server.url, server.cookie, server.project_id, colleague["user_id"], "editor")
 
     assert member(server, "colleague@example.org")["role"] == "editor"
 
@@ -99,7 +99,7 @@ def test_a_viewer_may_not_set_roles(server):
     colleague = member(server, "colleague@example.org")
 
     with pytest.raises(cc.Forbidden) as refused:
-        cc.set_role(server.url, viewer, server.project_id, colleague["user_id"], "viewer")
+        cc.raw.set_role(server.url, viewer, server.project_id, colleague["user_id"], "viewer")
 
     assert refused.value.status == 403
 
@@ -109,7 +109,7 @@ def test_a_role_the_server_does_not_assign_is_a_schema_error(server):
     colleague = member(server, "colleague@example.org")
 
     with pytest.raises(cc.ServerError) as refused:
-        cc.set_role(server.url, server.cookie, server.project_id, colleague["user_id"], "boss")
+        cc.raw.set_role(server.url, server.cookie, server.project_id, colleague["user_id"], "boss")
 
     assert type(refused.value) is cc.ServerError
     assert refused.value.status == 422
@@ -119,14 +119,14 @@ def test_the_owner_removes_a_member(server):
     account(server, "colleague@example.org", "editor")
     colleague = member(server, "colleague@example.org")
 
-    cc.remove_member(server.url, server.cookie, server.project_id, colleague["user_id"])
+    cc.raw.remove_member(server.url, server.cookie, server.project_id, colleague["user_id"])
 
-    emails = [item["email"] for item in cc.members(server.url, server.cookie, server.project_id)]
+    emails = [item["email"] for item in cc.raw.members(server.url, server.cookie, server.project_id)]
     assert emails == [server.email]
 
 
 def test_an_invitation_has_a_link_and_is_listed(server):
-    created = cc.invite(
+    created = cc.raw.invite(
         server.url,
         server.cookie,
         server.project_id,
@@ -137,7 +137,7 @@ def test_an_invitation_has_a_link_and_is_listed(server):
 
     assert isinstance(created["id"], int)
     assert created["link"] == f"{server.url}/ui/invitation#{created['token']}"
-    [listed] = cc.invitations(server.url, server.cookie, server.project_id)
+    [listed] = cc.raw.invitations(server.url, server.cookie, server.project_id)
     assert listed["id"] == created["id"]
     assert listed["email"] == "guest@example.org"
     assert listed["role"] == "viewer"
@@ -147,9 +147,9 @@ def test_an_invitation_has_a_link_and_is_listed(server):
 
 
 def test_an_invitation_without_an_address_is_a_share_link(server):
-    created = cc.invite(server.url, server.cookie, server.project_id, "editor", max_uses=5)
+    created = cc.raw.invite(server.url, server.cookie, server.project_id, "editor", max_uses=5)
 
-    [listed] = cc.invitations(server.url, server.cookie, server.project_id)
+    [listed] = cc.raw.invitations(server.url, server.cookie, server.project_id)
     assert listed["id"] == created["id"]
     assert listed["email"] is None
     assert listed["role"] == "editor"
@@ -157,22 +157,22 @@ def test_an_invitation_without_an_address_is_a_share_link(server):
 
 
 def test_a_revoked_invitation_is_no_longer_listed(server):
-    created = cc.invite(server.url, server.cookie, server.project_id, "editor")
+    created = cc.raw.invite(server.url, server.cookie, server.project_id, "editor")
 
-    cc.revoke_invitation(server.url, server.cookie, server.project_id, created["id"])
+    cc.raw.revoke_invitation(server.url, server.cookie, server.project_id, created["id"])
 
-    assert cc.invitations(server.url, server.cookie, server.project_id) == []
+    assert cc.raw.invitations(server.url, server.cookie, server.project_id) == []
 
 
 def test_revoking_an_unknown_invitation_is_not_found(server):
     with pytest.raises(cc.ServerNotFound) as refused:
-        cc.revoke_invitation(server.url, server.cookie, server.project_id, 4242)
+        cc.raw.revoke_invitation(server.url, server.cookie, server.project_id, 4242)
 
     assert refused.value.status == 404
 
 
 def test_project_groups_lists_the_granted_groups(server):
-    assert cc.project_groups(server.url, server.cookie, server.project_id) == []
+    assert cc.raw.project_groups(server.url, server.cookie, server.project_id) == []
     group = call(server, "POST", "/api/groups", {"name": "lab"})
     call(
         server,
@@ -181,7 +181,7 @@ def test_project_groups_lists_the_granted_groups(server):
         {"role": "viewer"},
     )
 
-    groups = cc.project_groups(server.url, server.cookie, server.project_id)
+    groups = cc.raw.project_groups(server.url, server.cookie, server.project_id)
 
     assert groups == [{"id": group["id"], "name": "lab", "role": "viewer"}]
 
@@ -190,59 +190,59 @@ def test_a_stranger_cannot_see_the_groups(server):
     stranger = account(server, "stranger@example.org")
 
     with pytest.raises(cc.ServerNotFound):
-        cc.project_groups(server.url, stranger, server.project_id)
+        cc.raw.project_groups(server.url, stranger, server.project_id)
 
 
 def test_project_url_escapes_the_id_as_one_segment():
     url = "https://cocat.example.org/cocat-dev"
 
     assert (
-        cc.project_url(url, "Bepi MSA?#%")
+        cc.raw.project_url(url, "Bepi MSA?#%")
         == "https://cocat.example.org/cocat-dev/ui/rooms/Bepi%20MSA%3F%23%25/browse"
     )
     assert (
-        cc.project_url(url + "/", "lab", share=True)
+        cc.raw.project_url(url + "/", "lab", share=True)
         == "https://cocat.example.org/cocat-dev/ui/rooms/lab/browse#share"
     )
 
 
 def listed(server, cookie):
-    return next(item for item in cc.projects(server.url, cookie) if item.id == server.project_id)
+    return next(item for item in cc.raw.projects(server.url, cookie) if item.id == server.project_id)
 
 
 def test_an_editor_invites_while_editors_may_share(server):
     editor = account(server, "editor@example.org", "editor")
 
-    created = cc.invite(server.url, editor, server.project_id, "viewer", email="guest@example.org")
+    created = cc.raw.invite(server.url, editor, server.project_id, "viewer", email="guest@example.org")
 
     assert listed(server, editor).editors_can_share is True
-    [pending] = cc.invitations(server.url, editor, server.project_id)
+    [pending] = cc.raw.invitations(server.url, editor, server.project_id)
     assert pending["id"] == created["id"]
 
 
 def test_with_sharing_kept_to_the_owner_an_editor_is_forbidden(server):
     editor = account(server, "editor@example.org", "editor")
 
-    cc.set_editors_can_share(server.url, server.cookie, server.project_id, False)
+    cc.raw.set_editors_can_share(server.url, server.cookie, server.project_id, False)
 
     assert listed(server, editor).editors_can_share is False
     assert listed(server, server.cookie).editors_can_share is False
     with pytest.raises(cc.Forbidden):
-        cc.invite(server.url, editor, server.project_id, "viewer")
+        cc.raw.invite(server.url, editor, server.project_id, "viewer")
     with pytest.raises(cc.Forbidden) as refused:
-        cc.invitations(server.url, editor, server.project_id)
+        cc.raw.invitations(server.url, editor, server.project_id)
     assert refused.value.status == 403
-    assert cc.invitations(server.url, server.cookie, server.project_id) == []
+    assert cc.raw.invitations(server.url, server.cookie, server.project_id) == []
 
 
 def test_only_the_owner_changes_who_may_share(server):
     editor = account(server, "editor@example.org", "editor")
 
     with pytest.raises(cc.Forbidden):
-        cc.set_editors_can_share(server.url, editor, server.project_id, False)
+        cc.raw.set_editors_can_share(server.url, editor, server.project_id, False)
 
-    cc.set_editors_can_share(server.url, server.cookie, server.project_id, False)
-    cc.set_editors_can_share(server.url, server.cookie, server.project_id, True)
+    cc.raw.set_editors_can_share(server.url, server.cookie, server.project_id, False)
+    cc.raw.set_editors_can_share(server.url, server.cookie, server.project_id, True)
     assert listed(server, editor).editors_can_share is True
 
 

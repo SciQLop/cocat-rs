@@ -34,7 +34,7 @@ def test_a_new_catalogue_becomes_public_once_a_curator_accepts_it(server, tmp_pa
     mine.save(15)
     mine.close()
 
-    submitted = cc.submit_catalogue(
+    submitted = cc.raw.submit_catalogue(
         server.url,
         server.cookie,
         server.project_id,
@@ -43,30 +43,30 @@ def test_a_new_catalogue_becomes_public_once_a_curator_accepts_it(server, tmp_pa
         description="Two waves",
         note="Seen by MMS",
     )
-    [pending] = cc.submissions(server.url, curator)
+    [pending] = cc.raw.submissions(server.url, curator)
     with pytest.raises(cc.Forbidden):
-        cc.review_submission(server.url, server.cookie, submitted, True)
-    cc.review_submission(server.url, curator, submitted, True, note="Welcome")
+        cc.raw.review_submission(server.url, server.cookie, submitted, True)
+    cc.raw.review_submission(server.url, curator, submitted, True, note="Welcome")
 
     assert pending["id"] == submitted
     assert pending["status"] == "pending"
     assert pending["title"] == "Waves"
     assert pending["note"] == "Seen by MMS"
-    [entry] = cc.public_catalogues(server.url, server.cookie)
+    [entry] = cc.raw.public_catalogues(server.url, server.cookie)
     assert entry["name"] == "Waves"
     assert entry["folder"] == "Lab/Waves"
     assert entry["description"] == "Two waves"
     name, found = events_of(tmp_path / "public", entry["id"], server, server.cookie)
     assert name == "Waves"
     assert set(found) == {event.uuid for event in waves}
-    [mine_now] = cc.submissions(server.url, server.cookie, mine=True)
+    [mine_now] = cc.raw.submissions(server.url, server.cookie, mine=True)
     assert mine_now["status"] == "accepted"
     assert mine_now["target"] == entry["id"]
 
 
 def test_a_proposed_change_replaces_the_public_catalogue_once_accepted(server, tmp_path):
     curator = account(server, "curator@example.org", "set-curator")
-    public_id = cc.create_public_catalogue(server.url, curator, "Shocks")
+    public_id = cc.raw.create_public_catalogue(server.url, curator, "Shocks")
     keeper = connected(tmp_path / "curator", public_id, server.url, curator)
     kept = keeper.create_event("2020-01-01T00:00:00", "2020-01-01T01:00:00")
     dropped = keeper.create_event("2020-01-02T00:00:00", "2020-01-02T01:00:00")
@@ -74,7 +74,7 @@ def test_a_proposed_change_replaces_the_public_catalogue_once_accepted(server, t
     keeper.save(15)
     keeper.close()
 
-    proposed = cc.propose_change(server.url, server.cookie, public_id)
+    proposed = cc.raw.propose_change(server.url, server.cookie, public_id)
     copy = connected(tmp_path / "copy", proposed["project_id"], server.url, server.cookie)
     wait_until(lambda: len(copy.catalogues()) == 1)
     catalogue = copy.catalogue(proposed["catalogue"])
@@ -84,15 +84,15 @@ def test_a_proposed_change_replaces_the_public_catalogue_once_accepted(server, t
     catalogue.remove_events([dropped.uuid])
     copy.save(15)
     copy.close()
-    submitted = cc.submit_update(
+    submitted = cc.raw.submit_update(
         server.url, server.cookie, proposed["project_id"], proposed["catalogue"], note="fixed"
     )
-    cc.review_submission(server.url, curator, submitted, True)
+    cc.raw.review_submission(server.url, curator, submitted, True)
 
     name, found = events_of(tmp_path / "reader", public_id, server, server.cookie)
     assert name == "Shocks"
     assert found == {kept.uuid: 0.75, added.uuid: None}
-    [decided] = cc.submissions(server.url, server.cookie, mine=True)
+    [decided] = cc.raw.submissions(server.url, server.cookie, mine=True)
     assert decided["kind"] == "update"
     assert decided["status"] == "accepted"
 
@@ -104,40 +104,40 @@ def test_a_declined_submission_tells_its_author_why(server, tmp_path):
     catalogue = mine.create_catalogue(name="Waves")
     mine.save(15)
     mine.close()
-    first = cc.submit_catalogue(server.url, server.cookie, server.project_id, catalogue.uuid)
-    second = cc.submit_catalogue(server.url, server.cookie, server.project_id, catalogue.uuid)
+    first = cc.raw.submit_catalogue(server.url, server.cookie, server.project_id, catalogue.uuid)
+    second = cc.raw.submit_catalogue(server.url, server.cookie, server.project_id, catalogue.uuid)
 
-    cc.review_submission(server.url, curator, first, False, note="Add a description")
+    cc.raw.review_submission(server.url, curator, first, False, note="Add a description")
     with pytest.raises(cc.ServerNotFound):
-        cc.withdraw_submission(server.url, stranger, second)
-    cc.withdraw_submission(server.url, server.cookie, second)
+        cc.raw.withdraw_submission(server.url, stranger, second)
+    cc.raw.withdraw_submission(server.url, server.cookie, second)
     with pytest.raises(cc.Conflict):
-        cc.review_submission(server.url, curator, second, True)
+        cc.raw.review_submission(server.url, curator, second, True)
 
-    statuses = {s["id"]: s for s in cc.submissions(server.url, server.cookie, mine=True)}
+    statuses = {s["id"]: s for s in cc.raw.submissions(server.url, server.cookie, mine=True)}
     assert statuses[first]["status"] == "declined"
     assert statuses[first]["review_note"] == "Add a description"
     assert statuses[first]["reviewer"] == "a curator"
     assert statuses[second]["status"] == "withdrawn"
-    assert cc.submissions(server.url, stranger) == []
-    assert cc.public_catalogues(server.url, server.cookie) == []
+    assert cc.raw.submissions(server.url, stranger) == []
+    assert cc.raw.public_catalogues(server.url, server.cookie) == []
 
 
 def test_a_public_catalogue_copies_into_a_project_to_use_it(server, tmp_path):
     curator = account(server, "curator@example.org", "set-curator")
-    public_id = cc.create_public_catalogue(server.url, curator, "Shocks")
+    public_id = cc.raw.create_public_catalogue(server.url, curator, "Shocks")
     keeper = connected(tmp_path / "curator", public_id, server.url, curator)
     shock = keeper.create_event("2020-01-01T00:00:00", "2020-01-01T01:00:00")
     keeper.create_catalogue(name="ACE shocks", events=[shock])
     keeper.save(15)
     keeper.close()
 
-    into_new = cc.copy_public_catalogue(server.url, server.cookie, public_id)
-    into_mine = cc.copy_public_catalogue(
+    into_new = cc.raw.copy_public_catalogue(server.url, server.cookie, public_id)
+    into_mine = cc.raw.copy_public_catalogue(
         server.url, server.cookie, public_id, project_id=server.project_id
     )
     with pytest.raises(cc.Conflict):
-        cc.copy_public_catalogue(server.url, server.cookie, public_id, server.project_id)
+        cc.raw.copy_public_catalogue(server.url, server.cookie, public_id, server.project_id)
 
     assert into_new["name"] == "Shocks"
     assert into_mine["project_id"] == server.project_id
@@ -146,4 +146,4 @@ def test_a_public_catalogue_copies_into_a_project_to_use_it(server, tmp_path):
     assert name == "ACE shocks"
     assert set(found) == {shock.uuid}
     with pytest.raises(cc.ServerNotFound):
-        cc.submit_update(server.url, server.cookie, into_new["project_id"], into_new["catalogue"])
+        cc.raw.submit_update(server.url, server.cookie, into_new["project_id"], into_new["catalogue"])

@@ -249,11 +249,11 @@ def ensure_entry(url: str, cookie: str, shared_list: SharedList, known: set[str]
         "description": shared_list.index_description,
     }
     if shared_list.public_id in known:
-        cc.update_public_catalogue(
+        cc.raw.update_public_catalogue(
             url, cookie, shared_list.public_id, name=shared_list.name, **fields
         )
         return "updated"
-    cc.create_public_catalogue(url, cookie, shared_list.name, key=shared_list.key, **fields)
+    cc.raw.create_public_catalogue(url, cookie, shared_list.name, key=shared_list.key, **fields)
     return "created"
 
 
@@ -403,8 +403,8 @@ def main(argv: list[str] | None = None) -> int:
     if not password:
         print(f"Set the password in ${args.password_env}.", file=sys.stderr)
         return 2
-    cookie = cc.login(args.url, args.email, password)
-    known = {entry["id"] for entry in cc.public_catalogues(args.url, cookie)}
+    cookie = cc.raw.login(args.url, args.email, password)
+    known = {entry["id"] for entry in cc.raw.public_catalogues(args.url, cookie)}
     lists = chosen(amda_lists(), args.only, args.limit)
     print(f"{len(lists)} shared lists, {sum(s.intervals for s in lists)} intervals")
     failed = []

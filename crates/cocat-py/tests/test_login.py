@@ -15,25 +15,25 @@ def wait_until(predicate, timeout=15.0):
 
 
 def test_login_returns_the_session_cookie(server):
-    cookie = cc.login(server.url, server.email, "plum orbit lantern cello")
+    cookie = cc.raw.login(server.url, server.email, "plum orbit lantern cello")
     assert cookie
     assert ";" not in cookie
 
 
 def test_a_bad_password_is_refused(server):
     with pytest.raises(cc.Unauthorized, match="wrong email or password"):
-        cc.login(server.url, server.email, "wrong")
+        cc.raw.login(server.url, server.email, "wrong")
 
 
 def test_projects_lists_the_callers_projects_with_their_roles(server):
-    projects = cc.projects(server.url, server.cookie)
+    projects = cc.raw.projects(server.url, server.cookie)
     assert (server.project_id, "bench", "owner") in [
         (project.id, project.name, project.role) for project in projects
     ]
 
 
 def test_projects_flag_the_own_project(server):
-    projects = cc.projects(server.url, server.cookie)
+    projects = cc.raw.projects(server.url, server.cookie)
     own = [project for project in projects if project.personal]
     assert [project.role for project in own] == ["owner"]
     assert own[0].id != server.project_id

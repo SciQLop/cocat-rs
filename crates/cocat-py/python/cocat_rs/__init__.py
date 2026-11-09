@@ -367,11 +367,9 @@ def login(*arguments, server=None, email=None, password=None):
 
     - `login()` or `login(server)`: in the browser; remembered for the next sessions.
     - `login(email, password)`: without a browser, for this Python session.
-    - `login(url, email, password)`, the older form, returns the session cookie and changes
-      nothing else.
+
+    Applications that hold a session themselves use `cocat_rs.raw.login(url, email, password)`.
     """
-    if len(arguments) == 3:
-        return _native.login(*arguments)
     if len(arguments) == 1:
         (server,) = arguments
     elif len(arguments) == 2:
@@ -398,16 +396,9 @@ def start_sign_in(app="Python"):
 
 
 def _shortcut(name):
-    """The module function `name`: with a server url first (or `url=`/`cookie=`), the older
-    `(url, cookie, ...)` form; otherwise the default client's method."""
-    older = getattr(_native, name)
+    """The module function `name`: the default client's method."""
 
     def shortcut(*arguments, **keywords):
-        first = arguments[0] if arguments else None
-        if (isinstance(first, str) and first.startswith(("http://", "https://"))) or (
-            "url" in keywords or "cookie" in keywords
-        ):
-            return older(*arguments, **keywords)
         return getattr(default_client(), name)(*arguments, **keywords)
 
     shortcut.__name__ = shortcut.__qualname__ = name
@@ -447,9 +438,12 @@ for _name in (
     globals()[_name] = _shortcut(_name)
 del _name
 
+from . import raw  # noqa: E402
+
 # `open` stays out of `__all__`: a star import must not hide the builtin.
 __all__ += [
     "DEFAULT_SERVER",
+    "raw",
     "Client",
     "NotSignedIn",
     "SignIn",

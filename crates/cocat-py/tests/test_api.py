@@ -71,7 +71,7 @@ def test_user_project(server, tmp_path) -> None:
     configure(server, tmp_path)
     api.log_in(server.email, "plum orbit lantern cello")
 
-    listed = cocat_rs.projects(api.SESSION.base_url(), api.SESSION.cookie)
+    listed = cocat_rs.raw.projects(api.SESSION.base_url(), api.SESSION.cookie)
     assert api.SESSION.project_id in [project.id for project in listed]
     assert api.SESSION.project_id != server.project_id
     assert len(api.SESSION.project_id) == 32

@@ -551,10 +551,11 @@ sign_in.wait()          # blocks; NotSignedIn when denied, expired or sign_in.ca
 
 ### Advanced: urls and cookies
 
-Every function that talks to a server also takes the server's url and a session first:
-`cc.projects(url, cookie)`, `cc.history(url, cookie, project_id)`... These are what the
-sections below use. `cookie = cc.login(url, email, password)` gives a session; so does
-`cc.Client(url).session` once signed in. `cc.sign_out(url, cookie)` ends one.
+Applications that keep the session themselves (SciQLop) use `cocat_rs.raw`: the same
+functions with the server's url and a session spelled out, `raw.projects(url, cookie)`,
+`raw.history(url, cookie, project_id)`...: each `cc.` function below has a `raw.` twin.
+`cookie = raw.login(url, email, password)` gives a session; so does `cc.Client(url).session`
+once signed in. `raw.sign_out(url, cookie)` ends one.
 
 Before 0.3.0 the package said room: `Room`, `RoomInfo`, `rooms()` and `room_id=`. Since
 0.4.0 only `Project`, `ProjectInfo`, `projects()` and `project_id=` exist.
@@ -600,9 +601,8 @@ itself when the session expires or your role changes. A wrong password raises
 `Unauthorized` right away. If you already have a session cookie (SciQLop gets one from the
 browser sign-in), pass it instead: `project.connect(url, cookie)`. Without credentials, a
 session the server drops leaves the project `unauthorized` until `set_cookie` gives it a
-new one. The functions below that talk to the server directly (`history`, `commit`,
-`public_catalogues`, ...) take a cookie: get one with `cookie = cocat_rs.login(url, email,
-password)`.
+new one. The `cc.` functions below use the sign-in from `cc.login()`; with a cookie of
+your own, use their `cc.raw.` twins.
 
 **Read-only projects.** `project.role` is the role the server named at the last connect
 (`owner`, `editor`, `viewer`), remembered next to the cache, so a project opened offline keeps
@@ -665,61 +665,57 @@ keeps such a catalogue's members without a rule, and warns.
 
 **History.** The server keeps every version of a project: a run of changes by one person with
 no gap over five minutes, and no longer than an hour. Each version says who made it, when, and how many events it added,
-changed or removed. `cocat_rs.history` lists them, newest first, as dicts; `catalogue=` keeps
+changed or removed. `project.history()` lists them, newest first, as dicts; `catalogue=` keeps
 the versions that touched one catalogue or its events. `Project.at` fetches the project as it
 was at a version: it is read-only (a write raises `RuntimeError`) and needs no connection once
-fetched. `cocat_rs.restore` makes the project, or one catalogue, equal to a version again, as one
+fetched. `project.restore(version)` makes the project, or one catalogue, equal to a version again, as one
 new change by you, so a restore can itself be undone; events created since go to the trash.
 A restore is always a version of its own, with `restored_from` set to the version it brought
 back. A version's `id` is its first change, so it stays the same, and keeps its name, while
 its author goes on editing.
-`cocat_rs.commit` saves the newest version on purpose: it ends at the project's last change
+`project.commit()` saves the newest version on purpose: it ends at the project's last change
 the server has, with an optional `name` and `message` (a note, up to 2000 characters), and
-returns its id. Call `project.save()` first so your pending edits reached the server. The next
+returns its id. It sends your pending edits first. The next
 change starts a new version, and the list marks the saved one with `committed` and its
 `message`. Saving again with nothing new raises `cocat_rs.Conflict`.
-`cocat_rs.copy_version(url, cookie, project_id, version, name)` makes a new project, owned by
+`project.copy_version(version, name)` makes a new project, owned by
 you, that starts as the version: same catalogues, events (with their uuids), rules and trash.
 It returns the new project's id. Any member may copy, a viewer too; the copy counts against
 your storage quota. The original and its history stay as they were.
 
 ```python
-versions = cocat_rs.history(url, cookie, "my-project")
+versions = project.history()
 first = versions[-1]["id"]
-past = cocat_rs.Project.at(url, cookie, "my-project", first)
-past.catalogues()                       # as they were
-cocat_rs.name_version(url, cookie, "my-project", first, "before the import")
-project.save()
-cocat_rs.commit(url, cookie, "my-project", name="paper v1", message="as submitted")
-cocat_rs.restore(url, cookie, "my-project", first)   # False when nothing differed
-trial = cocat_rs.copy_version(url, cookie, "my-project", first, "my-project (copy)")
+project.name_version(first, "before the import")
+project.commit(name="paper v1", message="as submitted")
+project.restore(first)                         # False when nothing differed
+trial = project.copy_version(first, "my-project (copy)")
 ```
 
-**Public catalogues.** `public_catalogues(url, cookie)` lists them as dicts (`id`, `name`,
+**Public catalogues.** `cc.public_catalogues()` lists them as dicts (`id`, `name`,
 `folder`, `source`, `description`, your `role`, `changed`, `count`). Open one like any project, with its
 id: a curator gets an editable project, everyone else a read-only one. A curator makes one
-with `create_public_catalogue(url, cookie, name, folder=None, source=None, description=None,
+with `cc.create_public_catalogue(name, folder=None, source=None, description=None,
 key=None)`, which answers its id (`public.<key>`, or a random one); anyone else gets
-`Forbidden`, a key already taken `Conflict`. `update_public_catalogue(url, cookie, id,
+`Forbidden`, a key already taken `Conflict`. `cc.update_public_catalogue(id,
 name=None, folder=None, source=None, description=None)` changes its entry: `None` keeps a
-field, `""` clears it. `copy_public_catalogue(url, cookie, public_id, project_id=None)`
+field, `""` clears it. `cc.copy_public_catalogue(public_id, project_id=None)`
 copies one, with its name and events, into one of your projects (a new one named after it
 without `project_id`) to use there, and answers `{"project_id", "name", "catalogue"}`.
 
-Submitting: `submit_catalogue(url, cookie, project_id, catalogue_uuid, title=None,
+Submitting: `cc.submit_catalogue(project_id, catalogue_uuid, title=None,
 folder=None, description=None, note=None)` offers one of your catalogues and answers the
-submission's id. `propose_change(url, cookie, public_id, project_id=None, name=None)` copies a
+submission's id. `cc.propose_change(public_id, project_id=None, name=None)` copies a
 public catalogue into one of your projects (a new one without `project_id`) and answers
-`{"project_id", "name", "catalogue"}`; change it there, then `submit_update(url, cookie,
-project_id, catalogue_uuid, note=None)`. `submissions(url, cookie, mine=False)` lists yours
+`{"project_id", "name", "catalogue"}`; change it there, then `cc.submit_update(
+project_id, catalogue_uuid, note=None)`. `cc.submissions(mine=False)` lists yours
 (a curator's: everyone's, unless `mine`), with `status` and the curator's `review_note`.
-Curators call `review_submission(url, cookie, id, accept, note=None)`; authors
-`withdraw_submission(url, cookie, id)`.
+Curators call `cc.review_submission(id, accept, note=None)`; authors
+`cc.withdraw_submission(id)`.
 
 ```python
-index = cocat_rs.public_catalogues(url, cookie)
-shocks = cocat_rs.Project.open(cache, index[0]["id"])
-shocks.connect(url, cookie)                      # read-only unless you are a curator
+index = cc.public_catalogues()
+shocks = cc.open(index[0]["id"])                 # read-only unless you are a curator
 ```
 
 **Managing a project.** The calls behind the web app's Share dialog, for a tool that shows who
@@ -727,7 +723,7 @@ has access or shares a project. Members, invitations and groups come back as dic
 the server's JSON; ids of members are account ids (uuid strings), ids of invitations integers.
 Whoever may share the project may change roles, remove others, invite and see or revoke the
 invitations: the owner always, and editors unless the owner turned that off with
-`set_editors_can_share(url, cookie, project_id, False)` (owner only; `ProjectInfo.editors_can_share`
+`cc.set_editors_can_share(project_id, False)` (owner only; `ProjectInfo.editors_can_share`
 says which). Everyone else gets `Forbidden`. Nobody can change the owner's role or remove the
 owner. Every member may list the members and the groups. `role` is `"viewer"` or `"editor"`: the server refuses
 anything else with a `ServerError` (422). An invitation with an `email` admits only that
@@ -737,16 +733,16 @@ that accepts it, on the address you called. `project_url` makes no call: it is t
 page in the web app, with its Share dialog open when `share=True`.
 
 ```python
-info = cocat_rs.create_project(url, cookie, "Bepi MSA")       # a ProjectInfo, you own it
-cocat_rs.members(url, cookie, info.id)        # [{"user_id": ..., "email": ..., "role": "owner"}]
-cocat_rs.set_role(url, cookie, info.id, user_id, "viewer")
-cocat_rs.remove_member(url, cookie, info.id, user_id)
-created = cocat_rs.invite(url, cookie, info.id, "editor", email="colleague@example.org")
+info = cc.create_project("Bepi MSA")       # a ProjectInfo, you own it
+cc.members(info.id)        # [{"user_id": ..., "email": ..., "role": "owner"}]
+cc.set_role(info.id, user_id, "viewer")
+cc.remove_member(info.id, user_id)
+created = cc.invite(info.id, "editor", email="colleague@example.org")
 created["link"]                               # <url>/ui/invitation#<token>, to send them
-cocat_rs.invitations(url, cookie, info.id)    # id, email, role, expires_at, uses, max_uses
-cocat_rs.revoke_invitation(url, cookie, info.id, created["id"])
-cocat_rs.project_groups(url, cookie, info.id) # [{"id": ..., "name": ..., "role": ...}]
-cocat_rs.project_url(url, info.id, share=True) # <url>/ui/rooms/<id>/browse#share
+cc.invitations(info.id)    # id, email, role, expires_at, uses, max_uses
+cc.revoke_invitation(info.id, created["id"])
+cc.project_groups(info.id) # [{"id": ..., "name": ..., "role": ...}]
+cc.project_url(info.id, share=True) # <url>/ui/rooms/<id>/browse#share
 ```
 
 **Errors.** When the server refuses a call (`login`, `projects`, `history`, `Project.at`,
@@ -762,9 +758,9 @@ also a `cocat_rs.NotFound`.
 
 ```python
 try:
-    cocat_rs.commit(url, cookie, "my-project")
-except cocat_rs.Unauthorized:
-    cookie = cocat_rs.login(url, email, password)
+    project.commit()
+except cocat_rs.NotSignedIn:
+    cocat_rs.login()
 except cocat_rs.Conflict as error:
     print(error.detail)   # Nothing changed since the last saved version.
 ```

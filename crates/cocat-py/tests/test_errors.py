@@ -33,7 +33,7 @@ def test_server_errors_stay_value_errors():
 
 def test_an_absent_session_is_unauthorized(server):
     with pytest.raises(cc.Unauthorized) as refused:
-        cc.projects(server.url, "not-a-session")
+        cc.raw.projects(server.url, "not-a-session")
 
     assert refused.value.status == 401
     assert refused.value.detail
@@ -43,7 +43,7 @@ def test_an_absent_session_is_unauthorized(server):
 
 def test_a_viewer_saving_a_version_is_forbidden(server):
     with pytest.raises(cc.Forbidden) as refused:
-        cc.commit(server.url, viewer_cookie(server), server.project_id)
+        cc.raw.commit(server.url, viewer_cookie(server), server.project_id)
 
     assert refused.value.status == 403
     assert refused.value.detail
@@ -51,7 +51,7 @@ def test_a_viewer_saving_a_version_is_forbidden(server):
 
 def test_an_unknown_project_is_not_found(server):
     with pytest.raises(cc.ServerNotFound) as refused:
-        cc.history(server.url, server.cookie, "no-such-room")
+        cc.raw.history(server.url, server.cookie, "no-such-room")
 
     assert refused.value.status == 404
     assert refused.value.detail
@@ -60,7 +60,7 @@ def test_an_unknown_project_is_not_found(server):
 
 def test_saving_without_changes_is_a_conflict(server):
     with pytest.raises(cc.Conflict) as refused:
-        cc.commit(server.url, server.cookie, server.project_id)
+        cc.raw.commit(server.url, server.cookie, server.project_id)
 
     assert refused.value.status == 409
     assert refused.value.detail == "Nothing changed since the last saved version."
@@ -69,7 +69,7 @@ def test_saving_without_changes_is_a_conflict(server):
 
 def test_a_bad_password_is_unauthorized_with_the_servers_detail(server):
     with pytest.raises(cc.Unauthorized, match="wrong email or password") as refused:
-        cc.login(server.url, server.email, "wrong")
+        cc.raw.login(server.url, server.email, "wrong")
 
     assert refused.value.status == 400
     assert refused.value.detail == "LOGIN_BAD_CREDENTIALS"
