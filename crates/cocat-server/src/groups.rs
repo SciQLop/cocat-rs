@@ -219,6 +219,7 @@ pub async fn grant(
     role: Role,
 ) -> Result<(GroupRow, Role), LifecycleError> {
     lifecycle::require_sharer(state, room_id, actor).await?;
+    lifecycle::refuse_personal(state, room_id).await?;
     if role == Role::Owner {
         return Err(LifecycleError::Invalid(
             "A group cannot be granted the owner role",

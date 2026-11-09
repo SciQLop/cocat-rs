@@ -959,6 +959,22 @@ pub async fn personal_room(
     .await?)
 }
 
+/// Whether the room is some account's own project, by the rule of [`personal_room`].
+pub async fn is_personal_room(
+    executor: impl Executor<'_, Database = Sqlite>,
+    room_id: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT EXISTS (SELECT 1 FROM "user"
+           JOIN membership ON membership.room_id = "user".personal_room
+             AND membership.user_id = "user".id AND membership.role = 'owner'
+           WHERE "user".personal_room = ?)"#,
+    )
+    .bind(room_id)
+    .fetch_one(executor)
+    .await?)
+}
+
 /// A public catalogue as the index lists it.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct PublicRoom {

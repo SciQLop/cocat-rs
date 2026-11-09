@@ -159,6 +159,7 @@ impl From<invitations::Preview> for PreviewOut {
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not invite", body = Detail),
         (status = 404, description = "No such room", body = Detail),
+        (status = 409, description = "The project is its owner's own (“My catalogues”)", body = Detail),
         (status = 422, description = "The body is not an invitation", body = Detail),
     )
 )]
@@ -299,6 +300,7 @@ async fn preview_invitation(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The invitation does not admit this account", body = Detail),
         (status = 404, description = "No invitation carries this token", body = Detail),
+        (status = 409, description = "The project is its owner's own (“My catalogues”)", body = Detail),
         (status = 422, description = "The body has no token", body = Detail),
     )
 )]
@@ -321,6 +323,7 @@ async fn accept_invitation(
         (status = 200, description = "The room, joined with the invited role", body = RoomOut),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No usable invitation with this id addressed to the caller's verified email", body = Detail),
+        (status = 409, description = "The project is its owner's own (“My catalogues”)", body = Detail),
         (status = 422, description = "The invitation id is not a number", body = Detail),
     )
 )]

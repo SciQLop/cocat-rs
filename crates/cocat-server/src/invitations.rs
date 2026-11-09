@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::db::{self, RoomRow};
-use crate::lifecycle::{LifecycleError, require_sharer};
+use crate::lifecycle::{LifecycleError, refuse_personal, require_sharer};
 use crate::mail::{self, Mailer};
 use crate::room::CloseReason;
 
@@ -65,6 +65,7 @@ pub async fn create(
     max_uses: Option<u32>,
 ) -> Result<(i64, String), LifecycleError> {
     require_sharer(state, room_id, actor).await?;
+    refuse_personal(state, room_id).await?;
     if role == Role::Owner {
         return Err(LifecycleError::Conflict(
             "An invitation cannot grant the owner role",
@@ -280,6 +281,7 @@ async fn join(
             "This invitation is for another email address".to_owned(),
         ));
     }
+    refuse_personal(state, &room_id).await?;
     let mut tx = state.pool.begin().await?;
     let granted = match join_with_one_use(&mut tx, id, &room_id, user.id, role).await {
         Ok(granted) => granted,

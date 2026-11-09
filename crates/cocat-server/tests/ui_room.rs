@@ -719,3 +719,37 @@ async fn a_foreign_group_is_refused() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn the_old_page_invites_nobody_to_a_personal_project() {
+    let fixture = Fixture::start().await.with_app();
+    let user = fixture.verified(MEMBER).await;
+    let token = fixture.token(user).await;
+    db::create_personal_room(&fixture.state.pool, user)
+        .await
+        .unwrap();
+    let id = db::personal_room(&fixture.state.pool, user)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let response = fixture
+        .post(
+            &format!("/ui/rooms/{id}/invitations"),
+            Some(&token),
+            &form(&[("role", "viewer"), ("kind", "link"), ("email", "")]),
+        )
+        .await;
+
+    let page = page_after(&fixture, &response, &token).await;
+    assert!(
+        page.contains("is personal: copy catalogues into another project"),
+        "{page}"
+    );
+    assert!(
+        invitations::list(&fixture.state, &id, user)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

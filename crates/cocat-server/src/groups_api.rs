@@ -358,6 +358,7 @@ async fn room_groups(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller may not grant this group", body = Detail),
         (status = 404, description = "No such room or group", body = Detail),
+        (status = 409, description = "The project is its owner's own (“My catalogues”)", body = Detail),
         (status = 422, description = "The body is not a role", body = Detail),
     )
 )]

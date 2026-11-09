@@ -543,6 +543,7 @@ async fn remove_member(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is not the owner", body = Detail),
         (status = 404, description = "No such room or account", body = Detail),
+        (status = 409, description = "The project is its owner's own (“My catalogues”)", body = Detail),
         (status = 422, description = "The body is not an account id", body = Detail),
     )
 )]

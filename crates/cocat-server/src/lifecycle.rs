@@ -15,6 +15,8 @@ const LONG_NAME: &str = "Enter a name of at most 200 characters";
 pub(crate) const MAX_NAME: usize = 200;
 pub(crate) const NO_MEMBERS: &str =
     "A public catalogue has no members: it cannot be shared, left or handed over";
+pub(crate) const PERSONAL: &str =
+    "“My catalogues” is personal: copy catalogues into another project to share them.";
 
 /// The noun a name belongs to, so rooms and groups word the same refusals differently.
 #[derive(Debug, Clone, Copy)]
@@ -201,6 +203,7 @@ pub async fn transfer_ownership(
 ) -> Result<(), LifecycleError> {
     refuse_public(state, room_id).await?;
     require_role(state, room_id, actor, Role::Owner).await?;
+    refuse_personal(state, room_id).await?;
     member_role(state, room_id, new_owner).await?;
     db::set_owner(&state.pool, room_id, new_owner).await?;
     state
@@ -251,6 +254,15 @@ pub(crate) async fn require_sharer(
 pub(crate) async fn refuse_public(state: &AppState, room_id: &str) -> Result<(), LifecycleError> {
     match db::is_public(&state.pool, room_id).await? {
         true => Err(LifecycleError::Conflict(NO_MEMBERS)),
+        false => Ok(()),
+    }
+}
+
+/// An account's own project gains nobody: no invitation, member, group or new owner. Who
+/// was in it before this rule stays, and can still be removed.
+pub(crate) async fn refuse_personal(state: &AppState, room_id: &str) -> Result<(), LifecycleError> {
+    match db::is_personal_room(&state.pool, room_id).await? {
+        true => Err(LifecycleError::Conflict(PERSONAL)),
         false => Ok(()),
     }
 }
