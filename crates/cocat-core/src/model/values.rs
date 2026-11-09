@@ -62,7 +62,7 @@ pub(super) fn shape(any: &Any) -> Option<Vec<Vertex>> {
         .map(|vertex| match vertex {
             Any::Array(pair) if pair.len() == 2 => Some(Vertex {
                 time: time(&pair[0])?,
-                frequency: number(&pair[1])?,
+                value: number(&pair[1])?,
             }),
             _ => None,
         })
@@ -93,7 +93,7 @@ pub(super) fn shape_any(shape: &[Vertex]) -> Result<Any, WriteError> {
         .map(|vertex| {
             Ok(Any::Array(Arc::from([
                 time_any(vertex.time)?,
-                Any::from(vertex.frequency),
+                Any::from(vertex.value),
             ])))
         })
         .collect::<Result<Vec<Any>, WriteError>>()?;

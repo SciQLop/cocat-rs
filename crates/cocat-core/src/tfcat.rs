@@ -4,7 +4,9 @@
 //! A polygon becomes the event's shape. Any other geometry is kept as written, as JSON text
 //! in the event attribute `tfcat_geometry`, and gives the event its time span. The file's
 //! coordinate system and field descriptions stay on the catalogue (`tfcat_crs`,
-//! `tfcat_fields`), so an export writes them back. Frequencies stay in the file's unit.
+//! `tfcat_fields`), so an export writes them back. The CRS's spectral axis becomes the
+//! catalogue's shape axis, and values stay in its unit; an export writes the shape axis back
+//! into the CRS.
 
 mod axis;
 
@@ -17,7 +19,8 @@ use serde_json::{Map, Value, json};
 use yrs::{ReadTxn, TransactionMut};
 
 use crate::model::{
-    self, AttributeInfo, CatalogueSummary, EventRecord, NewCatalogue, Vertex, WriteError, Written,
+    self, AttributeInfo, CatalogueSummary, EventRecord, NewCatalogue, ShapeAxis, Vertex,
+    WriteError, Written,
 };
 use crate::time::Timestamp;
 use axis::TimeAxis;
@@ -45,8 +48,8 @@ pub enum TfcatError {
     Position(Vec<f64>),
     #[error("TFCat: the time {0} cannot be written")]
     Time(Timestamp),
-    #[error("These events have no frequency: give a frequency range")]
-    NoFrequency,
+    #[error("These events have no {0}: give {article} {0} range", article = article(.0))]
+    NoValues(String),
     #[error("Export TFCat: cannot write the file: {0}")]
     Encoding(serde_json::Error),
 }
@@ -76,6 +79,8 @@ pub struct TfcatImport {
     pub title: Option<String>,
     /// The collection's other properties, its coordinate system and its fields.
     pub attributes: Map<String, Value>,
+    /// The CRS's spectral axis.
+    pub shape_axis: Option<ShapeAxis>,
     pub events: Vec<EventRecord>,
     /// What could not come across as it was, in words.
     pub warnings: Vec<String>,
@@ -121,6 +126,7 @@ pub fn parse(text: &str) -> Result<TfcatImport, TfcatError> {
         }
         None => None,
     };
+    let shape_axis = spectral_axis(&crs);
     attributes.insert(CRS.to_owned(), Value::from(crs.to_string()));
     if let Some(fields) = collection.fields.filter(|fields| !fields.is_null()) {
         attributes.insert(FIELDS.to_owned(), Value::from(fields.to_string()));
@@ -128,6 +134,7 @@ pub fn parse(text: &str) -> Result<TfcatImport, TfcatError> {
     Ok(TfcatImport {
         title,
         attributes,
+        shape_axis,
         events,
         warnings: warnings(holes, unlocated),
     })
@@ -212,10 +219,10 @@ fn open_ring(ring: &[Position]) -> Vec<Position> {
 fn vertices(axis: &TimeAxis, ring: &[Position]) -> Result<Vec<Vertex>, TfcatError> {
     ring.iter()
         .map(|position| {
-            let (time, frequency) = pair(position)?;
+            let (time, value) = pair(position)?;
             Ok(Vertex {
                 time: axis.instant(time)?,
-                frequency,
+                value,
             })
         })
         .collect()
@@ -248,7 +255,7 @@ fn positions(geometry: &Geometry) -> Vec<&Position> {
 
 fn pair(position: &Position) -> Result<(f64, f64), TfcatError> {
     match position.as_slice() {
-        [time, frequency] => Ok((*time, *frequency)),
+        [time, value] => Ok((*time, *value)),
         other => Err(TfcatError::Position(other.to_vec())),
     }
 }
@@ -277,6 +284,7 @@ pub fn write(
         ..NewCatalogue::default()
     };
     model::create_catalogue(txn, &catalogue)?;
+    model::set_catalogue_shape_axis(txn, &catalogue.uuid, import.shape_axis.as_ref())?;
     let uuids: Vec<String> = import
         .events
         .iter()
@@ -287,39 +295,66 @@ pub fn write(
     Ok(written)
 }
 
-/// Whether exporting these events needs a frequency range from the caller: some have no
-/// place in frequency, and none of the others gives a band to borrow.
-pub fn needs_frequency_range(events: &[EventRecord]) -> bool {
+/// Whether exporting these events needs a value range from the caller: some have no place
+/// on the shape axis, and none of the others gives a band to borrow.
+pub fn needs_value_range(events: &[EventRecord]) -> bool {
     events.iter().any(|event| !is_placed(event)) && band(events).is_none()
 }
 
-/// The spectral unit of the catalogue's coordinate system, which a frequency range is in.
-pub fn spectral_unit(catalogue: &CatalogueSummary) -> String {
-    let crs = stored(&catalogue.attributes, CRS).unwrap_or_else(default_crs);
-    crs["properties"]["spectral_coords"]["unit"]
-        .as_str()
-        .unwrap_or("Hz")
-        .to_owned()
+/// What the catalogue's shapes measure: its own shape axis, else the spectral axis of the
+/// TFCat file it came from, else frequency in Hz. A value range is on this axis.
+pub fn shape_axis(catalogue: &CatalogueSummary) -> ShapeAxis {
+    catalogue.shape_axis.clone().unwrap_or_else(|| {
+        let crs = stored(&catalogue.attributes, CRS).unwrap_or_else(default_crs);
+        spectral_axis(&crs).unwrap_or_else(default_axis)
+    })
+}
+
+fn spectral_axis(crs: &Value) -> Option<ShapeAxis> {
+    let coords = &crs["properties"]["spectral_coords"];
+    Some(ShapeAxis {
+        quantity: coords["type"].as_str()?.to_owned(),
+        unit: coords["unit"].as_str()?.to_owned(),
+    })
+}
+
+fn default_axis() -> ShapeAxis {
+    ShapeAxis {
+        quantity: "frequency".to_owned(),
+        unit: "Hz".to_owned(),
+    }
+}
+
+/// The CRS a file gets: the one it came with, else the default, with the catalogue's shape
+/// axis as its spectral axis.
+fn crs_of(catalogue: &CatalogueSummary) -> Value {
+    let mut crs = stored(&catalogue.attributes, CRS).unwrap_or_else(default_crs);
+    if let Some(axis) = &catalogue.shape_axis {
+        let coords = &mut crs["properties"]["spectral_coords"];
+        coords["type"] = Value::from(axis.quantity.clone());
+        coords["unit"] = Value::from(axis.unit.clone());
+    }
+    crs
 }
 
 fn is_placed(event: &EventRecord) -> bool {
     event.shape.is_some() || kept_geometry(event).is_some()
 }
 
-/// The lowest and highest frequency of the events placed in frequency.
+/// The lowest and highest value of the events placed on the shape axis.
 fn band(events: &[EventRecord]) -> Option<(f64, f64)> {
-    let frequencies: Vec<f64> = events.iter().flat_map(frequencies).collect();
-    let low = frequencies.iter().copied().reduce(f64::min)?;
-    let high = frequencies.iter().copied().reduce(f64::max)?;
+    let values: Vec<f64> = events.iter().flat_map(values).collect();
+    let low = values.iter().copied().reduce(f64::min)?;
+    let high = values.iter().copied().reduce(f64::max)?;
     Some((low, high))
 }
 
-fn frequencies(event: &EventRecord) -> Vec<f64> {
+fn values(event: &EventRecord) -> Vec<f64> {
     match (&event.shape, kept_geometry(event)) {
-        (Some(shape), _) => shape.iter().map(|vertex| vertex.frequency).collect(),
+        (Some(shape), _) => shape.iter().map(|vertex| vertex.value).collect(),
         (None, Some(geometry)) => positions(&geometry)
             .into_iter()
-            .filter_map(|position| pair(position).ok().map(|(_, frequency)| frequency))
+            .filter_map(|position| pair(position).ok().map(|(_, value)| value))
             .collect(),
         (None, None) => Vec::new(),
     }
@@ -328,6 +363,14 @@ fn frequencies(event: &EventRecord) -> Vec<f64> {
 fn kept_geometry(event: &EventRecord) -> Option<Geometry> {
     let text = event.attributes.get(GEOMETRY)?.as_str()?;
     serde_json::from_str(text).ok()
+}
+
+/// "a" or "an", for the error that names the axis.
+fn article(word: &str) -> &'static str {
+    match word.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        true => "an",
+        false => "a",
+    }
 }
 
 fn stored(attributes: &Map<String, Value>, key: &str) -> Option<Value> {
@@ -349,20 +392,21 @@ fn default_crs() -> Value {
 }
 
 /// The catalogue as one TFCat file, its times written on its own time axis. An event
-/// without a place in frequency becomes a rectangle over `frequency_range`, else over the
+/// without a place on the shape axis becomes a rectangle over `value_range`, else over the
 /// band of the catalogue's other events.
 pub fn export<T: ReadTxn>(
     txn: &T,
     catalogue: &CatalogueSummary,
     events: &[EventRecord],
-    frequency_range: Option<(f64, f64)>,
+    value_range: Option<(f64, f64)>,
 ) -> Result<String, TfcatError> {
-    let crs = stored(&catalogue.attributes, CRS).unwrap_or_else(default_crs);
+    let crs = crs_of(catalogue);
     let axis = TimeAxis::of(&crs)?;
-    let band = frequency_range.or_else(|| band(events));
+    let band = value_range.or_else(|| band(events));
+    let quantity = shape_axis(catalogue).quantity;
     let features = in_time_order(events)
         .into_iter()
-        .map(|event| feature(&axis, event, band))
+        .map(|event| feature(&axis, event, band, &quantity))
         .collect::<Result<_, _>>()?;
     let collection = Collection {
         kind: CollectionType::FeatureCollection,
@@ -384,18 +428,19 @@ fn feature(
     axis: &TimeAxis,
     event: &EventRecord,
     band: Option<(f64, f64)>,
+    quantity: &str,
 ) -> Result<Feature, TfcatError> {
     let geometry = match (kept_geometry(event), &event.shape) {
         (Some(geometry), _) => geometry,
         (None, Some(shape)) => {
             let corners: Vec<(Timestamp, f64)> = shape
                 .iter()
-                .map(|vertex| (vertex.time, vertex.frequency))
+                .map(|vertex| (vertex.time, vertex.value))
                 .collect();
             polygon(axis, &corners)?
         }
         (None, None) => {
-            let (low, high) = band.ok_or(TfcatError::NoFrequency)?;
+            let (low, high) = band.ok_or_else(|| TfcatError::NoValues(quantity.to_owned()))?;
             let (start, stop) = (event.start, event.stop);
             polygon(
                 axis,
@@ -418,7 +463,7 @@ fn feature(
 fn polygon(axis: &TimeAxis, corners: &[(Timestamp, f64)]) -> Result<Geometry, TfcatError> {
     let mut ring = corners
         .iter()
-        .map(|(time, frequency)| Ok(Position::from([axis.value(*time)?, *frequency])))
+        .map(|(time, value)| Ok(Position::from([axis.value(*time)?, *value])))
         .collect::<Result<Vec<_>, TfcatError>>()?;
     if let Some(first) = ring.first().cloned() {
         ring.push(first);

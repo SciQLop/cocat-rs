@@ -42,16 +42,33 @@ without fighting the non-geographic coordinates), not by hand.
   and the catalogue's attributes as `properties` (name as `title`).
 - An event with `tfcat_geometry` → that geometry; with a `shape` → a closed `Polygon`; with
   neither → a rectangle from start to stop over a frequency range: the caller's
-  `frequency_range`, else the range covered by the catalogue's shaped events. With neither,
+  `value_range`, else the range covered by the catalogue's shaped events. With neither,
   export refuses in plain words ("These events have no frequency: give a frequency range").
 - Event attributes → feature properties; `source_id` → feature `id` (else the event uuid).
 - Times written in the CRS's time coordinates.
+
+## Shape axis
+
+Shapes stay time-series shapes, but their second axis is generic: a frequency, a particle
+energy, a wavelength, a pitch angle. A vertex is `{time, value}` (it was `{time, frequency}`;
+the room stores plain `[ns, number]` pairs, so no data moves).
+
+- A catalogue may name its shape axis: `shape_axis = {quantity, unit}` (e.g.
+  `frequency`/`kHz`, `energy`/`eV`), a plain catalogue field beside `rule`, absent when not
+  said. Python reads and sets it as `catalogue.shape_axis = ("energy", "eV")` (or `None`).
+  Nothing else shows it yet.
+- TFCat import sets it from the CRS `spectral_coords` (`type`, `unit`). Export writes it
+  into the CRS `spectral_coords`, so a catalogue made by hand with an axis exports a correct
+  CRS. A catalogue without one keeps the CRS it came with, else the default (frequency, Hz).
+- The range an export asks for when events have no value is a `value_range`, in the shape
+  axis's unit, and the refusal names the quantity ("These events have no energy: give an
+  energy range").
 
 ## Python
 
 - `project.import_tfcat(path, name=None)` → the new catalogue (as `import_votable` does for
   its file, adapted to one catalogue).
-- `cocat_rs.export_tfcat(catalogue, path, frequency_range=None)` and a function returning
+- `cocat_rs.export_tfcat(catalogue, path, value_range=None)` and a function returning
   the JSON text, mirroring `export_votable`.
 - README: a short TFCat paragraph next to VOTable.
 

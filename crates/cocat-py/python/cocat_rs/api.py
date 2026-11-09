@@ -247,11 +247,11 @@ def export_votable(catalogues, file_path: str | Path) -> None:
 
 
 def export_tfcat(
-    catalogue, file_path: str | Path, frequency_range: tuple[float, float] | None = None
+    catalogue, file_path: str | Path, value_range: tuple[float, float] | None = None
 ) -> None:
-    """Writes the catalogue to a TFCat file. Events with no place in frequency are drawn
-    over `frequency_range` (low, high), else over the band of the catalogue's other events."""
-    Path(file_path).write_text(tfcat_json(catalogue, frequency_range), encoding="utf-8")
+    """Writes the catalogue to a TFCat file. Events with no place on the shape axis are
+    drawn over `value_range` (low, high), else over the band of the catalogue's other events."""
+    Path(file_path).write_text(tfcat_json(catalogue, value_range), encoding="utf-8")
 
 
 def save_on_exit() -> None:

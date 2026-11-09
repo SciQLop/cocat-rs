@@ -626,7 +626,7 @@ help.
 
 Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`, `final`,
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
-the event, from `project.create_origin(...)`), `source_id`, `created`, `comment` and a TFCat
+the event, from `project.create_origin(...)`), `source_id`, `created`, `comment` and a
 `shape`. All are settable and all are keyword arguments of `create_event`. Attributes register
 their type in the project (`project.attribute_types()`); writing another type warns but is kept.
 
@@ -672,21 +672,32 @@ tscat.export_json(project, [smart], "out.json")
 tscat writes a dynamic catalogue's predicate into its JSON as Python text, so `import_json`
 keeps such a catalogue's members without a rule, and warns.
 
+A **shape** is a list of `(datetime, value)` corners in the time plane: the value is on the
+catalogue's shape axis, which a catalogue may name as `(quantity, unit)`, such as
+`("frequency", "kHz")` or `("energy", "eV")`. The JSON API names a corner's second
+coordinate `value` (cocat-rs 0.5.2 and before named it `frequency`).
+
+```python
+catalogue.shape_axis = ("energy", "eV")  # None when not said
+```
+
 **TFCat** files (radio catalogues of time–frequency shapes, doi:10.25935/6068-8528) import
 as one catalogue each, next to VOTable. A polygon becomes the event's `shape`; any other
 geometry is kept as it is, in the event attribute `tfcat_geometry`, and gives the event its
 time span. The feature's `id` becomes `source_id`. The file's coordinate system and field
 descriptions stay on the catalogue (`tfcat_crs`, `tfcat_fields`), so an export writes them
-back. A file without a coordinate system (`crs`) is refused.
+back. The file's spectral axis becomes the catalogue's `shape_axis`, and an export writes the
+shape axis back into the coordinate system; a catalogue without one exports as frequency in
+Hz. A file without a coordinate system (`crs`) is refused.
 
 ```python
 bursts = project.import_tfcat("bursts.json")            # named by the file's title
 cocat_rs.export_tfcat(bursts, "out.json")
-cocat_rs.export_tfcat(plain, "out.json", frequency_range=(1e3, 2e4))
+cocat_rs.export_tfcat(plain, "out.json", value_range=(1e3, 2e4))
 text = cocat_rs.tfcat_json(bursts)                      # the same, as text
 ```
 
-An event without a shape is written as a rectangle over `frequency_range`, else over the band
+An event without a shape is written as a rectangle over `value_range`, else over the band
 of the catalogue's shaped events; with neither, the export raises `ValueError`.
 
 **History.** The server keeps every version of a project: a run of changes by one person with

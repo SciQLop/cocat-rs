@@ -41,8 +41,8 @@ pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,
     purge_catalogue, purge_event, remove_catalogue_attributes, remove_catalogue_events,
     remove_event_attributes, rename_catalogue, restore_catalogue, restore_event,
-    set_catalogue_attributes, set_catalogue_columns, set_catalogue_rule, set_catalogue_tags,
-    set_event_attributes, set_event_field, set_event_range,
+    set_catalogue_attributes, set_catalogue_columns, set_catalogue_rule, set_catalogue_shape_axis,
+    set_catalogue_tags, set_event_attributes, set_event_field, set_event_range,
 };
 
 pub const CATALOGUES: &str = "catalogues";
@@ -95,12 +95,20 @@ impl Status {
     }
 }
 
-/// One corner of a time–frequency polygon (TFCat).
+/// One corner of a shape: a time, and a value on the catalogue's shape axis (a frequency, an
+/// energy, a pitch angle…).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct Vertex {
     #[schema(value_type = String)]
     pub time: Timestamp,
-    pub frequency: f64,
+    pub value: f64,
+}
+
+/// What the second coordinate of a catalogue's shapes measures, and in which unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ShapeAxis {
+    pub quantity: String,
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
@@ -181,6 +189,7 @@ pub struct CatalogueSummary {
     pub attributes: Map<String, Value>,
     #[schema(value_type = Option<Object>)]
     pub rule: Option<Value>,
+    pub shape_axis: Option<ShapeAxis>,
     pub event_count: usize,
 }
 

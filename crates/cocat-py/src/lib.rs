@@ -271,7 +271,7 @@ fn optional_datetime(py: Python<'_>, time: Option<Timestamp>) -> Result<Py<PyAny
 fn shape_to_python(py: Python<'_>, shape: &[Vertex]) -> Result<Py<PyAny>> {
     let vertices = PyList::empty(py);
     for vertex in shape {
-        vertices.append((to_python_datetime(py, vertex.time)?, vertex.frequency))?;
+        vertices.append((to_python_datetime(py, vertex.time)?, vertex.value))?;
     }
     Ok(vertices.into_any().unbind())
 }
@@ -282,10 +282,10 @@ fn to_shape(value: &Bound<'_, PyAny>) -> Result<Option<Vec<Vertex>>> {
     }
     let mut shape = Vec::new();
     for vertex in value.try_iter()? {
-        let (time, frequency): (Bound<'_, PyAny>, f64) = vertex?.extract()?;
+        let (time, value): (Bound<'_, PyAny>, f64) = vertex?.extract()?;
         shape.push(Vertex {
             time: to_timestamp(&time)?,
-            frequency,
+            value,
         });
     }
     Ok(Some(shape))
@@ -317,8 +317,8 @@ fn field_to_python(py: Python<'_>, key: &str, value: &Value) -> Result<Py<PyAny>
                     vertex.get(0).and_then(nanos),
                     vertex.get(1).and_then(Value::as_f64),
                 ) {
-                    (Some(time), Some(frequency)) => {
-                        list.append((to_python_datetime(py, time)?, frequency))?
+                    (Some(time), Some(value)) => {
+                        list.append((to_python_datetime(py, time)?, value))?
                     }
                     _ => list.append(to_python(py, vertex)?)?,
                 }
@@ -540,6 +540,28 @@ impl Catalogue {
         let txn = doc.transact();
         let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
         to_python_map(py, &catalogue.attributes)
+    }
+
+    /// What the second coordinate of the shapes measures, as `(quantity, unit)`, or `None`.
+    #[getter]
+    fn shape_axis(&self) -> Result<Option<(String, String)>> {
+        Ok(self
+            .summary()?
+            .shape_axis
+            .map(|axis| (axis.quantity, axis.unit)))
+    }
+
+    #[setter]
+    fn set_shape_axis(&self, axis: Option<(String, String)>) -> Result<()> {
+        let axis = axis.map(|(quantity, unit)| model::ShapeAxis { quantity, unit });
+        let found = write(&self.room, |txn| {
+            model::set_catalogue_shape_axis(txn, &self.uuid, axis.as_ref())
+        })?
+        .map_err(value_error)?;
+        if !found {
+            return Err(unknown("catalogue"));
+        }
+        Ok(())
     }
 
     /// The rule that makes this a smart catalogue, or `None`.
@@ -879,7 +901,8 @@ impl Event {
         self.set_field(EventField::Created(optional_timestamp(Some(created))?))
     }
 
-    /// The time–frequency polygon as `(datetime, frequency)` pairs, or `None`.
+    /// The shape as `(datetime, value)` pairs, the value on the catalogue's shape axis, or
+    /// `None`.
     #[getter]
     fn shape(&self, py: Python<'_>) -> Result<Py<PyAny>> {
         match self.record()?.shape {
@@ -1587,19 +1610,16 @@ fn catalogues_with_events<T: yrs::ReadTxn>(
     Ok(exported)
 }
 
-/// The catalogue as TFCat JSON. Events with no place in frequency are drawn over
-/// `frequency_range` (low, high), else over the band of the catalogue's other events.
+/// The catalogue as TFCat JSON. Events with no place on the shape axis are drawn over
+/// `value_range` (low, high), else over the band of the catalogue's other events.
 #[pyfunction]
-#[pyo3(signature = (catalogue, frequency_range=None))]
-fn tfcat_json(
-    catalogue: PyRef<'_, Catalogue>,
-    frequency_range: Option<(f64, f64)>,
-) -> Result<String> {
+#[pyo3(signature = (catalogue, value_range=None))]
+fn tfcat_json(catalogue: PyRef<'_, Catalogue>, value_range: Option<(f64, f64)>) -> Result<String> {
     let doc = catalogue.room.doc();
     let txn = doc.transact();
     let exported = catalogues_with_events(&txn, std::slice::from_ref(&catalogue.uuid))?;
     let (summary, events) = exported.first().ok_or_else(|| unknown("catalogue"))?;
-    tfcat::export(&txn, summary, events, frequency_range).map_err(value_error)
+    tfcat::export(&txn, summary, events, value_range).map_err(value_error)
 }
 
 /// The catalogues and their member events in tscat's JSON format.

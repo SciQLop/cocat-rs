@@ -734,6 +734,7 @@ mod tests {
             columns: Vec::new(),
             attributes: Map::new(),
             rule: None,
+            shape_axis: None,
             event_count: 0,
         }
     }

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 use yrs::{Map as _, MapRef, Out, ReadTxn};
 
-use super::values::{get, json, number, shape, strings, text, time};
+use super::values::{get, json, number, shape, strings, text, time, typed};
 use super::{ATTRIBUTE_PREFIX, CATALOGUES, CatalogueSummary, EVENTS, EventRecord, META, Status};
 
 /// The catalogues not in the trash, sorted by name then uuid.
@@ -113,6 +113,7 @@ fn summary<T: ReadTxn>(txn: &T, uuid: &str, map: &MapRef) -> CatalogueSummary {
         columns: Vec::new(),
         attributes: Map::new(),
         rule: None,
+        shape_axis: None,
         event_count: 0,
     };
     for (key, value) in map.iter(txn) {
@@ -129,6 +130,7 @@ fn summary<T: ReadTxn>(txn: &T, uuid: &str, map: &MapRef) -> CatalogueSummary {
             "tags" => summary.tags = strings(&any),
             "columns" => summary.columns = strings(&any),
             "rule" => summary.rule = json(&any),
+            "shape_axis" => summary.shape_axis = typed(&any),
             _ => attribute(&mut summary.attributes, key, &any),
         }
     }

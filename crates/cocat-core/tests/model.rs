@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use cocat_core::model::{
-    self, AttributeType, EventField, EventRecord, NewCatalogue, Origin, OriginKind, Status, Used,
-    Vertex, WriteError,
+    self, AttributeType, EventField, EventRecord, NewCatalogue, Origin, OriginKind, ShapeAxis,
+    Status, Used, Vertex, WriteError,
 };
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value, json};
@@ -237,9 +237,9 @@ fn a_confidence_outside_zero_to_one_is_refused() {
 #[test]
 fn a_shape_sets_the_range_to_its_time_span() {
     let doc = written();
-    let vertex = |time: &str, frequency: f64| Vertex {
+    let vertex = |time: &str, value: f64| Vertex {
         time: at(time),
-        frequency,
+        value,
     };
     let shape = vec![
         vertex("2025-03-01 00:00:10", 1e3),
@@ -629,4 +629,32 @@ fn writing_to_an_unknown_object_changes_nothing() {
     let txn = doc.transact();
     assert_eq!(model::catalogues(&txn).len(), 1);
     assert_eq!(txn.get_map(model::EVENTS).unwrap().len(&txn), 1);
+}
+
+#[test]
+fn a_catalogue_describes_the_axis_of_its_shapes() {
+    let doc = written();
+    let axis = ShapeAxis {
+        quantity: "energy".to_owned(),
+        unit: "eV".to_owned(),
+    };
+    let set = |axis: Option<&ShapeAxis>| {
+        model::set_catalogue_shape_axis(&mut doc.transact_mut(), ALPHA, axis).unwrap()
+    };
+    assert_eq!(
+        model::catalogue(&doc.transact(), ALPHA).unwrap().shape_axis,
+        None
+    );
+
+    assert!(set(Some(&axis)));
+    let read = model::catalogue(&doc.transact(), ALPHA).unwrap();
+    assert_eq!(read.shape_axis, Some(axis));
+    assert!(!read.attributes.contains_key("shape_axis"));
+
+    assert!(set(None));
+    assert_eq!(
+        model::catalogue(&doc.transact(), ALPHA).unwrap().shape_axis,
+        None
+    );
+    assert!(!model::set_catalogue_shape_axis(&mut doc.transact_mut(), UNKNOWN, None).unwrap());
 }

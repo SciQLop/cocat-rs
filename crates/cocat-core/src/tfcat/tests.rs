@@ -2,9 +2,9 @@ use serde_json::{Map, Value, json};
 use yrs::{Doc, Transact};
 
 use super::{
-    CRS, FIELDS, GEOMETRY, TfcatError, TfcatImport, export, needs_frequency_range, parse, write,
+    CRS, FIELDS, GEOMETRY, TfcatError, TfcatImport, export, needs_value_range, parse, write,
 };
-use crate::model::{self, CatalogueSummary, EventRecord, NewCatalogue, Vertex};
+use crate::model::{self, CatalogueSummary, EventRecord, NewCatalogue, ShapeAxis, Vertex};
 use crate::time::Timestamp;
 
 const REAL: &str =
@@ -95,7 +95,7 @@ fn a_polygon_becomes_the_events_shape() {
         .shape
         .iter()
         .flatten()
-        .map(|vertex| (vertex.time, vertex.frequency))
+        .map(|vertex| (vertex.time, vertex.value))
         .collect();
     assert_eq!(
         corners,
@@ -126,6 +126,7 @@ fn the_collection_names_the_catalogue_and_keeps_its_axes_and_fields() {
     assert_eq!(fields["quality"]["ucd"], "meta.code.qual");
     assert_eq!(import.name(None, "dir/file.json"), "Patches");
     assert_eq!(import.name(Some("Mine"), "dir/file.json"), "Mine");
+    assert_eq!(import.shape_axis, Some(axis("frequency", "kHz")));
 }
 
 #[test]
@@ -236,6 +237,8 @@ fn a_round_trip_gives_the_same_events_shapes_attributes_and_axes() {
     );
     assert_eq!(second.title.as_deref(), Some("imported"));
     assert_eq!(catalogue.attributes, catalogue_again.attributes);
+    assert_eq!(catalogue.shape_axis, Some(axis("frequency", "kHz")));
+    assert_eq!(catalogue_again.shape_axis, catalogue.shape_axis);
     let file: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(file["features"][0]["id"], json!(7));
     assert_eq!(file["features"][1]["id"], json!("b-2"));
@@ -287,8 +290,22 @@ fn a_published_catalogue_imports_and_exports_back() {
     );
 }
 
+fn axis(quantity: &str, unit: &str) -> ShapeAxis {
+    ShapeAxis {
+        quantity: quantity.to_owned(),
+        unit: unit.to_owned(),
+    }
+}
+
 /// A catalogue made by hand: events with neither a shape nor a frequency.
 fn plain(events: Vec<EventRecord>) -> (Doc, CatalogueSummary, Vec<EventRecord>) {
+    described(events, None)
+}
+
+fn described(
+    events: Vec<EventRecord>,
+    shape_axis: Option<ShapeAxis>,
+) -> (Doc, CatalogueSummary, Vec<EventRecord>) {
     let doc = Doc::new();
     let uuid = "00000000-0000-4000-8000-0000000000c1";
     {
@@ -304,6 +321,7 @@ fn plain(events: Vec<EventRecord>) -> (Doc, CatalogueSummary, Vec<EventRecord>) 
         model::create_catalogue(&mut txn, &catalogue).unwrap();
         let uuids: Vec<String> = events.iter().map(|event| event.uuid.clone()).collect();
         model::add_catalogue_events(&mut txn, uuid, &uuids);
+        model::set_catalogue_shape_axis(&mut txn, uuid, shape_axis.as_ref()).unwrap();
     }
     let catalogue = model::catalogue(&doc.transact(), uuid).unwrap();
     (doc, catalogue, events)
@@ -312,7 +330,7 @@ fn plain(events: Vec<EventRecord>) -> (Doc, CatalogueSummary, Vec<EventRecord>) 
 #[test]
 fn events_without_frequency_ask_for_a_range() {
     let (doc, catalogue, events) = plain(vec![EventRecord::new("e1", unix(100), unix(160))]);
-    assert!(needs_frequency_range(&events));
+    assert!(needs_value_range(&events));
     let error = exported(&doc, &catalogue, &events, None).unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -343,21 +361,21 @@ fn shapeless_events_take_the_band_of_their_shaped_neighbours() {
     shaped.shape = Some(vec![
         Vertex {
             time: unix(10),
-            frequency: 3.0,
+            value: 3.0,
         },
         Vertex {
             time: unix(20),
-            frequency: 8.0,
+            value: 8.0,
         },
         Vertex {
             time: unix(15),
-            frequency: 4.0,
+            value: 4.0,
         },
     ]);
     let mut bare = EventRecord::new("e2", unix(30), unix(40));
     bare.attributes.insert("note".into(), json!("faint"));
     let (doc, catalogue, events) = plain(vec![shaped, bare]);
-    assert!(!needs_frequency_range(&events));
+    assert!(!needs_value_range(&events));
     let file: Value =
         serde_json::from_str(&exported(&doc, &catalogue, &events, None).unwrap()).unwrap();
     assert_eq!(
@@ -371,4 +389,44 @@ fn shapeless_events_take_the_band_of_their_shaped_neighbours() {
     assert_eq!(file["features"][1]["properties"]["note"], json!("faint"));
     assert_eq!(file["fields"]["note"]["datatype"], json!("str"));
     assert!(file["fields"]["note"]["ucd"].is_string());
+}
+
+#[test]
+fn a_catalogue_by_hand_exports_its_shape_axis_into_the_crs() {
+    let events = vec![EventRecord::new("e1", unix(100), unix(160))];
+    let (doc, catalogue, events) = described(events, Some(axis("energy", "eV")));
+    let error = exported(&doc, &catalogue, &events, None).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "These events have no energy: give an energy range"
+    );
+
+    let file: Value =
+        serde_json::from_str(&exported(&doc, &catalogue, &events, Some((10.0, 30.0))).unwrap())
+            .unwrap();
+    let properties = &file["crs"]["properties"];
+    assert_eq!(
+        properties["spectral_coords"],
+        json!({"type": "energy", "unit": "eV"})
+    );
+    assert_eq!(properties["time_coords_id"], json!("unix"));
+}
+
+#[test]
+fn a_changed_shape_axis_replaces_the_files_spectral_axis() {
+    let import = parse(&collection(vec![feature(json!(1), square())])).unwrap();
+    let (doc, catalogue, events) = stored(&import);
+    let uuid = catalogue.uuid.clone();
+    let mhz = axis("frequency", "MHz");
+    model::set_catalogue_shape_axis(&mut doc.transact_mut(), &uuid, Some(&mhz)).unwrap();
+    let catalogue = model::catalogue(&doc.transact(), &uuid).unwrap();
+
+    let file: Value =
+        serde_json::from_str(&exported(&doc, &catalogue, &events, None).unwrap()).unwrap();
+    let properties = &file["crs"]["properties"];
+    assert_eq!(
+        properties["spectral_coords"],
+        json!({"type": "frequency", "unit": "MHz"})
+    );
+    assert_eq!(properties["ref_position_id"], json!("cassini-orbiter"));
 }
