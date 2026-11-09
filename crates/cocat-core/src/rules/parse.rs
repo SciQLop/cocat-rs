@@ -4,6 +4,7 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use super::relative::{is_offset, is_relative, offset_of};
 use super::{FIELDS, Op, Predicate, Problem, RuleError, Set, regex};
 
 type Result<T> = std::result::Result<T, RuleError>;
@@ -25,7 +26,7 @@ const SETS: [(&str, &[&str], SetReader); 11] = [
     ("closest", &[], closest),
 ];
 
-const PREDICATES: [(&str, PredicateReader); 8] = [
+const PREDICATES: [(&str, PredicateReader); 9] = [
     ("cmp", cmp),
     ("match", matches),
     ("has", has),
@@ -34,6 +35,7 @@ const PREDICATES: [(&str, PredicateReader); 8] = [
     ("and", and),
     ("or", or),
     ("in_catalogue", in_catalogue),
+    ("text", text),
 ];
 
 /// Reads and validates a rule.
@@ -237,6 +239,13 @@ fn cmp(node: &Node) -> Result<Predicate> {
     let [name, op, value] = node.exactly()?;
     let op = Op::deserialize(op.value)
         .map_err(|_| node.format(format!("unknown operator '{}'", shown(op.value))))?;
+    if is_relative(value.value) && !offset_of(value.value).is_some_and(is_offset) {
+        let message = format!(
+            "{} is not a time from now: write it like -7d (units s, m, h, d, M, y)",
+            value.value.get("now").unwrap_or(value.value)
+        );
+        return Err(node.format(message));
+    }
     Ok(Predicate::Cmp(field(node, &name)?, op, value.value.clone()))
 }
 
@@ -281,6 +290,10 @@ fn in_catalogue(node: &Node) -> Result<Predicate> {
         Value::String(uuid) => Ok(Predicate::InCatalogue(Some(uuid.clone()))),
         other => Err(node.format(format!("expected a catalogue uuid or null, not {other}"))),
     }
+}
+
+fn text(node: &Node) -> Result<Predicate> {
+    Ok(Predicate::Text(node.text()?.to_owned()))
 }
 
 /// A fixed event field or an attribute `#key`, reported at the predicate `at`.

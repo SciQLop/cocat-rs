@@ -13,15 +13,17 @@
 use std::fmt;
 
 use serde::{Serialize, Serializer};
-use time::OffsetDateTime;
 use time::UtcOffset;
 use time::error::Format;
 use time::format_description::BorrowedFormatItem;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
+use time::{Date, Month, OffsetDateTime};
 
 const OUTPUT: &[BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]Z");
+const SECONDS: &[BorrowedFormatItem<'_>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 const PYTHON: &[BorrowedFormatItem<'_>] = format_description!(
     "[year]-[month]-[day] [hour]:[minute]:[second][offset_hour sign:mandatory]:[offset_minute]"
 );
@@ -49,6 +51,28 @@ impl Timestamp {
         let text = normalise(text)?;
         let parsed = OffsetDateTime::parse(&text, &Rfc3339).ok()?;
         Some(Self(parsed.to_offset(UtcOffset::UTC)))
+    }
+
+    pub fn now() -> Self {
+        Self(OffsetDateTime::now_utc())
+    }
+
+    /// The same day and time `months` calendar months later (earlier when negative); a day
+    /// the target month lacks becomes its last day, so a month after 31 January is 28 or
+    /// 29 February.
+    pub fn add_months(self, months: i64) -> Option<Self> {
+        let index = i64::from(self.0.year()) * 12 + i64::from(self.0.month() as u8) - 1;
+        let index = index.checked_add(months)?;
+        let year = i32::try_from(index.div_euclid(12)).ok()?;
+        let month = Month::try_from(u8::try_from(index.rem_euclid(12) + 1).ok()?).ok()?;
+        let day = self.0.day().min(time::util::days_in_month(month, year));
+        let date = Date::from_calendar_date(year, month, day).ok()?;
+        Some(Self(self.0.replace_date(date)))
+    }
+
+    /// UTC to the second, as the web app's event table shows a time.
+    pub fn seconds_text(self) -> Result<String, Format> {
+        self.0.format(SECONDS)
     }
 
     pub fn unix_micros(self) -> i128 {
@@ -201,6 +225,16 @@ mod tests {
         let nanos = precise.unix_nanos().unwrap();
         assert_eq!(nanos, 1_738_321_200_123_456_000);
         assert_eq!(Timestamp::from_unix_nanos(nanos), Some(precise));
+    }
+
+    #[test]
+    fn a_month_later_keeps_the_day_or_takes_the_last_one() {
+        let end = Timestamp::parse("2024-01-31 12:00:00").unwrap();
+        let month = |months| end.add_months(months).unwrap().to_string();
+        assert_eq!(month(1), "2024-02-29T12:00:00.000000Z");
+        assert_eq!(month(-2), "2023-11-30T12:00:00.000000Z");
+        assert_eq!(month(-12), "2023-01-31T12:00:00.000000Z");
+        assert_eq!(end.add_months(i64::MAX), None);
     }
 
     #[test]

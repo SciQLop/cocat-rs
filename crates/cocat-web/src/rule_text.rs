@@ -1,6 +1,6 @@
 //! A smart catalogue's rule in words, for the catalogue's header.
 
-use cocat_core::rules::{self, Op, Predicate, RuleError, Set, intervals::seconds};
+use cocat_core::rules::{self, Op, Predicate, RuleError, Set, intervals::seconds, relative};
 use serde_json::Value;
 
 use crate::format::{duration_text, value_text};
@@ -79,7 +79,7 @@ impl Words<'_> {
                     "{} {} {}",
                     field_name(field),
                     symbol(*op),
-                    value_text(value)
+                    operand_text(value)
                 )
             }
             Predicate::Match(field, pattern) => {
@@ -103,6 +103,7 @@ impl Words<'_> {
                 )
             }
             Predicate::InCatalogue(None) => "in no catalogue".to_owned(),
+            Predicate::Text(word) => format!("mentions “{word}”"),
         }
     }
 
@@ -120,6 +121,13 @@ impl Words<'_> {
             Predicate::And(_) | Predicate::Or(_) => format!("({})", self.predicate(predicate)),
             _ => self.predicate(predicate),
         }
+    }
+}
+
+fn operand_text(value: &Value) -> String {
+    match relative::offset_of(value) {
+        Some(offset) => format!("now{offset}"),
+        None => value_text(value),
     }
 }
 
@@ -203,6 +211,24 @@ mod tests {
         assert_eq!(
             words(rule),
             "(every event, shifted by 1 min 30 s) or (“All candidates” within 2 h 00 min of every event)"
+        );
+    }
+
+    #[test]
+    fn words_durations_and_relative_times_read_plainly() {
+        let rule = json!({
+            "filter": {"all": true},
+            "where": {"and": [
+                {"text": "shock"},
+                {"cmp": ["duration", ">", 600]},
+                {"cmp": ["created", ">", {"now": "-7d"}]},
+                {"cmp": ["start", "<", {"now": ""}]},
+            ]}
+        });
+        assert_eq!(
+            words(rule),
+            "events where mentions “shock” and duration > 600 and created > now-7d \
+             and start < now"
         );
     }
 

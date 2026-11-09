@@ -122,7 +122,7 @@ fn a_misspelt_predicate_lists_the_known_ones() {
     assert_eq!(
         message(json!({"filter": {"all": true}, "where": {"not": {"equals": ["a", 1]}}})),
         "rule.where.not: unknown predicate 'equals': expected one of cmp, match, has, \
-         contains, not, and, or, in_catalogue"
+         contains, not, and, or, in_catalogue, text"
     );
 }
 

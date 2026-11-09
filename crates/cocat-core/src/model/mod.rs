@@ -16,6 +16,7 @@ mod provenance;
 mod read;
 mod registry;
 mod restore;
+mod search;
 mod submission;
 mod values;
 mod write;
@@ -27,7 +28,9 @@ use thiserror::Error;
 use crate::time::Timestamp;
 
 pub use materialize::materialize;
-pub use members::{Member, catalogue_events, catalogue_members};
+pub use members::{
+    Member, catalogue_events, catalogue_events_at, catalogue_members, catalogue_members_at,
+};
 pub use migrate::{Migration, migrate_v1};
 pub use provenance::{comment, create_origin, origin, set_comment};
 pub use read::{
@@ -36,6 +39,7 @@ pub use read::{
 };
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
 pub use restore::restore;
+pub use search::{Search, search};
 pub use submission::{adopt, extract};
 pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,

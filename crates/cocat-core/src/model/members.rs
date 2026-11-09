@@ -8,10 +8,10 @@ use tracing::warn;
 use yrs::{Map as _, MapRef, Out, ReadTxn};
 
 use super::read::{entries, event, is_deleted, members, object, status};
-use super::values::{get, integer, json};
-use super::{CATALOGUES, EVENTS, EventRecord};
+use super::values::{get, integer, json, strings, text};
+use super::{ATTRIBUTE_PREFIX, CATALOGUES, EVENTS, EventRecord};
 use crate::rules::intervals::{self, Item, Source, seconds};
-use crate::rules::{self, Lookups, RuleError, Set};
+use crate::rules::{self, ANY_TEXT, Lookups, RuleError, Set};
 use crate::time::Timestamp;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,13 +35,22 @@ pub enum Member {
 }
 
 /// The members of a catalogue in time order, or `None` when the room holds no such
-/// catalogue.
+/// catalogue. A rule's times relative to now are taken from the clock.
 pub fn catalogue_members<T: ReadTxn>(
     txn: &T,
     uuid: &str,
 ) -> Option<Result<Vec<Member>, RuleError>> {
+    catalogue_members_at(txn, uuid, Timestamp::now())
+}
+
+/// The members of a catalogue, its rule evaluated at `now`.
+pub fn catalogue_members_at<T: ReadTxn>(
+    txn: &T,
+    uuid: &str,
+    now: Timestamp,
+) -> Option<Result<Vec<Member>, RuleError>> {
     let catalogue = object(txn, CATALOGUES, uuid)?;
-    let items = Evaluator::new(txn).own(uuid, &catalogue);
+    let items = Evaluator::new(txn, now).own(uuid, &catalogue);
     Some(items.map(|items| items.iter().filter_map(|item| member(txn, item)).collect()))
 }
 
@@ -49,6 +58,14 @@ pub fn catalogue_members<T: ReadTxn>(
 pub fn catalogue_events<T: ReadTxn>(
     txn: &T,
     uuid: &str,
+) -> Option<Result<Vec<EventRecord>, RuleError>> {
+    catalogue_events_at(txn, uuid, Timestamp::now())
+}
+
+pub fn catalogue_events_at<T: ReadTxn>(
+    txn: &T,
+    uuid: &str,
+    now: Timestamp,
 ) -> Option<Result<Vec<EventRecord>, RuleError>> {
     let events = |members: Vec<Member>| {
         members
@@ -59,7 +76,7 @@ pub fn catalogue_events<T: ReadTxn>(
             })
             .collect()
     };
-    catalogue_members(txn, uuid).map(|members| members.map(events))
+    catalogue_members_at(txn, uuid, now).map(|members| members.map(events))
 }
 
 /// The rule of a catalogue, unparsed.
@@ -67,16 +84,18 @@ pub(super) fn rule_of<T: ReadTxn>(txn: &T, catalogue: &MapRef) -> Option<Value> 
     get(catalogue, txn, "rule").as_ref().and_then(json)
 }
 
-struct Evaluator<'t, T> {
+pub(super) struct Evaluator<'t, T> {
     txn: &'t T,
+    now: Timestamp,
     /// The catalogues being evaluated, outermost first, to tell a cycle.
     path: Vec<String>,
 }
 
 impl<'t, T: ReadTxn> Evaluator<'t, T> {
-    fn new(txn: &'t T) -> Self {
+    pub(super) fn new(txn: &'t T, now: Timestamp) -> Self {
         Self {
             txn,
+            now,
             path: Vec::new(),
         }
     }
@@ -154,7 +173,10 @@ impl<'t, T: ReadTxn> Evaluator<'t, T> {
 
     /// Filters every event in the scan that reads them, so each event map is looked up
     /// once: the common rule, and the one the 100 ms target is about.
-    fn filter_all(&mut self, predicate: &rules::Predicate) -> Result<Vec<Item>, RuleError> {
+    pub(super) fn filter_all(
+        &mut self,
+        predicate: &rules::Predicate,
+    ) -> Result<Vec<Item>, RuleError> {
         let lookups = self.lookups(predicate)?;
         let txn = self.txn;
         let Some(events) = txn.get_map(EVENTS) else {
@@ -170,8 +192,9 @@ impl<'t, T: ReadTxn> Evaluator<'t, T> {
         Ok(kept.collect())
     }
 
-    fn lookups(&mut self, predicate: &rules::Predicate) -> Result<Lookups, RuleError> {
-        Lookups::new(predicate, &mut |catalogue| self.events_of(catalogue))
+    pub(super) fn lookups(&mut self, predicate: &rules::Predicate) -> Result<Lookups, RuleError> {
+        let now = self.now;
+        Lookups::new(predicate, now, &mut |catalogue| self.events_of(catalogue))
     }
 
     /// The events among a catalogue's members; for `None`, the events some catalogue not
@@ -241,7 +264,7 @@ fn event_of(item: &Item) -> Option<&str> {
 }
 
 /// A field of an item as a predicate sees it. A derived interval has only its range.
-fn item_field<T: ReadTxn>(txn: &T, item: &Item, name: &str) -> Option<Value> {
+pub(super) fn item_field<T: ReadTxn>(txn: &T, item: &Item, name: &str) -> Option<Value> {
     match (&item.source, name) {
         (Source::Event(uuid), _) => event_field(txn, uuid, &object(txn, EVENTS, uuid)?, name),
         (Source::Derived(_), "start") => Some(item.start.into()),
@@ -265,7 +288,41 @@ fn event_field<T: ReadTxn>(txn: &T, uuid: &str, map: &MapRef, name: &str) -> Opt
                 .into(),
         ),
         "start" | "stop" | "created" => stored.as_ref().and_then(integer).map(Value::from),
+        ANY_TEXT => Some(any_text(txn, map)),
         _ => stored.as_ref().and_then(json),
+    }
+}
+
+/// The texts `ANY_TEXT` names, with the status by name and attribute values as JSON text.
+fn any_text<T: ReadTxn>(txn: &T, map: &MapRef) -> Value {
+    let status_name = get(map, txn, "status")
+        .as_ref()
+        .map(status)
+        .unwrap_or_default()
+        .name();
+    let texts = map.iter(txn).flat_map(|(key, value)| {
+        let Out::Any(any) = value else {
+            return Vec::new();
+        };
+        match key {
+            "tags" => strings(&any),
+            "author" | "source_id" | "origin" => text(&any).into_iter().collect(),
+            _ if key.starts_with(ATTRIBUTE_PREFIX) => json(&any).map(shown).into_iter().collect(),
+            _ => Vec::new(),
+        }
+    });
+    let texts: Vec<Value> = texts
+        .chain([status_name.to_owned()])
+        .map(Value::from)
+        .collect();
+    Value::Array(texts)
+}
+
+/// A JSON value as a person reads it: text without its quotes.
+fn shown(value: Value) -> String {
+    match value {
+        Value::String(text) => text,
+        other => other.to_string(),
     }
 }
 

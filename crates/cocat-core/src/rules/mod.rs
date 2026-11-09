@@ -5,6 +5,7 @@
 pub mod intervals;
 mod parse;
 mod predicate;
+pub mod relative;
 mod tscat;
 
 use serde::{Deserialize, Serialize};
@@ -13,11 +14,12 @@ use thiserror::Error;
 
 pub use intervals::{Item, Source};
 pub use parse::parse;
-pub use predicate::{Lookups, test};
+pub use predicate::{ANY_TEXT, Lookups, test};
 pub use tscat::{TscatError, rule_from_tscat};
 
-/// The fixed event fields a predicate can name; any other field is an attribute, `#key`.
-pub const FIELDS: [&str; 13] = [
+/// The event fields a predicate can name; any other field is an attribute, `#key`.
+/// `duration` is computed: stop − start, in seconds.
+pub const FIELDS: [&str; 15] = [
     "uuid",
     "start",
     "stop",
@@ -31,6 +33,8 @@ pub const FIELDS: [&str; 13] = [
     "source_id",
     "tags",
     "products",
+    "duration",
+    "shape",
 ];
 
 /// A set of intervals. Each form is told apart by its own key (see `parse`).
@@ -90,6 +94,8 @@ pub enum Predicate {
     Or(Vec<Predicate>),
     /// `None`: listed by no catalogue.
     InCatalogue(Option<String>),
+    /// The word is part of some text of the item, or begins its start time.
+    Text(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
