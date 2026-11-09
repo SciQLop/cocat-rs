@@ -6,7 +6,7 @@ option; this page says which ones an operator needs and how they fit together.
 
 ## The image
 
-Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.5.2`) and
+Each release publishes `ghcr.io/sciqlop/cocat-server`, tagged with the version (`0.6.0`) and
 `latest`. The release workflow (`.github/workflows/publish.yml`) builds it from
 `docker/Dockerfile` when a `v*` tag is pushed.
 
