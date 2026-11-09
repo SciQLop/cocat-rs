@@ -218,7 +218,7 @@ mod tests {
         ]});
         assert_eq!(
             words(rule),
-            "(every event, shifted by 1 min 30 s) or (“All candidates” within 2 h 00 min of every event)"
+            "(every event, shifted by 1 min 30 s) or (“All candidates” within 2 h of every event)"
         );
     }
 
@@ -235,7 +235,7 @@ mod tests {
         });
         assert_eq!(
             words(rule),
-            "events where mentions “shock” and duration > 10 min 00 s and created > now-7d \
+            "events where mentions “shock” and duration > 10 min and created > now-7d \
              and start < now"
         );
     }
@@ -251,7 +251,7 @@ mod tests {
         });
         assert_eq!(
             words(rule),
-            "events where start ≥ 2015-01-01 00:00:00 and duration > 10 min 00 s"
+            "events where start ≥ 2015-01-01 00:00:00 and duration > 10 min"
         );
     }
 

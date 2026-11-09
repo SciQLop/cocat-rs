@@ -9,9 +9,7 @@ use crate::edit;
 use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
-use crate::submissions::{
-    Offer, Proposal, PublicAction, proposal_for, public_actions, submit_offer,
-};
+use crate::submissions::{Proposal, PublicAction, proposal_for, public_actions};
 use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
 use cocat_core::room_id::is_public_id;
 
@@ -66,7 +64,6 @@ pub fn Actions(
         let uuid = catalogue.get()?;
         proposals.with(|listed| proposal_for(listed, &uuid).map(|proposal| proposal.name.clone()))
     };
-    let offer = move || submit_offer(public, editor, linked().is_some());
     let menu = NodeRef::<leptos::html::Details>::new();
     let toggle = move |which: Form| {
         form.update(|open| *open = if *open == which { Form::Closed } else { which });
@@ -75,27 +72,13 @@ pub fn Actions(
         }
     };
     view! {
-        <Show when=move || editor && smart.get() == Some(true)>
-            <button type="button" class="button" aria-pressed=move || (form.get() == Form::Rule).to_string()
-                on:click=move |_| toggle(Form::Rule)>"Edit rule"</button>
-        </Show>
         <Show when=move || smart.get().is_some()>
-            {move || offer().map(|offer| {
-                let which = match offer {
-                    Offer::New => Form::Submit,
-                    Offer::Update => Form::Update,
-                };
-                view! {
-                    <button type="button" class="button submit-button" aria-pressed=move || (form.get() == which).to_string()
-                        on:click=move |_| toggle(which)>{offer.label()}</button>
-                }
-            })}
-            <details class="menu-button" node_ref=menu>
+            <details class="menu-button" data-menu node_ref=menu>
                 <summary aria-label="More actions">"More"</summary>
                 <div class="menu">
                     {editor.then(|| view! {
-                        <Show when=move || smart.get() == Some(true)
-                            fallback=move || view! { <button type="button" on:click=move |_| toggle(Form::Rule)>"Add a rule…"</button> }>
+                        <button type="button" on:click=move |_| toggle(Form::Rule)>"Rule as JSON…"</button>
+                        <Show when=move || smart.get() == Some(true)>
                             <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
                         </Show>
                     })}

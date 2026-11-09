@@ -272,7 +272,7 @@ fn NoneYet() -> impl IntoView {
             <h2 id="none-yet">"No public catalogue yet"</h2>
             <p>"Curators add them. They import shared catalogues, such as AMDA's, and accept what people submit."</p>
             <p>"Anyone can offer one: open a catalogue in one of your projects and choose "
-                <strong>"Submit…"</strong>" above its events."</p>
+                <strong>"More › Submit to Public catalogues…"</strong>" above its events."</p>
             <a class="button" href=help::href("public") target="_blank" rel="noopener">"How public catalogues work"</a>
         </section>
     }

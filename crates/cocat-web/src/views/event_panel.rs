@@ -57,7 +57,8 @@ pub fn EventPanel(
         .into_any(),
     };
     view! {
-        <aside class="panel" aria-label=move || match shown.get() {
+        <aside class="panel" class:showing-event=move || shown.with(|shown| *shown != Shown::Nothing)
+            aria-label=move || match shown.get() {
             Shown::Nothing => "Statistics",
             _ => "Selected event",
         }>

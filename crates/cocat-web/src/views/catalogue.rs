@@ -201,9 +201,11 @@ pub fn CataloguePage(
         <div class="page-head">
             <Heading shown members order with_search/>
             <div class="tools">
-                <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>
-                    <SearchIcon/>
-                </SearchBox>
+                <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
+                    <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>
+                        <SearchIcon/>
+                    </SearchBox>
+                </Show>
                 <ColumnPicker keys columns picked/>
                 <Actions shown selected form proposals/>
                 {public.then(|| view! { <PublicButtons shown form editor=can_write/> })}
@@ -233,7 +235,9 @@ pub fn CataloguePage(
                 text="Deleted events and catalogues wait here. Restore puts one back; Delete for good cannot be undone."/>
             <TrashedCatalogues/>
         })}
-        <Timeline members matching period selected/>
+        <Show when=move || members.with(|members| members.as_ref().is_ok_and(|rows| !rows.is_empty()))>
+            <Timeline members matching period selected/>
+        </Show>
         <PeriodLine period order members/>
         <Table members order sorting columns selected empty/>
     }
@@ -298,7 +302,7 @@ fn ColumnPicker(
     };
     view! {
         <Show when=move || keys.with(|keys| !keys.is_empty())>
-            <details class="columns">
+            <details class="columns" data-menu>
                 <summary>"Columns"</summary>
                 <div class="menu">
                     <For each=move || keys.get() key=Clone::clone let:key>

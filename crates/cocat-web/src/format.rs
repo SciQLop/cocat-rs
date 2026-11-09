@@ -13,7 +13,7 @@ const MINUTE: &[BorrowedFormatItem<'_>] =
 const DATE: &[BorrowedFormatItem<'_>] = format_description!("[year]-[month]-[day]");
 const CLOCK: &[BorrowedFormatItem<'_>] = format_description!("[hour]:[minute]:[second]");
 
-/// A length in its two largest units: "41 s", "1 min 03 s", "2 h 05 min", "3 d 4 h".
+/// A length in its two largest units: "41 s", "1 min 03 s", "2 h 05 min", "3 d 4 h", "20 min".
 pub fn duration_text(nanos: i64) -> String {
     if nanos <= 0 {
         return "0 s".to_owned();
@@ -24,10 +24,24 @@ pub fn duration_text(nanos: i64) -> String {
     let seconds = nanos / SECOND;
     match seconds {
         0..60 => format!("{seconds} s"),
-        60..3_600 => format!("{} min {:02} s", seconds / 60, seconds % 60),
-        3_600..86_400 => format!("{} h {:02} min", seconds / 3_600, seconds % 3_600 / 60),
-        _ => format!("{} d {} h", seconds / 86_400, seconds % 86_400 / 3_600),
+        60..3_600 => two_units((seconds / 60, "min"), (seconds % 60, "s")),
+        3_600..86_400 => two_units((seconds / 3_600, "h"), (seconds % 3_600 / 60, "min")),
+        _ => two_units((seconds / 86_400, "d"), (seconds % 86_400 / 3_600, "h")),
     }
+}
+
+/// "2 h 05 min", or "2 h" when the smaller unit is zero; days take hours unpadded.
+fn two_units((major, big): (i64, &str), (minor, small): (i64, &str)) -> String {
+    match (minor, big) {
+        (0, _) => format!("{major} {big}"),
+        (_, "d") => format!("{major} {big} {minor} {small}"),
+        _ => format!("{major} {big} {minor:02} {small}"),
+    }
+}
+
+/// A person as people read them: an email's name before the `@`.
+pub fn person_text(person: &str) -> &str {
+    person.split_once('@').map_or(person, |(name, _)| name)
 }
 
 /// UTC, to the second.
@@ -76,6 +90,19 @@ mod tests {
         assert_eq!(duration_text(63 * SECOND), "1 min 03 s");
         assert_eq!(duration_text((2 * 3600 + 5 * 60) * SECOND), "2 h 05 min");
         assert_eq!(duration_text(3 * DAY + 4 * 3600 * SECOND), "3 d 4 h");
+    }
+
+    #[test]
+    fn a_round_duration_drops_its_zero_unit() {
+        assert_eq!(duration_text(20 * 60 * SECOND), "20 min");
+        assert_eq!(duration_text(2 * 3600 * SECOND), "2 h");
+        assert_eq!(duration_text(3 * DAY), "3 d");
+    }
+
+    #[test]
+    fn a_person_reads_as_the_name_before_the_at() {
+        assert_eq!(person_text("bob.durand@example.org"), "bob.durand");
+        assert_eq!(person_text("AMDA"), "AMDA");
     }
 
     #[test]

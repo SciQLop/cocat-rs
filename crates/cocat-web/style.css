@@ -549,6 +549,11 @@ a { color: var(--accent); text-underline-offset: 2px; }
   .catalogue-list { flex: none; }
   .catalogue.trash { margin-top: 4px; }
   .panel { max-width: none; border-left: 0; border-top: 1px solid var(--rule); padding: 16px; }
+  .panel.showing-event {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; max-height: 75vh; overflow-y: auto;
+    background: var(--surface); border-radius: 12px 12px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / 0.25);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
   .search { min-width: 0; flex: 1 1 100%; }
   .menu-button .menu { right: auto; left: 0; }
   .tools { width: 100%; }
@@ -1012,7 +1017,7 @@ a.button { text-decoration: none; }
     padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
     border-radius: 12px 12px 0 0;
   }
-  .project-menu[open] > .project-switch::before { background: rgb(28 35 49 / 0.35); }
+  .project-menu[open] > .project-switch::before { background: rgb(0 0 0 / 0.5); }
   .project-menu .menu > :is(button, a) { padding: 11px 8px; }
   .project-dialog {
     width: 100vw;
@@ -1465,7 +1470,8 @@ a.home-project:hover { color: var(--accent); }
 /* A catalogue in the sidebar: its ⋯ menu (also on right-click) renames or deletes it. */
 
 .entry { position: relative; }
-.entry-menu { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); }
+/* Centred without a transform: a transform would trap the open menu below the rows after it. */
+.entry-menu { position: absolute; top: 0; bottom: 0; right: 4px; display: flex; align-items: center; }
 .entry-menu summary {
   list-style: none;
   display: grid;

@@ -87,32 +87,6 @@ pub struct Proposal {
     pub name: String,
 }
 
-/// What the header's submit button sends: the catalogue as a new public one, or, on a copy of
-/// a public catalogue, as its update.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Offer {
-    New,
-    Update,
-}
-
-impl Offer {
-    pub fn label(self) -> &'static str {
-        match self {
-            Offer::New => "Submit…",
-            Offer::Update => "Submit update…",
-        }
-    }
-}
-
-/// Editors submit from their own projects; a public catalogue changes only through a proposal.
-pub fn submit_offer(public: bool, editor: bool, linked: bool) -> Option<Offer> {
-    match (public, editor, linked) {
-        (false, true, true) => Some(Offer::Update),
-        (false, true, false) => Some(Offer::New),
-        _ => None,
-    }
-}
-
 /// What a public catalogue's header offers next to More.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicAction {
@@ -229,20 +203,6 @@ mod tests {
             created: "2026-11-08T10:00:00Z".into(),
             decided: None,
         }
-    }
-
-    #[test]
-    fn an_editor_submits_from_the_header_and_a_copy_submits_an_update() {
-        assert_eq!(submit_offer(false, true, false), Some(Offer::New));
-        assert_eq!(submit_offer(false, true, true), Some(Offer::Update));
-        assert_eq!(Offer::New.label(), "Submit…");
-        assert_eq!(Offer::Update.label(), "Submit update…");
-        assert_eq!(submit_offer(false, false, true), None, "a reader cannot");
-        assert_eq!(
-            submit_offer(true, true, false),
-            None,
-            "nor a public catalogue"
-        );
     }
 
     #[test]

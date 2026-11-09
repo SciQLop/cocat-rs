@@ -101,7 +101,7 @@ fn NewCatalogue() -> impl IntoView {
     let preset = StoredValue::new_local(preset);
     let presets = crate::search::presets(&me);
     view! {
-        <details class="menu-button add-menu" node_ref=menu>
+        <details class="menu-button add-menu" data-menu node_ref=menu>
             <summary class="icon add-catalogue" aria-label="Add a catalogue">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                     stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
@@ -179,7 +179,7 @@ fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView
                 <span class="count" title=count_title>{count}</span>
             </a>
             {editor.then(|| view! {
-                <details class="entry-menu" node_ref=menu
+                <details class="entry-menu" data-menu node_ref=menu
                     on:keydown=move |event| if event.key() == "Escape" { close(); }>
                     <summary aria-label=format!("Actions for “{}”", name)>"⋯"</summary>
                     <div class="menu" role="menu">

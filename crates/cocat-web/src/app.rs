@@ -23,6 +23,7 @@ use cocat_core::model;
 
 pub fn start() {
     console_error_panic_hook::set_once();
+    crate::views::menus::close_menus_from_outside();
     match read_config() {
         Ok(config) => leptos::mount::mount_to_body(move || view! { <Shell config/> }),
         Err(error) => leptos::mount::mount_to_body(move || failure(error.to_string())),

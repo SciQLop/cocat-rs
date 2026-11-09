@@ -227,7 +227,7 @@ pub fn ProjectMenu() -> impl IntoView {
         }
     };
     view! {
-        <details class="project-menu" node_ref=menu on:toggle=toggled
+        <details class="project-menu" data-menu node_ref=menu on:toggle=toggled
             on:keydown=move |event| if event.key() == "Escape" { close(); }>
             <summary class="project-switch" aria-label=move || format!("{}, open the project menu", label())>
                 <Show when=public><PublicIcon size=16/></Show>

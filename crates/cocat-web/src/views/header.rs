@@ -148,7 +148,7 @@ fn UserMenu() -> impl IntoView {
         }
     };
     view! {
-        <details class="user-menu" node_ref=menu
+        <details class="user-menu" data-menu node_ref=menu
             on:keydown=move |event| if event.key() == "Escape" { close(); }>
             <summary class="avatar me" title=email.clone() aria-label="Your account"
                 style=format!("background: {}", cocat_core::person::color(&email))>

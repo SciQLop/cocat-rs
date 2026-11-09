@@ -184,7 +184,7 @@ pub fn ProposeForm(form: RwSignal<Form>) -> impl IntoView {
                 <div class="inline-form submit-form" role="status">
                     <p>
                         "The copy is in “" {proposed.name} "”. Change it there, then choose "
-                        <strong>"Submit update…"</strong>" to send it back to “" {public_name.clone()} "”."
+                        <strong>"More › Submit as an update…"</strong>" to send it back to “" {public_name.clone()} "”."
                     </p>
                     <div class="row-buttons">
                         <a class="button primary" href=href>"Open the copy"</a>

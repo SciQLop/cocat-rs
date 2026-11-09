@@ -49,6 +49,12 @@ pub fn Heading(
         })?;
         let visible = order.with(Vec::len);
         let smart = about.with(|about| about.smart) && picked.is_none_or(|picked| picked == 0);
+        if !matches!(
+            shown.get(),
+            Route::Catalogue(_) | Route::Trash | Route::AllEvents
+        ) {
+            return None;
+        }
         let (kind, unit) = match (shown.get(), smart) {
             (Route::Trash, _) => ("In the trash", "event"),
             (Route::AllEvents, _) => ("Every event of the project", "event"),

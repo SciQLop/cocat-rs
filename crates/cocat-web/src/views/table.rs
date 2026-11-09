@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use leptos::html::Div;
 use leptos::prelude::*;
 
-use crate::format::{duration_text, time_text, value_text};
+use crate::format::{duration_text, person_text, time_text, value_text};
 use crate::layout::{tags_that_fit, window};
 use crate::presence::{Peer, editing};
 use crate::rows::{Row, SortKey};
@@ -181,7 +181,7 @@ fn row(
             <td class="text">{tags(row)}</td>
             <td>{confidence(row.confidence)}</td>
             <td>{status(row)}</td>
-            <td class="text quiet-cell" title=row.author.clone()>{row.author.clone().unwrap_or_default()}</td>
+            <td class="text quiet-cell" title=row.author.clone()>{row.author.as_deref().map(person_text).unwrap_or_default().to_owned()}</td>
             {attributes}
         </tr>
     }

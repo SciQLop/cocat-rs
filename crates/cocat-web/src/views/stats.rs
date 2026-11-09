@@ -39,9 +39,11 @@ fn Summary(on_screen: OnScreen) -> impl IntoView {
             <h2>{move || counted.with(|(_, heading)| heading.clone())}</h2>
         </div>
         {body}
-        <More on_screen/>
-        <Hint anchor="statistics" topic="statistics"
-            text="Coverage counts overlapping time once; gaps are the waits between events."/>
+        <Show when=move || counted.with(|(stats, _)| stats.count > 0)>
+            <More on_screen/>
+            <Hint anchor="statistics" topic="statistics"
+                text="Coverage counts overlapping time once; gaps are the waits between events."/>
+        </Show>
     }
 }
 

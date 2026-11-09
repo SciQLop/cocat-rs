@@ -10,6 +10,7 @@ pub mod header;
 pub mod history;
 pub mod home;
 pub mod invite;
+pub mod menus;
 pub mod notice;
 pub mod project_dialogs;
 pub mod projects;
