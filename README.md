@@ -700,6 +700,14 @@ text = cocat_rs.tfcat_json(bursts)                      # the same, as text
 An event without a shape is written as a rectangle over `value_range`, else over the band
 of the catalogue's shaped events; with neither, the export raises `ValueError`.
 
+Shapes and the shape axis travel in all three formats and come back as they were. VOTable
+writes the shape axis as a table `PARAM` named `shape_axis` (the quantity as its value, the
+unit as its `unit`), and each shape as JSON text `[[time, value], ...]` in a `shape` column
+(times in RFC 3339 UTC; `[]` for an event without one). tscat JSON writes the same JSON as
+an event's `shape` and `{"quantity", "unit"}` as a catalogue's `shape_axis`; tscat keeps both
+as attributes. TFCat only knows frequency, wavelength, energy and wavenumber: another axis is
+still written, with a warning that the file is not strict TFCat.
+
 **History.** The server keeps every version of a project: a run of changes by one person with
 no gap over five minutes, and no longer than an hour. Each version says who made it, when, and how many events it added,
 changed or removed. `project.history()` lists them, newest first, as dicts; `catalogue=` keeps

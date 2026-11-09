@@ -258,6 +258,32 @@ def test_our_json_export_imports_into_tscat(database, project, tmp_path):
     assert json.loads(path.read_text())["catalogues"][1]["predicate"] is None
 
 
+def test_shapes_travel_through_tscat_and_back(database, project, tmp_path):
+    """tscat keeps a shape and a shape axis as attributes, so its own export carries them
+    back to us."""
+    shape = [
+        (datetime.datetime(2021, 3, 1, 12, tzinfo=UTC), 10.0),
+        (datetime.datetime(2021, 3, 1, 12, 30, tzinfo=UTC), 90.5),
+        (datetime.datetime(2021, 3, 1, 13, tzinfo=UTC), 20.0),
+    ]
+    event = project.create_event(
+        start=shape[0][0], stop=shape[-1][0], author="dana", shape=shape
+    )
+    catalogue = project.create_catalogue(name="pitch", author="dana", events=[event])
+    catalogue.shape_axis = ("pitch angle", "deg")
+    ours = tmp_path / "ours.json"
+    cc_tscat.export_json(project, [catalogue], ours)
+
+    [theirs] = tscat_import_json_file(str(ours))
+    back = tmp_path / "back.json"
+    back.write_text(tscat_export_json([theirs]))
+    again = cc.Project.open(str(tmp_path / "again"), "75ca7000-0000-4000-8000-0000000000aa")
+    cc_tscat.import_json(again, back)
+
+    assert again.event(event.uuid).shape == event.shape
+    assert again.catalogue(catalogue.uuid).shape_axis == ("pitch angle", "deg")
+
+
 def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, project):
     """tscat 0.5.1 resolves InCatalogue through a lookup that returns its first catalogue;
     the import reads the stored predicate, so the rule names the catalogue it was made for."""

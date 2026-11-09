@@ -241,6 +241,7 @@ async fn the_import_help_says_which_files_and_what_updates() {
         "tscat JSON",
         "TFCat",
         "one file per catalogue",
+        "Event shapes and their axis travel in VOTable, tscat JSON and TFCat",
         "CSV",
         "same id",
         "one change",

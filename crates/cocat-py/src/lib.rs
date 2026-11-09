@@ -182,7 +182,7 @@ fn to_json_map(dict: &Bound<'_, PyDict>) -> Result<JsonMap<String, Value>> {
 }
 
 /// Says each registry mismatch as a Python warning; the values were written anyway.
-fn warn(py: Python<'_>, warnings: &[model::TypeWarning]) -> Result<()> {
+fn warn(py: Python<'_>, warnings: &[impl std::fmt::Display]) -> Result<()> {
     let module = py.import("warnings")?;
     for warning in warnings {
         module.call_method1("warn", (warning.to_string(),))?;
@@ -1549,10 +1549,7 @@ impl Project {
         let now = now()?;
         let written = write(&self.room, |txn| tfcat::write(txn, &import, &name, now))?
             .map_err(value_error)?;
-        let module = py.import("warnings")?;
-        for warning in &import.warnings {
-            module.call_method1("warn", (warning,))?;
-        }
+        warn(py, &import.warnings)?;
         warn(py, &written.warnings)?;
         let uuid = written
             .catalogues
@@ -1568,10 +1565,7 @@ impl Project {
         let now = now()?;
         let written =
             write(&self.room, |txn| tscat_json::write(txn, &import, now))?.map_err(value_error)?;
-        let module = py.import("warnings")?;
-        for warning in &import.warnings {
-            module.call_method1("warn", (warning,))?;
-        }
+        warn(py, &import.warnings)?;
         warn(py, &written.warnings)?;
         Ok(written.catalogues)
     }
@@ -1612,6 +1606,7 @@ fn catalogues_with_events<T: yrs::ReadTxn>(
 
 /// The catalogue as TFCat JSON. Events with no place on the shape axis are drawn over
 /// `value_range` (low, high), else over the band of the catalogue's other events.
+/// A shape axis TFCat does not know is said as a warning: the file is not strict TFCat.
 #[pyfunction]
 #[pyo3(signature = (catalogue, value_range=None))]
 fn tfcat_json(catalogue: PyRef<'_, Catalogue>, value_range: Option<(f64, f64)>) -> Result<String> {
@@ -1619,7 +1614,10 @@ fn tfcat_json(catalogue: PyRef<'_, Catalogue>, value_range: Option<(f64, f64)>) 
     let txn = doc.transact();
     let exported = catalogues_with_events(&txn, std::slice::from_ref(&catalogue.uuid))?;
     let (summary, events) = exported.first().ok_or_else(|| unknown("catalogue"))?;
-    tfcat::export(&txn, summary, events, value_range).map_err(value_error)
+    let text = tfcat::export(&txn, summary, events, value_range).map_err(value_error)?;
+    let warning = tfcat::strictness_warning(summary);
+    warn(catalogue.py(), warning.as_slice())?;
+    Ok(text)
 }
 
 /// The catalogues and their member events in tscat's JSON format.

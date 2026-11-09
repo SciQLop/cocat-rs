@@ -101,6 +101,12 @@ impl Timestamp {
         };
         self.0.format(format)
     }
+
+    /// RFC 3339 in UTC, with as many fraction digits as the instant needs, down to the
+    /// nanosecond a room stores.
+    pub fn rfc3339(self) -> Result<String, Format> {
+        self.0.format(&Rfc3339)
+    }
 }
 
 impl fmt::Display for Timestamp {

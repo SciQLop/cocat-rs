@@ -3,7 +3,7 @@ use yrs::{Doc, Transact};
 
 use super::{
     Format, Incoming, Summary, TransferError, export, file_name, files, needs_range, read, summary,
-    value_range, write,
+    tfcat_warnings, value_range, write,
 };
 use crate::fixture::{DAY0, at, room};
 use cocat_core::model::{self, ShapeAxis, Vertex};
@@ -359,4 +359,21 @@ fn a_tfcat_file_without_title_is_named_by_the_file() {
         read(r#"{"type": "FeatureCollection", "features": []}"#, "x.json"),
         Err(TransferError::Tfcat(_))
     ));
+}
+
+#[test]
+fn tfcat_warns_about_each_catalogue_on_an_axis_it_does_not_know() {
+    let doc = room();
+    let both = uuids(&["c-static", "c-smart"]);
+    assert!(tfcat_warnings(&doc.transact(), &both).is_empty());
+
+    let pitch = ShapeAxis {
+        quantity: "pitch angle".into(),
+        unit: "deg".into(),
+    };
+    model::set_catalogue_shape_axis(&mut doc.transact_mut(), "c-smart", Some(&pitch)).unwrap();
+    let warnings = tfcat_warnings(&doc.transact(), &both);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("Solitary waves: "), "{warnings:?}");
+    assert!(warnings[0].contains("not strict TFCat"), "{warnings:?}");
 }

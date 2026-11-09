@@ -95,6 +95,10 @@ Pick a format:</p>
   <li><strong>CSV (.csv)</strong>: for a spreadsheet. One row per event: start, stop, tags,
   status, confidence, author, comment, then one column per attribute. Times are UTC.</li>
 </ul>
+<p>Event shapes and their axis travel in VOTable, tscat JSON and TFCat, and come back
+as they were. TFCat only knows shapes in frequency, wavelength, energy or wavenumber: for
+another quantity, such as pitch angle, the file is still written but is not strict TFCat, and
+the page says so.</p>
 <p>A smart catalogue is saved with the events it holds now, without its rule.</p>
 <p><strong>To export several catalogues</strong> in one VOTable or tscat JSON file, use
 <strong>Export catalogues…</strong> in the project menu and tick the ones you want. TFCat

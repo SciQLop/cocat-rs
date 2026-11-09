@@ -12,8 +12,10 @@ use serde_json::Value;
 use yrs::TransactionMut;
 
 use crate::model::{
-    self, CatalogueSummary, EventRecord, NewCatalogue, Status, WriteError, Written,
+    self, CatalogueSummary, EventRecord, NewCatalogue, ShapeAxis, Status, Vertex, WriteError,
+    Written,
 };
+use crate::shape_json;
 use crate::time::Timestamp;
 
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +53,11 @@ const STOP_FIELD: [(&str, &str); 6] = [
     ("utype", ""),
 ];
 const CHAR: [(&str, &str); 2] = [("datatype", "char"), ("arraysize", "*")];
+const JSON_TEXT: [(&str, &str); 3] = [("datatype", "char"), ("arraysize", "*"), ("utype", "json")];
+/// The event's shape as `shape_json` text, in a JSON column like the list attributes, so a
+/// reader that does not know shapes still reads it as a list. A field `DESCRIPTION` would
+/// say so in the file, but cocat-rs 0.5 takes any `DESCRIPTION` for the document's.
+const SHAPE: &str = "shape";
 const DOUBLE: [(&str, &str); 1] = [("datatype", "double")];
 const DATE: [(&str, &str); 3] = [
     ("datatype", "char"),
@@ -87,6 +94,7 @@ pub fn export_many(
         prepared.push(Prepared {
             catalogue,
             kinds: attribute_kinds(events)?,
+            shaped: events.iter().any(|event| event.shape.is_some()),
             events: in_time_order(events),
         });
     }
@@ -119,11 +127,14 @@ pub fn export_many(
             "TABLE",
             &[("name", &table.catalogue.name.replace(' ', "_"))],
         )?;
-        write_fields(&mut writer, &table.kinds)?;
+        if let Some(axis) = &table.catalogue.shape_axis {
+            shape_axis_param(&mut writer, axis)?;
+        }
+        write_fields(&mut writer, &table.kinds, table.shaped)?;
         open(&mut writer, "DATA", &[])?;
         open(&mut writer, "TABLEDATA", &[])?;
         for event in &table.events {
-            write_row(&mut writer, event, &table.kinds)?;
+            write_row(&mut writer, event, &table.kinds, table.shaped)?;
         }
         close(&mut writer, "TABLEDATA")?;
         close(&mut writer, "DATA")?;
@@ -140,6 +151,8 @@ pub fn export_many(
 struct Prepared<'a> {
     catalogue: &'a CatalogueSummary,
     kinds: Vec<(String, Kind)>,
+    /// Whether the table gets a `shape` column: some of its events have a shape.
+    shaped: bool,
     events: Vec<&'a EventRecord>,
 }
 
@@ -180,11 +193,30 @@ fn field(writer: &mut Writer<Vec<u8>>, name: &str, attributes: &[(&str, &str)]) 
     writer.write_event(Event::Empty(element))
 }
 
-fn write_fields(writer: &mut Writer<Vec<u8>>, attributes: &[(String, Kind)]) -> io::Result<()> {
+/// The catalogue's shape axis as a PARAM: its value is the quantity, its unit the axis unit.
+fn shape_axis_param(writer: &mut Writer<Vec<u8>>, axis: &ShapeAxis) -> io::Result<()> {
+    let mut element = BytesStart::new("PARAM");
+    element.push_attribute(("name", SHAPE_AXIS));
+    element.extend_attributes(CHAR);
+    element.push_attribute(("value", sanitise(&axis.quantity).as_ref()));
+    if !axis.unit.is_empty() {
+        element.push_attribute(("unit", sanitise(&axis.unit).as_ref()));
+    }
+    writer.write_event(Event::Empty(element))
+}
+
+fn write_fields(
+    writer: &mut Writer<Vec<u8>>,
+    attributes: &[(String, Kind)],
+    shaped: bool,
+) -> io::Result<()> {
     field(writer, "Start Time", &START_FIELD)?;
     field(writer, "Stop Time", &STOP_FIELD)?;
     for (name, attributes) in FIXED {
         field(writer, name, attributes)?;
+    }
+    if shaped {
+        field(writer, SHAPE, &JSON_TEXT)?;
     }
     for (name, kind) in attributes {
         kind.write_field(writer, name)?;
@@ -196,6 +228,7 @@ fn write_row(
     writer: &mut Writer<Vec<u8>>,
     event: &EventRecord,
     attributes: &[(String, Kind)],
+    shaped: bool,
 ) -> io::Result<()> {
     let optional = |value: Option<String>| value.unwrap_or_default();
     let number = |value: Option<f64>| optional(value.map(|value| value.to_string()));
@@ -213,12 +246,16 @@ fn write_row(
         optional(event.source_id.clone()),
         optional(event.created.map(|created| created.to_string())),
     ];
+    let shape = match shaped {
+        true => Some(shape_cell(event.shape.as_deref().unwrap_or_default())?),
+        false => None,
+    };
     let drawn: Vec<String> = attributes
         .iter()
         .map(|(name, kind)| kind.cell(&event.attributes[name]))
         .collect();
     open(writer, "TR", &[])?;
-    for cell in fixed.iter().chain(&drawn) {
+    for cell in fixed.iter().chain(&shape).chain(&drawn) {
         text(writer, "TD", cell)?;
     }
     close(writer, "TR")
@@ -300,11 +337,7 @@ impl Kind {
     fn write_field(self, writer: &mut Writer<Vec<u8>>, name: &str) -> io::Result<()> {
         match self {
             Self::Text => field(writer, name, &CHAR),
-            Self::List => field(
-                writer,
-                name,
-                &[("datatype", "char"), ("arraysize", "*"), ("utype", "json")],
-            ),
+            Self::List => field(writer, name, &JSON_TEXT),
             Self::Number => field(writer, name, &[("datatype", "double")]),
             Self::Boolean => field(writer, name, &[("datatype", "boolean")]),
         }
@@ -316,6 +349,12 @@ impl Kind {
             _ => value.to_string(),
         }
     }
+}
+
+/// An event without a shape gets `[]`, not an empty cell, which a JSON reader refuses.
+fn shape_cell(shape: &[Vertex]) -> io::Result<String> {
+    let pairs = shape_json::pairs(shape).map_err(io::Error::other)?;
+    serde_json::to_string(&pairs).map_err(io::Error::other)
 }
 
 fn json_list(items: &[String]) -> String {
@@ -361,14 +400,17 @@ pub struct Imported {
 pub struct ImportedTable {
     /// The `TABLE` name, as written.
     pub name: String,
+    /// The `shape_axis` PARAM: what the shapes measure, in the PARAM's unit.
+    pub shape_axis: Option<ShapeAxis>,
     pub events: Vec<EventRecord>,
 }
 
 const START: &str = "Start Time";
 const STOP: &str = "Stop Time";
+const SHAPE_AXIS: &str = "shape_axis";
 
 fn is_standard(name: &str) -> bool {
-    name == START || name == STOP || FIXED.iter().any(|(fixed, _)| *fixed == name)
+    [START, STOP, SHAPE].contains(&name) || FIXED.iter().any(|(fixed, _)| *fixed == name)
 }
 
 const DEFAULT_AUTHOR: &str = "VOTable Import";
@@ -380,6 +422,7 @@ pub fn import(xml: &str) -> Result<Imported, VotableError> {
     for table in tables {
         imported.push(ImportedTable {
             name: table.name.clone(),
+            shape_axis: table.shape_axis.clone(),
             events: events(&table)?,
         });
     }
@@ -410,6 +453,7 @@ pub fn write(
             ..NewCatalogue::default()
         };
         model::create_catalogue(txn, &catalogue)?;
+        model::set_catalogue_shape_axis(txn, &catalogue.uuid, table.shape_axis.as_ref())?;
         let uuids: Vec<String> = table
             .events
             .iter()
@@ -439,6 +483,7 @@ fn catalogue_name(imported: &Imported, name: Option<&str>, index: usize) -> Stri
 
 struct Table {
     name: String,
+    shape_axis: Option<ShapeAxis>,
     fields: Vec<Field>,
     rows: Vec<Vec<String>>,
 }
@@ -447,6 +492,7 @@ impl Table {
     fn new(name: String) -> Self {
         Self {
             name,
+            shape_axis: None,
             fields: Vec::new(),
             rows: Vec::new(),
         }
@@ -475,9 +521,9 @@ fn read(xml: &str) -> Result<(String, Vec<Table>), VotableError> {
                 "TABLE" => {
                     table = Some(Table::new(attribute(&element, "name").unwrap_or_default()));
                 }
-                "FIELD" => {
+                "FIELD" | "PARAM" => {
                     if let Some(table) = table.as_mut() {
-                        table.fields.push(read_field(&element));
+                        read_column(table, &element);
                     }
                 }
                 "TR" => row = Some(Vec::new()),
@@ -485,10 +531,8 @@ fn read(xml: &str) -> Result<(String, Vec<Table>), VotableError> {
                 _ => {}
             },
             Event::Empty(element) => {
-                if element.name().as_ref() == "FIELD"
-                    && let Some(table) = table.as_mut()
-                {
-                    table.fields.push(read_field(&element));
+                if let Some(table) = table.as_mut() {
+                    read_column(table, &element);
                 }
             }
             Event::Text(text) => {
@@ -581,6 +625,19 @@ fn attribute(element: &BytesStart<'_>, key: &str) -> Option<String> {
         .map(Cow::into_owned)
 }
 
+fn read_column(table: &mut Table, element: &BytesStart<'_>) {
+    match element.name().as_ref() {
+        "FIELD" => table.fields.push(read_field(element)),
+        "PARAM" if attribute(element, "name").as_deref() == Some(SHAPE_AXIS) => {
+            table.shape_axis = Some(ShapeAxis {
+                quantity: attribute(element, "value").unwrap_or_default(),
+                unit: attribute(element, "unit").unwrap_or_default(),
+            });
+        }
+        _ => {}
+    }
+}
+
 fn read_field(element: &BytesStart<'_>) -> Field {
     Field {
         name: attribute(element, "name").unwrap_or_default(),
@@ -649,6 +706,7 @@ fn event(table: &Table, row: &[String]) -> Result<EventRecord, VotableError> {
     event.start_err = optional(cell("start_err"), "start_err", |v| v.parse().ok())?;
     event.stop_err = optional(cell("stop_err"), "stop_err", |v| v.parse().ok())?;
     event.created = optional(cell("created"), "created", Timestamp::parse)?;
+    event.shape = cell(SHAPE).map(shape).transpose()?.flatten();
 
     for (field, value) in table.fields.iter().zip(row) {
         match field.name.as_str() {
@@ -675,6 +733,12 @@ fn optional<T>(
         parse(value).ok_or_else(|| VotableError::BadValue(name.to_owned(), value.to_owned()))
     })
     .transpose()
+}
+
+fn shape(value: &str) -> Result<Option<Vec<Vertex>>, VotableError> {
+    let bad = || VotableError::BadValue(SHAPE.to_owned(), value.to_owned());
+    let pairs: Vec<shape_json::Pair> = serde_json::from_str(value).map_err(|_| bad())?;
+    shape_json::vertices(&pairs).map_err(|_| bad())
 }
 
 fn strings(field: &Field, value: &str) -> Result<Vec<String>, VotableError> {
@@ -719,7 +783,7 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::{export, export_many, import, write};
-    use crate::model::{CatalogueSummary, EventRecord, Status};
+    use crate::model::{CatalogueSummary, EventRecord, ShapeAxis, Status, Vertex};
     use crate::time::Timestamp;
     use crate::votable::VotableError;
 
@@ -1195,5 +1259,113 @@ mod tests {
             .unwrap()
             .author;
         assert_eq!(author.as_deref(), Some("a@x.org"));
+    }
+
+    fn pitch_angle() -> ShapeAxis {
+        ShapeAxis {
+            quantity: "pitch angle".to_owned(),
+            unit: "deg".to_owned(),
+        }
+    }
+
+    fn shaped(uuid: &str) -> EventRecord {
+        let at = |text: &str| Timestamp::parse(text).expect("a time");
+        let vertex = |time: &str, value: f64| Vertex {
+            time: at(time),
+            value,
+        };
+        let mut event = event("2025-01-31 10:00:00", None);
+        event.uuid = uuid.to_owned();
+        event.stop = at("2025-01-31 10:05:00");
+        event.shape = Some(vec![
+            vertex("2025-01-31T10:00:00Z", 10.0),
+            vertex("2025-01-31T10:02:30.123456789Z", 0.1 + 0.2),
+            vertex("2025-01-31T10:05:00Z", 170.5),
+        ]);
+        event
+    }
+
+    #[test]
+    fn shapes_and_their_axis_come_back_as_they_were() {
+        let mut catalogue = catalogue("alpha");
+        catalogue.shape_axis = Some(pitch_angle());
+        let with = shaped("00000000-0000-4000-8000-000000000001");
+        let mut without = event("2025-01-31 11:00:00", None);
+        without.uuid = "00000000-0000-4000-8000-000000000002".to_owned();
+        let xml = export(&catalogue, &[with.clone(), without.clone()]).expect("an export");
+
+        let imported = import(&xml).expect("an import");
+
+        assert_eq!(imported.name.as_deref(), Some("alpha"));
+        let table = &imported.tables[0];
+        assert_eq!(table.shape_axis, Some(pitch_angle()));
+        assert_eq!(table.events, [with, without]);
+    }
+
+    #[test]
+    fn the_shape_column_says_what_it_holds() {
+        let mut catalogue = catalogue("alpha");
+        catalogue.shape_axis = Some(pitch_angle());
+        let mut without = event("2025-01-31 11:00:00", None);
+        without.uuid = "00000000-0000-4000-8000-000000000002".to_owned();
+        let xml = export(&catalogue, &[shaped("u1"), without]).expect("an export");
+
+        assert!(
+            xml.contains(
+                r#"<PARAM name="shape_axis" datatype="char" arraysize="*" value="pitch angle" unit="deg"/>"#
+            ),
+            "{xml}"
+        );
+        assert!(
+            xml.contains(r#"<FIELD name="shape" datatype="char" arraysize="*" utype="json"/>"#),
+            "{xml}"
+        );
+        assert!(
+            xml.contains(
+                r#"<TD>[[&quot;2025-01-31T10:00:00Z&quot;,10.0],[&quot;2025-01-31T10:02:30.123456789Z&quot;,0.30000000000000004],"#
+            ),
+            "{xml}"
+        );
+        assert!(xml.contains("<TD>[]</TD>"), "{xml}");
+    }
+
+    #[test]
+    fn without_shapes_there_is_no_shape_column() {
+        let xml =
+            export(&catalogue("alpha"), &[event("2025-01-31 10:00:00", None)]).expect("an export");
+
+        assert!(!xml.contains("shape"), "{xml}");
+    }
+
+    #[test]
+    fn a_written_table_keeps_its_shape_axis_and_shapes() {
+        let mut catalogue = catalogue("alpha");
+        catalogue.shape_axis = Some(pitch_angle());
+        let with = shaped("00000000-0000-4000-8000-000000000001");
+        let xml = export(&catalogue, std::slice::from_ref(&with)).expect("an export");
+        let doc = yrs::Doc::new();
+        let mut txn = yrs::Transact::transact_mut(&doc);
+
+        let written = write(&mut txn, &import(&xml).expect("an import"), None).expect("a write");
+
+        let stored = crate::model::catalogue(&txn, &written.catalogues[0]).expect("a catalogue");
+        assert_eq!(stored.shape_axis, Some(pitch_angle()));
+        let event = crate::model::event(&txn, &with.uuid).expect("an event");
+        assert_eq!(event.shape, with.shape);
+    }
+
+    #[test]
+    fn a_shape_that_does_not_read_is_refused() {
+        let mut fields = start_stop();
+        fields.push(field("shape", "char", "json"));
+        let rows = [
+            "<TR><TD>2025-01-31 10:00:00</TD><TD>2025-01-31 10:01:00</TD><TD>[[\"soon\", 1]]</TD></TR>",
+        ];
+        let error = import(&votable(&fields, &rows)).expect_err("a refusal");
+
+        assert!(
+            matches!(&error, VotableError::BadValue(name, _) if name == "shape"),
+            "{error:?}"
+        );
     }
 }

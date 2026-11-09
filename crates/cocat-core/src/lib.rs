@@ -5,6 +5,7 @@ pub mod person;
 pub mod role;
 pub mod room_id;
 pub mod rules;
+pub mod shape_json;
 pub mod store;
 pub mod tfcat;
 pub mod time;

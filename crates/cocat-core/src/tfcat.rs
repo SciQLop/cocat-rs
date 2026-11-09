@@ -310,6 +310,23 @@ pub fn shape_axis(catalogue: &CatalogueSummary) -> ShapeAxis {
     })
 }
 
+/// The spectral axes TFCat's schema allows.
+const SPECTRAL_TYPES: [&str; 4] = ["frequency", "wavelength", "energy", "wavenumber"];
+
+/// A warning when the catalogue's shapes measure something TFCat's schema does not know.
+/// The export writes the file all the same.
+pub fn strictness_warning(catalogue: &CatalogueSummary) -> Option<String> {
+    let quantity = shape_axis(catalogue).quantity;
+    (!SPECTRAL_TYPES.contains(&quantity.as_str())).then(|| {
+        format!(
+            "{name}: TFCat knows shapes in frequency, wavelength, energy or wavenumber, \
+             not in {quantity}, so this file is not strict TFCat. \
+             VOTable and tscat JSON keep the shapes exactly.",
+            name = catalogue.name
+        )
+    })
+}
+
 fn spectral_axis(crs: &Value) -> Option<ShapeAxis> {
     let coords = &crs["properties"]["spectral_coords"];
     Some(ShapeAxis {

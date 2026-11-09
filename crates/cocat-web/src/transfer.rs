@@ -112,6 +112,16 @@ pub fn needs_range<T: ReadTxn>(txn: &T, uuids: &[String]) -> Option<ShapeAxis> {
     })
 }
 
+/// What a TFCat export of these catalogues says before it writes them: one line per
+/// catalogue whose shapes TFCat does not know.
+pub fn tfcat_warnings<T: ReadTxn>(txn: &T, uuids: &[String]) -> Vec<String> {
+    uuids
+        .iter()
+        .filter_map(|uuid| model::catalogue(txn, uuid))
+        .filter_map(|catalogue| tfcat::strictness_warning(&catalogue))
+        .collect()
+}
+
 /// The range typed in two boxes: `None` when both are empty.
 pub fn value_range(low: &str, high: &str) -> Result<Option<(f64, f64)>, String> {
     let refused = || "Give two numbers, the lowest first.".to_owned();

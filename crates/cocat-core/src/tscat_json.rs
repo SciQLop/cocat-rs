@@ -4,6 +4,10 @@
 //! 10) becomes a confidence (0 to 1) and back. A file may also carry `removed` (the uuids
 //! of items in tscat's trash) and `members` (each catalogue's members as tscat filters
 //! them): tscat never writes these, the Python import of a tscat database does.
+//!
+//! An event may carry its `shape` and a catalogue its `shape_axis`, which tscat itself
+//! keeps as attributes: the shape as `shape_json` text, the axis as
+//! `{"quantity": ..., "unit": ...}`. A file without them leaves the project's as they are.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::LazyLock;
@@ -15,9 +19,10 @@ use yrs::{ReadTxn, TransactionMut};
 
 use crate::model::{
     self, AttributeType, CatalogueSummary, EventField, EventRecord, NewCatalogue, Origin,
-    OriginKind, Status, TypeWarning, WriteError, Written,
+    OriginKind, ShapeAxis, Status, TypeWarning, WriteError, Written,
 };
 use crate::rules::rule_from_tscat;
+use crate::shape_json;
 use crate::time::Timestamp;
 
 /// The origin every imported event names.
@@ -61,6 +66,8 @@ struct TscatEvent {
     products: Option<Vec<String>>,
     #[serde(default)]
     rating: Option<Number>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape: Option<Vec<shape_json::Pair>>,
     #[serde(flatten)]
     attributes: Map<String, Value>,
 }
@@ -76,6 +83,8 @@ struct TscatCatalogue {
     tags: Option<Vec<String>>,
     #[serde(default)]
     predicate: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape_axis: Option<ShapeAxis>,
     #[serde(flatten)]
     attributes: Map<String, Value>,
     events: Vec<String>,
@@ -101,6 +110,7 @@ pub struct IncomingCatalogue {
     pub tags: Vec<String>,
     pub attributes: Map<String, Value>,
     pub rule: Option<Value>,
+    pub shape_axis: Option<ShapeAxis>,
     /// The events it lists.
     pub events: Vec<String>,
     pub removed: bool,
@@ -153,6 +163,8 @@ fn event_of(
         .rating
         .and_then(|rating| rating.as_f64())
         .map(|rating| rating / 10.0);
+    record.shape = shape_json::vertices(&event.shape.unwrap_or_default())
+        .map_err(|text| TscatJsonError::Time(uuid.clone(), "shape", text))?;
     if removed.contains(&uuid) {
         record.status = Status::Deleted;
     }
@@ -212,6 +224,7 @@ fn catalogue_of(
             .map(|(key, value)| (key, attribute_value(value).into_value()))
             .collect(),
         rule,
+        shape_axis: catalogue.shape_axis,
         events,
     }
 }
@@ -315,6 +328,9 @@ fn put_event(
     for field in &fields {
         model::set_event_field(txn, uuid, field)?;
     }
+    if event.shape.is_some() {
+        model::set_event_field(txn, uuid, &EventField::Shape(event.shape.clone()))?;
+    }
     let stale = stale_keys(&existing.attributes, &event.attributes);
     model::remove_event_attributes(txn, uuid, &stale);
     let warnings = model::set_event_attributes(txn, uuid, &event.attributes)?.unwrap_or_default();
@@ -355,6 +371,9 @@ fn put_catalogue(
     };
     model::add_catalogue_events(txn, uuid, &catalogue.events);
     model::set_catalogue_rule(txn, uuid, catalogue.rule.as_ref())?;
+    if catalogue.shape_axis.is_some() {
+        model::set_catalogue_shape_axis(txn, uuid, catalogue.shape_axis.as_ref())?;
+    }
     if catalogue.removed {
         model::delete_catalogue(txn, uuid);
     } else if in_trash {
@@ -409,7 +428,7 @@ pub fn export<T: ReadTxn>(
         .flat_map(|(_, events)| events.iter())
         .filter(|event| seen.insert(event.uuid.as_str()))
         .map(|event| event_to_tscat(event, &dates))
-        .collect();
+        .collect::<Result<_, _>>()?;
     let catalogues: Vec<TscatCatalogue> = catalogues
         .iter()
         .map(|(catalogue, events)| catalogue_to_tscat(catalogue, events))
@@ -420,7 +439,10 @@ pub fn export<T: ReadTxn>(
     }))
 }
 
-fn event_to_tscat(event: &EventRecord, dates: &BTreeSet<String>) -> TscatEvent {
+fn event_to_tscat(
+    event: &EventRecord,
+    dates: &BTreeSet<String>,
+) -> Result<TscatEvent, serde_json::Error> {
     let attributes = event
         .attributes
         .iter()
@@ -433,7 +455,13 @@ fn event_to_tscat(event: &EventRecord, dates: &BTreeSet<String>) -> TscatEvent {
             (key.clone(), value)
         })
         .collect();
-    TscatEvent {
+    let shape = event
+        .shape
+        .as_deref()
+        .map(shape_json::pairs)
+        .transpose()
+        .map_err(serde::ser::Error::custom)?;
+    Ok(TscatEvent {
         start: naive_isoformat(event.start),
         stop: naive_isoformat(event.stop),
         author: Some(event.author.clone().unwrap_or_default()),
@@ -441,8 +469,9 @@ fn event_to_tscat(event: &EventRecord, dates: &BTreeSet<String>) -> TscatEvent {
         tags: Some(sorted(&event.tags)),
         products: Some(sorted(&event.products)),
         rating: event.confidence.map(rating),
+        shape,
         attributes,
-    }
+    })
 }
 
 fn catalogue_to_tscat(catalogue: &CatalogueSummary, events: &[EventRecord]) -> TscatCatalogue {
@@ -454,6 +483,7 @@ fn catalogue_to_tscat(catalogue: &CatalogueSummary, events: &[EventRecord]) -> T
         uuid: Some(catalogue.uuid.clone()),
         tags: Some(sorted(&catalogue.tags)),
         predicate: Some(Value::Null),
+        shape_axis: catalogue.shape_axis.clone(),
         attributes: catalogue.attributes.clone(),
         events: uuids,
     }

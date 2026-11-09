@@ -159,6 +159,32 @@ fn range_axis(
     })
 }
 
+/// The warnings a TFCat export gives, while TFCat is the format picked.
+fn tfcat_notes(
+    room: StoredValue<Room, LocalStorage>,
+    format: RwSignal<Format>,
+    uuids: impl Fn() -> Vec<String> + Send + Sync + 'static,
+) -> Memo<Vec<String>> {
+    Memo::new(move |_| {
+        if format.get() != Format::Tfcat {
+            return Vec::new();
+        }
+        let uuids = uuids();
+        room.with_value(|room| room.read_untracked(|txn| transfer::tfcat_warnings(txn, &uuids)))
+    })
+}
+
+#[component]
+fn Notes(notes: Memo<Vec<String>>) -> impl IntoView {
+    move || {
+        notes
+            .get()
+            .into_iter()
+            .map(|note| view! { <p class="quiet">{note}</p> })
+            .collect_view()
+    }
+}
+
 /// Under the heading: the catalogue on screen as a file.
 #[component]
 pub fn ExportForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
@@ -170,6 +196,10 @@ pub fn ExportForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
     let axis = {
         let uuids = uuids.clone();
         range_axis(room, format, move || uuids.clone())
+    };
+    let notes = {
+        let uuids = uuids.clone();
+        tfcat_notes(room, format, move || uuids.clone())
     };
     let send = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
@@ -184,6 +214,7 @@ pub fn ExportForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
         <form class="inline-form name-form export-form" on:submit=send>
             <Formats formats=&Format::ALL format/>
             <RangeBoxes axis range/>
+            <Notes notes/>
             <Hint anchor="import-export" topic="import and export"
                 text="A smart catalogue is saved with the events it holds now."/>
             {error_line(error)}
@@ -210,6 +241,7 @@ pub fn ExportDialog(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
     let error: Error = RwSignal::new(None);
     let range = Range::new();
     let axis = range_axis(room, format, move || picked.get());
+    let notes = tfcat_notes(room, format, move || picked.get());
     let send = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
         let uuids = picked.get_untracked();
@@ -254,6 +286,7 @@ pub fn ExportDialog(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
             </fieldset>
             <Formats formats=&Format::MANY format/>
             <RangeBoxes axis range/>
+            <Notes notes/>
             <Hint anchor="import-export" topic="import and export"
                 text="VOTable and tscat JSON put them all in one file; TFCat makes one file per catalogue. For CSV, export one catalogue from its More menu."/>
             {error_line(error)}

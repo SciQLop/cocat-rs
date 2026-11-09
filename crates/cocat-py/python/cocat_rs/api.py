@@ -250,7 +250,9 @@ def export_tfcat(
     catalogue, file_path: str | Path, value_range: tuple[float, float] | None = None
 ) -> None:
     """Writes the catalogue to a TFCat file. Events with no place on the shape axis are
-    drawn over `value_range` (low, high), else over the band of the catalogue's other events."""
+    drawn over `value_range` (low, high), else over the band of the catalogue's other events.
+    Shapes on an axis TFCat does not know (not frequency, wavelength, energy or wavenumber)
+    are written with a warning: VOTable and tscat JSON keep them exactly."""
     Path(file_path).write_text(tfcat_json(catalogue, value_range), encoding="utf-8")
 
 

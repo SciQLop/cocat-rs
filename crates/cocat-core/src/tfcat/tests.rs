@@ -2,7 +2,8 @@ use serde_json::{Map, Value, json};
 use yrs::{Doc, Transact};
 
 use super::{
-    CRS, FIELDS, GEOMETRY, TfcatError, TfcatImport, export, needs_value_range, parse, write,
+    CRS, FIELDS, GEOMETRY, TfcatError, TfcatImport, export, needs_value_range, parse,
+    strictness_warning, write,
 };
 use crate::model::{self, CatalogueSummary, EventRecord, NewCatalogue, ShapeAxis, Vertex};
 use crate::time::Timestamp;
@@ -429,4 +430,25 @@ fn a_changed_shape_axis_replaces_the_files_spectral_axis() {
         json!({"type": "frequency", "unit": "MHz"})
     );
     assert_eq!(properties["ref_position_id"], json!("cassini-orbiter"));
+}
+
+#[test]
+fn an_axis_tfcat_does_not_know_is_exported_with_a_warning() {
+    let events = vec![EventRecord::new("e1", unix(100), unix(160))];
+    let (doc, catalogue, events) = described(events, Some(axis("pitch angle", "deg")));
+
+    assert!(exported(&doc, &catalogue, &events, Some((10.0, 30.0))).is_ok());
+    assert_eq!(
+        strictness_warning(&catalogue).as_deref(),
+        Some(
+            "hand made: TFCat knows shapes in frequency, wavelength, energy or wavenumber, \
+             not in pitch angle, so this file is not strict TFCat. \
+             VOTable and tscat JSON keep the shapes exactly."
+        )
+    );
+    for known in ["frequency", "wavelength", "energy", "wavenumber"] {
+        let (_, catalogue, _) = described(Vec::new(), Some(axis(known, "x")));
+        assert_eq!(strictness_warning(&catalogue), None, "{known}");
+    }
+    assert_eq!(strictness_warning(&plain(Vec::new()).1), None);
 }

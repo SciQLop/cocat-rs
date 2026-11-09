@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 use yrs::{Doc, Transact};
 
 use super::{ORIGIN, TscatJsonError, export, parse, write};
-use crate::model::{self, AttributeType, EventField, Status};
+use crate::model::{self, AttributeType, EventField, ShapeAxis, Status, Vertex};
 use crate::time::Timestamp;
 
 const ALICE: &str = "00000000-0000-4000-8000-00000000000a";
@@ -222,4 +222,109 @@ fn an_export_imports_back_the_same() {
     assert_eq!(again.events, events);
     assert_eq!(again.catalogues[0].events, [ALICE, BOB]);
     assert_eq!(again.catalogues[0].name, "listed");
+}
+
+fn pitch_angle() -> ShapeAxis {
+    ShapeAxis {
+        quantity: "pitch angle".to_owned(),
+        unit: "deg".to_owned(),
+    }
+}
+
+fn a_shape() -> Vec<Vertex> {
+    let vertex = |text: &str, value: f64| Vertex {
+        time: time(text),
+        value,
+    };
+    vec![
+        vertex("2020-01-01T00:00:00Z", 10.0),
+        vertex("2020-01-01T00:30:00.123456789Z", 0.1 + 0.2),
+        vertex("2020-01-01T01:00:00Z", 170.5),
+    ]
+}
+
+/// Alice has a shape and the listed catalogue a shape axis.
+fn shaped() -> Doc {
+    let doc = written(&file());
+    {
+        let mut txn = doc.transact_mut();
+        model::set_event_field(&mut txn, ALICE, &EventField::Shape(Some(a_shape()))).unwrap();
+        model::set_catalogue_shape_axis(&mut txn, LISTED, Some(&pitch_angle())).unwrap();
+    }
+    doc
+}
+
+fn exported_listed(doc: &Doc) -> String {
+    let txn = doc.transact();
+    let listed = model::catalogue(&txn, LISTED).unwrap();
+    let events = model::catalogue_events(&txn, LISTED).unwrap().unwrap();
+    export(&txn, &[(&listed, &events)]).unwrap()
+}
+
+#[test]
+fn shapes_and_the_shape_axis_are_plain_json() {
+    let json: Value = serde_json::from_str(&exported_listed(&shaped())).unwrap();
+
+    assert_eq!(
+        json["events"][0]["shape"],
+        json!([
+            ["2020-01-01T00:00:00Z", 10.0],
+            ["2020-01-01T00:30:00.123456789Z", 0.1 + 0.2],
+            ["2020-01-01T01:00:00Z", 170.5]
+        ])
+    );
+    assert!(json["events"][1].get("shape").is_none());
+    assert_eq!(
+        json["catalogues"][0]["shape_axis"],
+        json!({"quantity": "pitch angle", "unit": "deg"})
+    );
+}
+
+#[test]
+fn shapes_and_the_shape_axis_import_back() {
+    let text = exported_listed(&shaped());
+    let doc = Doc::new();
+    write(&mut doc.transact_mut(), &parse(&text).unwrap(), now()).unwrap();
+
+    let txn = doc.transact();
+    assert_eq!(model::event(&txn, ALICE).unwrap().shape, Some(a_shape()));
+    assert_eq!(model::event(&txn, BOB).unwrap().shape, None);
+    assert_eq!(
+        model::catalogue(&txn, LISTED).unwrap().shape_axis,
+        Some(pitch_angle())
+    );
+    assert!(
+        !model::event(&txn, ALICE)
+            .unwrap()
+            .attributes
+            .contains_key("shape")
+    );
+}
+
+#[test]
+fn a_file_without_shapes_leaves_the_projects_shapes() {
+    let doc = shaped();
+    write(
+        &mut doc.transact_mut(),
+        &parse(&file().to_string()).unwrap(),
+        now(),
+    )
+    .unwrap();
+
+    let txn = doc.transact();
+    assert_eq!(model::event(&txn, ALICE).unwrap().shape, Some(a_shape()));
+    assert_eq!(
+        model::catalogue(&txn, LISTED).unwrap().shape_axis,
+        Some(pitch_angle())
+    );
+}
+
+#[test]
+fn a_shape_with_a_bad_time_says_which_event() {
+    let mut file = file();
+    file["events"][0]["shape"] = json!([["soon", 1.0]]);
+    let error = parse(&file.to_string()).unwrap_err();
+    assert!(
+        matches!(error, TscatJsonError::Time(ref uuid, "shape", ref text) if uuid == ALICE && text == "soon")
+    );
 }
