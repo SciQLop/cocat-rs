@@ -28,6 +28,7 @@ impl PublicCatalogue {
             name: self.name.clone(),
             role: self.role,
             editors_can_share: false,
+            personal: false,
         }
     }
 

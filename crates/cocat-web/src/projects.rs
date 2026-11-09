@@ -22,6 +22,9 @@ pub struct Project {
     /// not say; a new project lets them.
     #[serde(default = "allowed")]
     pub editors_can_share: bool,
+    /// The visitor's own project, "My catalogues", which never gains people.
+    #[serde(default)]
+    pub personal: bool,
 }
 
 fn allowed() -> bool {
@@ -138,6 +141,16 @@ pub fn title(name: &str) -> String {
     format!("{name} · cocat")
 }
 
+/// Whether the project can gain people: not a public catalogue (nobody is a member) and not
+/// the visitor's own project. A project the list does not hold yet is taken as shareable;
+/// the server refuses what it must.
+pub fn shareable(room_id: &str, listed: &[Project]) -> bool {
+    !cocat_core::room_id::is_public_id(room_id)
+        && !listed
+            .iter()
+            .any(|project| project.id == room_id && project.personal)
+}
+
 /// A delete goes ahead once the visitor typed the project's name.
 pub fn delete_confirmed(typed: &str, name: &str) -> bool {
     typed.trim() == name.trim()
@@ -156,6 +169,7 @@ pub fn api_url(api: &str, segments: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cocat_core::room_id::PUBLIC_PREFIX;
 
     fn config() -> RoomConfig {
         RoomConfig {
@@ -175,6 +189,7 @@ mod tests {
             name: name.into(),
             role,
             editors_can_share: true,
+            personal: false,
         }
     }
 
@@ -249,6 +264,22 @@ mod tests {
                 delete: false
             }
         );
+    }
+
+    #[test]
+    fn the_share_button_is_for_projects_that_may_gain_people() {
+        let listed: Vec<Project> = serde_json::from_str(
+            r#"[{"id":"mine","name":"My catalogues","role":"owner","personal":true},
+                {"id":"lab","name":"Lab","role":"owner"}]"#,
+        )
+        .unwrap();
+        assert!(
+            !shareable("mine", &listed),
+            "the own project stays personal"
+        );
+        assert!(shareable("lab", &listed));
+        assert!(shareable("not-listed-yet", &listed));
+        assert!(!shareable(&format!("{PUBLIC_PREFIX}waves"), &listed));
     }
 
     #[test]

@@ -545,6 +545,7 @@ fn OpenPublic(target: String, title: String, curator: RwSignal<bool>) -> impl In
             name: title.clone(),
             role,
             editors_can_share: false,
+            personal: false,
         });
     };
     view! {

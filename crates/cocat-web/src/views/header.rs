@@ -4,6 +4,7 @@ use leptos::html::Details;
 
 use crate::help;
 use crate::presence::{Peer, initials};
+use crate::projects::shareable;
 use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
@@ -16,7 +17,11 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let config = room.config.clone();
     let status = room.status;
     let read_only = !config.role.can_write();
-    let public = cocat_core::room_id::is_public_id(&config.room_id);
+    let projects = expect_context::<Projects>();
+    let shareable = {
+        let room_id = config.room_id.clone();
+        move || projects.list.with(|listed| shareable(&room_id, listed))
+    };
     let page = window().location().pathname().unwrap_or_default();
     let in_history = move || matches!(shown.get(), Route::History { .. });
     let history = {
@@ -29,7 +34,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
             <Crumbs shown/>
             <div class="header-end">
                 <Avatars/>
-                <Show when=move || !public>
+                <Show when=shareable>
                     <ShareButton/>
                 </Show>
                 <Show
