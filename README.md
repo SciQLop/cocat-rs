@@ -347,6 +347,20 @@ presence in either direction. A reader's history names each author "a curator" o
 "a contributor", with no account id; curators still see emails and ids. A submission's author sees its reviewer as
 "a curator".
 
+### Relayed catalogues
+
+Some public catalogues follow a provider built into the server (`crates/cocat-server/src/relay/`:
+DONKI, CDAW, AMDA). A run fetches the provider's lists and makes each public catalogue
+hold exactly them (`cocat_core::model::hold`): new events added, changed ones rewritten,
+removed ones trashed, one history version per changed catalogue, authored by the source.
+Ids are `public.<provider>.<key>`; curators cannot create keys under a provider's prefix.
+Nobody edits a relayed catalogue: sockets get the viewer role, and PATCH, submissions,
+proposals and updates answer 409 "This catalogue follows <source>: it changes when <source>
+does." `GET /api/public` rows carry `relay: {source, url, refreshed_at, published}` (null for a
+catalogue curators keep). Settings, schedules and runs live in the `relay_provider` and
+`relay_catalogue` tables and are managed in the admin pages ("Catalogue providers"); see
+docs/deploy.md.
+
 ### Submissions
 
 Everyone else submits. A submission holds the catalogue and its events as they were when it

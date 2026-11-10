@@ -332,3 +332,21 @@ async fn the_catalogue_help_says_what_a_link_is() {
         "{catalogues}"
     );
 }
+
+#[tokio::test]
+async fn the_public_help_says_what_a_relayed_catalogue_is() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let public = section_text(&help, "public");
+    for expected in [
+        "Some public catalogues follow a list published elsewhere",
+        "DONKI",
+        "From DONKI (NASA CCMC), refreshed",
+        "No longer published by",
+        "nobody changes it here",
+    ] {
+        assert!(public.contains(expected), "{expected} missing: {public}");
+    }
+}

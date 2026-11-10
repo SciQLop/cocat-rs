@@ -133,6 +133,27 @@ These commands only change the database. A running server reads every open socke
 again every 30 seconds, so a revoked role or removed member is cut off within that time.
 The admin pages cut them off at once.
 
+## Catalogue providers
+
+The server can keep public catalogues in step with lists published elsewhere. Three
+providers are built in: DONKI (NASA CCMC's space weather database), CDAW (the SOHO/LASCO CME
+catalogue and the Wind/STEREO WAVES type II bursts) and AMDA. Each is off until an
+administrator turns it on, in the admin page under "Catalogue providers", where each one has
+its schedule (a cron line in UTC, or its default), its settings, its last run and "Refresh
+now". The provider is the source of truth: nobody, curators included, edits a catalogue it
+follows.
+
+- **DONKI** needs a NASA API key (free, at once, from https://api.nasa.gov): set `api_key`
+  in its settings. The demo key allows about ten requests an hour, and the first run reads
+  every type from 2010 in yearly windows (136 requests); later runs read the last 90 days.
+  Daily at 03:30 UTC by default.
+- **CDAW** needs nothing; weekly, Monday 05:30 UTC (the LASCO list is updated weekly).
+- **AMDA**: below.
+
+Providers fetch through OpenSSL with the User-Agent `cocat-relay/<version>` (CDAW's firewall
+refuses rustls clients and User-Agents holding an address), follow redirects on the same host
+only, and never write a list they could not read.
+
 ## Public catalogues from AMDA
 
 The AMDA provider replaces the `tools/amda_public.py` script. It copies AMDA's shared
