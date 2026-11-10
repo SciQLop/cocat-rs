@@ -6,7 +6,8 @@
 //! old socket announces the same id from a new socket of the same account: the new socket
 //! takes the id over. Its state's `user` field is always the account the
 //! socket authenticated as, whatever the client wrote there, and the only other field kept
-//! is `editing`: the server relays nothing a client could grow. A public catalogue relays
+//! is `editing`: the server relays nothing a client could grow. A workspace document keeps
+//! every field (cursors, selections) within a larger frame cap. A public catalogue relays
 //! no presence at all.
 
 use std::collections::HashMap;
@@ -22,6 +23,7 @@ use yrs::sync::awareness::{AwarenessUpdate, AwarenessUpdateEntry};
 use yrs::sync::protocol::MSG_AWARENESS;
 use yrs::updates::encoder::Encode;
 
+use crate::documents::project_of;
 use crate::room::ClientId;
 
 /// Blue, orange, teal, purple, green, brown, pink and slate: each carries white text and
@@ -29,8 +31,12 @@ use crate::room::ClientId;
 /// and rooms.
 pub use cocat_core::person::{COLORS, color};
 
-/// An awareness frame carries one small state; a larger one is dropped before it is decoded.
+/// A catalogue's awareness frame carries one small state; a larger one is dropped before it
+/// is decoded.
 const MAX_FRAME: usize = 4096;
+
+/// A notebook or text editor publishes cursors and selections, which grow with the document.
+const MAX_DOCUMENT_FRAME: usize = 16 * 1024;
 
 /// An event uuid is 36 characters.
 const MAX_EDITING: usize = 64;
@@ -49,14 +55,30 @@ pub struct Presence {
     states: HashMap<ClientId, State>,
     /// A public catalogue is read by every account, so nobody's email is shown there.
     silent: bool,
+    /// A workspace document relays every field of a state but `user`.
+    wide: bool,
 }
 
 impl Presence {
-    pub fn for_room(room_id: &str) -> Self {
+    /// The policy of a room key: `{project}/{document}` is a workspace document, a bare
+    /// project id its catalogues.
+    pub fn for_key(key: &str) -> Self {
+        let project = project_of(key);
         Self {
-            silent: is_public_id(room_id),
+            silent: project == key && is_public_id(key),
+            wide: project != key,
             ..Self::default()
         }
+    }
+
+    /// Whether `frame` is an awareness frame too large to read.
+    pub fn oversized(&self, frame: &[u8]) -> bool {
+        let max = if self.wide {
+            MAX_DOCUMENT_FRAME
+        } else {
+            MAX_FRAME
+        };
+        frame.first() == Some(&MSG_AWARENESS) && frame.len() > max
     }
 
     /// Takes a client's awareness update and answers the frame to relay to the others, if
@@ -73,7 +95,7 @@ impl Presence {
         }
         let id = self.owned_id(client, user, &update)?;
         let entry = update.clients.get(&id)?;
-        let json = vouched(&entry.json, email)?;
+        let json = vouched(&entry.json, email, self.wide)?;
         let entry = AwarenessUpdateEntry {
             clock: entry.clock,
             json: Arc::from(json),
@@ -151,24 +173,39 @@ impl Presence {
     }
 }
 
-/// Whether `frame` is an awareness frame too large to read.
-pub fn oversized(frame: &[u8]) -> bool {
-    frame.first() == Some(&MSG_AWARENESS) && frame.len() > MAX_FRAME
-}
-
-/// The state the server relays: the client's `editing` and the server's `user`. `null` (the
-/// client leaving) passes as is, and anything but an object or `null` is refused.
-fn vouched(json: &str, email: &str) -> Option<String> {
+/// The state the server relays: the server's `user` and either the client's `editing` or,
+/// when `wide`, every other field. `null` (the client leaving) passes as is, and anything
+/// but an object or `null` is refused.
+fn vouched(json: &str, email: &str, wide: bool) -> Option<String> {
     match serde_json::from_str(json).ok()? {
         Value::Null => Some("null".to_owned()),
-        Value::Object(state) => Some(
-            json!({
-                "editing": editing(&state),
-                "user": { "email": email, "color": color(email) },
-            })
-            .to_string(),
-        ),
+        Value::Object(state) => {
+            let mut relayed = if wide {
+                state
+            } else {
+                Map::from_iter([("editing".to_owned(), json!(editing(&state)))])
+            };
+            relayed.insert("user".to_owned(), account(email, wide));
+            Some(Value::Object(relayed).to_string())
+        }
         _ => None,
+    }
+}
+
+/// A workspace document's account also carries the `name` and `display_name` JupyterLab
+/// shows for a collaborator.
+fn account(email: &str, wide: bool) -> Value {
+    let user = json!({ "email": email, "color": color(email) });
+    let name = email.split('@').next().unwrap_or(email);
+    match (wide, user) {
+        (true, Value::Object(mut user)) => {
+            user.extend([
+                ("name".to_owned(), json!(name)),
+                ("display_name".to_owned(), json!(name)),
+            ]);
+            Value::Object(user)
+        }
+        (_, user) => user,
     }
 }
 
@@ -192,7 +229,7 @@ mod tests {
     use palette::color_difference::{EuclideanDistance, Wcag21RelativeContrast};
     use palette::{IntoColor, Oklab, Srgb};
 
-    use super::{COLORS, color, oversized, vouched};
+    use super::{COLORS, Presence, color, vouched};
 
     /// The page's `--surface` in the dark theme.
     const DARK_SURFACE: &str = "#181e29";
@@ -231,22 +268,32 @@ mod tests {
     #[test]
     fn the_user_field_is_the_servers() {
         let state: serde_json::Value = serde_json::from_str(
-            &vouched(r#"{"user":"me","editing":"e","extra":1}"#, "a@example.org").unwrap(),
+            &vouched(
+                r#"{"user":"me","editing":"e","extra":1}"#,
+                "a@example.org",
+                false,
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(state["user"]["email"], "a@example.org");
         assert_eq!(state["editing"], "e");
         assert_eq!(state.as_object().unwrap().len(), 2);
-        assert_eq!(vouched("null", "a@example.org").as_deref(), Some("null"));
-        assert_eq!(vouched("[1]", "a@example.org"), None);
-        assert_eq!(vouched("not json", "a@example.org"), None);
+        assert_eq!(
+            vouched("null", "a@example.org", false).as_deref(),
+            Some("null")
+        );
+        assert_eq!(vouched("[1]", "a@example.org", false), None);
+        assert_eq!(vouched("not json", "a@example.org", false), None);
     }
 
     #[test]
     fn only_a_short_string_is_an_edited_event() {
         let editing = |json: &str| -> serde_json::Value {
-            serde_json::from_str::<serde_json::Value>(&vouched(json, "a@example.org").unwrap())
-                .unwrap()["editing"]
+            serde_json::from_str::<serde_json::Value>(
+                &vouched(json, "a@example.org", false).unwrap(),
+            )
+            .unwrap()["editing"]
                 .clone()
         };
         assert_eq!(
@@ -260,9 +307,34 @@ mod tests {
 
     #[test]
     fn only_a_large_awareness_frame_is_oversized() {
-        assert!(oversized(&[1; 4097]));
-        assert!(!oversized(&[1; 4096]));
-        assert!(!oversized(&[0; 4097]));
+        let catalogue = Presence::for_key("lab");
+        assert!(catalogue.oversized(&[1; 4097]));
+        assert!(!catalogue.oversized(&[1; 4096]));
+        assert!(!catalogue.oversized(&[0; 4097]));
+    }
+
+    #[test]
+    fn a_workspace_document_allows_16_kb() {
+        let document = Presence::for_key(&format!("lab/{}", uuid::Uuid::new_v4()));
+        assert!(document.oversized(&[1; 16 * 1024 + 1]));
+        assert!(!document.oversized(&[1; 16 * 1024]));
+    }
+
+    #[test]
+    fn a_wide_state_keeps_every_field_but_user() {
+        let state: serde_json::Value = serde_json::from_str(
+            &vouched(
+                r#"{"user":"me","cursors":[1],"current":"c"}"#,
+                "a@example.org",
+                true,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state["cursors"], serde_json::json!([1]));
+        assert_eq!(state["current"], "c");
+        assert_eq!(state["user"]["name"], "a");
+        assert!(vouched("[1]", "a@example.org", true).is_none());
     }
 
     #[test]

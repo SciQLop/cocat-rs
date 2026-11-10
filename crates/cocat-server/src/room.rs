@@ -976,7 +976,7 @@ fn room_loop(
     let mut full_state = None;
     let mut commands = Some(commands);
     let mut seen = doc.transact().state_vector();
-    let mut presence = Presence::for_room(crate::documents::project_of(&room_id));
+    let mut presence = Presence::for_key(&room_id);
 
     'serving: loop {
         let mut schedule = SyncSchedule::new(Instant::now());
@@ -1508,7 +1508,7 @@ fn handle_frame(
     client: ClientId,
     frame: Bytes,
 ) -> Result<Option<Bytes>, CloseReason> {
-    if frame.len() < 2 || crate::presence::oversized(&frame) {
+    if frame.len() < 2 || serving.presence.oversized(&frame) {
         return Ok(None);
     }
     let Some((user, role)) = serving
@@ -1582,7 +1582,7 @@ fn handle_frame(
 }
 
 /// Every role may publish its presence, a viewer included: it writes nothing to the room.
-/// A public catalogue's presence relays nothing (`Presence::for_room`).
+/// A public catalogue's presence relays nothing (`Presence::for_key`).
 fn relay_awareness(serving: &mut Serving<'_>, client: ClientId, update: AwarenessUpdate) {
     let Some((user, email)) = serving
         .clients

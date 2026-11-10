@@ -258,3 +258,93 @@ async fn a_public_catalogue_relays_no_presence_either_way() {
     nothing_but_the_answer(&room, 2, &mut reader).await;
     nothing_but_the_answer(&room, 1, &mut curator).await;
 }
+
+fn open_document() -> Room {
+    open_named(&format!("lab/{}", Uuid::new_v4()))
+}
+
+#[tokio::test]
+async fn a_notebook_keeps_cursors_and_selections() {
+    let room = open_document();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Editor);
+
+    let state = json!({
+        "user": {"name": "Mallory", "initials": "M"},
+        "cursors": [{"anchor": 1, "head": 4}],
+        "selection": {"start": 2, "end": 9},
+        "current": "cell-3",
+    });
+    room.handle.frame(2, awareness(300, 1, state.clone()));
+
+    let seen = next_awareness(&mut alice).await;
+    let relayed = seen[&300].1.as_object().unwrap();
+    for field in ["cursors", "selection", "current"] {
+        assert_eq!(relayed[field], state[field], "{field}");
+    }
+    assert_eq!(relayed["user"]["email"], "bob@example.org");
+    assert_eq!(relayed["user"]["name"], "bob");
+    assert_eq!(relayed["user"]["display_name"], "bob");
+    assert!(relayed["user"]["color"].is_string());
+    assert!(relayed["user"].get("initials").is_none());
+}
+
+#[tokio::test]
+async fn a_notebook_state_cannot_claim_another_account() {
+    let room = open_document();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Editor);
+
+    let claim = json!({"email": "alice@example.org", "name": "alice", "color": "#000000"});
+    room.handle
+        .frame(2, awareness(301, 1, json!({"user": claim, "current": "c"})));
+
+    let seen = next_awareness(&mut alice).await;
+    let user = &seen[&301].1["user"];
+    assert_eq!(user["email"], "bob@example.org");
+    assert_eq!(user["name"], "bob");
+    assert_ne!(user["color"], "#000000");
+}
+
+#[tokio::test]
+async fn a_notebook_frame_over_16_kb_is_dropped() {
+    let room = open_document();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Editor);
+
+    let big = "x".repeat(17 * 1024);
+    room.handle
+        .frame(2, awareness(302, 1, json!({"cursors": big})));
+    nothing_but_the_answer(&room, 1, &mut alice).await;
+
+    let fits = "x".repeat(8 * 1024);
+    room.handle
+        .frame(2, awareness(302, 2, json!({"cursors": fits})));
+    assert_eq!(
+        next_awareness(&mut alice).await[&302].1["cursors"],
+        json!(fits)
+    );
+}
+
+#[tokio::test]
+async fn a_catalogue_still_keeps_only_user_and_editing() {
+    let room = open();
+    let mut alice = join(&room, 1, "alice@example.org", Role::Editor);
+    let _bob = join(&room, 2, "bob@example.org", Role::Editor);
+
+    room.handle.frame(
+        2,
+        awareness(303, 1, json!({"editing": "b", "cursors": [1]})),
+    );
+    let seen = next_awareness(&mut alice).await;
+    let mut keys: Vec<&str> = seen[&303]
+        .1
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["editing", "user"]);
+    assert!(seen[&303].1["user"].get("name").is_none());
+}
