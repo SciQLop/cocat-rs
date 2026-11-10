@@ -135,31 +135,21 @@ The admin pages cut them off at once.
 
 ## Public catalogues from AMDA
 
-`tools/amda_public.py` copies AMDA's shared catalogues and time tables (222 lists, about
-316,000 intervals) into the server as public catalogues, one per list. Run it from any
-machine with `speasy` and a `cocat-rs` that has `update_public_catalogue` (0.4.0 or newer,
-or built from this repository), as a curator, against a server that has `PATCH /api/public`:
-
-```sh
-pip install speasy cocat-rs
-read -rs COCAT_PASSWORD && export COCAT_PASSWORD   # typed, not echoed nor kept in history
-python tools/amda_public.py --url https://cocat.example.org --email curator@example.org
-```
+The AMDA provider replaces the `tools/amda_public.py` script. It copies AMDA's shared
+catalogues and time tables (222 lists, about 316,000 intervals) into the server as public
+catalogues, one per list, and keeps them in step with AMDA. Like every provider it is off
+until an administrator turns it on: admin page, "Catalogue providers", AMDA. It runs daily at
+04:00 UTC by default; "Refresh now" runs it at once.
 
 Each list becomes `public.amda.<AMDA id>` (`public.amda.sharedcatalog_22`), filed under
 `AMDA/` plus its AMDA folder, with AMDA's description. It holds one catalogue named like the
-list; a catalogue's columns become event attributes (numbers, text, dates, booleans). Run it
-again to follow AMDA: new intervals are added, changed columns rewritten, intervals AMDA
-dropped go to the trash, and nothing is duplicated. The script prints one line per list
-and exits non-zero when one failed; the others are still imported.
+list; a catalogue's columns become event attributes. A refresh adds new intervals, rewrites
+changed columns and moves intervals AMDA dropped to the trash; nothing is duplicated.
 
-- `--password-env VAR` reads the password from `VAR` instead of `COCAT_PASSWORD`. It is
-  never taken on the command line, where `ps` and the shell history would show it.
-- `--only sharedcatalog_22 sharedtimeTable_0` imports just those lists.
-- `--limit N` imports the first N.
-- `--dry-run` downloads and counts without writing.
-
-The largest list (34k intervals) takes about 10 s and a 14 MB project file.
+A server where the script already ran keeps its AMDA catalogues: the provider uses the same
+ids and uuids, so its first run changes nothing in a list AMDA did not change. Curators can no
+longer edit those catalogues once the provider follows them. If one list cannot be read, the
+whole run fails, no catalogue changes, and the admin page names the list.
 
 ## The catalogue web app
 

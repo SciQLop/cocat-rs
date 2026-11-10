@@ -743,6 +743,7 @@ dependencies = [
  "openidconnect",
  "palette",
  "proptest",
+ "quick-xml",
  "reqwest",
  "scraper",
  "serde",

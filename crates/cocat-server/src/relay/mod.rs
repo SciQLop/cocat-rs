@@ -4,6 +4,7 @@
 //! relayed catalogue by hand.
 
 pub mod admin;
+pub mod amda;
 pub mod cdaw;
 pub mod donki;
 pub mod schedule;
@@ -75,7 +76,11 @@ pub trait Provider: Send + Sync {
 
 /// The providers this server knows.
 pub fn providers() -> Vec<Arc<dyn Provider>> {
-    vec![Arc::new(donki::Donki), Arc::new(cdaw::Cdaw)]
+    vec![
+        Arc::new(donki::Donki),
+        Arc::new(cdaw::Cdaw),
+        Arc::new(amda::Amda),
+    ]
 }
 
 /// The client providers fetch with: a timeout per request, and a User-Agent naming cocat and

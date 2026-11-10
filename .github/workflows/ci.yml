@@ -55,4 +55,4 @@ jobs:
       # The suite starts the server binary, so it has to exist before pytest runs.
       - run: cargo build --workspace
       - run: .venv/bin/maturin develop -m crates/cocat-py/Cargo.toml
-      - run: .venv/bin/python -m pytest crates/cocat-py/tests tools
+      - run: .venv/bin/python -m pytest crates/cocat-py/tests
