@@ -58,11 +58,11 @@ pub fn WorkspaceApp(config: RoomConfig) -> impl IntoView {
     });
     move || {
         match documents.get() {
-        Documents::Loading => view! { <p class="quiet page-note">"Opening the workspace…"</p> }.into_any(),
+        Documents::Loading => view! { <p class="quiet page-note">"Opening the SciQLop workspace…"</p> }.into_any(),
         Documents::Failed(why) => view! { <p class="field-error page-note" role="alert">{why}</p> }.into_any(),
         Documents::Listed(listed) => match manifest_of(&listed) {
             Some(manifest) => view! { <Workspace config=config.clone() manifest/> }.into_any(),
-            None => view! { <p class="field-error page-note" role="alert">"This workspace has no file list."</p> }.into_any(),
+            None => view! { <p class="field-error page-note" role="alert">"This SciQLop workspace has no file list."</p> }.into_any(),
         },
     }
     }
@@ -80,7 +80,7 @@ fn manifest_of(documents: &[Document]) -> Option<String> {
 fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
     let project_socket = config.ws_url.clone();
     let Some(ws_url) = api_url(&config.ws_url, &[&manifest]) else {
-        return view! { <p class="field-error page-note" role="alert">"The workspace cannot sync."</p> }
+        return view! { <p class="field-error page-note" role="alert">"The SciQLop workspace cannot sync."</p> }
             .into_any();
     };
     let manifest_room = Room::new(RoomConfig { ws_url, ..config });
@@ -88,7 +88,7 @@ fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
     let connection = match connection::connect(manifest_room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => {
-            return view! { <p class="field-error page-note" role="alert">{format!("The workspace cannot sync: {error}")}</p> }
+            return view! { <p class="field-error page-note" role="alert">{format!("The SciQLop workspace cannot sync: {error}")}</p> }
                 .into_any();
         }
     };
@@ -138,7 +138,7 @@ fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
                         match open.get() {
                             None if empty.get() => view! {
                                 <h1>{name.clone()}</h1>
-                                <p class="quiet">"This workspace is empty. Its files appear here once someone shares a SciQLop workspace into it."</p>
+                                <p class="quiet">"This SciQLop workspace is empty. Its files appear here once someone shares it from SciQLop."</p>
                             }.into_any(),
                             None => view! {
                                 <h1>{name.clone()}</h1>
@@ -465,7 +465,7 @@ fn PastFile(
                 let stored = &json["files"][entry.path.as_str()];
                 match stored["hash"].as_str() {
                     Some(hash) => stored_file(&entry.path, hash, stored["size"].as_u64(), &blobs),
-                    None => view! { <p class="quiet">"The file was not in the workspace at this version."</p> }.into_any(),
+                    None => view! { <p class="quiet">"The file was not in the SciQLop workspace at this version."</p> }.into_any(),
                 }
             }
         },

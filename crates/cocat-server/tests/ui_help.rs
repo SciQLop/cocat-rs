@@ -267,7 +267,7 @@ async fn the_workspace_help_says_what_the_web_app_shows() {
         "SciQLop",
         "History",
         "Restore",
-        "New workspace",
+        "New SciQLop",
         "download",
         "live",
     ] {

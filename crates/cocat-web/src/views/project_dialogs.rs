@@ -118,8 +118,8 @@ fn Create(dialog: RwSignal<Option<Dialog>>, kind: Kind) -> impl IntoView {
                     <Hint text="A project holds catalogues you share with the same people." anchor="projects" topic="projects"/>
                 }.into_any(),
                 Kind::Workspace => view! {
-                    <h2>"New workspace"</h2>
-                    <Hint text="A workspace holds a SciQLop workspace's notebooks and files, shared with the same people." anchor="workspaces" topic="workspaces"/>
+                    <h2>"New SciQLop workspace"</h2>
+                    <Hint text="A SciQLop workspace shares its notebooks, scripts and files with the same people. You edit them in SciQLop; the web app shows them." anchor="workspaces" topic="workspaces"/>
                 }.into_any(),
             }}
             <label>
