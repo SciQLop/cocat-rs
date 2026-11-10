@@ -65,7 +65,7 @@ impl Presence {
     pub fn for_key(key: &str) -> Self {
         let project = project_of(key);
         Self {
-            silent: project == key && is_public_id(key),
+            silent: is_public_id(project),
             wide: project != key,
             ..Self::default()
         }
@@ -195,18 +195,18 @@ fn vouched(json: &str, email: &str, wide: bool) -> Option<String> {
 /// A workspace document's account also carries the `name` and `display_name` JupyterLab
 /// shows for a collaborator.
 fn account(email: &str, wide: bool) -> Value {
-    let user = json!({ "email": email, "color": color(email) });
-    let name = email.split('@').next().unwrap_or(email);
-    match (wide, user) {
-        (true, Value::Object(mut user)) => {
-            user.extend([
-                ("name".to_owned(), json!(name)),
-                ("display_name".to_owned(), json!(name)),
-            ]);
-            Value::Object(user)
-        }
-        (_, user) => user,
+    let mut user = Map::from_iter([
+        ("email".to_owned(), json!(email)),
+        ("color".to_owned(), json!(color(email))),
+    ]);
+    if wide {
+        let name = email.split('@').next().unwrap_or(email);
+        user.extend([
+            ("name".to_owned(), json!(name)),
+            ("display_name".to_owned(), json!(name)),
+        ]);
     }
+    Value::Object(user)
 }
 
 /// The event the client says it edits; anything but a short string reads as none.
@@ -311,6 +311,47 @@ mod tests {
         assert!(catalogue.oversized(&[1; 4097]));
         assert!(!catalogue.oversized(&[1; 4096]));
         assert!(!catalogue.oversized(&[0; 4097]));
+    }
+
+    #[test]
+    fn a_document_of_a_public_project_relays_no_presence() {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use yrs::ClientID;
+        use yrs::sync::awareness::{AwarenessUpdate, AwarenessUpdateEntry};
+
+        let update = || AwarenessUpdate {
+            clients: HashMap::from([(
+                ClientID::new(7),
+                AwarenessUpdateEntry {
+                    clock: 1,
+                    json: Arc::from(r#"{"current":"c"}"#),
+                },
+            )]),
+        };
+        let user = uuid::Uuid::new_v4();
+        let key = format!("public.x/{}", uuid::Uuid::new_v4());
+        assert!(
+            Presence::for_key(&key)
+                .update(1, user, "a@example.org", update())
+                .is_none()
+        );
+        assert!(
+            Presence::for_key("lab")
+                .update(1, user, "a@example.org", update())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_wide_state_replaces_a_user_that_is_not_an_object() {
+        for claim in [r#""me""#, "null"] {
+            let json = format!(r#"{{"user":{claim},"current":"c"}}"#);
+            let state: serde_json::Value =
+                serde_json::from_str(&vouched(&json, "a@example.org", true).unwrap()).unwrap();
+            assert_eq!(state["user"]["email"], "a@example.org");
+            assert_eq!(state["current"], "c");
+        }
     }
 
     #[test]
