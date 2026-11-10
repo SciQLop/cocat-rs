@@ -1,0 +1,177 @@
+[
+ {
+  "gstID": "2024-05-02T15:00:00-GST-001",
+  "startTime": "2024-05-02T15:00Z",
+  "allKpIndex": [
+   {
+    "kpIndex": 6.67,
+    "observedTime": "2024-05-02T18:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 6.67,
+    "observedTime": "2024-05-02T21:00Z",
+    "source": "NOAA"
+   }
+  ],
+  "link": "https://ccmc.gsfc.nasa.gov/DONKI/view/GST/30399/-1",
+  "linkedEvents": [
+   {
+    "activityID": "2024-05-02T07:46:00-IPS-001"
+   },
+   {
+    "activityID": "2024-05-02T15:49:00-MPC-001"
+   }
+  ],
+  "sentNotifications": [
+   {
+    "messageID": "20240502-AL-004",
+    "messageIssueTime": "2024-05-02T18:44Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30400/1"
+   },
+   {
+    "messageID": "20240502-AL-005",
+    "messageIssueTime": "2024-05-02T18:50Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30401/1"
+   },
+   {
+    "messageID": "20240502-AL-006",
+    "messageIssueTime": "2024-05-02T21:34Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30402/1"
+   }
+  ],
+  "submissionTime": "2024-05-02T18:44Z",
+  "versionId": 1
+ },
+ {
+  "gstID": "2024-05-10T15:00:00-GST-001",
+  "startTime": "2024-05-10T15:00Z",
+  "allKpIndex": [
+   {
+    "kpIndex": 7.67,
+    "observedTime": "2024-05-10T18:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 8.67,
+    "observedTime": "2024-05-10T21:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 9.0,
+    "observedTime": "2024-05-11T00:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 9.0,
+    "observedTime": "2024-05-11T03:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 8.33,
+    "observedTime": "2024-05-11T06:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 8.67,
+    "observedTime": "2024-05-11T09:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 9.0,
+    "observedTime": "2024-05-11T12:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 8.67,
+    "observedTime": "2024-05-11T15:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 8.33,
+    "observedTime": "2024-05-11T18:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 7.33,
+    "observedTime": "2024-05-11T21:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 7.33,
+    "observedTime": "2024-05-12T00:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 6.67,
+    "observedTime": "2024-05-12T03:00Z",
+    "source": "NOAA"
+   },
+   {
+    "kpIndex": 7.0,
+    "observedTime": "2024-05-12T06:00Z",
+    "source": "NOAA"
+   }
+  ],
+  "link": "https://ccmc.gsfc.nasa.gov/DONKI/view/GST/30693/-1",
+  "linkedEvents": [
+   {
+    "activityID": "2024-05-08T05:36:00-CME-001"
+   },
+   {
+    "activityID": "2024-05-08T12:24:00-CME-001"
+   },
+   {
+    "activityID": "2024-05-08T19:12:00-CME-001"
+   },
+   {
+    "activityID": "2024-05-08T22:24:00-CME-001"
+   },
+   {
+    "activityID": "2024-05-09T09:24:00-CME-001"
+   },
+   {
+    "activityID": "2024-05-10T16:36:00-IPS-001"
+   }
+  ],
+  "sentNotifications": [
+   {
+    "messageID": "20240510-AL-013",
+    "messageIssueTime": "2024-05-10T18:44Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30694/1"
+   },
+   {
+    "messageID": "20240510-AL-014",
+    "messageIssueTime": "2024-05-10T19:19Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30695/1"
+   },
+   {
+    "messageID": "20240510-AL-015",
+    "messageIssueTime": "2024-05-10T21:35Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30702/1"
+   },
+   {
+    "messageID": "20240510-AL-016",
+    "messageIssueTime": "2024-05-10T22:01Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30703/1"
+   },
+   {
+    "messageID": "20240511-AL-002",
+    "messageIssueTime": "2024-05-11T00:34Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30707/1"
+   },
+   {
+    "messageID": "20240511-AL-003",
+    "messageIssueTime": "2024-05-11T00:39Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30708/1"
+   },
+   {
+    "messageID": "20240511-AL-015",
+    "messageIssueTime": "2024-05-11T15:14Z",
+    "messageURL": "https://ccmc.gsfc.nasa.gov/DONKI/view/Alert/30731/1"
+   }
+  ],
+  "submissionTime": "2024-05-10T18:44Z",
+  "versionId": 1
+ }
+]

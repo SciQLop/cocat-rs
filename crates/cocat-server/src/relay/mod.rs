@@ -4,6 +4,7 @@
 //! relayed catalogue by hand.
 
 pub mod admin;
+pub mod donki;
 pub mod schedule;
 pub mod store;
 
@@ -13,6 +14,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cocat_core::model::{self, Counts, EventRecord, Wanted};
 use cocat_core::room_id::{InvalidRoomId, public_id};
+use cocat_core::time::Timestamp;
 use tokio::task::JoinError;
 use yrs::Transact;
 
@@ -55,10 +57,13 @@ pub trait Provider: Send + Sync {
         &[]
     }
     /// Every list the provider publishes now; the error is what the administrator reads.
+    /// `last_ok` is when a run last worked, `None` on the first one: a provider that only
+    /// fetches what changed since then reads it.
     async fn fetch(
         &self,
         http: &reqwest::Client,
         settings: &serde_json::Value,
+        last_ok: Option<Timestamp>,
     ) -> Result<Vec<Fetched>, String>;
     /// An event the provider no longer lists that stays anyway (it fell outside the window
     /// the provider fetches).
@@ -69,7 +74,7 @@ pub trait Provider: Send + Sync {
 
 /// The providers this server knows.
 pub fn providers() -> Vec<Arc<dyn Provider>> {
-    Vec::new()
+    vec![Arc::new(donki::Donki)]
 }
 
 /// The client providers fetch with: a timeout per request, and a User-Agent naming cocat and
@@ -198,8 +203,12 @@ fn panic_message(error: JoinError) -> String {
 
 async fn refresh(state: AppState, provider: Arc<dyn Provider>) -> Result<RunReport, RelayError> {
     let settings = serde_json::from_str(&store::settings(&state.pool, provider.id()).await?)?;
+    let last_ok = store::provider(&state.pool, provider.id())
+        .await?
+        .and_then(|row| row.last_ok_at)
+        .and_then(|at| Timestamp::parse(&at));
     let fetched = provider
-        .fetch(&state.http, &settings)
+        .fetch(&state.http, &settings, last_ok)
         .await
         .map_err(RelayError::Fetch)?;
     if fetched.is_empty() {

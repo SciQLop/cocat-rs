@@ -1,0 +1,44 @@
+[
+ {
+  "flrID": "2024-05-14T16:46:00-FLR-001",
+  "instruments": [
+   {
+    "displayName": "GOES-P: EXIS 1.0-8.0"
+   }
+  ],
+  "beginTime": "2024-05-14T16:46Z",
+  "peakTime": "2024-05-14T17:03Z",
+  "endTime": "2024-05-14T17:08Z",
+  "classType": "X8.7",
+  "sourceLocation": "S18W40",
+  "activeRegionNum": 13664,
+  "note": "",
+  "submissionTime": "2024-05-14T17:30Z",
+  "versionId": 1,
+  "link": "https://webtools.ccmc.gsfc.nasa.gov/DONKI/view/FLR/30500/-1",
+  "linkedEvents": [
+   {
+    "activityID": "2024-05-14T17:12:00-CME-001"
+   }
+  ]
+ },
+ {
+  "flrID": "2024-05-15T08:30:00-FLR-001",
+  "instruments": [
+   {
+    "displayName": "GOES-P: EXIS 1.0-8.0"
+   }
+  ],
+  "beginTime": "2024-05-15T08:30Z",
+  "peakTime": "2024-05-15T08:41Z",
+  "endTime": null,
+  "classType": "M2.1",
+  "sourceLocation": "S17W45",
+  "activeRegionNum": 13664,
+  "note": "",
+  "submissionTime": "2024-05-15T09:10Z",
+  "versionId": 1,
+  "link": "https://webtools.ccmc.gsfc.nasa.gov/DONKI/view/FLR/30510/-1",
+  "linkedEvents": null
+ }
+]

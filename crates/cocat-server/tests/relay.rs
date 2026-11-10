@@ -62,6 +62,7 @@ impl Provider for Fake {
         &self,
         _http: &reqwest::Client,
         _settings: &Value,
+        _last_ok: Option<Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         if let Some((started, release)) = &self.gate {
             started.notify_one();
