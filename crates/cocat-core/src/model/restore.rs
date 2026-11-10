@@ -3,7 +3,10 @@
 
 use std::collections::BTreeSet;
 
-use yrs::{Doc, In, Map as _, MapPrelim, MapRef, Out, ReadTxn, Transact, TransactionMut, WriteTxn};
+use yrs::{
+    Array as _, Doc, In, Map as _, MapPrelim, MapRef, Out, ReadTxn, Transact, TransactionMut,
+    WriteTxn,
+};
 
 use super::members::catalogue_events;
 use super::read::{is_deleted, members, object};
@@ -49,11 +52,15 @@ fn restore_root<P: ReadTxn>(
     }
 }
 
+/// A catalogue's chain of copies belongs to the catalogue, not to a state of it: restoring
+/// or adopting a state never changes it.
+const KEPT: &str = "copied_from";
+
 /// Writes only the keys that differ, so restoring the present writes nothing.
 fn restore_map<P: ReadTxn>(txn: &mut TransactionMut<'_>, past: &P, is: &MapRef, was: &MapRef) {
     let stale: Vec<String> = is
         .keys(txn)
-        .filter(|key| !was.contains_key(past, key))
+        .filter(|key| *key != KEPT && !was.contains_key(past, key))
         .map(str::to_owned)
         .collect();
     for key in stale {
@@ -63,7 +70,7 @@ fn restore_map<P: ReadTxn>(txn: &mut TransactionMut<'_>, past: &P, is: &MapRef, 
         .iter(past)
         .map(|(key, value)| (key.to_owned(), value))
         .collect();
-    for (key, value) in wanted {
+    for (key, value) in wanted.into_iter().filter(|(key, _)| key != KEPT) {
         match (value, is.get(txn, &key)) {
             (Out::Any(want), Some(Out::Any(have))) if want == have => {}
             (Out::YMap(want), Some(Out::YMap(have))) => restore_map(txn, past, &have, &want),
@@ -82,11 +89,18 @@ fn copy<P: ReadTxn>(past: &P, map: &MapRef) -> MapPrelim {
         .collect()
 }
 
-/// The layout holds plain values and nested maps (a catalogue's event set) only.
+/// The layout holds plain values, nested maps (a catalogue's event set) and a chain of
+/// copies (an array of maps) only.
 fn input<P: ReadTxn>(past: &P, value: Out) -> Option<In> {
     match value {
         Out::Any(any) => Some(In::Any(any)),
         Out::YMap(map) => Some(In::Map(copy(past, &map))),
+        Out::YArray(array) => Some(In::Array(
+            array
+                .iter(past)
+                .filter_map(|item| input(past, item))
+                .collect(),
+        )),
         _ => None,
     }
 }

@@ -9,6 +9,7 @@
 //! Reading is pure: every function borrows a read transaction and returns owned values.
 //! Writing happens in the caller's transaction.
 
+mod copies;
 mod materialize;
 mod members;
 mod migrate;
@@ -27,6 +28,7 @@ use thiserror::Error;
 
 use crate::time::Timestamp;
 
+pub use copies::{Hop, copy_chain, set_copied_from};
 pub use materialize::materialize;
 pub use members::{
     Member, catalogue_events, catalogue_events_at, catalogue_members, catalogue_members_at,
@@ -194,6 +196,7 @@ pub struct CatalogueSummary {
     #[schema(value_type = Option<Object>)]
     pub rule: Option<Value>,
     pub shape_axis: Option<ShapeAxis>,
+    pub copied_from: Vec<Hop>,
     pub event_count: usize,
 }
 

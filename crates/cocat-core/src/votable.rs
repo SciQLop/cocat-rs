@@ -815,6 +815,7 @@ mod tests {
             attributes: Map::new(),
             rule: None,
             shape_axis: None,
+            copied_from: Vec::new(),
             event_count: 0,
         }
     }

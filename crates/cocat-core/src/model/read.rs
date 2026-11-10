@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use serde_json::{Map, Value};
 use yrs::{Map as _, MapRef, Out, ReadTxn};
 
+use super::copies::chain_in;
 use super::values::{get, json, number, shape, strings, text, time, typed};
 use super::{ATTRIBUTE_PREFIX, CATALOGUES, CatalogueSummary, EVENTS, EventRecord, META, Status};
 
@@ -122,6 +123,7 @@ fn summary<T: ReadTxn>(txn: &T, uuid: &str, map: &MapRef) -> CatalogueSummary {
         attributes: Map::new(),
         rule: None,
         shape_axis: None,
+        copied_from: chain_in(txn, map),
         event_count: 0,
     };
     for (key, value) in map.iter(txn) {
