@@ -9,7 +9,7 @@ use crate::edit;
 use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
-use crate::submissions::{Proposal, PublicAction, proposal_for, public_actions};
+use crate::submissions::{Proposal, PublicAction, menu_proposes, proposal_for, public_actions};
 use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
 use cocat_core::room_id::is_public_id;
 
@@ -33,7 +33,9 @@ pub fn Actions(
     form: RwSignal<Form>,
     proposals: RwSignal<Vec<Proposal>>,
 ) -> impl IntoView {
-    let public = is_public_id(&expect_context::<Room>().config.room_id);
+    let room_id = expect_context::<Room>().config.room_id.clone();
+    let public = is_public_id(&room_id);
+    let relayed = crate::views::public::relay_of(room_id);
     let editor = expect_context::<Room>().can_write();
     let room = StoredValue::new_local(expect_context::<Room>());
     let error: Error = RwSignal::new(None);
@@ -83,7 +85,7 @@ pub fn Actions(
                         </Show>
                     })}
                     <button type="button" on:click=move |_| toggle(Form::Export)>"Export…"</button>
-                    {public.then(|| view! {
+                    {move || menu_proposes(public, relayed.with(Option::is_some)).then(|| view! {
                         <button type="button" on:click=move |_| toggle(Form::Propose)>"Propose a change…"</button>
                     })}
                     {(editor && !public).then(|| view! {

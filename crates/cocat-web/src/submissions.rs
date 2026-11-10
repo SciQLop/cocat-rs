@@ -121,6 +121,12 @@ pub fn public_actions(
     }
 }
 
+/// Whether More offers "Propose a change…": on a public catalogue, unless it follows a
+/// provider, since a relayed catalogue changes only at its source.
+pub fn menu_proposes(public: bool, relayed: bool) -> bool {
+    public && !relayed
+}
+
 pub fn pending(all: &[Submission]) -> usize {
     all.iter()
         .filter(|submission| submission.is_pending())
@@ -230,6 +236,16 @@ mod tests {
         );
         assert_eq!(Copy.label(), "Copy to a project…");
         assert_eq!(Propose.label(), "Propose a change…");
+    }
+
+    #[test]
+    fn more_offers_to_propose_a_change_only_on_a_public_catalogue_the_relay_does_not_hold() {
+        assert!(menu_proposes(true, false));
+        assert!(
+            !menu_proposes(true, true),
+            "a relayed catalogue changes only at its source"
+        );
+        assert!(!menu_proposes(false, false));
     }
 
     #[test]
