@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>Administration</h1>
+</div>
+{% include "admin_tabs.html" %}
+
+{% if providers.is_empty() %}
+<p class="empty">This server has no catalogue providers.</p>
+{% else %}
+<div class="table-wrap">
+<table class="providers">
+  <thead>
+    <tr><th>Source</th><th>Status</th><th>Schedule (UTC)</th><th>Settings</th><th>Last run</th><th class="actions"><span class="sr-only">Actions</span></th></tr>
+  </thead>
+  <tbody>
+{% for provider in providers %}
+    <tr>
+      <td>{{ provider.source }}</td>
+      <td>{% if provider.enabled %}<span class="tag accent">on</span>{% else %}<span class="tag">off</span>{% endif %}
+        {% if provider.running %}<span class="tag">running</span>{% endif %}</td>
+      <td class="nowrap"><code>{{ provider.schedule }}</code>{% if provider.schedule_is_default %} <span class="muted">default</span>{% endif %}</td>
+      <td>
+{% for setting in provider.settings %}
+        <div>{{ setting.key }}:
+{% if setting.secret %}
+          <span class="tag">{% if setting.is_set %}set{% else %}not set{% endif %}</span>
+{% else %}
+          {% if setting.is_set %}{{ setting.value }}{% else %}<span class="muted">not set</span>{% endif %}
+{% endif %}
+        </div>
+{% endfor %}
+      </td>
+      <td>
+        <div>{{ provider.outcome }}{% if !provider.last_run.is_empty() %} <span class="muted">{{ provider.last_run }}</span>{% endif %}</div>
+{% if !provider.counts.is_empty() %}<div class="muted">{{ provider.counts }}</div>{% endif %}
+{% if !provider.error.is_empty() %}<div class="danger">{{ provider.error }}</div>{% endif %}
+      </td>
+      <td class="actions">
+        <form method="post" action="{{ provider.refresh_action }}">
+          <button type="submit" class="small">Refresh now</button>
+        </form>
+        <details class="edit">
+          <summary>Edit</summary>
+          <form method="post" action="{{ provider.save_action }}">
+            <label><input type="checkbox" name="enabled" value="on"{% if provider.enabled %} checked{% endif %}> Enabled</label>
+            <input name="schedule" type="text" value="{% if !provider.schedule_is_default %}{{ provider.schedule }}{% endif %}"
+                   placeholder="{{ provider.schedule }}" aria-label="Cron line in UTC for {{ provider.source }}">
+{% for setting in provider.settings %}
+            <input name="{{ setting.field }}" type="{% if setting.secret %}password{% else %}text{% endif %}"
+                   value="{{ setting.value }}" autocomplete="off"
+                   placeholder="{% if setting.secret %}{% if setting.is_set %}unchanged{% else %}not set{% endif %}{% endif %}"
+                   aria-label="{{ setting.key }} for {{ provider.source }}">
+{% endfor %}
+            <button type="submit" class="small">Save</button>
+          </form>
+        </details>
+      </td>
+    </tr>
+{% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted note">A provider is off until turned on. The schedule is a cron line in UTC; leave it
+empty for the default. A secret setting is never shown: leave its field empty to keep it.
+Refresh now runs in the background; reload the page to see how it went.</p>
+{% endif %}
+{% endblock %}

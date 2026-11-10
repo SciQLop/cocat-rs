@@ -118,13 +118,17 @@ pub enum AdminError {
     UnknownUser,
     #[error("a public catalogue has no owner")]
     PublicRoom,
+    #[error("no such catalogue provider")]
+    UnknownProvider,
+    #[error(transparent)]
+    Schedule(#[from] crate::relay::schedule::ScheduleError),
     #[error(transparent)]
     Db(#[from] DbError),
     #[error(transparent)]
     Account(#[from] AccountError),
 }
 
-fn require(actor: &User) -> Result<(), AdminError> {
+pub(crate) fn require(actor: &User) -> Result<(), AdminError> {
     if actor.is_superuser {
         Ok(())
     } else {

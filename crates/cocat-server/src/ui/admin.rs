@@ -17,6 +17,7 @@ use crate::AppState;
 use crate::admin::{self, AdminError, Overview, RoomRow, UserRow};
 use crate::db::User;
 use crate::links::segment;
+use crate::relay::admin::{self as providers_admin, Config, Refresh, Status};
 use crate::ui::frame::{self, Flash, Frame, RequireUser};
 
 #[derive(Template)]
@@ -51,11 +52,20 @@ struct RoomsPage {
     room_default: String,
 }
 
-/// The three sections, and which one the page shows.
+#[derive(Template)]
+#[template(path = "admin_providers.html")]
+struct ProvidersPage {
+    frame: Frame,
+    tabs: Tabs,
+    providers: Vec<ProviderView>,
+}
+
+/// The sections, and which one the page shows.
 struct Tabs {
     overview: String,
     users: String,
     rooms: String,
+    providers: String,
     current: &'static str,
 }
 
@@ -232,6 +242,88 @@ pub(crate) async fn rooms(
     })
 }
 
+/// One catalogue provider as the table shows it, with the forms that act on it.
+struct ProviderView {
+    source: &'static str,
+    enabled: bool,
+    schedule: String,
+    schedule_is_default: bool,
+    settings: Vec<SettingView>,
+    running: bool,
+    last_run: String,
+    outcome: &'static str,
+    counts: String,
+    error: String,
+    save_action: String,
+    refresh_action: String,
+}
+
+struct SettingView {
+    key: String,
+    field: String,
+    secret: bool,
+    is_set: bool,
+    value: String,
+}
+
+pub(crate) async fn providers(
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Flash(flash): Flash,
+) -> Response {
+    let statuses = match providers_admin::statuses(&state, &user).await {
+        Ok(statuses) => statuses,
+        Err(error) => return refused_page(error),
+    };
+    frame::page(ProvidersPage {
+        frame: frame(&state, &user, "Catalogue providers", flash),
+        tabs: tabs(&state, "providers"),
+        providers: statuses
+            .iter()
+            .map(|status| provider_view(&state, status))
+            .collect(),
+    })
+}
+
+pub(crate) async fn configure_provider(
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Response {
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.clone())
+    };
+    let config = Config {
+        enabled: field("enabled").is_some(),
+        schedule: field("schedule").unwrap_or_default(),
+        settings: fields
+            .iter()
+            .filter_map(|(key, value)| {
+                Some((key.strip_prefix("setting.")?.to_owned(), value.clone()))
+            })
+            .collect(),
+    };
+    let result = providers_admin::configure(&state, &user, &id, config).await;
+    answer(&state, "/admin/providers", result, "Saved")
+}
+
+pub(crate) async fn refresh_provider(
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let text = match providers_admin::refresh_now(&state, &user, &id).await {
+        Ok(Refresh::Started(source)) => format!("Refreshing {source}…"),
+        Ok(Refresh::AlreadyRunning(source)) => format!("{source} is already being refreshed"),
+        Err(error) => return answer(&state, "/admin/providers", Err(error), ""),
+    };
+    back(&state, "/admin/providers", &text)
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct FlagForm {
     flag: String,
@@ -343,8 +435,91 @@ fn tabs(state: &AppState, current: &'static str) -> Tabs {
         overview: state.links.path("/admin"),
         users: state.links.path("/admin/users"),
         rooms: state.links.path("/admin/rooms"),
+        providers: state.links.path("/admin/providers"),
         current,
     }
+}
+
+fn provider_view(state: &AppState, status: &Status) -> ProviderView {
+    let id = status.provider.id();
+    let row = status.row.as_ref();
+    let result: Option<serde_json::Value> = row
+        .and_then(|row| row.last_result.as_deref())
+        .and_then(|text| serde_json::from_str(text).ok());
+    let error = result
+        .as_ref()
+        .and_then(|result| result["error"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let last_run = row.and_then(|row| row.last_run_at.as_deref());
+    ProviderView {
+        source: status.provider.source(),
+        enabled: row.is_some_and(|row| row.enabled),
+        schedule: status.schedule().to_owned(),
+        schedule_is_default: row.is_none_or(|row| row.schedule.is_none()),
+        settings: status
+            .settings()
+            .into_iter()
+            .map(|setting| SettingView {
+                field: format!("setting.{}", setting.key),
+                key: setting.key,
+                secret: setting.secret,
+                is_set: setting.is_set,
+                value: setting.value,
+            })
+            .collect(),
+        running: row.is_some_and(|row| row.running),
+        last_run: last_run.map(when).unwrap_or_default(),
+        outcome: match (last_run, error.is_empty()) {
+            (None, _) => "Never run",
+            (Some(_), true) => "Worked",
+            (Some(_), false) => "Failed",
+        },
+        counts: result.as_ref().map(run_counts).unwrap_or_default(),
+        error,
+        save_action: state.links.path(&format!("/admin/providers/{id}")),
+        refresh_action: state.links.path(&format!("/admin/providers/{id}/refresh")),
+    }
+}
+
+/// "2026-11-10T12:00:00Z" as "2026-11-10 12:00 UTC".
+fn when(stamp: &str) -> String {
+    format!(
+        "{} UTC",
+        stamp
+            .trim_end_matches('Z')
+            .replacen('T', " ", 1)
+            .chars()
+            .take(16)
+            .collect::<String>()
+    )
+}
+
+fn run_counts(result: &serde_json::Value) -> String {
+    let count = |name: &str| result[name].as_u64().unwrap_or(0);
+    if result["catalogues"].is_null() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = [
+        ("catalogues", "catalogues"),
+        ("added", "added"),
+        ("changed", "changed"),
+        ("removed", "removed"),
+        ("restored", "restored"),
+    ]
+    .iter()
+    .map(|(key, word)| format!("{} {word}", count(key)))
+    .collect();
+    parts.extend(
+        [
+            ("skipped", "skipped"),
+            ("unpublished", "no longer published"),
+        ]
+        .iter()
+        .filter(|(key, _)| count(key) > 0)
+        .map(|(key, word)| format!("{} {word}", count(key))),
+    );
+    parts.join(", ")
 }
 
 fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
@@ -479,7 +654,9 @@ fn answer(state: &AppState, page: &str, result: Result<(), AdminError>, done: &s
             error @ (AdminError::OwnAccount
             | AdminError::InvalidQuota
             | AdminError::UnknownUser
-            | AdminError::PublicRoom),
+            | AdminError::PublicRoom
+            | AdminError::UnknownProvider
+            | AdminError::Schedule(_)),
         ) => error.to_string(),
         Err(error) => {
             tracing::warn!(%error, "an administration action failed");

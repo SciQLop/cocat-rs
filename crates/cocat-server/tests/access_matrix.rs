@@ -745,6 +745,24 @@ const ROWS: &[Row] = &[
     row("GET", "/ui/admin/users", Guard::Superuser, Style::UiPage),
     row("GET", "/ui/admin/rooms", Guard::Superuser, Style::UiPage),
     row(
+        "GET",
+        "/ui/admin/providers",
+        Guard::Superuser,
+        Style::UiPage,
+    ),
+    row(
+        "POST",
+        "/ui/admin/providers/{provider}",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
+        "POST",
+        "/ui/admin/providers/{provider}/refresh",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
+    row(
         "POST",
         "/ui/admin/users/{user}/flag",
         Guard::Superuser,
@@ -1032,6 +1050,7 @@ impl World {
             .replace("{invitation}", &self.invitation.to_string())
             .replace("{user}", &self.user.to_string())
             .replace("{member}", &self.target.to_string())
+            .replace("{provider}", "missing")
             .replace("{name}", "orcid")
             .replace("{token}", "missing")
             .replace("{file}", "style.css")

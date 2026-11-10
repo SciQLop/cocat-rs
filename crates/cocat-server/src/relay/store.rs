@@ -84,6 +84,28 @@ pub async fn finish(pool: &SqlitePool, id: &str, ok: bool, result: &str) -> Resu
     Ok(())
 }
 
+/// Saves what the administrator set; the provider's run state is left alone.
+pub async fn configure(
+    pool: &SqlitePool,
+    id: &str,
+    enabled: bool,
+    schedule: Option<&str>,
+    settings: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO relay_provider (id, enabled, schedule, settings) VALUES (?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled,
+           schedule = excluded.schedule, settings = excluded.settings",
+    )
+    .bind(id)
+    .bind(enabled)
+    .bind(schedule)
+    .bind(settings)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// No run survives a restart: whatever was marked running stopped with the old process.
 pub async fn stop_all(pool: &SqlitePool) -> Result<(), DbError> {
     sqlx::query("UPDATE relay_provider SET running = 0")

@@ -389,6 +389,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         let _sampler = crate::telemetry::spawn_sampler(state.clone());
     }
     let _role_checks = ws::spawn_role_checks(state.clone());
+    let _relay_schedule = crate::relay::schedule::spawn_scheduler(state.clone());
     let address = listener.local_addr()?;
     println!("listening on {address}");
     tracing::info!(%address, "cocat-server serving");

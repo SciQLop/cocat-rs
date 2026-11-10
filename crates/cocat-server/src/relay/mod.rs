@@ -3,6 +3,8 @@
 //! provider publishes now, as one version authored by the provider's source. Nobody edits a
 //! relayed catalogue by hand.
 
+pub mod admin;
+pub mod schedule;
 pub mod store;
 
 use std::sync::Arc;
@@ -47,6 +49,11 @@ pub trait Provider: Send + Sync {
     fn source(&self) -> &'static str;
     /// A cron line, in UTC.
     fn default_schedule(&self) -> &'static str;
+    /// The settings the administrator can give, by key; a key holding `key`, `token` or
+    /// `secret` is masked on the admin page.
+    fn settings(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// Every list the provider publishes now; the error is what the administrator reads.
     async fn fetch(
         &self,

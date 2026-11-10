@@ -104,6 +104,12 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/admin/users/{user}/flag", post(admin::set_flag))
         .route("/admin/users/{user}/quota", post(admin::set_quota))
         .route("/admin/users/{user}/delete", post(admin::delete_user))
+        .route("/admin/providers", get(admin::providers))
+        .route("/admin/providers/{id}", post(admin::configure_provider))
+        .route(
+            "/admin/providers/{id}/refresh",
+            post(admin::refresh_provider),
+        )
         .route("/admin/rooms", get(admin::rooms))
         .route("/admin/rooms/{room}/limit", post(admin::set_limit))
         .route("/admin/rooms/{room}/owner", post(admin::set_owner))
