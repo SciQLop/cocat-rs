@@ -59,6 +59,10 @@ const LASCO_MEASURES: [(usize, &str); 9] = [
     (11, "mpa_deg"),
 ];
 const LASCO_COLUMNS: usize = 12;
+/// How the list writes frequencies it did not determine; such a row has a day, not a burst
+/// time: its 00:00 times are placeholders.
+const UNDETERMINED: &str = "????";
+const DAY_SECONDS: i64 = 86_400;
 /// Date, time, end date, end time, two frequencies, flare, region, importance, CME date,
 /// time, angle, width, speed, plot link.
 const TYPE_II_COLUMNS: usize = 15;
@@ -104,10 +108,19 @@ fn type_ii_event(row: &Row) -> Result<(String, EventRecord), String> {
     if t.len() < TYPE_II_COLUMNS {
         return Err(format!("type II line has too few columns: {}", row.line));
     }
-    let start = stamp(row.date, minutes_of(t[1])? * 60)?;
-    let stop = stamp(day_after_or_same(row.date, t[2])?, minutes_of(t[3])? * 60)?;
+    let time_unknown = t[4] == UNDETERMINED;
+    let (start, stop) = match time_unknown {
+        true => (stamp(row.date, 0)?, stamp(row.date, DAY_SECONDS)?),
+        false => (
+            stamp(row.date, minutes_of(t[1])? * 60)?,
+            stamp(day_after_or_same(row.date, t[2])?, minutes_of(t[3])? * 60)?,
+        ),
+    };
     let mut record = EventRecord::new(String::new(), start, stop);
     let a = &mut record.attributes;
+    if time_unknown {
+        a.insert("time_unknown".into(), Value::Bool(true));
+    }
     insert(a, "freq_start_khz", number(t[4]));
     insert(a, "freq_end_khz", number(t[5]));
     insert(a, "flare_location", text(t[6]));
@@ -483,6 +496,19 @@ mod tests {
         assert_eq!(unmeasured.attributes["flare_location"], json!("W90b"));
         assert_eq!(unmeasured.attributes["noaa_ar"], json!("DIM"));
         assert!(!unmeasured.attributes.contains_key("importance"));
+    }
+
+    #[test]
+    fn a_burst_with_undetermined_frequencies_spans_its_whole_day() {
+        let burst = burst_at("2003-06-05T00:00:00Z");
+
+        assert_eq!(burst.stop, at("2003-06-06T00:00:00Z"));
+        assert_eq!(burst.attributes["time_unknown"], json!(true));
+        assert!(
+            !burst_at("2006-12-06T19:00:00Z")
+                .attributes
+                .contains_key("time_unknown")
+        );
     }
 
     #[test]
