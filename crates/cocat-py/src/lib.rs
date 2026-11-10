@@ -457,14 +457,41 @@ fn same_catalogue(a: &model::CatalogueSummary, b: &model::CatalogueSummary) -> b
 #[derive(Clone)]
 pub struct Catalogue {
     room: Arc<ClientRoom>,
+    identity: Arc<Mutex<Identity>>,
     uuid: String,
 }
 
+/// What the project's opener knows about where and who it is, for the copies it makes;
+/// both stay unknown for a project opened from a folder without a client.
+#[derive(Default)]
+struct Identity {
+    project_name: Option<String>,
+    email: Option<String>,
+}
+
 impl Catalogue {
-    fn of(room: &Arc<ClientRoom>, uuid: &str) -> Catalogue {
+    fn of(room: &Arc<ClientRoom>, identity: &Arc<Mutex<Identity>>, uuid: &str) -> Catalogue {
         Catalogue {
             room: Arc::clone(room),
+            identity: Arc::clone(identity),
             uuid: uuid.to_owned(),
+        }
+    }
+
+    fn freeze_hop(&self, name: String, at: Timestamp) -> Hop {
+        let identity = lock(&self.identity);
+        let project = self.room.room_id().to_owned();
+        Hop {
+            project_name: identity
+                .project_name
+                .clone()
+                .unwrap_or_else(|| project.clone()),
+            project,
+            catalogue: self.uuid.clone(),
+            catalogue_name: name,
+            version: None,
+            at: (at.unix_micros() / 1000) as i64,
+            by: identity.email.clone(),
         }
     }
 }
@@ -632,25 +659,43 @@ impl Catalogue {
             created: Some(created),
             ..NewCatalogue::default()
         };
+        let hop = self.freeze_hop(self.name()?, created);
         let found = write(&self.room, |txn| {
-            let smart = model::catalogue(txn, &self.uuid)?;
-            let hop = Hop {
-                project: self.room.room_id().to_owned(),
-                project_name: self.room.room_id().to_owned(),
-                catalogue: smart.uuid,
-                catalogue_name: smart.name,
-                version: None,
-                at: (created.unix_micros() / 1000) as i64,
-                by: None,
-            };
-            Some(model::materialize(txn, &self.uuid, &into, hop))
+            model::materialize(txn, &self.uuid, &into, hop)
         })?
-        .ok_or_else(|| unknown("catalogue"))?
         .map_err(value_error)?;
         if !found {
             return Err(unknown("catalogue"));
         }
-        Py::new(py, Catalogue::of(&self.room, &into.uuid))
+        Py::new(py, Catalogue::of(&self.room, &self.identity, &into.uuid))
+    }
+
+    /// The copies this catalogue descends from, oldest first; the last one is its source.
+    #[getter]
+    fn copied_from<'py>(&self, py: Python<'py>) -> Result<Bound<'py, PyList>> {
+        let doc = self.room.doc();
+        let chain = model::catalogue(&doc.transact(), &self.uuid)
+            .ok_or_else(|| unknown("catalogue"))?
+            .copied_from;
+        let hops = chain.iter().map(|hop| {
+            let dict = PyDict::new(py);
+            dict.set_item("project", &hop.project)?;
+            dict.set_item("project_name", &hop.project_name)?;
+            dict.set_item("catalogue", &hop.catalogue)?;
+            dict.set_item("catalogue_name", &hop.catalogue_name)?;
+            dict.set_item("version", hop.version)?;
+            dict.set_item(
+                "at",
+                to_python_datetime(
+                    py,
+                    Timestamp::from_unix_micros(i128::from(hop.at) * 1000)
+                        .ok_or_else(|| value_error("bad time"))?,
+                )?,
+            )?;
+            dict.set_item("by", hop.by.as_deref())?;
+            Ok::<_, PyErr>(dict)
+        });
+        PyList::new(py, hops.collect::<Result<Vec<_>>>()?)
     }
 
     #[getter]
@@ -1134,6 +1179,7 @@ pub struct Project {
     batches: Mutex<Receiver<Vec<Change>>>,
     url: Mutex<Option<String>>,
     credentials: Mutex<Option<(String, String)>>,
+    identity: Arc<Mutex<Identity>>,
 }
 
 impl Project {
@@ -1148,6 +1194,7 @@ impl Project {
             batches: Mutex::new(batches),
             url: Mutex::new(None),
             credentials: Mutex::new(None),
+            identity: Arc::default(),
         }
     }
 }
@@ -1241,6 +1288,14 @@ impl Project {
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
+    /// The project's name and the signed-in email, recorded in the copies made from here.
+    fn set_identity(&self, project_name: String, email: String) {
+        *lock(&self.identity) = Identity {
+            project_name: Some(project_name),
+            email: Some(email),
+        };
+    }
+
     fn close(&self) {
         self.room.close();
     }
@@ -1313,7 +1368,12 @@ impl Project {
         let txn = doc.transact();
         model::catalogues(&txn)
             .iter()
-            .map(|catalogue| Py::new(py, Catalogue::of(&self.room, &catalogue.uuid)))
+            .map(|catalogue| {
+                Py::new(
+                    py,
+                    Catalogue::of(&self.room, &self.identity, &catalogue.uuid),
+                )
+            })
             .collect()
     }
 
@@ -1326,7 +1386,10 @@ impl Project {
                 .find(|catalogue| catalogue.name == uuid_or_name)
         });
         let catalogue = found.ok_or_else(|| unknown("catalogue"))?;
-        Py::new(py, Catalogue::of(&self.room, &catalogue.uuid))
+        Py::new(
+            py,
+            Catalogue::of(&self.room, &self.identity, &catalogue.uuid),
+        )
     }
 
     fn event(&self, py: Python<'_>, uuid: &str) -> Result<Py<Event>> {
@@ -1398,7 +1461,10 @@ impl Project {
             model::set_catalogue_rule(txn, &catalogue.uuid, Some(&rule))
         })?
         .map_err(value_error)?;
-        Py::new(py, Catalogue::of(&self.room, &catalogue.uuid))
+        Py::new(
+            py,
+            Catalogue::of(&self.room, &self.identity, &catalogue.uuid),
+        )
     }
 
     /// The events in the trash, in time order.
@@ -1549,7 +1615,7 @@ impl Project {
                 model::add_catalogue_events(txn, &uuid, &uuids)
             })?;
         }
-        Py::new(py, Catalogue::of(&self.room, &uuid))
+        Py::new(py, Catalogue::of(&self.room, &self.identity, &uuid))
     }
 
     /// A hand-made event (no `origin`) records when it was created unless told otherwise.
@@ -1674,7 +1740,7 @@ impl Project {
             .catalogues
             .first()
             .ok_or_else(|| unknown("catalogue"))?;
-        Py::new(py, Catalogue::of(&self.room, uuid))
+        Py::new(py, Catalogue::of(&self.room, &self.identity, uuid))
     }
 
     /// Imports a file in tscat's JSON format and returns the uuids of its catalogues, in the

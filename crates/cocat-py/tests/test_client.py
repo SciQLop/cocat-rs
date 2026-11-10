@@ -257,3 +257,20 @@ def test_the_signed_in_account_names_its_email(server, signed_in):
     assert account["id"] == signed_in.account_id()
     assert account["is_curator"] is False
     assert cc.raw.account(server.url, server.cookie)["email"] == server.email
+
+
+def test_a_frozen_catalogue_lists_where_it_came_from(server, signed_in, cache):
+    project = signed_in.open("bench", cache=cache)
+    smart = project.create_catalogue(name="smart")
+    smart.rule = {"filter": {"all": True}, "where": {"cmp": ["author", "==", "bob"]}}
+
+    frozen = smart.materialize("snapshot")
+
+    [hop] = frozen.copied_from
+    assert (hop["project"], hop["project_name"]) == (server.project_id, "bench")
+    assert (hop["catalogue"], hop["catalogue_name"]) == (smart.uuid, "smart")
+    assert hop["by"] == server.email
+    assert hop["version"] is None
+    assert hop["at"].year >= 2026
+    assert smart.copied_from == []
+    project.close()

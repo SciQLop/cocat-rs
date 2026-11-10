@@ -166,7 +166,11 @@ class Client:
                 f"You cannot open {project_id!r} on {self.server}: "
                 "it does not exist or you are not a member."
             ) from None
+        project._native.set_identity(self._project_name(project_id), self.account()["email"])
         return project
+
+    def _project_name(self, project_id: str) -> str:
+        return next(info.name for info in self.projects() if info.id == project_id)
 
     def account_id(self, fresh: bool = False) -> str:
         if self._account is None or fresh:
