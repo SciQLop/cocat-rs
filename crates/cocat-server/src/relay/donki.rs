@@ -24,29 +24,55 @@ struct Kind {
     start_field: &'static str,
 }
 
-const fn kind(code: &'static str, name: &'static str, id_field: &'static str) -> Kind {
-    let start_field = match code.as_bytes() {
-        b"FLR" => "beginTime",
-        b"CME" | b"GST" => "startTime",
-        _ => "eventTime",
-    };
-    Kind {
-        code,
-        name,
-        id_field,
-        start_field,
-    }
-}
-
 const KINDS: [Kind; 8] = [
-    kind("FLR", "Solar flares", "flrID"),
-    kind("CME", "Coronal mass ejections", "activityID"),
-    kind("SEP", "Solar energetic particles", "sepID"),
-    kind("IPS", "Interplanetary shocks", "activityID"),
-    kind("GST", "Geomagnetic storms", "gstID"),
-    kind("MPC", "Magnetopause crossings", "mpcID"),
-    kind("RBE", "Radiation belt enhancements", "rbeID"),
-    kind("HSS", "High speed streams", "hssID"),
+    Kind {
+        code: "FLR",
+        name: "Solar flares",
+        id_field: "flrID",
+        start_field: "beginTime",
+    },
+    Kind {
+        code: "CME",
+        name: "Coronal mass ejections",
+        id_field: "activityID",
+        start_field: "startTime",
+    },
+    Kind {
+        code: "SEP",
+        name: "Solar energetic particles",
+        id_field: "sepID",
+        start_field: "eventTime",
+    },
+    Kind {
+        code: "IPS",
+        name: "Interplanetary shocks",
+        id_field: "activityID",
+        start_field: "eventTime",
+    },
+    Kind {
+        code: "GST",
+        name: "Geomagnetic storms",
+        id_field: "gstID",
+        start_field: "startTime",
+    },
+    Kind {
+        code: "MPC",
+        name: "Magnetopause crossings",
+        id_field: "mpcID",
+        start_field: "eventTime",
+    },
+    Kind {
+        code: "RBE",
+        name: "Radiation belt enhancements",
+        id_field: "rbeID",
+        start_field: "eventTime",
+    },
+    Kind {
+        code: "HSS",
+        name: "High speed streams",
+        id_field: "hssID",
+        start_field: "eventTime",
+    },
 ];
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x6ef18c5f_f0a8_49d6_8d92_7b8c37272eaf);
@@ -65,6 +91,9 @@ const JOINED: [(&str, &str); 2] = [
 ];
 
 fn parse(kind: &Kind, body: &[u8]) -> Result<Vec<EventRecord>, String> {
+    if body.trim_ascii().is_empty() {
+        return Ok(Vec::new());
+    }
     let events: Vec<Value> = serde_json::from_slice(body)
         .map_err(|error| format!("{} is not a list: {error}", kind.code))?;
     events
@@ -81,6 +110,7 @@ fn parse_event(kind: &Kind, event: &Value) -> Result<EventRecord, String> {
     let stop = STOP_FIELDS
         .iter()
         .find_map(|field| time_of(event, field))
+        .or_else(|| kp_readings(event).filter_map(|(_, at)| at).max())
         .unwrap_or(start);
     let uuid = Uuid::new_v5(&NAMESPACE, key.as_bytes()).to_string();
     let mut record = EventRecord::new(uuid, start, stop);
@@ -115,7 +145,26 @@ fn attributes(kind: &Kind, event: &Value) -> Map<String, Value> {
             Value::String(joined(event, field, member)?),
         ))
     });
-    scalars.chain(joined).collect()
+    let kp_max = kp_readings(event)
+        .map(|(kp, _)| kp)
+        .max_by(f64::total_cmp)
+        .map(|kp| ("kp_max".to_owned(), Value::from(kp)));
+    scalars.chain(joined).chain(kp_max).collect()
+}
+
+/// A storm's Kp readings: the index, and when it was observed.
+fn kp_readings(event: &Value) -> impl Iterator<Item = (f64, Option<Timestamp>)> + '_ {
+    let readings = event
+        .get("allKpIndex")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    readings.filter_map(|reading| {
+        Some((
+            reading.get("kpIndex")?.as_f64()?,
+            time_of(reading, "observedTime"),
+        ))
+    })
 }
 
 fn joined(event: &Value, field: &str, member: &str) -> Option<String> {
@@ -224,7 +273,10 @@ async fn fetch_kind(
 ) -> Result<Fetched, String> {
     let mut events = Vec::new();
     for window in windows {
-        let body = fetch_window(http, request_url(kind, *window, settings)?).await?;
+        let url = request_url(kind, *window, settings)?;
+        let body = fetch_window(http, url)
+            .await
+            .map_err(|error| format!("{} {}: {error}", kind.code, window.0))?;
         events.extend(parse(kind, &body)?);
     }
     Ok(catalogue(kind, events))
@@ -401,7 +453,7 @@ mod tests {
     #[test]
     fn the_key_comes_from_the_settings() {
         let window = (at("2024-05-01T00:00:00Z"), at("2024-05-31T00:00:00Z"));
-        let window = (date(window.0), date(window.1));
+        let window = (date_of(window.0).unwrap(), date_of(window.1).unwrap());
         let url = |settings| request_url(&kind("FLR"), window, &settings).unwrap();
 
         assert_eq!(
@@ -410,16 +462,6 @@ mod tests {
         );
         assert!(url(json!({})).ends_with("api_key=DEMO_KEY"));
         assert!(url(json!({"api_key": ""})).ends_with("api_key=DEMO_KEY"));
-    }
-
-    fn date(at: Timestamp) -> Date {
-        let parts = at.parts();
-        Date::from_calendar_date(
-            parts.year,
-            time::Month::try_from(parts.month).unwrap(),
-            parts.day,
-        )
-        .unwrap()
     }
 
     #[test]
@@ -492,5 +534,23 @@ mod tests {
         );
         assert!(Donki.keep(&record(old_uuid, old, "M1")));
         assert!(!Donki.keep(&record(recent_uuid, recent, "M1")));
+    }
+
+    #[test]
+    fn an_empty_answer_is_no_events() {
+        for body in ["", " \n"] {
+            assert_eq!(parse(&kind("FLR"), body.as_bytes()), Ok(Vec::new()));
+        }
+    }
+
+    #[test]
+    fn a_storm_lasts_until_its_last_kp_reading_and_keeps_its_peak() {
+        let storms = parse(&kind("GST"), fixture("GST")).unwrap();
+
+        assert_eq!(storms[0].start, at("2024-05-02T15:00:00Z"));
+        assert_eq!(storms[0].stop, at("2024-05-02T21:00:00Z"));
+        assert_eq!(storms[0].attributes["kp_max"], json!(6.67));
+        assert_eq!(storms[1].stop, at("2024-05-12T06:00:00Z"));
+        assert_eq!(storms[1].attributes["kp_max"], json!(9.0));
     }
 }
