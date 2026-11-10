@@ -277,6 +277,15 @@ and to restore.
 | `PUT /api/rooms/{id}/blobs/{sha256}` | owner, editors | store a whole file under its SHA-256 (64 lowercase hex characters; 400 when the bytes do not hash to it; 409 without a file list). 201 when new, 200 when already there |
 | `GET /api/rooms/{id}/blobs/{sha256}` | any member | read it back |
 
+**Uploading from the web app.** Editors upload files or a folder (or drop files on the
+Files section). The page applies the manifest's `rules.patterns` (or the defaults, which it
+writes into a file list it creates) and the file size limit, which the app page names in
+`<meta name="cocat-file-max" content="<bytes>">` (`COCAT_FILE_MAX_MB`). `.ipynb` files
+become `notebook` documents in jupyter_ydoc's `YNotebook` layout, the extensions the viewer
+colours become `text` documents, the rest blobs; then all entries are written to the
+manifest in one transaction. Uploading to an existing notebook or text path writes into its
+document, so its history keeps the replaced version.
+
 **Limits.** `COCAT_ROOM_MAX_MB` and the project's admin limit apply to each document file
 separately, still within the owner's `COCAT_OWNER_MAX_MB`.
 

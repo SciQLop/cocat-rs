@@ -268,6 +268,10 @@ async fn the_workspace_help_says_what_the_web_app_shows() {
         "File history",
         "Restore",
         "when you share one from SciQLop",
+        "Upload a folder…",
+        "drop files",
+        "too big to share",
+        "replaces it",
         "download",
         "live",
     ] {
