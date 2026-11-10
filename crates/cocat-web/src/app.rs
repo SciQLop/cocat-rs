@@ -9,7 +9,7 @@ use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
-use crate::views::files::{FilePane, FilesLoader, ProjectFiles};
+use crate::views::files::{FilePane, FilesLoader, FilesState, ProjectFiles};
 use crate::views::groups::GroupsPage;
 use crate::views::header::Header;
 use crate::views::history::HistoryPage;
@@ -93,10 +93,11 @@ fn App(config: RoomConfig) -> impl IntoView {
     set_title(&config.room_name);
     let public = cocat_core::room_id::is_public_id(&config.room_id);
     let current = public.then(|| config.room_id.clone());
+    let config_has_files = config.files;
     let with_files = config.files.then(|| config.clone());
     let room = Room::new(config);
     provide_context(room.clone());
-    let files: ProjectFiles = RwSignal::new(None);
+    let files: ProjectFiles = RwSignal::new(FilesState::initial(config_has_files));
     provide_context(files);
     let connection = match connection::connect(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
@@ -160,7 +161,7 @@ fn App(config: RoomConfig) -> impl IntoView {
                     <div class="pane">
                         {move || match file_path.get() {
                             Some(path) => view! {
-                                <main class="content file-pane"><FilePane state=files path/></main>
+                                <main class="content file-pane" on:dragover=drag_over on:drop=drop><FilePane state=files path/></main>
                             }.into_any(),
                             None => view! {
                                 <main class="content" on:dragover=drag_over on:drop=drop>

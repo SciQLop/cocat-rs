@@ -1542,7 +1542,7 @@ a.home-project:hover { color: var(--accent); }
 .tone-type { color: var(--tone-type); }
 .tone-punctuation { color: var(--tone-punctuation); }
 
-/* Workspace viewer: the file tree, and a file as it is shown. */
+/* Files viewer: the file tree, and a file as it is shown. */
 .files-section { margin-top: 16px; flex: 1; }
 .sidebar:has(.files-section) .catalogue-list { flex: none; }
 .files-section .eyebrow { margin: 0 0 8px; }

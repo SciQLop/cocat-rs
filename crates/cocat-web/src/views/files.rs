@@ -35,9 +35,23 @@ struct Document {
     kind: String,
 }
 
-/// The project's files once its file list is synced: `None` while it loads, or when the
-/// project has none. Provided by the project page; the sidebar and the file pane read it.
-pub type ProjectFiles = RwSignal<Option<Files>>;
+/// What is known of the project's files. Provided by the project page; the sidebar and the
+/// file pane read it.
+#[derive(Clone)]
+pub enum FilesState {
+    Loading,
+    Unavailable(String),
+    None,
+    Ready(Files),
+}
+
+impl FilesState {
+    pub fn initial(has_files: bool) -> Self {
+        if has_files { Self::Loading } else { Self::None }
+    }
+}
+
+pub type ProjectFiles = RwSignal<FilesState>;
 
 #[derive(Clone)]
 pub struct Files {
@@ -48,24 +62,33 @@ pub struct Files {
 }
 
 /// Finds the project's file list and keeps it synced while the page shows the project.
+// simplify: a project that gains its file list while open shows no Files until reload (the
+// project list is stale the same way); ceiling = SciQLop linking a workspace to a project
+// others have open; upgrade = re-read the documents when the page regains focus, or a
+// server signal.
 #[component]
 pub fn FilesLoader(config: RoomConfig, state: ProjectFiles) -> impl IntoView {
     let manifest = RwSignal::new(None::<String>);
-    let failure = RwSignal::new(None::<String>);
     let (api, id) = (config.api_url.clone(), config.room_id.clone());
     spawn_local(async move {
         match api::read::<Vec<Document>>(&api, &["rooms", &id, "documents"]).await {
-            Ok(listed) => {
-                manifest.try_set(manifest_of(&listed));
-            }
+            Ok(listed) => match manifest_of(&listed) {
+                Some(id) => {
+                    manifest.try_set(Some(id));
+                }
+                None => {
+                    state.try_set(FilesState::None);
+                }
+            },
             Err(error) => {
-                failure.try_set(Some(error.to_string()));
+                state.try_set(FilesState::Unavailable(error.to_string()));
             }
         }
     });
-    view! {
-        {move || failure.get().map(|why| view! { <p class="field-error page-note" role="alert">{format!("The files cannot be read: {why}")}</p> })}
-        {move || manifest.get().map(|manifest| view! { <ManifestSync config=config.clone() manifest state/> })}
+    move || {
+        manifest
+            .get()
+            .map(|manifest| view! { <ManifestSync config=config.clone() manifest state/> })
     }
 }
 
@@ -78,10 +101,11 @@ fn manifest_of(documents: &[Document]) -> Option<String> {
 
 /// Syncs the file list as a read replica (not the page's catalogues room).
 #[component]
-fn ManifestSync(config: RoomConfig, manifest: String, state: ProjectFiles) -> impl IntoView {
+fn ManifestSync(config: RoomConfig, manifest: String, state: ProjectFiles) {
     let socket = config.ws_url.clone();
     let Some(ws_url) = api_url(&config.ws_url, &[&manifest]) else {
-        return view! { <p class="field-error page-note" role="alert">"The files cannot sync."</p> }.into_any();
+        state.set(FilesState::Unavailable("the address is invalid".to_owned()));
+        return;
     };
     let blobs = Blobs {
         api: config.api_url.clone(),
@@ -91,22 +115,21 @@ fn ManifestSync(config: RoomConfig, manifest: String, state: ProjectFiles) -> im
     let connection = match connection::connect(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => {
-            return view! { <p class="field-error page-note" role="alert">{format!("The files cannot sync: {error}")}</p> }
-                .into_any();
+            state.set(FilesState::Unavailable(error.to_string()));
+            return;
         }
     };
     on_cleanup(move || {
         connection.try_with_value(|connection| connection.close());
-        state.try_set(None);
+        state.try_set(FilesState::Loading);
     });
     let files = Memo::new(move |_| room.read(|txn| manifest_files(txn)));
-    state.set(Some(Files {
+    state.set(FilesState::Ready(Files {
         files,
         socket,
         blobs,
         manifest,
     }));
-    ().into_any()
 }
 
 /// The sidebar's Files section: the project's files as a tree.
@@ -117,20 +140,27 @@ pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
         _ => None,
     });
     move || {
-        state.get().map(|project| {
-            view! {
-                <section class="files-section" aria-label="Files">
-                    <h2 class="eyebrow">"Files"</h2>
-                    {move || {
-                        let listed = project.files.get();
-                        if listed.is_empty() {
-                            return view! { <p class="quiet">"No files yet."</p> }.into_any();
-                        }
-                        tree_view(tree(listed), open)
-                    }}
-                </section>
-            }
-        })
+        match state.get() {
+        FilesState::Ready(project) => Some(view! {
+            <section class="files-section" aria-label="Files">
+                <h2 class="eyebrow">"Files"</h2>
+                {move || {
+                    let listed = project.files.get();
+                    if listed.is_empty() {
+                        return view! { <p class="quiet">"No files yet."</p> }.into_any();
+                    }
+                    tree_view(tree(listed), open)
+                }}
+            </section>
+        }.into_any()),
+        FilesState::Unavailable(why) => Some(view! {
+            <section class="files-section" aria-label="Files">
+                <h2 class="eyebrow">"Files"</h2>
+                <p class="field-error" role="alert">{format!("The files cannot be read: {why}")}</p>
+            </section>
+        }.into_any()),
+        FilesState::Loading | FilesState::None => None,
+    }
     }
 }
 
@@ -138,8 +168,17 @@ pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
 #[component]
 pub fn FilePane(state: ProjectFiles, path: String) -> impl IntoView {
     move || {
-        let Some(project) = state.get() else {
-            return view! { <p class="quiet">"Opening the files…"</p> }.into_any();
+        let project = match state.get() {
+            FilesState::Ready(project) => project,
+            FilesState::Loading => {
+                return view! { <p class="quiet">"Opening the files…"</p> }.into_any();
+            }
+            FilesState::None => {
+                return view! { <p class="quiet">"This project has no files."</p> }.into_any();
+            }
+            FilesState::Unavailable(why) => {
+                return view! { <p class="field-error" role="alert">{format!("The files cannot be read: {why}")}</p> }.into_any();
+            }
         };
         let files = project.files;
         let wanted = path.clone();

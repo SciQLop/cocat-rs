@@ -872,7 +872,7 @@ fn taken_email(error: sqlx::Error, email: &str) -> DbError {
     }
 }
 
-/// What a project holds: one catalogues document, or a workspace of files.
+/// What a project was made to hold: catalogues, or catalogues and a file list.
 #[derive(
     Debug,
     Clone,
@@ -1039,7 +1039,7 @@ pub async fn create_room(
     Ok(())
 }
 
-/// A workspace and its manifest document, made together: it is never without one.
+/// A project and its file list (manifest document), made together: it is never without one.
 pub async fn create_workspace(
     pool: &SqlitePool,
     owner_id: Uuid,

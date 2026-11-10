@@ -27,7 +27,7 @@ pub enum Route {
         catalogue: Option<String>,
         version: Option<u64>,
     },
-    /// A workspace's file, by its path in the workspace.
+    /// A project's file, by its path in the file list.
     File(String),
 }
 

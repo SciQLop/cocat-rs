@@ -182,7 +182,6 @@ pub fn ProjectMenu() -> impl IntoView {
     let dialog = RwSignal::new(None::<Dialog>);
     let room = use_context::<Room>();
     let held = room.is_some();
-    let catalogues = room.is_some();
     let editor = room.is_some_and(|room| room.can_write());
     let importer = use_context::<Importer>();
     let open_id = move || projects.open.with(|config| config.room_id.clone());
@@ -264,9 +263,7 @@ pub fn ProjectMenu() -> impl IntoView {
                     <button type="button" role="menuitem" on:click=move |_| { close(); importer.open(None); }>"Import…"</button>
                 })}
                 {held.then(|| view! {
-                    {catalogues.then(|| view! {
-                        <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Export)>"Export catalogues…"</button>
-                    })}
+                    <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Export)>"Export catalogues…"</button>
                     <hr/>
                 })}
                 <button type="button" role="menuitem" on:click=move |_| { close(); go_to(&Route::Groups.hash()); }>"Groups…"</button>
