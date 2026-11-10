@@ -199,14 +199,19 @@ pub async fn delete_room(
 }
 
 /// Deletes the project row, then the files of its catalogues and documents. The documents are
-/// read first because the row takes them with it. False when there was no such project.
+/// read in the same transaction as the delete, because the row takes them with it and a
+/// document created in between would otherwise leave its file behind. False when there was no
+/// such project.
 pub(crate) async fn remove_project(state: &AppState, room_id: &str) -> Result<bool, DbError> {
-    let documents: Vec<Uuid> = db::documents_of(&state.pool, room_id)
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let documents: Vec<Uuid> = db::documents_of(&mut *tx, room_id)
         .await?
         .into_iter()
         .map(|(doc, _)| doc)
         .collect();
-    if !db::delete_room(&state.pool, room_id).await? {
+    let deleted = db::delete_room(&mut *tx, room_id).await?;
+    tx.commit().await?;
+    if !deleted {
         return Ok(false);
     }
     state.rooms.delete_project(room_id, &documents).await;
@@ -231,7 +236,7 @@ pub async fn set_member_role(
     }
     state
         .rooms
-        .revoke_project(&state.pool, room_id, member, CloseReason::AccessChanged)
+        .revoke_project(room_id, member, CloseReason::AccessChanged)
         .await;
     Ok(())
 }
@@ -253,7 +258,7 @@ pub async fn remove_member(
     }
     state
         .rooms
-        .revoke_project(&state.pool, room_id, member, CloseReason::AccessChanged)
+        .revoke_project(room_id, member, CloseReason::AccessChanged)
         .await;
     Ok(())
 }
@@ -272,7 +277,7 @@ pub async fn transfer_ownership(
     db::set_owner(&state.pool, room_id, new_owner).await?;
     state
         .rooms
-        .revoke_project(&state.pool, room_id, new_owner, CloseReason::AccessChanged)
+        .revoke_project(room_id, new_owner, CloseReason::AccessChanged)
         .await;
     Ok(())
 }

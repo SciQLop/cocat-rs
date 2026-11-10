@@ -273,7 +273,7 @@ async fn revoke_sockets(state: &AppState, id: Uuid, rooms: Vec<(db::RoomRow, Rol
     for (room, _) in rooms {
         state
             .rooms
-            .revoke_project(&state.pool, &room.id, id, CloseReason::SessionEnded)
+            .revoke_project(&room.id, id, CloseReason::SessionEnded)
             .await;
     }
 }
@@ -286,10 +286,7 @@ pub(crate) async fn revoke_public(
     reason: CloseReason,
 ) -> Result<(), DbError> {
     for room in db::public_rooms(&state.pool).await? {
-        state
-            .rooms
-            .revoke_project(&state.pool, &room.id, id, reason)
-            .await;
+        state.rooms.revoke_project(&room.id, id, reason).await;
     }
     Ok(())
 }

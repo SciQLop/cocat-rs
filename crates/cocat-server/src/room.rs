@@ -352,23 +352,22 @@ impl RoomManager {
     }
 
     /// Closes the user's sockets on the project's catalogues and on each of its documents.
-    pub async fn revoke_project(
-        &self,
-        pool: &SqlitePool,
-        room_id: &str,
-        user: Uuid,
-        reason: CloseReason,
-    ) {
-        match project_keys(pool, room_id).await {
-            Ok(keys) => {
-                for key in keys {
-                    self.revoke(&key, user, reason).await;
-                }
+    /// Only open rooms hold sockets, so the keys come from the registry.
+    pub async fn revoke_project(&self, room_id: &str, user: Uuid, reason: CloseReason) {
+        let prefix = format!("{room_id}/");
+        let keys: Vec<String> = match self.rooms.lock() {
+            Ok(rooms) => rooms
+                .keys()
+                .filter(|key| key.as_str() == room_id || key.starts_with(&prefix))
+                .cloned()
+                .collect(),
+            Err(_) => {
+                tracing::error!("the room registry is poisoned");
+                return;
             }
-            Err(error) => {
-                tracing::error!(%error, room = %room_id, "cannot list the documents to revoke");
-                self.revoke(room_id, user, reason).await;
-            }
+        };
+        for key in keys {
+            self.revoke(&key, user, reason).await;
         }
     }
 

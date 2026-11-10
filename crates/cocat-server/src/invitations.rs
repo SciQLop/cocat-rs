@@ -293,7 +293,7 @@ async fn join(
     tx.commit().await?;
     state
         .rooms
-        .revoke_project(&state.pool, &room_id, user.id, CloseReason::AccessChanged)
+        .revoke_project(&room_id, user.id, CloseReason::AccessChanged)
         .await;
     Ok((
         RoomRow {

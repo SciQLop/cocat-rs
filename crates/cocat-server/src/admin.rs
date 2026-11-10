@@ -357,7 +357,7 @@ pub async fn set_room_owner(
     for changed in previous.into_iter().chain([target.id]) {
         state
             .rooms
-            .revoke_project(&state.pool, room, changed, CloseReason::AccessChanged)
+            .revoke_project(room, changed, CloseReason::AccessChanged)
             .await;
     }
     Ok(())

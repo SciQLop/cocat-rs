@@ -1004,13 +1004,13 @@ pub async fn document_rows(pool: &SqlitePool, room_id: &str) -> Result<Vec<Docum
 }
 
 pub async fn documents_of(
-    pool: &SqlitePool,
+    executor: impl Executor<'_, Database = Sqlite>,
     room_id: &str,
 ) -> Result<Vec<(Uuid, DocumentKind)>, DbError> {
     let rows: Vec<(String, DocumentKind)> =
         sqlx::query_as("SELECT id, kind FROM document WHERE room_id = ? ORDER BY created_at, id")
             .bind(room_id)
-            .fetch_all(pool)
+            .fetch_all(executor)
             .await?;
     rows.into_iter()
         .map(|(id, kind)| {
@@ -1346,10 +1346,13 @@ pub async fn rooms_closed_to_editors(
     .await?)
 }
 
-pub async fn delete_room(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
+pub async fn delete_room(
+    executor: impl Executor<'_, Database = Sqlite>,
+    room_id: &str,
+) -> Result<bool, DbError> {
     let deleted = sqlx::query("DELETE FROM room WHERE id = ?")
         .bind(room_id)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(deleted.rows_affected() > 0)
 }

@@ -510,11 +510,12 @@ fn room_path_escaped(id: &str) -> String {
     id.replace('/', "%2F")
 }
 
-async fn closed_by_the_server(socket: &mut Socket) -> bool {
+async fn close_code(socket: &mut Socket) -> Option<u16> {
     loop {
         match timeout(WAIT, socket.next()).await.expect("never closed") {
-            Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => return true,
+            Some(Ok(WsMessage::Close(frame))) => return frame.map(|frame| u16::from(frame.code)),
             Some(Ok(_)) => {}
+            other => panic!("expected a close frame, got {other:?}"),
         }
     }
 }
@@ -543,7 +544,7 @@ async fn removing_a_member_closes_their_notebook_sockets() {
         .await;
 
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(closed_by_the_server(&mut socket).await);
+    assert_eq!(close_code(&mut socket).await, Some(4403));
 }
 
 #[tokio::test]
@@ -573,7 +574,7 @@ async fn lowering_a_group_grant_closes_notebook_sockets() {
         .await
         .unwrap();
 
-    assert!(closed_by_the_server(&mut socket).await);
+    assert_eq!(close_code(&mut socket).await, Some(4403));
 }
 
 #[tokio::test]
