@@ -279,6 +279,94 @@ async fn the_project_list_says_which_projects_have_files() {
         files_of(created["id"].as_str().unwrap()),
         Some(json!(false))
     );
+    let kind_of = |id: &str| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|room| room["id"] == id)
+            .map(|room| room["kind"].clone())
+    };
+    assert_eq!(created["kind"], "catalogues");
+    assert_eq!(kind_of(&workspace), Some(json!("workspace")));
+    assert_eq!(
+        kind_of(created["id"].as_str().unwrap()),
+        Some(json!("catalogues"))
+    );
+}
+
+#[tokio::test]
+async fn a_plain_project_lists_no_documents() {
+    let fixture = Fixture::start().await;
+    let (_, token) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&token, "catalogues").await;
+
+    let (status, body) = fixture
+        .send(
+            Method::GET,
+            &format!("/api/rooms/{room}/documents"),
+            &token,
+            None,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
+}
+
+#[tokio::test]
+async fn the_database_keeps_one_manifest_per_project() {
+    let fixture = Fixture::start().await;
+    let (owner, token) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&token, "catalogues").await;
+    let pool = &fixture.state.pool;
+    db::create_document(pool, &room, db::DocumentKind::Manifest, owner)
+        .await
+        .unwrap();
+
+    let second = db::create_document(pool, &room, db::DocumentKind::Manifest, owner).await;
+
+    assert!(second.is_err());
+}
+
+#[tokio::test]
+async fn two_manifests_at_once_make_one_and_refuse_the_other() {
+    let fixture = Fixture::start().await;
+    let (_, token) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&token, "catalogues").await;
+
+    let (first, second) = tokio::join!(
+        fixture.add_document(&token, &room, "manifest"),
+        fixture.add_document(&token, &room, "manifest"),
+    );
+
+    let mut statuses = [first.0, second.0];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::CREATED, StatusCode::CONFLICT]);
+}
+
+#[tokio::test]
+async fn a_public_catalogue_gets_no_file_list() {
+    let fixture = Fixture::start().await;
+    let (curator, token) = fixture.user_token("curator@example.org").await;
+    db::set_curator(&fixture.state.pool, curator, true)
+        .await
+        .unwrap();
+    let (status, made) = fixture
+        .send(
+            Method::POST,
+            "/api/public",
+            &token,
+            Some(json!({"name": "Shocks"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let public = made["id"].as_str().unwrap();
+
+    let (status, refused) = fixture.add_document(&token, public, "manifest").await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["detail"], "A public catalogue holds no files");
 }
 
 async fn handshake(addr: SocketAddr, path: &str, token: &str) -> Result<Socket, u16> {

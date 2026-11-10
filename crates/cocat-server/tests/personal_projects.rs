@@ -157,6 +157,31 @@ async fn nobody_is_invited_to_a_personal_project() {
 }
 
 #[tokio::test]
+async fn a_personal_project_with_a_file_list_still_has_nobody_invited() {
+    let world = World::start().await;
+    db::create_document(
+        &world.state.pool,
+        &world.personal,
+        db::DocumentKind::Manifest,
+        world.owner,
+    )
+    .await
+    .unwrap();
+    let path = format!("/api/rooms/{}/invitations", world.personal);
+
+    refused(
+        world
+            .call(
+                world.owner,
+                Method::POST,
+                &path,
+                Some(json!({"role": "viewer"})),
+            )
+            .await,
+    );
+}
+
+#[tokio::test]
 async fn an_invitation_from_before_the_rule_adds_nobody() {
     let world = World::start().await;
     world.old_invitation(None).await;

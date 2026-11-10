@@ -1,5 +1,5 @@
-//! A workspace's documents: the manifest made with it, and the notebooks and texts added
-//! later. Their content lives in sockets and storage, never in these routes.
+//! A project's documents: its file list (the manifest), made with it or added once, and the
+//! notebooks and texts added after. Their content lives in sockets and storage, never in these routes.
 
 use axum::Json;
 use axum::extract::State;

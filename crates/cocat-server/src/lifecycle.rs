@@ -16,6 +16,7 @@ pub(crate) const MAX_NAME: usize = 200;
 pub(crate) const NO_MEMBERS: &str =
     "A public catalogue has no members: it cannot be shared, left or handed over";
 pub(crate) const NO_FILES: &str = "This project has no files yet";
+const PUBLIC_NO_FILES: &str = "A public catalogue holds no files";
 const HAS_FILES: &str = "This project already has its file list";
 pub(crate) const PERSONAL: &str =
     "“My catalogues” is personal: copy catalogues into another project to share them.";
@@ -106,13 +107,21 @@ pub async fn add_document(
     kind: db::DocumentKind,
 ) -> Result<Uuid, LifecycleError> {
     require_role(state, room_id, actor, Role::Editor).await?;
+    if kind == db::DocumentKind::Manifest && db::is_public(&state.pool, room_id).await? {
+        return Err(LifecycleError::Conflict(PUBLIC_NO_FILES));
+    }
     match (kind, db::has_files(&state.pool, room_id).await?) {
         (db::DocumentKind::Manifest, true) => return Err(LifecycleError::Conflict(HAS_FILES)),
         (db::DocumentKind::Manifest, false) => {}
         (_, false) => return Err(LifecycleError::Conflict(NO_FILES)),
         (_, true) => {}
     }
-    Ok(db::create_document(&state.pool, room_id, kind, actor).await?)
+    match db::create_document(&state.pool, room_id, kind, actor).await {
+        Err(DbError::Sqlx(sqlx::Error::Database(error))) if error.is_unique_violation() => {
+            Err(LifecycleError::Conflict(HAS_FILES))
+        }
+        created => Ok(created?),
+    }
 }
 
 /// Refuses a project without a file list: only a project with one holds files.
