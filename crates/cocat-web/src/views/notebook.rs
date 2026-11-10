@@ -77,6 +77,9 @@ pub fn coloured(code: &str, language: &str) -> AnyView {
         .into_any()
 }
 
+/// Nothing an HTML output names is fetched: no remote stylesheet, no tracking pixel.
+const OUTPUT_POLICY: &str = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:\">";
+
 /// The look of an HTML output inside its sandbox: the app's font, table rules and theme.
 const OUTPUT_STYLE: &str = "<style>\
 :root { color-scheme: light dark; }\
@@ -113,7 +116,7 @@ fn output_view(output: Output) -> AnyView {
         }
         Output::Html(html) => {
             let height = format!("height: {}px", html_height(&html));
-            let html = format!("{OUTPUT_STYLE}{html}");
+            let html = format!("{OUTPUT_POLICY}{OUTPUT_STYLE}{html}");
             // An empty sandbox: the output's own scripts and links never reach the page.
             view! { <iframe class="output html-output" sandbox="" srcdoc=html style=height title="Output"></iframe> }
                 .into_any()

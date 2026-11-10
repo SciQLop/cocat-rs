@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::format::whole_number;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellKind {
     Markdown,
@@ -79,7 +81,7 @@ fn cell(cell: &Value) -> Cell {
         id: cell["id"].as_str().unwrap_or_default().to_owned(),
         kind,
         source: text(&cell["source"], ""),
-        count: integer(&cell["execution_count"]),
+        count: whole_number(&cell["execution_count"]),
         outputs: cell["outputs"].as_array().map_or_else(Vec::new, |outputs| {
             outputs.iter().filter_map(output).collect()
         }),
@@ -106,15 +108,6 @@ fn attachments(attachments: &Value) -> BTreeMap<String, String> {
             Some((name.clone(), format!("data:{mime};base64,{base64}")))
         })
         .collect()
-}
-
-fn integer(value: &Value) -> Option<i64> {
-    value.as_i64().or_else(|| {
-        value
-            .as_f64()
-            .filter(|f| f.fract() == 0.0)
-            .map(|f| f as i64)
-    })
 }
 
 /// nbformat allows a text field to be a string or a list of strings.
@@ -296,6 +289,23 @@ mod tests {
                 traceback: "line1\nline2".into()
             }]
         );
+    }
+
+    #[test]
+    fn an_svg_output_stays_svg_never_markup() {
+        let nb = cell_with(json!([{"output_type": "display_data", "data": {
+            "text/plain": "<Figure>", "image/svg+xml": ["<svg>", "</svg>"], "text/html": "<b>x</b>"}}]));
+        assert_eq!(nb.cells[0].outputs, [Output::Svg("<svg></svg>".into())]);
+    }
+
+    #[test]
+    fn a_count_that_is_not_a_whole_number_is_left_out() {
+        let nb = notebook(&json!({"cells": [
+            {"id": "a", "cell_type": "code", "source": "", "execution_count": 2.5},
+            {"id": "b", "cell_type": "code", "source": "", "execution_count": 1e20},
+        ]}));
+        assert_eq!(nb.cells[0].count, None);
+        assert_eq!(nb.cells[1].count, None, "too large to be a count");
     }
 
     #[test]

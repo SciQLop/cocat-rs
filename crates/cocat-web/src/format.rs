@@ -70,6 +70,15 @@ pub fn value_text(value: &Value) -> String {
 }
 
 /// Every time a room holds formats; the raw number is the fallback for one that does not.
+/// Integers may arrive as floats from the browser side; accept the integer-valued ones
+/// that a float holds exactly.
+pub fn whole_number(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        let f = value.as_f64()?;
+        (f.fract() == 0.0 && f.abs() < 9.0e15).then_some(f as i64)
+    })
+}
+
 fn formatted(nanos: i64, format: &[BorrowedFormatItem<'_>]) -> String {
     OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
         .ok()

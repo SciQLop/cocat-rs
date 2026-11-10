@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 use syntect::easy::ScopeRangeIterator;
-use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+use syntect::parsing::{ParseState, ScopeStack, ScopeStackOp, SyntaxSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
@@ -110,9 +110,18 @@ fn highlight_line(
     let Ok(ops) = state.parse_line(line, set) else {
         return vec![(Tone::Plain, line.trim_end_matches('\n').to_string())];
     };
+    line_runs(&ops, line, stack)
+}
+
+fn line_runs(ops: &[(usize, ScopeStackOp)], line: &str, stack: &mut ScopeStack) -> Vec<Run> {
     let mut runs = Vec::new();
-    for (range, op) in ScopeRangeIterator::new(&ops, line) {
+    for (range, op) in ScopeRangeIterator::new(ops, line) {
         if stack.apply(op).is_err() {
+            push_run(
+                &mut runs,
+                Tone::Plain,
+                range_text(line, range.start..line.len()),
+            );
             break;
         }
         push_run(&mut runs, tone_of(stack), range_text(line, range));
@@ -206,6 +215,14 @@ mod tests {
             .filter(|token| syntaxes().find_syntax_by_token(token).is_none())
             .collect();
         assert_eq!(unresolved, [&"toml", &"ini", &"ts"]);
+    }
+
+    #[test]
+    fn a_scope_step_that_fails_keeps_the_rest_of_the_line_plain() {
+        let line = "abc def\n";
+        let mut stack = ScopeStack::new();
+        let runs = line_runs(&[(4, ScopeStackOp::Restore)], line, &mut stack);
+        assert_eq!(runs.concat_text(), "abc def");
     }
 
     trait ConcatText {

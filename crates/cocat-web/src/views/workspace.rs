@@ -19,13 +19,15 @@ use crate::projects::api_url;
 use crate::route::Route;
 use crate::session::RoomConfig;
 use crate::state::Room;
+use crate::sync::Status;
 use crate::views::controls::{Error, error_line};
 use crate::views::header::Header;
 use crate::views::notebook::{NotebookView, Place, coloured};
 use crate::views::notice::NoticeBar;
 use crate::views::projects::Projects;
 use crate::workspace::{
-    Entry, Node, Shown, entries, resolve_path, shows_as, size_text, tree, versions_that_changed,
+    Entry, Node, Shown, entries, is_image, placed_image, same_view, shows_as, size_text, tree,
+    versions_that_changed,
 };
 
 /// One document as `GET /api/rooms/{id}/documents` lists it.
@@ -77,10 +79,11 @@ fn manifest_of(documents: &[Document]) -> Option<String> {
 #[component]
 fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
     let project_socket = config.ws_url.clone();
-    let manifest_room = Room::new(RoomConfig {
-        ws_url: format!("{}/{manifest}", config.ws_url),
-        ..config
-    });
+    let Some(ws_url) = api_url(&config.ws_url, &[&manifest]) else {
+        return view! { <p class="field-error page-note" role="alert">"The workspace cannot sync."</p> }
+            .into_any();
+    };
+    let manifest_room = Room::new(RoomConfig { ws_url, ..config });
     provide_context(manifest_room.clone());
     let connection = match connection::connect(manifest_room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
@@ -100,6 +103,15 @@ fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
         Route::File(path) => Some(path),
         _ => None,
     });
+    let empty = Memo::new(move |_| files.with(Vec::is_empty));
+    let opened = Memo::new_with_compare(
+        move |_| {
+            open.get().and_then(|path| {
+                files.with(|files| files.iter().find(|entry| entry.path == path).cloned())
+            })
+        },
+        |old, new| !same_view(old.and_then(Option::as_ref), new.and_then(Option::as_ref)),
+    );
     let config = manifest_room.config.clone();
     let blobs = Blobs {
         api: config.api_url.clone(),
@@ -123,9 +135,8 @@ fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
             <div class="pane">
                 <main class="content file-pane">
                     {move || {
-                        let listed = files.get();
                         match open.get() {
-                            None if listed.is_empty() => view! {
+                            None if empty.get() => view! {
                                 <h1>{name.clone()}</h1>
                                 <p class="quiet">"This workspace is empty. Its files appear here once someone shares a SciQLop workspace into it."</p>
                             }.into_any(),
@@ -133,9 +144,9 @@ fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
                                 <h1>{name.clone()}</h1>
                                 <p class="quiet">"Pick a file on the left to see it. Files change here as people edit them in SciQLop."</p>
                             }.into_any(),
-                            Some(path) => match listed.iter().find(|entry| entry.path == path) {
+                            Some(path) => match opened.get() {
                                 Some(entry) => view! {
-                                    <FileView entry=entry.clone() files=listed.clone() socket=project_socket.clone() blobs=blobs.clone() manifest=manifest.clone()/>
+                                    <FileView entry files socket=project_socket.clone() blobs=blobs.clone() manifest=manifest.clone()/>
                                 }.into_any(),
                                 None => view! {
                                     <h1 class="file-title">{path}</h1>
@@ -218,13 +229,16 @@ fn about(entry: &Entry) -> String {
 #[component]
 fn FileView(
     entry: Entry,
-    files: Vec<Entry>,
+    files: Memo<Vec<Entry>>,
     socket: String,
     blobs: Blobs,
     manifest: String,
 ) -> impl IntoView {
     let in_history = RwSignal::new(false);
-    let about_line = about(&entry);
+    let about_line = {
+        let path = entry.path.clone();
+        move || files.with(|files| files.iter().find(|e| e.path == path).map(about))
+    };
     let shown = shows_as(&entry);
     let place = placing(&entry.path, files, blobs.clone());
     let history_entry = entry.clone();
@@ -266,18 +280,7 @@ fn FileView(
 /// A stored whole file: an image shows, anything else is a download.
 fn stored_file(path: &str, hash: &str, size: Option<u64>, blobs: &Blobs) -> AnyView {
     let name = path.rsplit('/').next().unwrap_or_default().to_owned();
-    if matches!(
-        shows_as(&Entry {
-            path: path.to_owned(),
-            kind: crate::workspace::FileKind::File,
-            doc: None,
-            hash: None,
-            size: None,
-            by: None,
-            at: None,
-        }),
-        Shown::Image
-    ) {
+    if is_image(path) {
         return view! { <img class="file-image" alt=name src=blobs.url(hash)/> }.into_any();
     }
     let label = match size {
@@ -291,7 +294,10 @@ fn stored_file(path: &str, hash: &str, size: Option<u64>, blobs: &Blobs) -> AnyV
     .into_any()
 }
 
-/// How many of the file list's versions a whole file's history looks through.
+/// How many of the file list's versions a whole file's history lists.
+// simplify: each version costs one read of the whole file list, so the history stops at the
+// newest 40; ceiling = a file whose older changes are past that; upgrade = a server route
+// that lists the versions where one path changed.
 const WHOLE_FILE_VERSIONS: usize = 40;
 
 /// A file's versions, the file as it was at the one picked, and Restore for editors.
@@ -330,7 +336,7 @@ fn FileHistory(
                     let id = version.id;
                     view! {
                         <li><button type="button" class="version" aria-current=move || (picked.get() == Some(id)).to_string()
-                            on:click=move |_| picked.set(Some(id))>
+                            on:click=move |_| { error.set(None); picked.set(Some(id)); }>
                             <span>{version_title(&version)}</span>
                             <small class="quiet">{version_when(&version)}</small>
                         </button></li>
@@ -413,8 +419,10 @@ async fn file_versions(
     let Some(path) = whole_file else {
         return Ok(versions);
     };
+    // One more than listed, so the oldest listed version is judged against the one before.
+    // Read one after the other: the crate has no `futures` to join them.
     let mut contents = Vec::new();
-    for version in versions.iter().take(WHOLE_FILE_VERSIONS) {
+    for version in versions.iter().take(WHOLE_FILE_VERSIONS + 1) {
         let state = api::document_state(config, version.id, document).await?;
         let hash = state["files"][path]["hash"].as_str().map(str::to_owned);
         contents.push((version.id, hash));
@@ -422,6 +430,7 @@ async fn file_versions(
     let kept = versions_that_changed(&contents);
     Ok(versions
         .into_iter()
+        .take(WHOLE_FILE_VERSIONS)
         .filter(|version| kept.contains(&version.id))
         .collect())
 }
@@ -484,12 +493,14 @@ fn version_when(version: &Version) -> String {
 }
 
 /// What a markdown cell's relative image path points at in this workspace, as a stored file.
-fn placing(from: &str, files: Vec<Entry>, blobs: Blobs) -> Place {
+fn placing(from: &str, files: Memo<Vec<Entry>>, blobs: Blobs) -> Place {
     let from = from.to_owned();
     Arc::new(move |dest: &str| {
-        let path = resolve_path(&from, dest)?;
-        let entry = files.iter().find(|entry| entry.path == path)?;
-        blobs.url(entry.hash.as_deref()?)
+        files
+            .try_with_untracked(|files| {
+                placed_image(&from, dest, files).and_then(|hash| blobs.url(hash))
+            })
+            .flatten()
     })
 }
 
@@ -503,10 +514,11 @@ enum Render {
 #[component]
 fn LiveDocument(socket: String, doc: String, render: Render) -> impl IntoView {
     let config = expect_context::<Room>().config.as_ref().clone();
-    let room = Room::new(RoomConfig {
-        ws_url: format!("{socket}/{doc}"),
-        ..config
-    });
+    let Some(ws_url) = api_url(&socket, &[&doc]) else {
+        return view! { <p class="field-error" role="alert">"The file cannot sync."</p> }
+            .into_any();
+    };
+    let room = Room::new(RoomConfig { ws_url, ..config });
     let connection = match connection::connect(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => {
@@ -517,9 +529,20 @@ fn LiveDocument(socket: String, doc: String, render: Render) -> impl IntoView {
     on_cleanup(move || {
         connection.try_with_value(|connection| connection.close());
     });
+    let synced = Memo::new(move |was: Option<&bool>| {
+        was.copied().unwrap_or(false) || room.status.get() == Status::Live
+    });
+    // simplify: every change re-renders the whole file; ceiling = a large notebook while
+    // someone types in it; upgrade = a memo per cell id.
     (move || {
+        if !synced.get() {
+            return view! { <p class="quiet">"Opening the file…"</p> }.into_any();
+        }
         room.track();
-        let json = document_json(&room.doc).unwrap_or_default();
+        let Ok(json) = document_json(&room.doc) else {
+            return view! { <p class="field-error" role="alert">"This file cannot be shown."</p> }
+                .into_any();
+        };
         match render.clone() {
             Render::Notebook(place) => {
                 view! { <NotebookView notebook=notebook(&json) place/> }.into_any()

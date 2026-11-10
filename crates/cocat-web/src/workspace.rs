@@ -3,6 +3,8 @@
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+use crate::format::whole_number;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
     Notebook,
@@ -39,7 +41,9 @@ pub enum Shown {
     Download,
 }
 
-const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
+/// No `svg`: a stored blob is served as bytes, and serving it as an image would let its
+/// scripts run on the app's origin; a stored SVG is a download.
+const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 
 /// Extension to syntect lookup token; `None` means plain text.
 const TEXTS: &[(&str, Option<&str>)] = &[
@@ -80,14 +84,14 @@ fn entry(path: &str, fields: &serde_json::Map<String, Value>) -> Option<Entry> {
     Some(Entry {
         path: path.to_owned(),
         kind: kind(fields.get("kind")),
-        doc: text("doc"),
+        doc: text("doc").filter(|doc| uuid::Uuid::parse_str(doc).is_ok()),
         hash: text("hash"),
         size: fields
             .get("size")
-            .and_then(whole)
+            .and_then(whole_number)
             .and_then(|n| u64::try_from(n).ok()),
         by: text("by"),
-        at: fields.get("at").and_then(whole),
+        at: fields.get("at").and_then(whole_number),
     })
 }
 
@@ -97,14 +101,6 @@ fn kind(value: Option<&Value>) -> FileKind {
         Some("text") => FileKind::Text,
         _ => FileKind::File,
     }
-}
-
-/// Integers may arrive as floats from the browser side; accept the integer-valued ones.
-fn whole(value: &Value) -> Option<i64> {
-    value.as_i64().or_else(|| {
-        let f = value.as_f64()?;
-        (f.fract() == 0.0 && f.abs() < 9.0e15).then_some(f as i64)
-    })
 }
 
 pub fn tree(entries: Vec<Entry>) -> Vec<Node> {
@@ -179,6 +175,37 @@ fn by_extension(path: &str) -> Shown {
     }
 }
 
+pub fn is_image(path: &str) -> bool {
+    by_extension(path) == Shown::Image
+}
+
+/// The stored hash of the image a markdown link `dest` in the file at `from` points at.
+pub fn placed_image<'a>(from: &str, dest: &str, files: &'a [Entry]) -> Option<&'a str> {
+    let path = resolve_path(from, dest)?;
+    if !is_image(&path) {
+        return None;
+    }
+    files
+        .iter()
+        .find(|entry| entry.path == path)?
+        .hash
+        .as_deref()
+}
+
+/// Whether the opened file still shows the same thing: who changed it, when and its size
+/// only change the line above it.
+pub fn same_view(a: Option<&Entry>, b: Option<&Entry>) -> bool {
+    let shown = |entry: &Entry| {
+        (
+            entry.path.clone(),
+            entry.kind,
+            entry.doc.clone(),
+            entry.hash.clone(),
+        )
+    };
+    a.map(shown) == b.map(shown)
+}
+
 fn language_of(path: &str) -> Option<&'static str> {
     let ext = extension(path);
     TEXTS
@@ -245,6 +272,8 @@ pub fn versions_that_changed(newest_first: &[(u64, Option<String>)]) -> Vec<u64>
 mod tests {
     use super::*;
     use serde_json::json;
+
+    const DOC: &str = "0b6f3e7c-2a41-4d8e-9c55-7f1a2b3c4d5e";
 
     fn file(path: &str) -> Entry {
         Entry {
@@ -317,7 +346,7 @@ mod tests {
     #[test]
     fn entries_skip_what_is_not_a_file() {
         let files = json!({
-            "a.py": {"kind": "text", "doc": "d1", "size": 12.0, "by": "me", "at": 5},
+            "a.py": {"kind": "text", "doc": DOC, "size": 12.0, "by": "me", "at": 5},
             "bad": "nope",
             "": {"kind": "text"},
             "n.ipynb": {"kind": "notebook", "hash": "abc"},
@@ -326,7 +355,7 @@ mod tests {
         assert_eq!(found.len(), 2);
         let a = found.iter().find(|e| e.path == "a.py").unwrap();
         assert_eq!(a.kind, FileKind::Text);
-        assert_eq!(a.doc.as_deref(), Some("d1"));
+        assert_eq!(a.doc.as_deref(), Some(DOC));
         assert_eq!(a.size, Some(12));
         assert_eq!(a.by.as_deref(), Some("me"));
         assert_eq!(a.at, Some(5));
@@ -363,7 +392,6 @@ mod tests {
         let shown = |path: &str, kind| shows_as(&Entry { kind, ..file(path) });
         let file_kind = FileKind::File;
         assert_eq!(shown("p.PNG", file_kind), Shown::Image);
-        assert_eq!(shown("d/i.svg", file_kind), Shown::Image);
         assert_eq!(
             shown("a.py", file_kind),
             Shown::Text {
@@ -390,5 +418,75 @@ mod tests {
             shown("LICENSE", FileKind::Text),
             Shown::Text { language: None }
         );
+    }
+
+    #[test]
+    fn a_doc_that_is_not_a_uuid_is_dropped() {
+        let found = entries(&json!({
+            "a.py": {"kind": "text", "doc": "../OTHER/DOC"},
+            "b.py": {"kind": "text", "doc": DOC},
+        }));
+        let doc = |path: &str| found.iter().find(|e| e.path == path).unwrap().doc.clone();
+        assert_eq!(doc("a.py"), None, "the entry stays, not shared yet");
+        assert_eq!(doc("b.py").as_deref(), Some(DOC));
+    }
+
+    #[test]
+    fn a_stored_svg_is_a_download() {
+        assert_eq!(shows_as(&file("d/i.svg")), Shown::Download);
+        assert!(!is_image("d/i.SVG"));
+        assert!(is_image("d/i.webp"));
+    }
+
+    #[test]
+    fn a_markdown_image_places_only_stored_raster_images() {
+        let stored = |path: &str| Entry {
+            hash: Some(format!("hash-of-{path}")),
+            ..file(path)
+        };
+        let files = [stored("fig/a.png"), stored("fig/b.svg"), file("fig/c.png")];
+        let from = "nb/n.ipynb";
+        assert_eq!(
+            placed_image(from, "../fig/a.png", &files),
+            Some("hash-of-fig/a.png")
+        );
+        assert_eq!(
+            placed_image(from, "../fig/b.svg", &files),
+            None,
+            "svg is never placed"
+        );
+        assert_eq!(
+            placed_image(from, "../fig/c.png", &files),
+            None,
+            "not stored"
+        );
+        assert_eq!(
+            placed_image(from, "../fig/d.png", &files),
+            None,
+            "not there"
+        );
+    }
+
+    #[test]
+    fn a_new_size_or_author_does_not_reopen_the_file() {
+        let shown = Entry {
+            doc: Some(DOC.into()),
+            ..file("a.py")
+        };
+        let touched = Entry {
+            size: Some(9),
+            by: Some("bob".into()),
+            at: Some(7),
+            ..shown.clone()
+        };
+        assert!(same_view(Some(&shown), Some(&touched)));
+        assert!(same_view(None, None));
+        let rehashed = Entry {
+            hash: Some("h".into()),
+            ..shown.clone()
+        };
+        assert!(!same_view(Some(&shown), Some(&rehashed)));
+        assert!(!same_view(Some(&shown), None));
+        assert!(!same_view(Some(&shown), Some(&file("b.py"))));
     }
 }
