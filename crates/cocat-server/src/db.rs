@@ -887,6 +887,8 @@ fn taken_email(error: sqlx::Error, email: &str) -> DbError {
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 #[schema(rename_all = "lowercase")]
+// simplify: the `room.kind` column is only written now, never read; a project has files when
+// it has a manifest. Drop the column and this enum in a later migration.
 pub enum ProjectKind {
     Catalogues,
     Workspace,
@@ -932,14 +934,13 @@ impl DocumentKind {
     }
 }
 
-pub async fn project_kind(
-    pool: &SqlitePool,
-    room_id: &str,
-) -> Result<Option<ProjectKind>, DbError> {
-    Ok(sqlx::query_scalar("SELECT kind FROM room WHERE id = ?")
-        .bind(room_id)
-        .fetch_optional(pool)
-        .await?)
+pub async fn has_files(pool: &SqlitePool, room_id: &str) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM document WHERE room_id = ? AND kind = 'manifest')",
+    )
+    .bind(room_id)
+    .fetch_one(pool)
+    .await?)
 }
 
 pub async fn create_document(

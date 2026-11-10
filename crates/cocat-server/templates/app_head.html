@@ -6,7 +6,7 @@
 <meta name="cocat-api" content="{{ api }}">
 <meta name="cocat-user" content="{{ email }}">
 {% if admin %}<meta name="cocat-admin" content="true">
-{% endif %}{% if workspace %}<meta name="cocat-kind" content="workspace">
+{% endif %}{% if files %}<meta name="cocat-files" content="true">
 {% endif %}{% match flash %}{% when Some with (text) %}<meta name="cocat-flash" content="{{ text }}">
 {% when None %}{% endmatch %}{% match share_link %}{% when Some with (link) %}<meta name="cocat-share-link" content="{{ link }}">
 {% when None %}{% endmatch %}

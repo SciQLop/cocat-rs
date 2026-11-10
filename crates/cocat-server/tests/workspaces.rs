@@ -207,7 +207,7 @@ async fn a_viewer_cannot_add_a_document() {
 }
 
 #[tokio::test]
-async fn a_catalogue_project_holds_no_documents() {
+async fn files_need_the_file_list_first() {
     let fixture = Fixture::start().await;
     let (_, token) = fixture.user_token("owner@example.org").await;
     let room = fixture.project(&token, "catalogues").await;
@@ -215,22 +215,41 @@ async fn a_catalogue_project_holds_no_documents() {
     let (status, body) = fixture.add_document(&token, &room, "notebook").await;
 
     assert_eq!(status, StatusCode::CONFLICT);
-    assert!(body["detail"].is_string());
+    assert_eq!(body["detail"], "This project has no files yet");
 }
 
 #[tokio::test]
-async fn nobody_adds_a_second_manifest() {
+async fn a_plain_project_gains_its_file_list_once() {
+    let fixture = Fixture::start().await;
+    let (_, token) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&token, "catalogues").await;
+    assert!(!db::has_files(&fixture.state.pool, &room).await.unwrap());
+
+    let (first, made) = fixture.add_document(&token, &room, "manifest").await;
+    let (second, refused) = fixture.add_document(&token, &room, "manifest").await;
+    let (notebook, _) = fixture.add_document(&token, &room, "notebook").await;
+
+    assert_eq!(first, StatusCode::CREATED, "{made}");
+    assert_eq!(made["kind"], "manifest");
+    assert_eq!(second, StatusCode::CONFLICT);
+    assert_eq!(refused["detail"], "This project already has its file list");
+    assert_eq!(notebook, StatusCode::CREATED);
+    assert!(db::has_files(&fixture.state.pool, &room).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_workspace_is_made_with_its_file_list() {
     let fixture = Fixture::start().await;
     let (_, token) = fixture.user_token("owner@example.org").await;
     let room = fixture.project(&token, "workspace").await;
 
-    let (status, _) = fixture.add_document(&token, &room, "manifest").await;
+    let (status, refused) = fixture.add_document(&token, &room, "manifest").await;
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
 }
 
 #[tokio::test]
-async fn the_project_list_says_each_kind() {
+async fn the_project_list_says_which_projects_have_files() {
     let fixture = Fixture::start().await;
     let (_, token) = fixture.user_token("owner@example.org").await;
     let workspace = fixture.project(&token, "workspace").await;
@@ -243,29 +262,22 @@ async fn the_project_list_says_each_kind() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created["kind"], "catalogues");
+    assert_eq!(created["files"], false);
 
     let (_, listed) = fixture.send(Method::GET, "/api/rooms", &token, None).await;
 
-    let kind_of = |id: &str| {
+    let files_of = |id: &str| {
         listed
             .as_array()
             .unwrap()
             .iter()
             .find(|room| room["id"] == id)
-            .map(|room| room["kind"].clone())
+            .map(|room| room["files"].clone())
     };
-    assert_eq!(kind_of(&workspace), Some(json!("workspace")));
+    assert_eq!(files_of(&workspace), Some(json!(true)));
     assert_eq!(
-        kind_of(created["id"].as_str().unwrap()),
-        Some(json!("catalogues"))
-    );
-    assert!(
-        listed
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|room| room["kind"].is_string())
+        files_of(created["id"].as_str().unwrap()),
+        Some(json!(false))
     );
 }
 
@@ -446,15 +458,15 @@ async fn a_catalogue_project_has_no_document_sockets() {
 }
 
 #[tokio::test]
-async fn a_workspace_has_no_catalogues_socket() {
+async fn a_project_with_files_still_has_its_catalogues() {
     let fixture = Fixture::start().await;
     let (_, owner) = fixture.user_token("owner@example.org").await;
     let room = fixture.project(&owner, "workspace").await;
     let addr = fixture.serve().await;
 
-    let refused = handshake(addr, &room, &owner).await;
+    let mut socket = connect(addr, &room, &owner).await;
 
-    assert_eq!(refused.err(), Some(404));
+    next_message(&mut socket).await;
 }
 
 #[tokio::test]

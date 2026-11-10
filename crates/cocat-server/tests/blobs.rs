@@ -319,7 +319,7 @@ async fn a_viewer_cannot_store_a_file() {
 }
 
 #[tokio::test]
-async fn a_catalogue_project_holds_no_files() {
+async fn files_need_the_file_list_first() {
     let fixture = Fixture::start().await;
     let (_, owner) = fixture.user("owner@example.org").await;
     let room = fixture.project(&owner, "catalogues").await;

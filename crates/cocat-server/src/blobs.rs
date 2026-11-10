@@ -151,7 +151,7 @@ async fn owner_left(state: &AppState, room_id: &str) -> Result<u64, ApiError> {
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is a viewer", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member", body = Detail),
-        (status = 409, description = "A catalogue project holds no files", body = Detail),
+        (status = 409, description = "The project has no file list yet", body = Detail),
         (status = 413, description = "The file is over the file limit, or over what the owner's storage has left", body = Detail),
     )
 )]
@@ -162,7 +162,7 @@ async fn put_blob(
     body: Body,
 ) -> Result<StatusCode, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
-    lifecycle::require_workspace(&state, &room_id).await?;
+    lifecycle::require_files(&state, &room_id).await?;
     valid_hash(&hash)?;
     let content = read_body(body, state.rooms.limits().file).await?;
     if HEXLOWER.encode(&Sha256::digest(&content)) != hash {
@@ -201,7 +201,7 @@ async fn put_blob(
         (status = 400, description = "The name is not a SHA-256", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, the caller is not a member, or the project does not hold this file", body = Detail),
-        (status = 409, description = "A catalogue project holds no files", body = Detail),
+        (status = 409, description = "The project has no file list yet", body = Detail),
     )
 )]
 async fn get_blob(
@@ -210,7 +210,7 @@ async fn get_blob(
     ApiPath((room_id, hash)): ApiPath<(String, String)>,
 ) -> Result<Response, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Viewer).await?;
-    lifecycle::require_workspace(&state, &room_id).await?;
+    lifecycle::require_files(&state, &room_id).await?;
     valid_hash(&hash)?;
     let missing = || ApiError::NotFound(format!("Project {room_id} holds no file {hash}"));
     if !is_stored(&state.pool, &room_id, &hash).await? {

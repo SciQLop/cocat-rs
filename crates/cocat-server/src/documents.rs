@@ -55,7 +55,7 @@ impl From<DocumentRow> for DocumentOut {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct NewDocument {
-    /// `notebook` or `text`: the manifest is made with the workspace.
+    /// `manifest` (the project's file list, once), then `notebook` or `text`.
     kind: DocumentKind,
 }
 
@@ -71,10 +71,9 @@ struct DocumentCreated {
     params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The workspace's documents, oldest first", body = [DocumentOut]),
+        (status = 200, description = "The project's documents, oldest first; none until it has its file list", body = [DocumentOut]),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member", body = Detail),
-        (status = 409, description = "A catalogue project holds no documents", body = Detail),
     )
 )]
 async fn list_documents(
@@ -83,7 +82,6 @@ async fn list_documents(
     ApiPath(room_id): ApiPath<String>,
 ) -> Result<Json<Vec<DocumentOut>>, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Viewer).await?;
-    lifecycle::require_workspace(&state, &room_id).await?;
     let documents = db::document_rows(&state.pool, &room_id).await?;
     Ok(Json(documents.into_iter().map(DocumentOut::from).collect()))
 }
@@ -96,12 +94,11 @@ async fn list_documents(
     security(("cookie" = [])),
     responses(
         (status = 201, description = "The new, empty document", body = DocumentCreated),
-        (status = 400, description = "A workspace has one manifest, made with it", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is a viewer", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member", body = Detail),
-        (status = 409, description = "A catalogue project holds no documents", body = Detail),
-        (status = 422, description = "The kind is neither notebook nor text", body = Detail),
+        (status = 409, description = "The project already has its file list, or has none yet for a notebook or text", body = Detail),
+        (status = 422, description = "The kind is none of manifest, notebook or text", body = Detail),
     )
 )]
 async fn add_document(

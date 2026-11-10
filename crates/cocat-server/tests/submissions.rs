@@ -1053,24 +1053,23 @@ async fn a_copy_of_a_public_catalogue_with_a_long_name_names_its_project_within_
 }
 
 #[tokio::test]
-async fn a_copy_into_a_workspace_is_refused_and_writes_no_catalogues_file() {
+async fn a_public_catalogue_copies_into_a_project_with_files() {
     let world = World::start().await;
     let public = world.public().await;
-    db::create_room(
-        &world.state.pool,
+    let with_files = lifecycle::create_project(
+        &world.state,
         world.author,
-        "wk",
         "Notebooks",
         db::ProjectKind::Workspace,
     )
     .await
-    .unwrap();
-    let file = world.state.rooms.update_dir().join("wk.y");
+    .unwrap()
+    .id;
 
-    let (status, refused) = world.copy(world.author, &public, Some("wk")).await;
+    let (status, copied) = world.copy(world.author, &public, Some(&with_files)).await;
 
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert!(!file.exists(), "a catalogues document was created");
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    assert_eq!(copied["room"], with_files.as_str());
 }
 
 impl World {

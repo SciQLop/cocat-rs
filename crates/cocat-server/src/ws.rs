@@ -137,8 +137,7 @@ async fn open_socket(
     response
 }
 
-/// The room a socket relays: the project's catalogues unless it is a workspace, which has
-/// none, or the key of the project's document, which must exist.
+/// The room a socket relays: the project's catalogues, or the key of the project's document, which must exist.
 async fn room_to_relay(
     state: &AppState,
     project: &str,
@@ -150,11 +149,7 @@ async fn room_to_relay(
             Ok(None) => Err(StatusCode::NOT_FOUND),
             Err(error) => Err(server_failed(&error)),
         },
-        None => match db::project_kind(&state.pool, project).await {
-            Ok(Some(db::ProjectKind::Workspace)) => Err(StatusCode::NOT_FOUND),
-            Ok(_) => Ok(project.to_owned()),
-            Err(error) => Err(server_failed(&error)),
-        },
+        None => Ok(project.to_owned()),
     }
 }
 

@@ -700,7 +700,6 @@ async fn copy_into(
     update: Vec<u8>,
 ) -> Result<(String, String), ApiError> {
     lifecycle::require_role(state, room_id, user, Role::Editor).await?;
-    lifecycle::require_catalogues(state, room_id).await?;
     if db::is_public(&state.pool, room_id).await? {
         return Err(ApiError::Conflict(INTO_PUBLIC.to_owned()));
     }

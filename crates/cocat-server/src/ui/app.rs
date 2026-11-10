@@ -30,7 +30,7 @@ struct Head<'a> {
     api: String,
     email: &'a str,
     admin: bool,
-    workspace: bool,
+    files: bool,
     flash: Option<String>,
     share_link: Option<String>,
 }
@@ -61,10 +61,10 @@ pub(crate) async fn browse(
     let Some(index) = index(&state).await else {
         return missing(&state, &user, flash);
     };
-    let kind = match db::project_kind(&state.pool, &room.id).await {
-        Ok(kind) => kind,
+    let files = match db::has_files(&state.pool, &room.id).await {
+        Ok(files) => files,
         Err(error) => {
-            tracing::warn!(%error, "cannot read a project's kind");
+            tracing::warn!(%error, "cannot tell whether a project has files");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
@@ -77,7 +77,7 @@ pub(crate) async fn browse(
         api: state.links.app("/api"),
         email: &user.email,
         admin: user.is_superuser,
-        workspace: kind == Some(db::ProjectKind::Workspace),
+        files,
         flash,
         share_link,
     };

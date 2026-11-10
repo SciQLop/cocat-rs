@@ -426,31 +426,22 @@ async fn the_own_project_is_forgotten_when_deleted_or_given_away() {
 }
 
 #[tokio::test]
-async fn a_new_project_is_a_catalogue_project_unless_asked() {
+async fn a_project_has_files_once_it_has_a_manifest() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;
     db::create_room(&pool, owner, "cats", "Cats", db::ProjectKind::Catalogues)
         .await
         .unwrap();
-    db::create_room(&pool, owner, "work", "Work", db::ProjectKind::Workspace)
+    db::create_workspace(&pool, owner, "work", "Work")
         .await
         .unwrap();
-    db::create_personal_room(&pool, owner).await.unwrap();
-    let personal = db::personal_room(&pool, owner).await.unwrap().unwrap();
+    db::create_document(&pool, "cats", db::DocumentKind::Notebook, owner)
+        .await
+        .unwrap();
 
-    assert_eq!(
-        db::project_kind(&pool, "cats").await.unwrap(),
-        Some(db::ProjectKind::Catalogues)
-    );
-    assert_eq!(
-        db::project_kind(&pool, "work").await.unwrap(),
-        Some(db::ProjectKind::Workspace)
-    );
-    assert_eq!(
-        db::project_kind(&pool, &personal).await.unwrap(),
-        Some(db::ProjectKind::Catalogues)
-    );
-    assert_eq!(db::project_kind(&pool, "nope").await.unwrap(), None);
+    assert!(!db::has_files(&pool, "cats").await.unwrap());
+    assert!(db::has_files(&pool, "work").await.unwrap());
+    assert!(!db::has_files(&pool, "nope").await.unwrap());
 }
 
 #[tokio::test]

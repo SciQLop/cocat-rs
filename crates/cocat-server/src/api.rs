@@ -254,6 +254,9 @@ struct ListedRoom {
     personal: bool,
     /// Whether the project's editors may share it as its owner does.
     editors_can_share: bool,
+    /// Whether the project has its file list, so holds a SciQLop workspace's files.
+    files: bool,
+    /// Deprecated: `workspace` when `files` is true, else `catalogues`. Dropped in a later release.
     kind: db::ProjectKind,
 }
 
@@ -370,18 +373,17 @@ async fn list_rooms(
     let closed = db::rooms_closed_to_editors(&state.pool, user.id).await?;
     let mut rooms = Vec::new();
     for (room, role) in db::list_user_rooms(&state.pool, user.id).await? {
-        // simplify: one query per project; fetch the kinds in the listing's own query if a
-        // user ever belongs to thousands.
-        let kind = db::project_kind(&state.pool, &room.id)
-            .await?
-            .unwrap_or(db::ProjectKind::Catalogues);
+        // simplify: one query per project; fetch the file lists in the listing's own query
+        // if a user ever belongs to thousands.
+        let files = db::has_files(&state.pool, &room.id).await?;
         rooms.push(ListedRoom {
             personal: own.as_deref() == Some(room.id.as_str()),
             editors_can_share: !closed.contains(&room.id),
             id: room.id,
             name: room.name,
             role: role.as_str(),
-            kind,
+            files,
+            kind: kind_of(files),
         });
     }
     Ok(Json(rooms))
@@ -406,9 +408,11 @@ async fn create_room(
 ) -> Result<(StatusCode, Json<CreatedRoom>), ApiError> {
     let kind = body.kind.unwrap_or(db::ProjectKind::Catalogues);
     let room = lifecycle::create_project(&state, user.id, &body.name.0, kind).await?;
+    let files = kind == db::ProjectKind::Workspace;
     let created = CreatedRoom {
         room: RoomOut::new(room, Role::Owner),
-        kind,
+        files,
+        kind: kind_of(files),
     };
     Ok((StatusCode::CREATED, Json(created)))
 }
@@ -422,7 +426,7 @@ struct NewRoomBody {
         pattern = "^(?!\\s*$)[^\\u0000-\\u001F\\u007F]+$"
     )]
     name: Name,
-    /// `catalogues` when left out.
+    /// `workspace` makes the project with its file list; `catalogues` (the default) without.
     kind: Option<db::ProjectKind>,
 }
 
@@ -430,7 +434,16 @@ struct NewRoomBody {
 struct CreatedRoom {
     #[serde(flatten)]
     room: RoomOut,
+    files: bool,
+    /// Deprecated: see `files`.
     kind: db::ProjectKind,
+}
+
+fn kind_of(files: bool) -> db::ProjectKind {
+    match files {
+        true => db::ProjectKind::Workspace,
+        false => db::ProjectKind::Catalogues,
+    }
 }
 
 #[utoipa::path(

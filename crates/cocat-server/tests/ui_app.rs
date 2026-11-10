@@ -143,7 +143,7 @@ async fn an_admins_page_says_so() {
 }
 
 #[tokio::test]
-async fn a_workspace_page_says_it_is_a_workspace() {
+async fn the_app_page_says_when_a_project_has_files() {
     let mut fixture = Fixture::start().await;
     fixture.state.web_dir = Some(bundle(&fixture));
     let owner = db::create_user(&fixture.state.pool, "owner@example.org", "p", true, false)
@@ -177,10 +177,10 @@ async fn a_workspace_page_says_it_is_a_workspace() {
 
     let body = page(workspace).await;
     assert!(
-        body.contains(r#"<meta name="cocat-kind" content="workspace">"#),
+        body.contains(r#"<meta name="cocat-files" content="true">"#),
         "{body}"
     );
-    assert!(!page(catalogues).await.contains("cocat-kind"));
+    assert!(!page(catalogues).await.contains("cocat-files"));
 }
 
 #[tokio::test]
