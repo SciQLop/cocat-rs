@@ -166,11 +166,18 @@ class Client:
                 f"You cannot open {project_id!r} on {self.server}: "
                 "it does not exist or you are not a member."
             ) from None
-        project._native.set_identity(self._project_name(project_id), self.account()["email"])
+        self._name_copies(project, project_id)
         return project
 
-    def _project_name(self, project_id: str) -> str:
-        return next(info.name for info in self.projects() if info.id == project_id)
+    def _name_copies(self, project: "Project", project_id: str) -> None:
+        """Lets the project's copies name it and their author. Without the answer, they
+        name the project by its id and no author: opening must not fail on it."""
+        try:
+            name = next((info.name for info in self.projects() if info.id == project_id), None)
+            email = self.account()["email"]
+        except (Unauthorized, Forbidden, RuntimeError, OSError, KeyError, ValueError):
+            return
+        project._native.set_identity(name or project_id, email)
 
     def account_id(self, fresh: bool = False) -> str:
         if self._account is None or fresh:

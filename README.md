@@ -714,6 +714,13 @@ smart.event_arrays()                    # every member; a merged interval has uu
 snapshot = smart.materialize("strong shocks, today")   # a static copy
 ```
 
+**Where a copy came from.** A catalogue made as a copy of another (copying a public
+catalogue, copying a project at a version, a submission that becomes a public catalogue,
+a freeze) records the whole chain of copies it descends from, oldest first:
+`snapshot.copied_from` lists `{project, project_name, catalogue, catalogue_name, version,
+at, by}`, the last one being the catalogue it was copied from. A catalogue never copied has
+an empty list. The chain keeps its first step and the latest 31.
+
 A malformed rule raises `ValueError` saying where: `rule.where.cmp: unknown operator '=~'`.
 The rule format (sets, interval operators, predicates) is in
 `docs/superpowers/specs/2026-11-07-catalogue-engine-v2-design.md`, section 3.

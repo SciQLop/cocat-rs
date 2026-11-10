@@ -291,6 +291,68 @@ pub fn counts_text(
     }
 }
 
+/// Where a copied catalogue came from: a line naming its direct source, and a hover text
+/// listing the whole chain of copies, oldest first. `None` when it was never copied.
+pub fn copied_text(chain: &[cocat_core::model::Hop]) -> Option<(String, String)> {
+    let source = chain.last()?;
+    let step = |hop: &cocat_core::model::Hop| {
+        let when = crate::format::date_text(hop.at.saturating_mul(1_000_000));
+        let base = format!("{} › {}, {when}", hop.project_name, hop.catalogue_name);
+        match hop.by.as_deref() {
+            Some(by) => format!("{base}, by {}", crate::format::person_text(by)),
+            None => base,
+        }
+    };
+    let when = crate::format::date_text(source.at.saturating_mul(1_000_000));
+    let line = format!(
+        "Copied from {} › {}, {when}",
+        source.project_name, source.catalogue_name
+    );
+    let steps: Vec<String> = chain
+        .iter()
+        .enumerate()
+        .map(|(index, hop)| format!("{}. {}", index + 1, step(hop)))
+        .collect();
+    Some((line, format!("Copied, oldest first:\n{}", steps.join("\n"))))
+}
+
+#[cfg(test)]
+mod copied_tests {
+    use super::copied_text;
+    use cocat_core::model::Hop;
+
+    fn hop(project: &str, catalogue: &str, by: Option<&str>) -> Hop {
+        Hop {
+            project: format!("{project}-id"),
+            project_name: project.to_owned(),
+            catalogue: format!("{catalogue}-uuid"),
+            catalogue_name: catalogue.to_owned(),
+            version: None,
+            at: 1_762_771_200_000,
+            by: by.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_catalogue_never_copied_says_nothing() {
+        assert_eq!(copied_text(&[]), None);
+    }
+
+    #[test]
+    fn the_line_names_the_direct_source_and_the_title_the_whole_chain() {
+        let chain = [
+            hop("Public catalogues", "Bow shock list", None),
+            hop("Lab", "Bow shocks", Some("alice.martin@example.org")),
+        ];
+        let (line, title) = copied_text(&chain).unwrap();
+        assert_eq!(line, "Copied from Lab › Bow shocks, 2025-11-10");
+        assert_eq!(
+            title,
+            "Copied, oldest first:\n1. Public catalogues › Bow shock list, 2025-11-10\n2. Lab › Bow shocks, 2025-11-10, by alice.martin"
+        );
+    }
+}
+
 #[cfg(test)]
 mod counts_tests {
     use super::counts_text;

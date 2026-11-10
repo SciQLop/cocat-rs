@@ -8,7 +8,7 @@ use leptos::prelude::*;
 
 use crate::route::Route;
 use crate::rows::Row;
-use crate::rule_text::{counts_text, describe};
+use crate::rule_text::{copied_text, counts_text, describe};
 use crate::state::Room;
 use crate::views::catalogue::Members;
 
@@ -18,6 +18,8 @@ struct About {
     smart: bool,
     /// A smart catalogue's rule in words, when it reads.
     rule: Option<String>,
+    /// Where a copied catalogue came from: its direct source, and the whole chain.
+    copied: Option<(String, String)>,
 }
 
 #[component]
@@ -67,6 +69,9 @@ pub fn Heading(
         <div class="heading">
             <h1>{move || about.with(|about| about.title.clone())}</h1>
             <p class="quiet">{counts}</p>
+            {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
+                <p class="quiet copied" title=chain>{line}</p>
+            })}
             {move || about.with(|about| about.rule.clone()).map(|words| view! {
                 <p class="rule">"Rule: " {words}</p>
             })}
@@ -83,6 +88,7 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
         title: title.to_owned(),
         smart: false,
         rule: None,
+        copied: None,
     };
     match shown {
         Route::Catalogue(uuid) => match model::catalogue(txn, uuid) {
@@ -93,6 +99,7 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
                     .rule
                     .filter(|rule| query::rule_search(rule, &model::catalogue_names(txn)).is_none())
                     .and_then(|rule| describe(&rule, &name).ok()),
+                copied: copied_text(&catalogue.copied_from),
             },
             None => titled("No such catalogue"),
         },
