@@ -1,7 +1,7 @@
 FROM fedora:43 AS build
 
 RUN dnf install -y cargo rust rust-std-static-wasm32-unknown-unknown gcc gcc-c++ make \
-        ca-certificates \
+        ca-certificates openssl-devel pkgconf-pkg-config \
     && dnf clean all
 
 # trunk fetches the wasm-bindgen that Cargo.lock pins, and wasm-opt, on its first build.
@@ -27,7 +27,7 @@ ENV STORAGE_PATH=/storage \
     COCAT_TRUSTED_PROXIES=1 \
     COCAT_WEB_DIR=/usr/share/cocat/web
 
-RUN dnf install -y ca-certificates \
+RUN dnf install -y ca-certificates openssl-libs \
     && useradd cocat \
     && mkdir -p $STORAGE_PATH $DB_PATH $LOG_PATH/cocat \
     && chown -R cocat $STORAGE_PATH $DB_PATH $LOG_PATH \

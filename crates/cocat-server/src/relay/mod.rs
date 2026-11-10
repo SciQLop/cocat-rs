@@ -27,7 +27,6 @@ use crate::history_api::save_newest_if_changed;
 use crate::room::{Author, RoomError};
 use crate::ws;
 
-const PROJECT_URL: &str = "https://github.com/SciQLop/cocat-rs";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REDIRECTS: usize = 5;
 
@@ -87,18 +86,33 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
     ]
 }
 
-/// The client providers fetch with: a timeout per request, a User-Agent naming cocat and
-/// where to reach this server, or else the project, and redirects followed only on the host
-/// asked, so a provider cannot send the server to another one.
-pub fn http_client(public_url: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
-    let contact = public_url
-        .filter(|url| !url.is_empty())
-        .unwrap_or(PROJECT_URL);
+/// What a failed fetch says, down to its cause ("Connection reset by peer"), never with
+/// the URL, which may carry a key.
+pub fn fetch_error(error: reqwest::Error) -> String {
+    let error = error.without_url();
+    let mut text = error.to_string();
+    let mut cause = std::error::Error::source(&error);
+    while let Some(inner) = cause {
+        text = format!("{text}: {inner}");
+        cause = inner.source();
+    }
+    text
+}
+
+/// Names cocat and its version only: CDAW's firewall resets a connection whose User-Agent
+/// holds an address.
+pub fn user_agent() -> String {
+    format!("cocat-relay/{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// The client providers fetch with: a timeout per request, cocat's User-Agent, and redirects
+/// followed only on the host asked, so a provider cannot send the server to another one.
+/// It speaks TLS through OpenSSL, not rustls: CDAW's firewall resets rustls handshakes
+/// (checked 2026-11-10; curl and OpenSSL clients get through).
+pub fn http_client() -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
-        .user_agent(format!(
-            "cocat-relay/{} (+{contact})",
-            env!("CARGO_PKG_VERSION")
-        ))
+        .use_native_tls()
+        .user_agent(user_agent())
         .timeout(FETCH_TIMEOUT)
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if follows(attempt.url(), attempt.previous()) {
@@ -266,6 +280,21 @@ async fn refresh(state: AppState, provider: Arc<dyn Provider>) -> Result<RunRepo
     })
 }
 
+/// The catalogue's columns: those the provider names, else every attribute its events carry,
+/// in the order they first appear, so the table shows a list's measures.
+fn columns_of(named: &[String], events: &[EventRecord]) -> Vec<String> {
+    if !named.is_empty() {
+        return named.to_vec();
+    }
+    let mut seen = Vec::new();
+    for key in events.iter().flat_map(|event| event.attributes.keys()) {
+        if !seen.contains(key) {
+            seen.push(key.clone());
+        }
+    }
+    seen
+}
+
 /// Makes public catalogue `room` the provider's list: what the index says, then its events,
 /// as one version named after the source when something changed.
 async fn relay_list(
@@ -279,7 +308,7 @@ async fn relay_list(
     let wanted = Wanted {
         catalogue: list.catalogue.clone(),
         name: list.name.clone(),
-        columns: list.columns.clone(),
+        columns: columns_of(&list.columns, &events),
         events,
     };
     let (counts, update) = held(state, provider.clone(), room, wanted).await?;
@@ -372,6 +401,43 @@ impl RunReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_without_named_columns_shows_its_attributes_in_first_seen_order() {
+        let mut first = EventRecord::new(
+            "a",
+            Timestamp::from_unix_nanos(0).unwrap(),
+            Timestamp::from_unix_nanos(1).unwrap(),
+        );
+        first
+            .attributes
+            .insert("speed_km_s".into(), serde_json::json!(400));
+        first
+            .attributes
+            .insert("width_deg".into(), serde_json::json!(90));
+        let mut second = first.clone();
+        second
+            .attributes
+            .insert("remarks".into(), serde_json::json!("Halo"));
+        let events = [first, second];
+        assert_eq!(
+            columns_of(&[], &events),
+            ["speed_km_s", "width_deg", "remarks"]
+        );
+        let named = ["width_deg".to_owned()];
+        assert_eq!(columns_of(&named, &events), ["width_deg"]);
+        assert!(columns_of(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn the_user_agent_names_cocat_and_no_address() {
+        let agent = user_agent();
+        assert!(agent.starts_with("cocat-relay/"), "{agent}");
+        assert!(
+            !agent.contains("http"),
+            "CDAW refuses an address in it: {agent}"
+        );
+    }
 
     #[test]
     fn why_a_list_could_not_be_read_carries_no_secret() {

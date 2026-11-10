@@ -311,7 +311,7 @@ fn link(answer: &str) -> Result<&str, String> {
 }
 
 async fn text(request: reqwest::RequestBuilder) -> Result<String, String> {
-    let describe = |error: reqwest::Error| error.without_url().to_string();
+    let describe = super::fetch_error;
     request
         .send()
         .await

@@ -377,7 +377,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from),
         providers: Arc::new(crate::relay::providers()),
-        http: crate::relay::http_client(env("COCAT_PUBLIC_URL").as_deref())?,
+        http: crate::relay::http_client()?,
     };
 
     let listener = TcpListener::bind((host, port)).await?;

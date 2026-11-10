@@ -40,7 +40,8 @@ with the calls listed in it).
 - Every provider off by default; settings in the database, no restart needed; cron in UTC;
   on start, a provider whose last success is older than one period runs once; a provider
   never runs twice at once; fetch timeout 120 s per request; User-Agent
-  `cocat-relay/<version> (+<COCAT_PUBLIC_URL or project URL>)`, no personal email.
+  `cocat-relay/<version>` (no address: CDAW's firewall resets one holding a URL), no personal
+  email; TLS through OpenSSL (CDAW's firewall resets rustls handshakes).
 - History: a relay write is stamped with no user; history shows it as "<source name>".
 - DONKI key: provider setting `api_key`, masked on the admin page; default `DEMO_KEY`.
 - UI words: "From <source>, refreshed <date>", "No longer published by <source>",

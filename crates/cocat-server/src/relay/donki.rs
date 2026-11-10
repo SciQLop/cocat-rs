@@ -250,19 +250,14 @@ fn request_url(
         .map_err(|error| error.to_string())
 }
 
-/// Reqwest errors carry the URL, and the URL carries the key.
-fn describe(error: reqwest::Error) -> String {
-    error.without_url().to_string()
-}
-
 async fn fetch_window(http: &reqwest::Client, url: String) -> Result<Vec<u8>, String> {
-    let response = http.get(url).send().await.map_err(describe)?;
+    let response = http.get(url).send().await.map_err(super::fetch_error)?;
     let body = response
         .error_for_status()
-        .map_err(describe)?
+        .map_err(super::fetch_error)?
         .bytes()
         .await
-        .map_err(describe)?;
+        .map_err(super::fetch_error)?;
     Ok(body.to_vec())
 }
 

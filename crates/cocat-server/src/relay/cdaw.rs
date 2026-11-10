@@ -26,6 +26,8 @@ struct List {
     description: &'static str,
     url: &'static str,
     data_url: &'static str,
+    /// The table's columns, in the catalogue's own order.
+    columns: &'static [&'static str],
 }
 
 const LASCO: List = List {
@@ -34,6 +36,19 @@ const LASCO: List = List {
     description: "Coronal mass ejections seen by SOHO/LASCO, from the CDAW CME catalogue, https://cdaw.gsfc.nasa.gov/CME_list/",
     url: "https://cdaw.gsfc.nasa.gov/CME_list/",
     data_url: "https://cdaw.gsfc.nasa.gov/CME_list/UNIVERSAL_ver2/text_ver/univ_all.txt",
+    columns: &[
+        "central_pa_deg",
+        "width_deg",
+        "linear_speed_km_s",
+        "speed_initial_km_s",
+        "speed_final_km_s",
+        "speed_20rs_km_s",
+        "accel_m_s2",
+        "mass_g",
+        "kinetic_energy_erg",
+        "mpa_deg",
+        "remarks",
+    ],
 };
 
 const TYPE_II: List = List {
@@ -42,6 +57,18 @@ const TYPE_II: List = List {
     description: "Decameter-hectometric type II radio bursts seen by Wind/WAVES and STEREO/WAVES, with their CMEs, from the CDAW catalogue, https://cdaw.gsfc.nasa.gov/CME_list/radio/waves_type2_description.htm",
     url: "https://cdaw.gsfc.nasa.gov/CME_list/radio/waves_type2.html",
     data_url: "https://cdaw.gsfc.nasa.gov/CME_list/radio/waves_type2.html",
+    columns: &[
+        "freq_start_khz",
+        "freq_end_khz",
+        "flare_location",
+        "noaa_ar",
+        "importance",
+        "cme_date_time",
+        "cme_cpa_deg",
+        "cme_width_deg",
+        "cme_speed_km_s",
+        "remarks",
+    ],
 };
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x3a9d41c2_7be5_4f08_b6a1_c0de5d4a7e21);
@@ -292,13 +319,13 @@ fn catalogue(list: &List, events: Vec<EventRecord>) -> Fetched {
         description: list.description.to_owned(),
         url: list.url.to_owned(),
         catalogue: Uuid::new_v5(&NAMESPACE, list.key.as_bytes()).to_string(),
-        columns: Vec::new(),
+        columns: list.columns.iter().map(|&name| name.to_owned()).collect(),
         events: Ok(events),
     }
 }
 
 async fn download(http: &reqwest::Client, list: &List) -> Result<String, String> {
-    let describe = |error: reqwest::Error| format!("{}: {}", list.name, error.without_url());
+    let describe = |error: reqwest::Error| format!("{}: {}", list.name, super::fetch_error(error));
     let body = http
         .get(list.data_url)
         .send()
@@ -379,6 +406,24 @@ mod tests {
             .into_iter()
             .find(|event| event.start == start)
             .unwrap()
+    }
+
+    #[test]
+    fn every_measure_of_a_list_is_one_of_its_columns() {
+        let flags = ["time_unknown", "cme_width_is_lower_limit"];
+        let lists = [
+            (&LASCO, parse_lasco(LASCO_FIXTURE).unwrap()),
+            (&TYPE_II, parse_type_ii(TYPE_II_FIXTURE).unwrap()),
+        ];
+        for (list, events) in lists {
+            for key in events.iter().flat_map(|event| event.attributes.keys()) {
+                assert!(
+                    list.columns.contains(&key.as_str()) || flags.contains(&key.as_str()),
+                    "{} lacks the column {key}",
+                    list.name
+                );
+            }
+        }
     }
 
     #[test]
