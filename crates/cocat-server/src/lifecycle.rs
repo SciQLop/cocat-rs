@@ -337,8 +337,8 @@ pub(crate) async fn refuse_public(state: &AppState, room_id: &str) -> Result<(),
 
 /// A catalogue that follows a provider changes only when the provider does.
 pub(crate) async fn refuse_relayed(state: &AppState, room_id: &str) -> Result<(), LifecycleError> {
-    match crate::relay::refusal(&state.pool, room_id).await? {
-        Some(refusal) => Err(LifecycleError::Relayed(refusal)),
+    match crate::relay::store::relayed(&state.pool, room_id).await? {
+        Some(relayed) => Err(LifecycleError::Relayed(relayed.refusal())),
         None => Ok(()),
     }
 }

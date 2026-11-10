@@ -3,7 +3,7 @@
 
 use sqlx::SqlitePool;
 
-use crate::db::DbError;
+use crate::db::{DbError, PublicRoom};
 
 /// A provider's settings and how its last run went.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -170,4 +170,52 @@ pub async fn relayed(pool: &SqlitePool, room_id: &str) -> Result<Option<RelayedR
     .bind(room_id)
     .fetch_optional(pool)
     .await?)
+}
+
+/// A public catalogue and the provider it follows, if any, as the index lists them.
+#[derive(sqlx::FromRow)]
+struct IndexRow {
+    #[sqlx(flatten)]
+    room: PublicRoom,
+    relay_provider: Option<String>,
+    relay_key: Option<String>,
+    relay_published: Option<bool>,
+    relay_refreshed_at: Option<String>,
+    relay_url: Option<String>,
+}
+
+impl IndexRow {
+    fn split(self) -> (PublicRoom, Option<RelayedRow>) {
+        let relayed = self
+            .relay_provider
+            .zip(self.relay_key)
+            .map(|(provider, key)| RelayedRow {
+                source: self.room.source.clone().unwrap_or_else(|| provider.clone()),
+                provider,
+                key,
+                published: self.relay_published.unwrap_or(true),
+                refreshed_at: self.relay_refreshed_at,
+                url: self.relay_url,
+            });
+        (self.room, relayed)
+    }
+}
+
+/// Every public catalogue, by folder then name, with the provider it follows.
+pub async fn public_index(
+    pool: &SqlitePool,
+) -> Result<Vec<(PublicRoom, Option<RelayedRow>)>, DbError> {
+    let rows: Vec<IndexRow> = sqlx::query_as(
+        "SELECT room.id, room.name, room.folder, room.source, room.description,
+           room.public_count, room.counted_file,
+           relay_catalogue.provider AS relay_provider, relay_catalogue.key AS relay_key,
+           relay_catalogue.published AS relay_published,
+           relay_catalogue.refreshed_at AS relay_refreshed_at, relay_catalogue.url AS relay_url
+         FROM room LEFT JOIN relay_catalogue ON relay_catalogue.room_id = room.id
+         WHERE room.public
+         ORDER BY room.folder IS NULL, room.folder, room.name, room.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(IndexRow::split).collect())
 }

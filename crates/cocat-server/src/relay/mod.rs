@@ -11,6 +11,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cocat_core::model::{self, Counts, EventRecord, Wanted};
 use cocat_core::room_id::{InvalidRoomId, public_id};
+use tokio::task::JoinError;
 use yrs::Transact;
 
 use crate::AppState;
@@ -18,6 +19,7 @@ use crate::db::{self, DbError, PublicRoom};
 use crate::history::diff::replay_until;
 use crate::history_api::save_newest_if_changed;
 use crate::room::{Author, RoomError};
+use crate::ws;
 
 const PROJECT_URL: &str = "https://github.com/SciQLop/cocat-rs";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
@@ -94,11 +96,13 @@ pub enum RelayError {
     Unknown(String),
     #[error("a run of this provider is going on already")]
     Running,
+    #[error("the run stopped on a bug: {0}")]
+    Panicked(String),
     #[error("the provider could not be read: {0}")]
     Fetch(String),
     #[error("the provider published nothing: the catalogues were kept as they were")]
     Empty,
-    #[error("the settings are not a JSON object: {0}")]
+    #[error("the stored settings are not JSON: {0}")]
     Settings(#[from] serde_json::Error),
     #[error(transparent)]
     Key(#[from] InvalidRoomId),
@@ -120,22 +124,40 @@ pub async fn run(state: &AppState, provider: &str) -> Result<RunReport, RelayErr
     if !store::start(&state.pool, provider.id()).await? {
         return Err(RelayError::Running);
     }
-    let refreshed = refresh(state, &provider).await;
+    // The run is a task of its own, so a caller that gives up never leaves it marked running.
+    tokio::spawn(run_to_end(state.clone(), provider))
+        .await
+        .map_err(|error| RelayError::Panicked(panic_message(error)))?
+}
+
+/// Refreshes, then records the outcome whatever it was, a panic included.
+async fn run_to_end(state: AppState, provider: Arc<dyn Provider>) -> Result<RunReport, RelayError> {
+    let refreshed = tokio::spawn(refresh(state.clone(), provider.clone()))
+        .await
+        .unwrap_or_else(|error| Err(RelayError::Panicked(panic_message(error))));
     let result = match &refreshed {
         Ok(report) => report.as_json(),
         Err(error) => serde_json::json!({ "error": error.to_string() }),
     };
-    store::finish(
-        &state.pool,
-        provider.id(),
-        refreshed.is_ok(),
-        &result.to_string(),
-    )
-    .await?;
+    let ok = refreshed.is_ok();
+    if let Err(error) = store::finish(&state.pool, provider.id(), ok, &result.to_string()).await {
+        tracing::error!(%error, provider = provider.id(), "the end of a relay run was not recorded");
+    }
     refreshed
 }
 
-async fn refresh(state: &AppState, provider: &Arc<dyn Provider>) -> Result<RunReport, RelayError> {
+fn panic_message(error: JoinError) -> String {
+    match error.try_into_panic() {
+        Ok(panic) => panic
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".to_owned()),
+        Err(error) => error.to_string(),
+    }
+}
+
+async fn refresh(state: AppState, provider: Arc<dyn Provider>) -> Result<RunReport, RelayError> {
     let settings = serde_json::from_str(&store::settings(&state.pool, provider.id()).await?)?;
     let fetched = provider
         .fetch(&state.http, &settings)
@@ -144,12 +166,13 @@ async fn refresh(state: &AppState, provider: &Arc<dyn Provider>) -> Result<RunRe
     if fetched.is_empty() {
         return Err(RelayError::Empty);
     }
+    let rooms = fetched
+        .iter()
+        .map(|list| public_id(&format!("{}.{}", provider.id(), list.key)))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut counts = Counts::default();
-    let mut rooms = Vec::new();
-    for list in fetched {
-        let room = public_id(&format!("{}.{}", provider.id(), list.key))?;
-        counts += relay_list(state, provider, &room, list).await?;
-        rooms.push(room);
+    for (room, list) in rooms.iter().zip(fetched) {
+        counts += relay_list(&state, &provider, room, list).await?;
     }
     let unpublished = store::unpublish_others(&state.pool, provider.id(), &rooms).await?;
     Ok(RunReport {
@@ -187,8 +210,8 @@ async fn relay_list(
     Ok(counts)
 }
 
-/// The public catalogue as the index shows it, made when missing (an existing one is
-/// adopted), and following the provider.
+/// The public catalogue as the index shows it, made when missing, and following the
+/// provider. Curators editing a catalogue the relay adopts lose their write access now.
 async fn place(
     state: &AppState,
     provider: &dyn Provider,
@@ -204,10 +227,15 @@ async fn place(
         public_count: None,
         counted_file: None,
     };
-    if !db::create_public_room(&state.pool, &public, None).await? {
+    let followed = store::relayed(&state.pool, room).await?.is_some();
+    let created = db::create_public_room(&state.pool, &public, None).await?;
+    if !created {
         db::update_public_room(&state.pool, &public).await?;
     }
     store::adopt(&state.pool, room, provider.id(), &list.key, &list.url).await?;
+    if !created && !followed {
+        ws::check_room_roles(state, room).await;
+    }
     Ok(())
 }
 
@@ -242,14 +270,4 @@ impl RunReport {
             "unpublished": self.unpublished,
         })
     }
-}
-
-/// Why nobody edits `room_id` by hand, when it follows a provider.
-pub(crate) async fn refusal(
-    pool: &sqlx::SqlitePool,
-    room_id: &str,
-) -> Result<Option<String>, DbError> {
-    Ok(store::relayed(pool, room_id)
-        .await?
-        .map(|relayed| relayed.refusal()))
 }

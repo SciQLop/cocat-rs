@@ -468,8 +468,20 @@ pub fn spawn_role_checks(state: AppState) -> tokio::task::JoinHandle<()> {
 
 /// Closes every socket whose account no longer has the role it was admitted with.
 pub async fn check_roles(state: &AppState) {
+    recheck(state, |_| true).await;
+}
+
+/// `check_roles` for the sockets of one project alone.
+pub async fn check_room_roles(state: &AppState, project: &str) {
+    recheck(state, |room_id| documents::project_of(room_id) == project).await;
+}
+
+async fn recheck(state: &AppState, checked: impl Fn(&str) -> bool) {
     let sockets: HashSet<_> = state.rooms.sockets().await.into_iter().collect();
-    for (room_id, user, role) in sockets {
+    for (room_id, user, role) in sockets
+        .into_iter()
+        .filter(|(room_id, _, _)| checked(room_id))
+    {
         match db::role_in(&state.pool, documents::project_of(&room_id), user).await {
             Ok(current) if current == Some(role) => {}
             Ok(_) => {

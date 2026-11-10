@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
@@ -13,11 +14,13 @@ use cocat_core::time::Timestamp;
 use cocat_server::relay::{self, Fetched, Provider, RelayError, store};
 use cocat_server::room::{Author, RoomManager};
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -26,8 +29,12 @@ use yrs::{Doc, Transact};
 const SOURCE: &str = "Fake source";
 const SHOCKS: &str = "public.fake.shocks";
 const STORMS: &str = "public.fake.storms";
+/// The answer that makes the fake provider panic instead.
+const PANIC: &str = "panic";
 const FOLLOWS: &str = "This catalogue follows Fake source: it changes when Fake source does.";
 
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 type Answer = Arc<Mutex<Result<Vec<Fetched>, String>>>;
 
 /// Answers whatever the test put in `answer`; with `gate`, says it started and waits to be
@@ -60,7 +67,11 @@ impl Provider for Fake {
             started.notify_one();
             release.notified().await;
         }
-        self.answer.lock().unwrap().clone()
+        let answer = self.answer.lock().unwrap().clone();
+        if answer == Err(PANIC.to_owned()) {
+            panic!("the fake provider broke");
+        }
+        answer
     }
 }
 
@@ -366,7 +377,7 @@ async fn a_provider_never_runs_twice_at_once() {
     let world = World::with_gate(Some((started.clone(), release.clone()))).await;
     let state = world.state.clone();
     let first = tokio::spawn(async move { relay::run(&state, "fake").await });
-    tokio::time::timeout(std::time::Duration::from_secs(10), started.notified())
+    tokio::time::timeout(Duration::from_secs(10), started.notified())
         .await
         .expect("the first run never fetched");
 
@@ -391,15 +402,7 @@ async fn an_unknown_provider_is_refused() {
 #[tokio::test]
 async fn nobody_edits_a_relayed_catalogue() {
     let world = World::start().await;
-    let (status, _) = world
-        .call(
-            world.curator,
-            Method::POST,
-            "/api/public",
-            Some(json!({"name": "Shocks", "key": "fake.shocks"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CREATED);
+    world.public_before_the_relay().await;
     let path = format!("/api/public/{SHOCKS}/proposals");
     world
         .state
@@ -490,12 +493,39 @@ async fn nobody_edits_a_relayed_catalogue() {
 }
 
 impl World {
+    /// `public.fake.shocks` as a curator made it before the relay followed it, the way the
+    /// AMDA script made AMDA's.
+    async fn public_before_the_relay(&self) {
+        let room = db::PublicRoom {
+            id: SHOCKS.to_owned(),
+            name: "Shocks".to_owned(),
+            folder: None,
+            source: None,
+            description: None,
+            public_count: None,
+            counted_file: None,
+        };
+        assert!(
+            db::create_public_room(&self.state.pool, &room, Some(self.curator))
+                .await
+                .unwrap()
+        );
+    }
+
     /// The role the socket handshake grants `user` on the relayed catalogue.
     async fn socket_role(&self, user: Uuid) -> String {
+        let (role, _socket, server) = self.socket(user).await;
+        server.abort();
+        role
+    }
+
+    /// A socket of `user` on `public.fake.shocks`, the role it was granted, and the server
+    /// answering it.
+    async fn socket(&self, user: Uuid) -> (String, Socket, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let app = ws::router(self.state.clone());
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let mut request = format!("ws://{address}/room/{SHOCKS}")
             .into_client_request()
             .unwrap();
@@ -509,12 +539,12 @@ impl World {
             header::COOKIE,
             format!("fastapiusersauth={token}").parse().unwrap(),
         );
-        let (_, answer) = connect_async(request).await.unwrap();
-        server.abort();
-        answer.headers()[cocat_core::ROLE_HEADER]
+        let (socket, answer) = connect_async(request).await.unwrap();
+        let role = answer.headers()[cocat_core::ROLE_HEADER]
             .to_str()
             .unwrap()
-            .to_owned()
+            .to_owned();
+        (role, socket, server)
     }
 }
 
@@ -563,4 +593,127 @@ async fn the_public_index_says_where_a_relayed_catalogue_comes_from() {
     let plain = row(&plain["id"]);
     assert_eq!(plain["relay"], Value::Null);
     assert_eq!(plain["role"], "editor");
+}
+
+#[tokio::test]
+async fn a_panicking_provider_is_recorded_failed_and_runs_again() {
+    let world = World::start().await;
+    world.answer(Err(PANIC.to_owned()));
+
+    let failed = world.run().await;
+
+    assert!(matches!(failed, Err(RelayError::Panicked(_))), "{failed:?}");
+    let provider = store::provider(&world.state.pool, "fake")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!provider.running);
+    assert!(provider.last_ok_at.is_none());
+    assert!(provider.last_result.unwrap().contains("error"));
+    world.answer(Ok(two_lists()));
+    world.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_run_whose_caller_gave_up_still_ends_and_clears_running() {
+    let (started, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let world = World::with_gate(Some((started.clone(), release.clone()))).await;
+    let state = world.state.clone();
+    let caller = tokio::spawn(async move { relay::run(&state, "fake").await });
+    tokio::time::timeout(Duration::from_secs(10), started.notified())
+        .await
+        .expect("the run never fetched");
+
+    caller.abort();
+    let _ = caller.await;
+    release.notify_one();
+
+    // simplify: nothing signals the end of a run nobody awaits, so this polls the row.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while store::provider(&world.state.pool, "fake")
+            .await
+            .unwrap()
+            .unwrap()
+            .running
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the run stayed marked running");
+    assert_eq!(
+        world.row(SHOCKS).await["count"],
+        2,
+        "the run went to its end"
+    );
+}
+
+#[tokio::test]
+async fn a_curator_editing_when_the_relay_adopts_the_catalogue_is_cut_off() {
+    let world = World::start().await;
+    world.public_before_the_relay().await;
+    let (role, mut socket, server) = world.socket(world.curator).await;
+    assert_eq!(role, "editor");
+    socket.next().await.unwrap().unwrap();
+
+    world.run().await.unwrap();
+
+    let close = loop {
+        match tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("the socket stayed open")
+        {
+            Some(Ok(WsMessage::Close(frame))) => break frame,
+            Some(Ok(_)) => continue,
+            other => panic!("expected a close, got {other:?}"),
+        }
+    };
+    server.abort();
+    assert_eq!(
+        close.map(|frame| u16::from(frame.code)),
+        Some(cocat_core::ACCESS_CHANGED_CLOSE)
+    );
+}
+
+#[tokio::test]
+async fn nobody_takes_a_providers_ids_by_hand() {
+    let world = World::start().await;
+
+    let (status, refused) = world
+        .call(
+            world.curator,
+            Method::POST,
+            "/api/public",
+            Some(json!({"name": "Mine", "key": "fake.mine"})),
+        )
+        .await;
+    let (other, _) = world
+        .call(
+            world.curator,
+            Method::POST,
+            "/api/public",
+            Some(json!({"name": "Mine", "key": "fakery.mine"})),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["detail"],
+        "Ids starting with public.fake. belong to the Fake source catalogues"
+    );
+    assert_eq!(other, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_bad_key_fails_the_run_before_anything_is_written() {
+    let world = World::start().await;
+    world.answer(Ok(vec![
+        shocks(vec![event("e1", 1)]),
+        list("not a key", "cat-bad", vec![event("b1", 1)]),
+    ]));
+
+    let failed = world.run().await;
+
+    assert!(matches!(failed, Err(RelayError::Key(_))), "{failed:?}");
+    assert!(world.index(world.reader).await.is_empty());
 }

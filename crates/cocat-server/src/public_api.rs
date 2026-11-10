@@ -118,8 +118,8 @@ async fn index(
 ) -> Result<Json<Vec<PublicOut>>, ApiError> {
     let role = role_of(&state, user.id).await?;
     let mut listed = Vec::new();
-    for room in db::public_rooms(&state.pool).await? {
-        listed.push(out(&state, room, role).await?);
+    for (room, relay) in store::public_index(&state.pool).await? {
+        listed.push(out(&state, room, role, relay).await);
     }
     Ok(Json(listed))
 }
@@ -134,7 +134,7 @@ async fn index(
         (status = 400, description = "A field is empty, too long or not a key", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is not a curator", body = Detail),
-        (status = 409, description = "A public catalogue has that key", body = Detail),
+        (status = 409, description = "A public catalogue has that key, or a provider's catalogues use it", body = Detail),
         (status = 422, description = "The body is not a public catalogue", body = Detail),
     )
 )]
@@ -146,6 +146,7 @@ async fn create(
     if !db::is_curator(&state.pool, user.id).await? {
         return Err(ApiError::Forbidden(NOT_A_CURATOR.to_owned()));
     }
+    refuse_provider_ids(&state, body.key.as_deref())?;
     let room = checked(body)?;
     if !db::create_public_room(&state.pool, &room, Some(user.id)).await? {
         return Err(ApiError::Conflict(format!(
@@ -155,7 +156,7 @@ async fn create(
     }
     Ok((
         StatusCode::CREATED,
-        Json(out(&state, room, Role::Editor).await?),
+        Json(out(&state, room, Role::Editor, None).await),
     ))
 }
 
@@ -190,7 +191,26 @@ async fn change(
     lifecycle::refuse_relayed(&state, &room_id).await?;
     let room = changed(room, body)?;
     db::update_public_room(&state.pool, &room).await?;
-    Ok(Json(out(&state, room, Role::Editor).await?))
+    Ok(Json(out(&state, room, Role::Editor, None).await))
+}
+
+/// `public.<provider>.…` is where the relay puts a provider's catalogues.
+fn refuse_provider_ids(state: &AppState, key: Option<&str>) -> Result<(), ApiError> {
+    let Some(key) = key else {
+        return Ok(());
+    };
+    match state
+        .providers
+        .iter()
+        .find(|provider| key.starts_with(&format!("{}.", provider.id())))
+    {
+        Some(provider) => Err(ApiError::Conflict(format!(
+            "Ids starting with public.{}. belong to the {} catalogues",
+            provider.id(),
+            provider.source()
+        ))),
+        None => Ok(()),
+    }
 }
 
 async fn role_of(state: &AppState, user: Uuid) -> Result<Role, ApiError> {
@@ -201,8 +221,12 @@ async fn role_of(state: &AppState, user: Uuid) -> Result<Role, ApiError> {
 }
 
 /// The row as `role` sees it; a relayed catalogue is read-only for everyone.
-async fn out(state: &AppState, room: PublicRoom, role: Role) -> Result<PublicOut, ApiError> {
-    let relay = store::relayed(&state.pool, &room.id).await?;
+async fn out(
+    state: &AppState,
+    room: PublicRoom,
+    role: Role,
+    relay: Option<RelayedRow>,
+) -> PublicOut {
     let role = match relay {
         Some(_) => Role::Viewer,
         None => role,
@@ -212,7 +236,7 @@ async fn out(state: &AppState, room: PublicRoom, role: Role) -> Result<PublicOut
         .room_changed(&room.id)
         .and_then(|at| OffsetDateTime::from(at).format(&Rfc3339).ok());
     let count = counted(state, &room).await;
-    Ok(PublicOut {
+    PublicOut {
         id: room.id,
         name: room.name,
         folder: room.folder,
@@ -222,7 +246,7 @@ async fn out(state: &AppState, room: PublicRoom, role: Role) -> Result<PublicOut
         changed,
         count,
         relay: relay.map(RelayOut::from),
-    })
+    }
 }
 
 /// The events the catalogue holds: the stored count while the room file is the one it was
