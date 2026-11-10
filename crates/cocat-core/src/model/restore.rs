@@ -15,7 +15,7 @@ use super::{CATALOGUES, EVENTS, Status};
 
 /// Makes the events and catalogues equal to `past`; with a catalogue, only that catalogue
 /// and the events that are its members now or were then. Events and catalogues absent from
-/// `past` move to the trash. Origins, comments and the attribute registry stay as they are.
+/// `past` move to the trash. Origins, comments, links and the attribute registry stay as they are.
 pub fn restore(txn: &mut TransactionMut<'_>, past: &Doc, catalogue: Option<&str>) {
     let past = past.transact();
     let (events, catalogues) = match catalogue {

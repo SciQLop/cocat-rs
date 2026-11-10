@@ -5,7 +5,8 @@ use cocat_core::model::{
     create_catalogue, links, remove_link,
 };
 use cocat_core::{tscat_json, votable};
-use yrs::{Any, Doc, In, Map, MapPrelim, Transact, WriteTxn};
+use yrs::updates::decoder::Decode;
+use yrs::{Any, Doc, In, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 const HERE: &str = "project-here";
 
@@ -147,4 +148,47 @@ fn links_never_reach_an_export() {
 
     assert_eq!(exports(&doc), without);
     assert!(model::catalogues(&doc.transact()).len() == 1);
+}
+
+fn merge(left: &Doc, right: &Doc) {
+    let from_left = left
+        .transact()
+        .encode_state_as_update_v1(&yrs::StateVector::default());
+    let from_right = right
+        .transact()
+        .encode_state_as_update_v1(&yrs::StateVector::default());
+    left.transact_mut()
+        .apply_update(yrs::Update::decode_v1(&from_right).unwrap())
+        .unwrap();
+    right
+        .transact_mut()
+        .apply_update(yrs::Update::decode_v1(&from_left).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn concurrent_duplicates_show_once_and_are_removed_together() {
+    let (left, right) = (Doc::new(), Doc::new());
+    link(&left, "other", "cat-1", "Shocks").unwrap();
+    link(&right, "other", "cat-1", "Shocks").unwrap();
+
+    merge(&left, &right);
+
+    for doc in [&left, &right] {
+        let shown = links(&doc.transact());
+        assert_eq!(shown.len(), 1);
+        assert!(remove_link(&mut doc.transact_mut(), &shown[0].id));
+        assert!(links(&doc.transact()).is_empty());
+    }
+}
+
+#[test]
+fn a_restore_leaves_links_untouched() {
+    let doc = project_with_a_catalogue();
+    link(&doc, "other", "cat-1", "Shocks").unwrap();
+    let before = links(&doc.transact());
+
+    model::restore(&mut doc.transact_mut(), &Doc::new(), None);
+
+    assert_eq!(links(&doc.transact()), before);
 }

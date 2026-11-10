@@ -2,6 +2,8 @@
 //! the catalogues document, one map per link keyed by a fresh uuid, and are read
 //! defensively: whatever does not parse is skipped. Nothing that exports reads this root.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use yrs::types::ToJson;
@@ -54,8 +56,21 @@ struct Stored {
     at: i64,
 }
 
-/// The links, sorted by name ignoring case, then by id.
+/// The links, one per (project, catalogue), sorted by name ignoring case, then by id.
+/// Two clients that linked the same catalogue while apart each wrote an entry; the lowest id
+/// is the one shown, so every client agrees.
 pub fn links<T: ReadTxn>(txn: &T) -> Vec<Link> {
+    let mut seen = BTreeSet::new();
+    let mut links: Vec<Link> = stored_links(txn)
+        .into_iter()
+        .filter(|link| seen.insert((link.project.clone(), link.catalogue.clone())))
+        .collect();
+    links.sort_by_cached_key(|link| (link.name.to_lowercase(), link.id.clone()));
+    links
+}
+
+/// Every entry that parses, by id.
+fn stored_links<T: ReadTxn>(txn: &T) -> Vec<Link> {
     let mut links: Vec<Link> = entries(txn, LINKS)
         .into_iter()
         .filter_map(|(id, map)| {
@@ -70,7 +85,7 @@ pub fn links<T: ReadTxn>(txn: &T) -> Vec<Link> {
             })
         })
         .collect();
-    links.sort_by_cached_key(|link| (link.name.to_lowercase(), link.id.clone()));
+    links.sort_by(|left, right| left.id.cmp(&right.id));
     links
 }
 
@@ -95,9 +110,23 @@ pub fn add_link(
     Ok(id)
 }
 
-/// Removes a link; false when there was none by that id.
+/// Removes a link and any duplicate of it that another client wrote; false when there was
+/// none by that id.
 pub fn remove_link(txn: &mut TransactionMut<'_>, id: &str) -> bool {
-    txn.get_or_insert_map(LINKS).remove(txn, id).is_some()
+    let held = stored_links(txn);
+    let Some(target) = held.iter().find(|link| link.id == id) else {
+        return txn.get_or_insert_map(LINKS).remove(txn, id).is_some();
+    };
+    let same: Vec<String> = held
+        .iter()
+        .filter(|link| link.project == target.project && link.catalogue == target.catalogue)
+        .map(|link| link.id.clone())
+        .collect();
+    let root = txn.get_or_insert_map(LINKS);
+    same.iter().for_each(|id| {
+        root.remove(txn, id);
+    });
+    true
 }
 
 fn link_map(link: &NewLink) -> MapPrelim {
