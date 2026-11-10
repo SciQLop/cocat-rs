@@ -263,8 +263,18 @@ async fn the_workspace_help_says_what_the_web_app_shows() {
     let fixture = Fixture::start().await;
     let help = page(&fixture, "/ui/help", None).await;
     let workspaces = section_text(&help, "workspaces");
-    for expected in ["SciQLop", "History", "Restore", "New workspace", "download", "live"] {
-        assert!(workspaces.contains(expected), "{expected} missing: {workspaces}");
+    for expected in [
+        "SciQLop",
+        "History",
+        "Restore",
+        "New workspace",
+        "download",
+        "live",
+    ] {
+        assert!(
+            workspaces.contains(expected),
+            "{expected} missing: {workspaces}"
+        );
     }
 }
 
