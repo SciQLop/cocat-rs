@@ -413,7 +413,7 @@ fn room_budget() -> Result<Option<u64>, CliError> {
     }
 }
 
-/// The room and owner storage limits. Both are megabytes; unset or empty means the default,
+/// The room, owner and whole-file storage limits. All are megabytes; unset or empty means the default,
 /// which is already in bytes.
 fn storage_limits() -> Result<StorageLimits, CliError> {
     storage_limits_from(|name| std::env::var(name))
@@ -433,6 +433,11 @@ fn storage_limits_from(
             "COCAT_OWNER_MAX_MB",
             lookup("COCAT_OWNER_MAX_MB"),
             defaults.owner,
+        )?,
+        file: megabytes(
+            "COCAT_FILE_MAX_MB",
+            lookup("COCAT_FILE_MAX_MB"),
+            defaults.file,
         )?,
     })
 }
@@ -537,6 +542,31 @@ mod tests {
             .room,
             1024 * 1024 * 1024,
             "a set value is read as megabytes"
+        );
+    }
+
+    #[test]
+    fn the_file_cap_defaults_to_twenty_megabytes_and_reads_megabytes() {
+        let lookup = |value: Option<&'static str>| {
+            move |name: &str| match (name, value) {
+                ("COCAT_FILE_MAX_MB", Some(value)) => Ok(value.to_owned()),
+                _ => Err(VarError::NotPresent),
+            }
+        };
+
+        assert_eq!(
+            storage_limits_from(lookup(None)).unwrap().file,
+            20 * 1024 * 1024
+        );
+        assert_eq!(
+            storage_limits_from(lookup(Some("1"))).unwrap().file,
+            1024 * 1024
+        );
+        assert!(
+            storage_limits_from(lookup(Some("0")))
+                .unwrap_err()
+                .to_string()
+                .contains("COCAT_FILE_MAX_MB")
         );
     }
 

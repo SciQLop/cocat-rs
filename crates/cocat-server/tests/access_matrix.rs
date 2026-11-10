@@ -264,6 +264,20 @@ const ROWS: &[Row] = &[
     )
     .room_any(),
     row(
+        "GET",
+        "/api/rooms/{room}/blobs/{sha256}",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "PUT",
+        "/api/rooms/{room}/blobs/{sha256}",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any(),
+    row(
         "PUT",
         "/api/rooms/{room}/editors-can-share",
         Guard::RoomOwner,
@@ -1012,6 +1026,7 @@ impl World {
             .replace("{group}", &self.group)
             .replace("{catalogue}", "missing")
             .replace("{version}", "0")
+            .replace("{sha256}", &"0".repeat(64))
             .replace("{invitation}", &self.invitation.to_string())
             .replace("{user}", &self.user.to_string())
             .replace("{member}", &self.target.to_string())

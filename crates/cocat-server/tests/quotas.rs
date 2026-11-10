@@ -30,7 +30,9 @@ async fn a_room_limit_override_caps_the_allowance() {
     )
     .await
     .unwrap();
-    let StorageLimits { room, owner: quota } = fixture.state.rooms.limits();
+    let StorageLimits {
+        room, owner: quota, ..
+    } = fixture.state.rooms.limits();
     assert_eq!(
         fixture
             .state
@@ -94,7 +96,9 @@ async fn clearing_an_override_returns_to_the_configured_default() {
     )
     .await
     .unwrap();
-    let StorageLimits { room, owner: quota } = fixture.state.rooms.limits();
+    let StorageLimits {
+        room, owner: quota, ..
+    } = fixture.state.rooms.limits();
     let default = fixture
         .state
         .rooms

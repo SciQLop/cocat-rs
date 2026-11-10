@@ -78,6 +78,8 @@ fn megabytes(mb: u64) -> u64 {
 pub struct StorageLimits {
     pub room: u64,
     pub owner: u64,
+    /// The largest whole file a workspace stores.
+    pub file: u64,
 }
 
 impl Default for StorageLimits {
@@ -85,6 +87,7 @@ impl Default for StorageLimits {
         Self {
             room: 1024 * 1024 * 1024,
             owner: 5120 * 1024 * 1024,
+            file: 20 * 1024 * 1024,
         }
     }
 }
@@ -328,8 +331,8 @@ impl RoomManager {
         Ok(room_limit.min(left))
     }
 
-    /// What the owner's quota leaves once the files of their projects (the catalogues key
-    /// and every document) and stored submissions are counted, `except` one key.
+    /// What the owner's quota leaves once the files of their projects (the catalogues key,
+    /// every document and the stored whole files) and stored submissions are counted, `except` one key.
     pub async fn owner_left(
         &self,
         pool: &SqlitePool,
@@ -342,6 +345,7 @@ impl RoomManager {
         };
         let mut used = crate::submissions::stored_bytes(pool, owner).await?;
         for owned in crate::db::owned_rooms(pool, owner).await? {
+            used = used.saturating_add(crate::blobs::stored_bytes(pool, &owned).await?);
             for key in project_keys(pool, &owned).await? {
                 if Some(key.as_str()) != except {
                     used = used.saturating_add(self.room_size(&key));
@@ -371,9 +375,10 @@ impl RoomManager {
         }
     }
 
-    /// Deletes the project's catalogues file and the files of `documents`, which the caller
-    /// read before the project row cascaded them away.
+    /// Deletes the project's catalogues file, the files of `documents`, which the caller
+    /// read before the project row cascaded them away, and its stored files.
     pub async fn delete_project(&self, room_id: &str, documents: &[Uuid]) {
+        crate::blobs::delete_folder(&self.update_dir, room_id).await;
         self.delete(room_id).await;
         for doc in documents {
             self.delete(&crate::documents::key(room_id, *doc)).await;
@@ -442,6 +447,11 @@ impl RoomManager {
 
     pub fn open_rooms(&self) -> usize {
         self.rooms.lock().map(|rooms| rooms.len()).unwrap_or(0)
+    }
+
+    /// Where the room files and the stored whole files live.
+    pub fn update_dir(&self) -> &Path {
+        &self.update_dir
     }
 
     /// The limits the process was configured with, before any per-account override.
@@ -2781,6 +2791,7 @@ mod tests {
         let manager = RoomManager::new(dir.path().to_owned(), None).with_storage(StorageLimits {
             room: u64::MAX,
             owner: 196,
+            ..StorageLimits::default()
         });
 
         assert_eq!(manager.allowance(&pool, "second").await.unwrap(), 100);
@@ -2821,6 +2832,7 @@ mod tests {
         let manager = RoomManager::new(dir.path().to_owned(), None).with_storage(StorageLimits {
             room: u64::MAX,
             owner: used + 100,
+            ..StorageLimits::default()
         });
 
         assert_eq!(

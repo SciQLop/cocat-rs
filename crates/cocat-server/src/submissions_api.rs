@@ -601,7 +601,7 @@ fn within_quota(size: u64, left: u64) -> Result<(), ApiError> {
     )))
 }
 
-fn bytes(size: u64) -> String {
+pub(crate) fn bytes(size: u64) -> String {
     const KB: u64 = 1024;
     match size {
         0..KB => format!("{size} bytes"),

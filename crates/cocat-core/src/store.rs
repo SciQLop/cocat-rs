@@ -214,12 +214,18 @@ pub fn room_id_from_file(path: &Path) -> Option<String> {
     (file_name(&room_id) == name).then_some(room_id)
 }
 
-fn file_name(room_id: &str) -> String {
+/// The room id as one file-system-safe name, with no extension: what `room_file` and a
+/// room's folder of side files are named after.
+pub fn escaped_room_id(room_id: &str) -> String {
     let escaped = utf8_percent_encode(room_id, NOT_IN_A_FILE_NAME).to_string();
     match escaped.strip_prefix('.') {
-        Some(rest) => format!("%2E{rest}.y"),
-        None => format!("{escaped}.y"),
+        Some(rest) => format!("%2E{rest}"),
+        None => escaped,
     }
+}
+
+fn file_name(room_id: &str) -> String {
+    format!("{}.y", escaped_room_id(room_id))
 }
 
 fn check_room_id(room_id: &str) -> Result<(), InvalidRoomId> {

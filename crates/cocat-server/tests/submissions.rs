@@ -310,6 +310,7 @@ async fn a_catalogue_over_the_project_size_limit_is_refused() {
     let world = World::with_limits(StorageLimits {
         room: 200,
         owner: u64::MAX,
+        ..StorageLimits::default()
     })
     .await;
     let many: Vec<String> = (0..20).map(|n| format!("event-{n}")).collect();
@@ -789,6 +790,7 @@ async fn submissions_count_against_the_authors_storage() {
     let world = World::with_limits(StorageLimits {
         room: 1 << 30,
         owner: 1 << 20,
+        ..StorageLimits::default()
     })
     .await;
     world
@@ -828,6 +830,7 @@ async fn a_submission_over_the_authors_storage_is_refused() {
     let world = World::with_limits(StorageLimits {
         room: 1 << 30,
         owner: 10,
+        ..StorageLimits::default()
     })
     .await;
     world
@@ -994,6 +997,7 @@ async fn a_copy_counts_against_the_destination_owners_storage() {
     let world = World::with_limits(StorageLimits {
         room: 1 << 30,
         owner: 10,
+        ..StorageLimits::default()
     })
     .await;
     let public = world.public().await;

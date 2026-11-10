@@ -32,6 +32,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(set_editors_can_share))
         .routes(routes!(legacy_rooms))
         .routes(routes!(legacy_room_users))
+        .merge(crate::blobs::router())
         .merge(crate::catalogues_api::router())
         .merge(crate::documents::router())
         .merge(crate::history_api::router())
