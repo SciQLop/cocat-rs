@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::accounts::{self, AccountError, Change};
 use crate::db::{self, DbError, User};
+use crate::lifecycle;
 use crate::room::CloseReason;
 
 /// The largest quota an administrator may set, in MB (one terabyte).
@@ -356,7 +357,7 @@ pub async fn set_room_owner(
     for changed in previous.into_iter().chain([target.id]) {
         state
             .rooms
-            .revoke(room, changed, CloseReason::AccessChanged)
+            .revoke_project(&state.pool, room, changed, CloseReason::AccessChanged)
             .await;
     }
     Ok(())
@@ -366,10 +367,9 @@ pub async fn set_room_owner(
 /// closing as `lifecycle::delete_room`, without its owner check.
 pub async fn delete_room(state: &AppState, actor: &User, room: &str) -> Result<(), AdminError> {
     require(actor)?;
-    if !db::delete_room(&state.pool, room).await? {
+    if !lifecycle::remove_project(state, room).await? {
         return Err(AdminError::NotFound);
     }
-    state.rooms.delete(room).await;
     Ok(())
 }
 

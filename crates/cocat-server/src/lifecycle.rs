@@ -192,11 +192,25 @@ pub async fn delete_room(
         false => Role::Owner,
     };
     require_role(state, room_id, actor, deleter).await?;
-    if !db::delete_room(&state.pool, room_id).await? {
+    if !remove_project(state, room_id).await? {
         return Err(room_not_found(room_id));
     }
-    state.rooms.delete(room_id).await;
     Ok(())
+}
+
+/// Deletes the project row, then the files of its catalogues and documents. The documents are
+/// read first because the row takes them with it. False when there was no such project.
+pub(crate) async fn remove_project(state: &AppState, room_id: &str) -> Result<bool, DbError> {
+    let documents: Vec<Uuid> = db::documents_of(&state.pool, room_id)
+        .await?
+        .into_iter()
+        .map(|(doc, _)| doc)
+        .collect();
+    if !db::delete_room(&state.pool, room_id).await? {
+        return Ok(false);
+    }
+    state.rooms.delete_project(room_id, &documents).await;
+    Ok(true)
 }
 
 /// Changes a member's role and closes their sockets, which were admitted under the old one.
@@ -217,7 +231,7 @@ pub async fn set_member_role(
     }
     state
         .rooms
-        .revoke(room_id, member, CloseReason::AccessChanged)
+        .revoke_project(&state.pool, room_id, member, CloseReason::AccessChanged)
         .await;
     Ok(())
 }
@@ -239,7 +253,7 @@ pub async fn remove_member(
     }
     state
         .rooms
-        .revoke(room_id, member, CloseReason::AccessChanged)
+        .revoke_project(&state.pool, room_id, member, CloseReason::AccessChanged)
         .await;
     Ok(())
 }
@@ -258,7 +272,7 @@ pub async fn transfer_ownership(
     db::set_owner(&state.pool, room_id, new_owner).await?;
     state
         .rooms
-        .revoke(room_id, new_owner, CloseReason::AccessChanged)
+        .revoke_project(&state.pool, room_id, new_owner, CloseReason::AccessChanged)
         .await;
     Ok(())
 }

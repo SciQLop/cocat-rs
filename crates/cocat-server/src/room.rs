@@ -59,6 +59,16 @@ const MEGABYTE: u64 = 1024 * 1024;
 /// A room can unload between being found and being written to; a retry opens it again.
 const WRITE_TRIES: usize = 3;
 
+async fn project_keys(pool: &SqlitePool, room_id: &str) -> Result<Vec<String>, RoomError> {
+    let documents = crate::db::documents_of(pool, room_id).await?;
+    let documents = documents
+        .into_iter()
+        .map(|(doc, _)| crate::documents::key(room_id, doc));
+    Ok(std::iter::once(room_id.to_owned())
+        .chain(documents)
+        .collect())
+}
+
 fn megabytes(mb: u64) -> u64 {
     mb.saturating_mul(MEGABYTE)
 }
@@ -299,26 +309,27 @@ impl RoomManager {
         Ok(handle)
     }
 
-    /// The bytes a room's file may reach: the room limit, or what its owner's quota leaves
-    /// once the owner's other room files and stored submissions are counted.
+    /// The bytes the file under `key` may reach: the room limit, or what its owner's quota
+    /// leaves once the owner's other files and stored submissions are counted.
     ///
     /// simplify: the allowance is measured when the room opens, so two of one owner's rooms
     /// opening together can each spend the remaining quota (overshoot ≤ remaining × open
     /// rooms). Upgrade path: one shared per-owner byte counter in the manager.
-    pub async fn allowance(&self, pool: &SqlitePool, room_id: &str) -> Result<u64, RoomError> {
-        let room_limit = match crate::db::room_quota(pool, room_id).await? {
+    pub async fn allowance(&self, pool: &SqlitePool, key: &str) -> Result<u64, RoomError> {
+        let project = crate::documents::project_of(key);
+        let room_limit = match crate::db::room_quota(pool, project).await? {
             Some(mb) => megabytes(mb),
             None => self.storage.room,
         };
-        let Some(owner) = crate::db::room_owner(pool, room_id).await? else {
+        let Some(owner) = crate::db::room_owner(pool, project).await? else {
             return Ok(room_limit);
         };
-        let left = self.owner_left(pool, owner, Some(room_id)).await?;
+        let left = self.owner_left(pool, owner, Some(key)).await?;
         Ok(room_limit.min(left))
     }
 
-    /// What the owner's quota leaves once their room files and stored submissions are
-    /// counted, `except` one room.
+    /// What the owner's quota leaves once the files of their projects (the catalogues key
+    /// and every document) and stored submissions are counted, `except` one key.
     pub async fn owner_left(
         &self,
         pool: &SqlitePool,
@@ -331,11 +342,43 @@ impl RoomManager {
         };
         let mut used = crate::submissions::stored_bytes(pool, owner).await?;
         for owned in crate::db::owned_rooms(pool, owner).await? {
-            if Some(owned.as_str()) != except {
-                used = used.saturating_add(self.room_size(&owned));
+            for key in project_keys(pool, &owned).await? {
+                if Some(key.as_str()) != except {
+                    used = used.saturating_add(self.room_size(&key));
+                }
             }
         }
         Ok(owner_limit.saturating_sub(used))
+    }
+
+    /// Closes the user's sockets on the project's catalogues and on each of its documents.
+    pub async fn revoke_project(
+        &self,
+        pool: &SqlitePool,
+        room_id: &str,
+        user: Uuid,
+        reason: CloseReason,
+    ) {
+        match project_keys(pool, room_id).await {
+            Ok(keys) => {
+                for key in keys {
+                    self.revoke(&key, user, reason).await;
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, room = %room_id, "cannot list the documents to revoke");
+                self.revoke(room_id, user, reason).await;
+            }
+        }
+    }
+
+    /// Deletes the project's catalogues file and the files of `documents`, which the caller
+    /// read before the project row cascaded them away.
+    pub async fn delete_project(&self, room_id: &str, documents: &[Uuid]) {
+        self.delete(room_id).await;
+        for doc in documents {
+            self.delete(&crate::documents::key(room_id, *doc)).await;
+        }
     }
 
     /// Closes every socket this user has in the room, whatever their client ids. A room

@@ -509,3 +509,96 @@ async fn a_slash_project_row_does_not_reach_another_projects_document_room() {
 fn room_path_escaped(id: &str) -> String {
     id.replace('/', "%2F")
 }
+
+async fn closed_by_the_server(socket: &mut Socket) -> bool {
+    loop {
+        match timeout(WAIT, socket.next()).await.expect("never closed") {
+            Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => return true,
+            Some(Ok(_)) => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn removing_a_member_closes_their_notebook_sockets() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let (editor, editor_token) = fixture.user_token("editor@example.org").await;
+    let room = fixture.project(&owner, "workspace").await;
+    db::add_member(&fixture.state.pool, &room, editor, Role::Editor)
+        .await
+        .unwrap();
+    let doc = notebook(&fixture, &owner, &room).await;
+    let addr = fixture.serve().await;
+    let mut socket = connect(addr, &format!("{room}/{doc}"), &editor_token).await;
+    next_message(&mut socket).await;
+
+    let (status, _) = fixture
+        .send(
+            Method::DELETE,
+            &format!("/api/rooms/{room}/members/{editor}"),
+            &owner,
+            None,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(closed_by_the_server(&mut socket).await);
+}
+
+#[tokio::test]
+async fn lowering_a_group_grant_closes_notebook_sockets() {
+    let fixture = Fixture::start().await;
+    let (owner, owner_token) = fixture.user_token("owner@example.org").await;
+    let (member, member_token) = fixture.user_token("member@example.org").await;
+    let room = fixture.project(&owner_token, "workspace").await;
+    let doc = notebook(&fixture, &owner_token, &room).await;
+    let group = cocat_server::groups::create(&fixture.state, owner, "Team")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO group_member (group_id, user_id, role) VALUES (?, ?, 'member')")
+        .bind(&group.id)
+        .bind(member.to_string())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    cocat_server::groups::grant(&fixture.state, &room, &group.id, owner, Role::Editor)
+        .await
+        .unwrap();
+    let addr = fixture.serve().await;
+    let mut socket = connect(addr, &format!("{room}/{doc}"), &member_token).await;
+    next_message(&mut socket).await;
+
+    cocat_server::groups::grant(&fixture.state, &room, &group.id, owner, Role::Viewer)
+        .await
+        .unwrap();
+
+    assert!(closed_by_the_server(&mut socket).await);
+}
+
+#[tokio::test]
+async fn deleting_a_workspace_deletes_every_document_file() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "workspace").await;
+    let addr = fixture.serve().await;
+    for _ in 0..2 {
+        let doc = notebook(&fixture, &owner, &room).await;
+        let mut socket = connect(addr, &format!("{room}/{doc}"), &owner).await;
+        next_message(&mut socket).await;
+        socket
+            .send(update_frame(update_with("key", "value")))
+            .await
+            .unwrap();
+        let key = cocat_server::documents::key(&room, doc);
+        fixture.state.rooms.flush(&key).await.unwrap();
+    }
+    assert!(files_in(&fixture.rooms_dir) > 0);
+
+    let (status, _) = fixture
+        .send(Method::DELETE, &format!("/api/rooms/{room}"), &owner, None)
+        .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(files_in(&fixture.rooms_dir), 0);
+}

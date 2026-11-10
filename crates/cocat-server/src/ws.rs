@@ -445,10 +445,7 @@ async fn attach(
     user: &User,
     role: Role,
 ) -> Result<(RoomHandle, Inbox), AttachError> {
-    let allowance = state
-        .rooms
-        .allowance(&state.pool, documents::project_of(room_id))
-        .await?;
+    let allowance = state.rooms.allowance(&state.pool, room_id).await?;
     for _ in 0..ATTACH_TRIES {
         let rooms = state.rooms.clone();
         let id = room_id.to_owned();

@@ -149,3 +149,45 @@ async fn a_zero_quota_is_refused() {
         None
     );
 }
+
+fn big_update(bytes: usize) -> Vec<u8> {
+    use yrs::{Doc, Map, ReadTxn, StateVector, Transact};
+    let doc = Doc::new();
+    doc.get_or_insert_map("content")
+        .insert(&mut doc.transact_mut(), "text", "x".repeat(bytes));
+    doc.transact()
+        .encode_state_as_update_v1(&StateVector::default())
+}
+
+#[tokio::test]
+async fn a_workspace_documents_count_toward_the_owner_quota() {
+    use cocat_server::documents;
+    use cocat_server::room::{Author, RoomError};
+    let fixture = Fixture::start().await;
+    let rooms = &fixture.state.rooms;
+    let pool = &fixture.state.pool;
+    let owner = fixture.verified("owner@example.org").await;
+    db::create_room(pool, owner, "lab", "Lab", db::ProjectKind::Workspace)
+        .await
+        .unwrap();
+    db::set_user_quota(pool, owner, Some(1)).await.unwrap();
+    let mut keys = Vec::new();
+    for _ in 0..2 {
+        let doc = db::create_document(pool, "lab", db::DocumentKind::Notebook, owner)
+            .await
+            .unwrap();
+        keys.push(documents::key("lab", doc));
+    }
+    let write = |key: String| async move {
+        let allowance = rooms.allowance(pool, &key).await.unwrap();
+        rooms
+            .write_as(&key, allowance, Author::Client(owner), big_update(600_000))
+            .await
+    };
+
+    let first = write(keys[0].clone()).await;
+    let second = write(keys[1].clone()).await;
+
+    assert!(first.unwrap());
+    assert!(matches!(second, Err(RoomError::Full)));
+}

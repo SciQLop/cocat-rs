@@ -677,7 +677,7 @@ async fn revoke_pairs(state: &AppState, pairs: Vec<(String, Uuid)>) {
     for (room_id, user) in pairs {
         state
             .rooms
-            .revoke(&room_id, user, CloseReason::AccessChanged)
+            .revoke_project(&state.pool, &room_id, user, CloseReason::AccessChanged)
             .await;
     }
 }
