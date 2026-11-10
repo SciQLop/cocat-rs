@@ -303,6 +303,16 @@ their sockets on every document (4403).
   project is deleted.
 - Two restores at the same moment that both bring back the same deleted cell insert it twice.
 
+## Links to other projects' catalogues
+
+A project's catalogues document may hold a root map `links`: link id → `{project,
+project_name, catalogue, name, by?, at}` (`at` in milliseconds since the Unix epoch;
+`project_name` and `name` are the names when linked). The web app lists them under
+"Linked" and opens the original catalogue in its own project, with the visitor's role
+there. One link per (project, catalogue); when two clients link the same one while apart,
+the lowest id is shown and removing it removes both. Exports and restores leave links alone,
+and clients that do not know the map ignore it.
+
 ## Public catalogues
 
 Public catalogues are projects every signed-in account reads and only curators edit. Each

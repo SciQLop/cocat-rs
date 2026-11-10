@@ -304,3 +304,26 @@ async fn the_search_help_gives_the_syntax_and_how_to_save_one() {
         );
     }
 }
+
+#[tokio::test]
+async fn the_catalogue_help_says_what_a_link_is() {
+    let fixture = Fixture::start().await;
+
+    let help = page(&fixture, "/ui/help", None).await;
+
+    let catalogues = section_text(&help, "catalogues");
+    assert!(
+        catalogues.contains("Link a catalogue from another project…"),
+        "{catalogues}"
+    );
+    assert!(
+        catalogues.contains("changes go to the original"),
+        "{catalogues}"
+    );
+    assert!(catalogues.contains("your role there"), "{catalogues}");
+    assert!(catalogues.contains("No longer available"), "{catalogues}");
+    assert!(
+        catalogues.contains("A smart catalogue cannot use a linked catalogue"),
+        "{catalogues}"
+    );
+}
