@@ -6,6 +6,7 @@ use crate::layout::{Span, reveal};
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
+use crate::views::files::{FilesSection, ProjectFiles};
 use crate::views::submissions::waiting_submissions;
 use crate::views::transfer::Importer;
 
@@ -14,6 +15,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let room = expect_context::<Room>();
     let reader = room.clone();
     let list = Memo::new(move |_| reader.read(|txn| catalogue_list(txn)));
+    let files = expect_context::<ProjectFiles>();
     let page = window().location().pathname().unwrap_or_default();
     let trash = Route::Trash.href(&page);
     let all = Route::AllEvents.href(&page);
@@ -45,6 +47,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                     <p class="quiet">"No catalogues in this project yet."</p>
                 </Show>
             </nav>
+            <FilesSection state=files shown/>
             <a
                 class="catalogue trash"
                 href=trash

@@ -10,7 +10,7 @@ use crate::history::browse_href;
 use crate::projects::{Actions, Arrival, Project, arrival, stays, title};
 use crate::public::PublicCatalogue;
 use crate::route::Route;
-use crate::session::{Kind, RoomConfig};
+use crate::session::RoomConfig;
 use crate::state::Room;
 use crate::views::controls::{Hint, go_to};
 use crate::views::notice::Notice;
@@ -182,9 +182,7 @@ pub fn ProjectMenu() -> impl IntoView {
     let dialog = RwSignal::new(None::<Dialog>);
     let room = use_context::<Room>();
     let held = room.is_some();
-    let catalogues = room
-        .as_ref()
-        .is_some_and(|room| room.config.kind == Kind::Catalogues);
+    let catalogues = room.is_some();
     let editor = room.is_some_and(|room| room.can_write());
     let importer = use_context::<Importer>();
     let open_id = move || projects.open.with(|config| config.room_id.clone());

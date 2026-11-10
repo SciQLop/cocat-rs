@@ -546,7 +546,7 @@ fn OpenPublic(target: String, title: String, curator: RwSignal<bool>) -> impl In
             role,
             editors_can_share: false,
             personal: false,
-            kind: crate::session::Kind::Catalogues,
+            files: false,
         });
     };
     view! {

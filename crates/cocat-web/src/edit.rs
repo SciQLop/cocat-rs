@@ -400,7 +400,6 @@ mod tests {
     use yrs::updates::decoder::Decode;
     use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
-    use crate::session::Kind;
     use cocat_core::role::Role;
 
     use super::*;
@@ -419,7 +418,7 @@ mod tests {
             api_url: "https://cocat.example.org/api".into(),
             user_email: "ann@example.org".into(),
             admin: false,
-            kind: Kind::Catalogues,
+            files: false,
         }
     }
 

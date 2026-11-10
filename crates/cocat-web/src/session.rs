@@ -8,15 +8,6 @@ use thiserror::Error;
 use url::Url;
 use url::form_urlencoded::byte_serialize;
 
-/// What a project holds: catalogues, or a workspace's files (which never open as catalogues).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    #[default]
-    Catalogues,
-    Workspace,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomConfig {
     pub room_id: String,
@@ -28,7 +19,8 @@ pub struct RoomConfig {
     pub user_email: String,
     /// Whether the visitor may open the admin pages.
     pub admin: bool,
-    pub kind: Kind,
+    /// The project holds a SciQLop workspace's files besides its catalogues.
+    pub files: bool,
 }
 
 #[derive(Debug, Error)]
@@ -57,10 +49,7 @@ impl RoomConfig {
             api_url: resolve(&tag("cocat-api")?, base_uri)?.into(),
             user_email: tag("cocat-user")?,
             admin: meta("cocat-admin").is_some_and(|value| value == "true"),
-            kind: match meta("cocat-kind").as_deref() {
-                Some("workspace") => Kind::Workspace,
-                _ => Kind::Catalogues,
-            },
+            files: meta("cocat-files").is_some_and(|value| value == "true"),
         })
     }
 }
@@ -137,7 +126,7 @@ mod tests {
                 api_url: "https://cocat.example.org/cocat-dev/api".into(),
                 user_email: "alice@example.org".into(),
                 admin: false,
-                kind: Kind::Catalogues,
+                files: false,
             }
         );
     }
@@ -150,18 +139,15 @@ mod tests {
     }
 
     #[test]
-    fn a_page_without_a_kind_holds_a_catalogue_project() {
-        assert_eq!(
-            read(&full("/room/lab"), BASE).unwrap().kind,
-            Kind::Catalogues
-        );
+    fn a_page_without_files_says_so() {
+        assert!(!read(&full("/room/lab"), BASE).unwrap().files);
     }
 
     #[test]
-    fn a_workspace_page_says_so() {
+    fn a_page_with_files_says_so() {
         let mut meta = full("/room/lab");
-        meta.insert("cocat-kind".into(), "workspace".into());
-        assert_eq!(read(&meta, BASE).unwrap().kind, Kind::Workspace);
+        meta.insert("cocat-files".into(), "true".into());
+        assert!(read(&meta, BASE).unwrap().files);
     }
 
     #[test]

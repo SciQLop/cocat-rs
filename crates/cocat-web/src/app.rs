@@ -5,10 +5,11 @@ use leptos::prelude::*;
 use crate::connection;
 use crate::route::Route;
 use crate::rows::Row;
-use crate::session::{ConfigError, Kind, RoomConfig};
+use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
+use crate::views::files::{FilePane, FilesLoader, ProjectFiles};
 use crate::views::groups::GroupsPage;
 use crate::views::header::Header;
 use crate::views::history::HistoryPage;
@@ -19,7 +20,6 @@ use crate::views::projects::set_title;
 use crate::views::public::{PublicSidebar, PublicSpace};
 use crate::views::sidebar::Sidebar;
 use crate::views::transfer::{ImportDialog, Importer, drop_on};
-use crate::views::workspace::WorkspaceApp;
 use cocat_core::model;
 
 pub fn start() {
@@ -83,10 +83,7 @@ fn Shell(config: RoomConfig) -> impl IntoView {
         }
         opened.with(|_| {
             let config = projects.open.get_untracked();
-            match config.kind {
-                Kind::Workspace => view! { <WorkspaceApp config/> }.into_any(),
-                Kind::Catalogues => view! { <App config/> }.into_any(),
-            }
+            view! { <App config/> }.into_any()
         })
     }
 }
@@ -96,8 +93,11 @@ fn App(config: RoomConfig) -> impl IntoView {
     set_title(&config.room_name);
     let public = cocat_core::room_id::is_public_id(&config.room_id);
     let current = public.then(|| config.room_id.clone());
+    let with_files = config.files.then(|| config.clone());
     let room = Room::new(config);
     provide_context(room.clone());
+    let files: ProjectFiles = RwSignal::new(None);
+    provide_context(files);
     let connection = match connection::connect(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => return failure(format!("The project cannot sync: {error}")).into_any(),
@@ -121,6 +121,10 @@ fn App(config: RoomConfig) -> impl IntoView {
         let editing = panel.with(|shown| shown.event().map(str::to_owned));
         published.set(editing.filter(|_| editor));
     });
+    let file_path = Memo::new(move |_| match shown.get() {
+        Route::File(path) => Some(path),
+        _ => None,
+    });
     let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
     let in_groups = Memo::new(move |_| matches!(shown.get(), Route::Groups | Route::Group(_)));
     // Both keep their value once the page leaves the history: see `HistoryPage`.
@@ -138,6 +142,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         }
     });
     view! {
+        {with_files.map(|config| view! { <FilesLoader config state=files/> })}
         <Header shown/>
         <NoticeBar/>
         {move || importer.is_open().then(|| view! { <ImportDialog/> })}
@@ -153,10 +158,17 @@ fn App(config: RoomConfig) -> impl IntoView {
                         None => view! { <Sidebar shown/> }.into_any(),
                     }}
                     <div class="pane">
-                        <main class="content" on:dragover=drag_over on:drop=drop>
-                            <CataloguePage shown selected screen/>
-                        </main>
-                        <EventPanel selected shown=panel route=shown screen/>
+                        {move || match file_path.get() {
+                            Some(path) => view! {
+                                <main class="content file-pane"><FilePane state=files path/></main>
+                            }.into_any(),
+                            None => view! {
+                                <main class="content" on:dragover=drag_over on:drop=drop>
+                                    <CataloguePage shown selected screen/>
+                                </main>
+                                <EventPanel selected shown=panel route=shown screen/>
+                            }.into_any(),
+                        }}
                     </div>
                 </div>
             }

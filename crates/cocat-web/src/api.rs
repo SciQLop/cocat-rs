@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::history::{Diff, History, Version, endpoint, refusal_text, save_body};
 use crate::projects::{Project, api_url};
-use crate::session::{Kind, RoomConfig};
+use crate::session::RoomConfig;
 use crate::sharing::Created;
 use crate::submissions::Submission;
 
@@ -156,10 +156,12 @@ pub async fn projects(api: &str) -> Result<Vec<Project>, ApiError> {
 }
 
 /// A new project, owned by the visitor.
-pub async fn create_project(api: &str, name: &str, kind: Kind) -> Result<Project, ApiError> {
-    let kind = match kind {
-        Kind::Catalogues => "catalogues",
-        Kind::Workspace => "workspace",
+/// A new project; `with_files` also gives it a file list for a SciQLop workspace.
+pub async fn create_project(api: &str, name: &str, with_files: bool) -> Result<Project, ApiError> {
+    let kind = if with_files {
+        "workspace"
+    } else {
+        "catalogues"
     };
     let body = json!({ "name": name, "kind": kind }).to_string();
     json_body(Request::post(&at(api, &["rooms"])?), body).await

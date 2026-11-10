@@ -7,7 +7,6 @@ use leptos::task::spawn_local;
 
 use crate::api::{self, ApiError};
 use crate::projects::delete_confirmed;
-use crate::session::Kind;
 use crate::views::controls::{Error, Hint, error_line};
 use crate::views::projects::Projects;
 use crate::views::transfer::ExportDialog;
@@ -32,8 +31,8 @@ pub fn ProjectDialog(which: Dialog, dialog: RwSignal<Option<Dialog>>) -> impl In
         }
     });
     let body = match which {
-        Dialog::Create => view! { <Create dialog kind=Kind::Catalogues/> }.into_any(),
-        Dialog::CreateWorkspace => view! { <Create dialog kind=Kind::Workspace/> }.into_any(),
+        Dialog::Create => view! { <Create dialog with_files=false/> }.into_any(),
+        Dialog::CreateWorkspace => view! { <Create dialog with_files=true/> }.into_any(),
         Dialog::Rename => view! { <Rename dialog/> }.into_any(),
         Dialog::Leave => view! { <Leave dialog/> }.into_any(),
         Dialog::Delete => view! { <Delete dialog/> }.into_any(),
@@ -96,7 +95,7 @@ fn Buttons(
 }
 
 #[component]
-fn Create(dialog: RwSignal<Option<Dialog>>, kind: Kind) -> impl IntoView {
+fn Create(dialog: RwSignal<Option<Dialog>>, with_files: bool) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let input = NodeRef::<Input>::new();
     let (error, busy): (Error, _) = (RwSignal::new(None), RwSignal::new(false));
@@ -106,18 +105,18 @@ fn Create(dialog: RwSignal<Option<Dialog>>, kind: Kind) -> impl IntoView {
         send(
             error,
             busy,
-            async move { api::create_project(&api, &name, kind).await },
+            async move { api::create_project(&api, &name, with_files).await },
             move |project| projects.created(project),
         );
     };
     view! {
         <form method="dialog" class="name-form" on:submit=submit>
-            {match kind {
-                Kind::Catalogues => view! {
+            {match with_files {
+                false => view! {
                     <h2>"New project"</h2>
                     <Hint text="A project holds catalogues you share with the same people." anchor="projects" topic="projects"/>
                 }.into_any(),
-                Kind::Workspace => view! {
+                true => view! {
                     <h2>"New SciQLop workspace"</h2>
                     <Hint text="A SciQLop workspace shares its notebooks, scripts and files with the same people. You edit them in SciQLop; the web app shows them." anchor="workspaces" topic="workspaces"/>
                 }.into_any(),

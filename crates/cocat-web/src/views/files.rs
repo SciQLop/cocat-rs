@@ -1,4 +1,5 @@
-//! A workspace's page: its files, synced from the manifest, and the file opened.
+//! A project's files: its file list synced from the manifest, the Files section of the
+//! sidebar, and the file opened in the main pane.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -21,10 +22,7 @@ use crate::session::RoomConfig;
 use crate::state::Room;
 use crate::sync::Status;
 use crate::views::controls::{Error, error_line};
-use crate::views::header::Header;
 use crate::views::notebook::{NotebookView, Place, coloured};
-use crate::views::notice::NoticeBar;
-use crate::views::projects::Projects;
 use crate::workspace::{
     Entry, Node, Shown, entries, is_image, placed_image, same_view, shows_as, size_text, tree,
     versions_that_changed,
@@ -37,34 +35,37 @@ struct Document {
     kind: String,
 }
 
-/// What the page knows of the workspace's documents.
-#[derive(Debug, Clone)]
-enum Documents {
-    Loading,
-    Failed(String),
-    Listed(Vec<Document>),
+/// The project's files once its file list is synced: `None` while it loads, or when the
+/// project has none. Provided by the project page; the sidebar and the file pane read it.
+pub type ProjectFiles = RwSignal<Option<Files>>;
+
+#[derive(Clone)]
+pub struct Files {
+    files: Memo<Vec<Entry>>,
+    socket: String,
+    blobs: Blobs,
+    manifest: String,
 }
 
+/// Finds the project's file list and keeps it synced while the page shows the project.
 #[component]
-pub fn WorkspaceApp(config: RoomConfig) -> impl IntoView {
-    let documents = RwSignal::new(Documents::Loading);
+pub fn FilesLoader(config: RoomConfig, state: ProjectFiles) -> impl IntoView {
+    let manifest = RwSignal::new(None::<String>);
+    let failure = RwSignal::new(None::<String>);
     let (api, id) = (config.api_url.clone(), config.room_id.clone());
     spawn_local(async move {
-        let listed = api::read::<Vec<Document>>(&api, &["rooms", &id, "documents"]).await;
-        documents.try_set(match listed {
-            Ok(listed) => Documents::Listed(listed),
-            Err(failure) => Documents::Failed(failure.to_string()),
-        });
+        match api::read::<Vec<Document>>(&api, &["rooms", &id, "documents"]).await {
+            Ok(listed) => {
+                manifest.try_set(manifest_of(&listed));
+            }
+            Err(error) => {
+                failure.try_set(Some(error.to_string()));
+            }
+        }
     });
-    move || {
-        match documents.get() {
-        Documents::Loading => view! { <p class="quiet page-note">"Opening the SciQLop workspace…"</p> }.into_any(),
-        Documents::Failed(why) => view! { <p class="field-error page-note" role="alert">{why}</p> }.into_any(),
-        Documents::Listed(listed) => match manifest_of(&listed) {
-            Some(manifest) => view! { <Workspace config=config.clone() manifest/> }.into_any(),
-            None => view! { <p class="field-error page-note" role="alert">"This SciQLop workspace has no file list."</p> }.into_any(),
-        },
-    }
+    view! {
+        {move || failure.get().map(|why| view! { <p class="field-error page-note" role="alert">{format!("The files cannot be read: {why}")}</p> })}
+        {move || manifest.get().map(|manifest| view! { <ManifestSync config=config.clone() manifest state/> })}
     }
 }
 
@@ -75,91 +76,89 @@ fn manifest_of(documents: &[Document]) -> Option<String> {
         .map(|document| document.id.clone())
 }
 
-/// The workspace once its file list is known: the header, its files, the file opened.
+/// Syncs the file list as a read replica (not the page's catalogues room).
 #[component]
-fn Workspace(config: RoomConfig, manifest: String) -> impl IntoView {
-    let project_socket = config.ws_url.clone();
+fn ManifestSync(config: RoomConfig, manifest: String, state: ProjectFiles) -> impl IntoView {
+    let socket = config.ws_url.clone();
     let Some(ws_url) = api_url(&config.ws_url, &[&manifest]) else {
-        return view! { <p class="field-error page-note" role="alert">"The SciQLop workspace cannot sync."</p> }
-            .into_any();
+        return view! { <p class="field-error page-note" role="alert">"The files cannot sync."</p> }.into_any();
     };
-    let manifest_room = Room::new(RoomConfig { ws_url, ..config });
-    provide_context(manifest_room.clone());
-    let connection = match connection::connect(manifest_room.clone()) {
+    let blobs = Blobs {
+        api: config.api_url.clone(),
+        project: config.room_id.clone(),
+    };
+    let room = Room::new(RoomConfig { ws_url, ..config });
+    let connection = match connection::connect(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => {
-            return view! { <p class="field-error page-note" role="alert">{format!("The SciQLop workspace cannot sync: {error}")}</p> }
+            return view! { <p class="field-error page-note" role="alert">{format!("The files cannot sync: {error}")}</p> }
                 .into_any();
         }
     };
     on_cleanup(move || {
         connection.try_with_value(|connection| connection.close());
+        state.try_set(None);
     });
-    let route = expect_context::<Projects>().route;
-    let shown = Memo::new(move |_| route.get());
-    let reader = manifest_room.clone();
-    let files = Memo::new(move |_| reader.read(|txn| manifest_files(txn)));
+    let files = Memo::new(move |_| room.read(|txn| manifest_files(txn)));
+    state.set(Some(Files {
+        files,
+        socket,
+        blobs,
+        manifest,
+    }));
+    ().into_any()
+}
+
+/// The sidebar's Files section: the project's files as a tree.
+#[component]
+pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
     let open = Memo::new(move |_| match shown.get() {
         Route::File(path) => Some(path),
         _ => None,
     });
-    let empty = Memo::new(move |_| files.with(Vec::is_empty));
-    let opened = Memo::new_with_compare(
-        move |_| {
-            open.get().and_then(|path| {
-                files.with(|files| files.iter().find(|entry| entry.path == path).cloned())
-            })
-        },
-        |old, new| !same_view(old.and_then(Option::as_ref), new.and_then(Option::as_ref)),
-    );
-    let config = manifest_room.config.clone();
-    let blobs = Blobs {
-        api: config.api_url.clone(),
-        project: config.room_id.clone(),
-    };
-    let name = config.room_name.clone();
-    view! {
-        <Header shown/>
-        <NoticeBar/>
-        <div class="browser">
-            <aside class="sidebar workspace-tree" aria-label="Files">
-                <h2 class="eyebrow">"Files"</h2>
-                {move || {
-                    let listed = files.get();
-                    if listed.is_empty() {
-                        return view! { <p class="quiet">"No files yet."</p> }.into_any();
-                    }
-                    tree_view(tree(listed), open)
-                }}
-            </aside>
-            <div class="pane">
-                <main class="content file-pane">
+    move || {
+        state.get().map(|project| {
+            view! {
+                <section class="files-section" aria-label="Files">
+                    <h2 class="eyebrow">"Files"</h2>
                     {move || {
-                        match open.get() {
-                            None if empty.get() => view! {
-                                <h1>{name.clone()}</h1>
-                                <p class="quiet">"This SciQLop workspace is empty. Its files appear here once someone shares it from SciQLop."</p>
-                            }.into_any(),
-                            None => view! {
-                                <h1>{name.clone()}</h1>
-                                <p class="quiet">"Pick a file on the left to see it. Files change here as people edit them in SciQLop."</p>
-                            }.into_any(),
-                            Some(path) => match opened.get() {
-                                Some(entry) => view! {
-                                    <FileView entry files socket=project_socket.clone() blobs=blobs.clone() manifest=manifest.clone()/>
-                                }.into_any(),
-                                None => view! {
-                                    <h1 class="file-title">{path}</h1>
-                                    <p class="quiet">"This file was moved or deleted."</p>
-                                }.into_any(),
-                            },
+                        let listed = project.files.get();
+                        if listed.is_empty() {
+                            return view! { <p class="quiet">"No files yet."</p> }.into_any();
                         }
+                        tree_view(tree(listed), open)
                     }}
-                </main>
-            </div>
-        </div>
+                </section>
+            }
+        })
     }
-    .into_any()
+}
+
+/// The main pane on a file's route: the file, or why it is not there.
+#[component]
+pub fn FilePane(state: ProjectFiles, path: String) -> impl IntoView {
+    move || {
+        let Some(project) = state.get() else {
+            return view! { <p class="quiet">"Opening the files…"</p> }.into_any();
+        };
+        let files = project.files;
+        let wanted = path.clone();
+        let opened = Memo::new_with_compare(
+            move |_| files.with(|files| files.iter().find(|entry| entry.path == wanted).cloned()),
+            |old, new| !same_view(old.and_then(Option::as_ref), new.and_then(Option::as_ref)),
+        );
+        let path = path.clone();
+        (move || match opened.get() {
+            Some(entry) => view! {
+                <FileView entry files socket=project.socket.clone() blobs=project.blobs.clone() manifest=project.manifest.clone()/>
+            }.into_any(),
+            None => view! {
+                <h1 class="file-title">{path.clone()}</h1>
+                <p class="quiet">"This file was moved or deleted."</p>
+            }.into_any(),
+        })
+        .into_any()
+    }
 }
 
 /// The manifest's `files` map, read as entries.
@@ -262,7 +261,7 @@ fn FileView(
             <h1 class="file-title">{history_entry.path.clone()}</h1>
             <button type="button" class="button" aria-pressed=move || in_history.get().to_string()
                 on:click=move |_| in_history.update(|open| *open = !*open)>
-                {move || if in_history.get() { "Close history" } else { "History" }}
+                {move || if in_history.get() { "Close file history" } else { "File history" }}
             </button>
         </div>
         <p class="quiet">{about_line}</p>
