@@ -38,8 +38,6 @@ issues SciQLop/SciQLop#132 and SciQLop/cocat#110.
 ## Non-goals (later)
 
 - SciQLop's own state (plot panels, products, time range): personal for now.
-- Sharing a workspace does not share the catalogue projects its notebooks use; the two
-  stay shared separately.
 - Data files: excluded by default (people fetch data themselves).
 - Live "watch party" sessions or shared kernels: each person runs their own kernel; what
   is shared is the notebook, outputs included.
@@ -61,25 +59,47 @@ issues SciQLop/SciQLop#132 and SciQLop/cocat#110.
   anyway"), e.g. a calibration table that cannot be fetched again.
 - Notebook outputs are shared as they are, inside the notebook (decided 2026-11-05;
   storage growth accepted until history compaction exists).
-- Workspaces and catalogue projects are separate shareable things for now, built so they
-  can be unified later.
+- Workspaces and catalogue projects were first separate shareable things. **Merged
+  (decided 2026-11-10):** a project holds catalogues, a SciQLop workspace's files, or both
+  (see "Projects hold catalogues and files"). The UI calls the files side a "SciQLop
+  workspace".
+- Copies of catalogues record the chain of copies they descend from (`copied_from`,
+  decided 2026-11-10), so a "propose changes back" (fork and pull request) can be built
+  later. Plan: docs/superpowers/plans/2026-11-10-copy-chain.md.
+- Links (decided 2026-11-10): a project can show a catalogue or file of another project
+  as a link; opening it opens the original, and edits go there live. Only links, no
+  two-way synced copies.
 
-## One model underneath (so unifying later is a setting)
+## Projects hold catalogues and files (merged 2026-11-10)
 
-Today a cocat-rs project is one room holding one document (the catalogues). This becomes:
+A **project** holds **documents**. A document has an id, a kind (`catalogues`, `manifest`,
+`notebook`, `text`) and its own update file and room thread. Every project has its
+catalogues document (possibly empty), and it holds a SciQLop workspace's files once someone
+links one (a manifest plus one document per notebook or text file). Members, roles, groups,
+invitations, history, the personal-project rule and revocation are the project's, shared by
+all its documents.
 
-- A **project** holds **documents**. A document has an id, a kind (`catalogues`,
-  `manifest`, `notebook`, `text`) and its own update file and room thread.
-- A project's **kind** (`catalogues` or `workspace`) only decides which documents it may
-  hold and how the web app and SciQLop present it. Members, roles, groups, invitations,
-  history, trash, the personal-project rule and revocation are the project's, shared by
-  all its documents.
-- Unifying later = letting one project hold both a catalogues document and a manifest.
-  No data moves; no second ACL to merge.
+What the merge means, with the answer to each downside (talked through with the user):
+- **Sharing is per project.** To share catalogues without notebooks (or notebooks that may
+  hold private notes or tokens), use two projects. Linking a SciQLop workspace to a project
+  says who will see the files ("Everyone in this project will see these files (N people)").
+- **The page shows both**: the sidebar has "Catalogues" and, when the project has files,
+  "Files"; a catalogue-only project looks as before.
+- **History**: one timeline per project, each entry naming what it touched; each file keeps
+  its own history.
+- **One SciQLop workspace per project.** "My catalogues" stays personal and holds no files
+  unless its owner links one.
+- **Deleted files** have no trash at first: they come back from History.
+- **Restoring the whole project to a moment** stays later.
+- **Older clients** (today's SciQLop plugin, the Python API) keep using the catalogues
+  document and never open the files.
+- **Migration**: the project `kind` becomes "what it holds"; workspaces exist only on
+  cocat-dev, nothing in production.
+- **Templates** (later) become public projects holding catalogues and notebooks together.
 
 Server consequences:
-- Socket: `/room/{project}/{doc}`. `/room/{project}` stays the catalogues document, so
-  today's clients keep working.
+- Socket: `/room/{project}/{doc}`. `/room/{project}` is the catalogues document of every
+  project, so today's clients keep working.
 - Storage: `update_dir/{project}/{doc}.y`; a catalogue project's existing file stays where
   it is (its path is the catalogues document's path).
 - *(Designer's call:)* documents are created through the API
