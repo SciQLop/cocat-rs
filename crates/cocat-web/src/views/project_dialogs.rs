@@ -118,7 +118,7 @@ fn Create(dialog: RwSignal<Option<Dialog>>, with_files: bool) -> impl IntoView {
                 }.into_any(),
                 true => view! {
                     <h2>"New SciQLop workspace"</h2>
-                    <Hint text="A SciQLop workspace shares its notebooks, scripts and files with the same people. You edit them in SciQLop; the web app shows them." anchor="workspaces" topic="workspaces"/>
+                    <Hint text="A project ready for a SciQLop workspace's files: its notebooks and scripts, beside its catalogues. You edit them in SciQLop; the web app shows them." anchor="workspaces" topic="workspaces"/>
                 }.into_any(),
             }}
             <label>

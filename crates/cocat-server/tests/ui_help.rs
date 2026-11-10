@@ -265,7 +265,7 @@ async fn the_workspace_help_says_what_the_web_app_shows() {
     let workspaces = section_text(&help, "workspaces");
     for expected in [
         "SciQLop",
-        "History",
+        "File history",
         "Restore",
         "New SciQLop",
         "download",

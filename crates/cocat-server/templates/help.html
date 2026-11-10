@@ -8,7 +8,7 @@ together, in the browser, in SciQLop and from Python.</p>
 <nav class="toc" aria-label="Contents">
   <ul>
     <li><a href="#projects">Projects</a></li>
-    <li><a href="#workspaces">SciQLop workspaces</a></li>
+    <li><a href="#workspaces">Files of a SciQLop workspace</a></li>
     <li><a href="#catalogues">Catalogues and events</a></li>
     <li><a href="#statistics">Statistics</a></li>
     <li><a href="#import-export">Import and export</a></li>
@@ -27,27 +27,30 @@ together, in the browser, in SciQLop and from Python.</p>
 
 <section>
 <h2 id="projects">Projects</h2>
-<p>Projects hold catalogues and their events. Everyone in a project sees and can work on
-everything in it, with the role you give them. An event can belong to several catalogues of
+<p>Projects hold catalogues and their events, and can also hold the files of a SciQLop
+workspace (see <a href="#workspaces">Files of a SciQLop workspace</a>). Everyone in a project
+sees and can work on everything in it, with the role you give them. An event can belong to several catalogues of
 the same project. The project's history covers all of it.</p>
 <p>Your account starts with a project called “My catalogues”. It is private until you share
 it. Signing in opens it.</p>
 <p>The project's name at the top of the catalogues is a menu. It lists your projects: pick one
 to switch to it. It also creates, renames, leaves and deletes projects, and opens your
 groups.</p>
-<p>To share only some catalogues, create a project for them with <strong>New project</strong>,
-and share that one.</p>
+<p>To share only some catalogues, or catalogues without their notebooks, create a project
+for them with <strong>New project</strong>, and share that one.</p>
 <p>Only the server API, the websocket path and the command-line tool still call a project a
 “room”.</p>
 </section>
 
 <section>
-<h2 id="workspaces">SciQLop workspaces</h2>
-<p>A SciQLop workspace shares its notebooks, scripts, notes and figures. You
-edit them in SciQLop, together; the web app shows them. Make one with <strong>New SciQLop
-workspace</strong> in the project menu, and share it like a project.</p>
-<p>The files are listed on the left, in their folders, with their size and who changed them
-last. Open one to see it:</p>
+<h2 id="workspaces">Files of a SciQLop workspace</h2>
+<p>A project can hold the files of a SciQLop workspace beside its catalogues: its notebooks,
+scripts, notes and figures. You edit them in SciQLop, together; the web app shows them.
+<strong>New SciQLop workspace</strong> in the project menu makes a project ready for them.
+Everyone in the project sees its files: to keep notebooks to fewer people, put them in a
+project of their own.</p>
+<p>The files are listed under the catalogues, on the left, in their folders, with their size
+and who changed them last. Open one to see it:</p>
 <ul>
   <li>a notebook shows as a notebook: its text, its code and its results, plots included;</li>
   <li>scripts and text files show coloured, with line numbers;</li>
@@ -56,7 +59,7 @@ last. Open one to see it:</p>
 <p>What you see is live: when someone edits a notebook in SciQLop, the page changes as they
 type. Nothing a notebook holds can run in your browser: web pages a notebook made show in a
 closed box, and its scripts never run.</p>
-<p><strong>History</strong>, next to a file's name, lists its versions. Pick one to see the
+<p><strong>File history</strong>, next to a file's name, lists its versions. Pick one to see the
 file as it was. Editors can <strong>Restore</strong> it: the file goes back to that version
 for everyone, and the version it replaces stays in the history.</p>
 <p>Data files, such as CDF or HDF5, are not shared by default: everyone fetches data for
