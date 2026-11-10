@@ -5,12 +5,8 @@ use std::collections::BTreeMap;
 
 use crate::format::whole_number;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileKind {
-    Notebook,
-    Text,
-    File,
-}
+pub use cocat_core::files::FileKind;
+use cocat_core::files::{TEXTS, extension};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
@@ -44,30 +40,6 @@ pub enum Shown {
 /// No `svg`: a stored blob is served as bytes, and serving it as an image would let its
 /// scripts run on the app's origin; a stored SVG is a download.
 const IMAGES: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
-
-/// Extension to syntect lookup token; `None` means plain text.
-const TEXTS: &[(&str, Option<&str>)] = &[
-    ("py", Some("py")),
-    ("md", Some("md")),
-    ("txt", None),
-    ("toml", Some("toml")),
-    ("json", Some("json")),
-    ("yaml", Some("yaml")),
-    ("yml", Some("yaml")),
-    ("cfg", Some("ini")),
-    ("ini", Some("ini")),
-    ("csv", None),
-    ("sh", Some("sh")),
-    ("rs", Some("rs")),
-    ("c", Some("c")),
-    ("cpp", Some("cpp")),
-    ("h", Some("c")),
-    ("js", Some("js")),
-    ("ts", Some("ts")),
-    ("html", Some("html")),
-    ("css", Some("css")),
-    ("tex", Some("tex")),
-];
 
 pub fn entries(files: &Value) -> Vec<Entry> {
     let Some(map) = files.as_object() else {
@@ -212,13 +184,6 @@ fn language_of(path: &str) -> Option<&'static str> {
         .iter()
         .find(|(known, _)| *known == ext)
         .and_then(|(_, language)| *language)
-}
-
-fn extension(path: &str) -> String {
-    file_name(path)
-        .rsplit_once('.')
-        .map(|(_, ext)| ext.to_lowercase())
-        .unwrap_or_default()
 }
 
 /// The workspace path a link `relative` in the file at `from` points at, `None` when it

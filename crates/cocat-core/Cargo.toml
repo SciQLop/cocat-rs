@@ -9,6 +9,7 @@ publish.workspace = true
 bytes.workspace = true
 geojson = { version = "1", default-features = false }
 hifitime = { version = "4", default-features = false }
+ignore = "0.4"
 percent-encoding = "2"
 quick-xml = "0.42"
 regex = "1"
