@@ -8,6 +8,7 @@ together, in the browser, in SciQLop and from Python.</p>
 <nav class="toc" aria-label="Contents">
   <ul>
     <li><a href="#projects">Projects</a></li>
+    <li><a href="#workspaces">Workspaces</a></li>
     <li><a href="#catalogues">Catalogues and events</a></li>
     <li><a href="#statistics">Statistics</a></li>
     <li><a href="#import-export">Import and export</a></li>
@@ -38,6 +39,29 @@ groups.</p>
 and share that one.</p>
 <p>Only the server API, the websocket path and the command-line tool still call a project a
 “room”.</p>
+</section>
+
+<section>
+<h2 id="workspaces">Workspaces</h2>
+<p>A workspace shares a SciQLop workspace: its notebooks, scripts, notes and figures. You
+edit them in SciQLop, together; the web app shows them. Make one with <strong>New
+workspace</strong> in the project menu, and share it like a project.</p>
+<p>The files are listed on the left, in their folders, with their size and who changed them
+last. Open one to see it:</p>
+<ul>
+  <li>a notebook shows as a notebook: its text, its code and its results, plots included;</li>
+  <li>scripts and text files show coloured, with line numbers;</li>
+  <li>images show; any other file is a download.</li>
+</ul>
+<p>What you see is live: when someone edits a notebook in SciQLop, the page changes as they
+type. Nothing a notebook holds can run in your browser: web pages a notebook made show in a
+closed box, and its scripts never run.</p>
+<p><strong>History</strong>, next to a file's name, lists its versions. Pick one to see the
+file as it was. Editors can <strong>Restore</strong> it: the file goes back to that version
+for everyone, and the version it replaces stays in the history.</p>
+<p>Data files, such as CDF or HDF5, are not shared by default: everyone fetches data for
+themselves. A file that cannot be fetched again, such as a calibration table, can be shared
+on purpose from SciQLop.</p>
 </section>
 
 <section>

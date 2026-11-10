@@ -5,8 +5,9 @@ use cocat_server::groups;
 use ui_support::{Fixture, PUBLIC_URL, body_text};
 
 const MEMBER: &str = "member@example.org";
-const ANCHORS: [&str; 14] = [
+const ANCHORS: [&str; 15] = [
     "projects",
+    "workspaces",
     "catalogues",
     "statistics",
     "import-export",
@@ -254,6 +255,16 @@ async fn the_import_help_says_which_files_and_what_updates() {
     ];
     for words in words {
         assert!(section.contains(words), "{words}: {section}");
+    }
+}
+
+#[tokio::test]
+async fn the_workspace_help_says_what_the_web_app_shows() {
+    let fixture = Fixture::start().await;
+    let help = page(&fixture, "/ui/help", None).await;
+    let workspaces = section_text(&help, "workspaces");
+    for expected in ["SciQLop", "History", "Restore", "New workspace", "download", "live"] {
+        assert!(workspaces.contains(expected), "{expected} missing: {workspaces}");
     }
 }
 
