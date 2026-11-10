@@ -94,6 +94,8 @@ impl Fixture {
             links: Links::from_env(&lookup).unwrap(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         Self {
             state,

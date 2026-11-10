@@ -303,7 +303,7 @@ async fn submit(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the project", body = Detail),
         (status = 404, description = "No such project, membership or catalogue, or it is no copy of a public one", body = Detail),
-        (status = 409, description = "The caller has 20 submissions waiting already", body = Detail),
+        (status = 409, description = "The caller has 20 submissions waiting already, or the public catalogue follows a provider", body = Detail),
         (status = 413, description = "The catalogue is over 50 MB or over what the caller's storage has left", body = Detail),
         (status = 422, description = "The body is not a submission", body = Detail),
     )
@@ -319,6 +319,7 @@ async fn submit_update(
         .into_iter()
         .find(|proposal| proposal.catalogue == body.catalogue)
         .ok_or_else(|| ApiError::NotFound(NOT_A_COPY.to_owned()))?;
+    lifecycle::refuse_relayed(&state, &proposal.target).await?;
     let note = note(body.note)?;
     let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id, None).await?;
     let new = NewSubmission {
@@ -376,7 +377,7 @@ async fn one(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is its author, not a curator", body = Detail),
         (status = 404, description = "No such submission, or the caller is neither its author nor a curator", body = Detail),
-        (status = 409, description = "It was decided or withdrawn already, its public catalogue was deleted, or it does not fit", body = Detail),
+        (status = 409, description = "It was decided or withdrawn already, its public catalogue was deleted or follows a provider, or it does not fit", body = Detail),
         (status = 422, description = "The body is not a review", body = Detail),
     )
 )]
@@ -389,6 +390,9 @@ async fn review(
     let (submission, curator) = visible(&state, id, user.id).await?;
     if !curator {
         return Err(ApiError::Forbidden(ONLY_CURATORS.to_owned()));
+    }
+    if let (true, Some(target)) = (body.accept, &submission.target) {
+        lifecycle::refuse_relayed(&state, target).await?;
     }
     let note = note(body.note)?;
     let decision = Decision {
@@ -453,7 +457,7 @@ async fn withdraw(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the project given", body = Detail),
         (status = 404, description = "No such public catalogue, project or membership", body = Detail),
-        (status = 409, description = "The project is public, holds a copy already, or is full; or the public catalogue is empty", body = Detail),
+        (status = 409, description = "The project is public, holds a copy already, or is full; or the public catalogue is empty or follows a provider", body = Detail),
         (status = 422, description = "The body is not a proposal", body = Detail),
     )
 )]
@@ -464,6 +468,7 @@ async fn propose(
     JsonBody(body): JsonBody<ProposeBody>,
 ) -> Result<(StatusCode, Json<Copied>), ApiError> {
     let public = public_room(&state, &room_id).await?;
+    lifecycle::refuse_relayed(&state, &room_id).await?;
     let name = body.name.unwrap_or_else(|| proposal_name(&public.name));
     let (copied, base) = copy_public(&state, &user, &public, body.room, name).await?;
     submissions::link(
@@ -899,7 +904,7 @@ async fn create_public(
             public_count: None,
             counted_file: None,
         };
-        if db::create_public_room(&state.pool, &room, curator).await? {
+        if db::create_public_room(&state.pool, &room, Some(curator)).await? {
             return Ok(room);
         }
         tried += 1;

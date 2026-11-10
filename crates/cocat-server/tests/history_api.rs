@@ -59,6 +59,8 @@ impl Fixture {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         let user = |email: &'static str| {
             let pool = state.pool.clone();

@@ -115,6 +115,8 @@ impl Server {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         self.state = Some(state.clone());
         let (ready, listening) = std::sync::mpsc::channel();

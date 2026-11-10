@@ -65,6 +65,8 @@ impl World {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         let user =
             |email: &'static str| db::create_user(&state.pool, email, "hunter2", false, true);

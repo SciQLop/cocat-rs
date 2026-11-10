@@ -254,7 +254,9 @@ pub async fn role_in(
            JOIN group_member ON group_member.group_id = room_group.group_id
          WHERE room_group.room_id = ?1 AND group_member.user_id = ?2
          UNION ALL
-         SELECT CASE WHEN "user".is_superuser OR "user".is_curator THEN 'editor' ELSE 'viewer' END
+         SELECT CASE WHEN ("user".is_superuser OR "user".is_curator)
+             AND NOT EXISTS (SELECT 1 FROM relay_catalogue WHERE relay_catalogue.room_id = ?1)
+           THEN 'editor' ELSE 'viewer' END
          FROM room JOIN "user" ON "user".id = ?2
          WHERE room.id = ?1 AND room.public"#,
     )
@@ -1175,13 +1177,14 @@ pub struct PublicRoom {
     pub counted_file: Option<String>,
 }
 
-/// Makes a public catalogue: no owner and no members, so `created_by` only records who.
+/// Makes a public catalogue: no owner and no members, so `created_by` only records who, or
+/// nobody for one the server relays.
 /// Makes the public room; false when a room has its id already. The insert itself tells, so
 /// two callers racing for one id cannot both get it.
 pub async fn create_public_room(
     pool: &SqlitePool,
     room: &PublicRoom,
-    by: Uuid,
+    by: Option<Uuid>,
 ) -> Result<bool, DbError> {
     let made = sqlx::query(
         "INSERT INTO room (id, name, created_by, public, folder, source, description)
@@ -1189,7 +1192,7 @@ pub async fn create_public_room(
     )
     .bind(&room.id)
     .bind(&room.name)
-    .bind(by.to_string())
+    .bind(by.map(|by| by.to_string()))
     .bind(&room.folder)
     .bind(&room.source)
     .bind(&room.description)
@@ -1474,7 +1477,7 @@ pub async fn name_version(
     by: Uuid,
 ) -> Result<(), DbError> {
     let mut tx = begin_immediate(pool).await?;
-    put_version_name(&mut tx, room_id, &records, name, by).await?;
+    put_version_name(&mut tx, room_id, &records, name, Some(by)).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1484,7 +1487,7 @@ async fn put_version_name(
     room_id: &str,
     records: &RangeInclusive<i64>,
     name: &str,
-    by: Uuid,
+    by: Option<Uuid>,
 ) -> Result<(), sqlx::Error> {
     delete_version_names(tx, room_id, records).await?;
     sqlx::query(
@@ -1493,7 +1496,7 @@ async fn put_version_name(
     .bind(room_id)
     .bind(records.start())
     .bind(name)
-    .bind(by.to_string())
+    .bind(by.map(|by| by.to_string()))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -1515,7 +1518,7 @@ pub async fn save_version(
     pool: &SqlitePool,
     room_id: &str,
     saved: &SavedVersion<'_>,
-    by: Uuid,
+    by: Option<Uuid>,
 ) -> Result<bool, DbError> {
     let mut tx = begin_immediate(pool).await?;
     let newest: Option<i64> =
@@ -1532,7 +1535,7 @@ pub async fn save_version(
     .bind(room_id)
     .bind(saved.records.end())
     .bind(saved.message)
-    .bind(by.to_string())
+    .bind(by.map(|by| by.to_string()))
     .execute(&mut *tx)
     .await?;
     if let Some(name) = saved.name {

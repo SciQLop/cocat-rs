@@ -52,6 +52,9 @@ pub enum LifecycleError {
     Forbidden(String),
     #[error("{0}")]
     Conflict(&'static str),
+    /// The catalogue follows a provider: nobody changes it by hand.
+    #[error("{0}")]
+    Relayed(String),
     #[error("{0}")]
     Invalid(&'static str),
     #[error(transparent)]
@@ -332,6 +335,14 @@ pub(crate) async fn refuse_public(state: &AppState, room_id: &str) -> Result<(),
     }
 }
 
+/// A catalogue that follows a provider changes only when the provider does.
+pub(crate) async fn refuse_relayed(state: &AppState, room_id: &str) -> Result<(), LifecycleError> {
+    match crate::relay::refusal(&state.pool, room_id).await? {
+        Some(refusal) => Err(LifecycleError::Relayed(refusal)),
+        None => Ok(()),
+    }
+}
+
 /// An account's own project gains nobody: no invitation, member, group or new owner. Who
 /// was in it before this rule stays, and can still be removed.
 pub(crate) async fn refuse_personal(state: &AppState, room_id: &str) -> Result<(), LifecycleError> {
@@ -351,6 +362,9 @@ pub(crate) async fn require_role(
     let role = db::role_in(&state.pool, room_id, actor)
         .await?
         .ok_or_else(|| room_not_found(room_id))?;
+    if minimum.can_write() {
+        refuse_relayed(state, room_id).await?;
+    }
     if role.rank() < minimum.rank() {
         return Err(LifecycleError::Forbidden(format!(
             "Project {room_id} requires the {} role",

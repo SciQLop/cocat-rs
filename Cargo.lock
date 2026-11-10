@@ -720,6 +720,7 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "askama",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "bcrypt",
@@ -740,6 +741,7 @@ dependencies = [
  "openidconnect",
  "palette",
  "proptest",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",

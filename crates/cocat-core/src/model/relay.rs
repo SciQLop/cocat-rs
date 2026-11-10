@@ -38,6 +38,16 @@ impl Counts {
     }
 }
 
+impl std::ops::AddAssign for Counts {
+    fn add_assign(&mut self, other: Self) {
+        self.added += other.added;
+        self.changed += other.changed;
+        self.removed += other.removed;
+        self.restored += other.restored;
+        self.skipped += other.skipped;
+    }
+}
+
 /// Makes the catalogue exist under `wanted.name` and list exactly `wanted.events` (the last of
 /// two events with one uuid wins). Listed events nobody wants go to the trash unless `keep`
 /// says to leave them. Holding the same events twice writes nothing the second time.

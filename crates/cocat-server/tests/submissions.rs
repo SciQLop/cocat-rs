@@ -48,6 +48,8 @@ impl World {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         let account = |email: &'static str| db::create_user(&state.pool, email, "pwd", false, true);
         let curator = account("curator@example.org").await.unwrap();
@@ -862,7 +864,7 @@ async fn proposing_a_change_to_a_catalogue_with_a_long_name_names_the_copy_withi
         counted_file: None,
     };
     assert!(
-        db::create_public_room(&world.state.pool, &room, world.curator)
+        db::create_public_room(&world.state.pool, &room, Some(world.curator))
             .await
             .unwrap()
     );
@@ -1036,7 +1038,7 @@ async fn a_copy_of_a_public_catalogue_with_a_long_name_names_its_project_within_
         counted_file: None,
     };
     assert!(
-        db::create_public_room(&world.state.pool, &room, world.curator)
+        db::create_public_room(&world.state.pool, &room, Some(world.curator))
             .await
             .unwrap()
     );

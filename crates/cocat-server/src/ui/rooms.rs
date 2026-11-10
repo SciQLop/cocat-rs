@@ -147,7 +147,9 @@ fn answer(state: &AppState, result: Result<(), lifecycle::LifecycleError>, done:
             lifecycle::LifecycleError::Invalid(text) | lifecycle::LifecycleError::Conflict(text),
         ) => text.to_owned(),
         Err(
-            lifecycle::LifecycleError::Forbidden(text) | lifecycle::LifecycleError::NotFound(text),
+            lifecycle::LifecycleError::Forbidden(text)
+            | lifecycle::LifecycleError::NotFound(text)
+            | lifecycle::LifecycleError::Relayed(text),
         ) => text,
         Err(error) => {
             tracing::warn!(%error, "a room action failed");

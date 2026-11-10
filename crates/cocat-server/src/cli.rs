@@ -6,6 +6,7 @@ use std::future::Future;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use axum::serve::ListenerExt;
 use clap::{Parser, Subcommand};
@@ -154,6 +155,8 @@ pub enum CliError {
     Telemetry(#[from] crate::telemetry::TelemetryError),
     #[error(transparent)]
     Links(#[from] LinksError),
+    #[error("cannot build the catalogue providers' HTTP client: {0}")]
+    Http(#[from] reqwest::Error),
     #[error(transparent)]
     Oidc(#[from] oidc::OidcError),
     #[error(transparent)]
@@ -358,6 +361,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     }
     let pool = db::open(db_path).await?;
     db::refuse_reserved_ids(&pool).await?;
+    crate::relay::store::stop_all(&pool).await?;
     let secret = auth::load_secret(db_path)?;
     let rooms = RoomManager::new(update_dir.to_owned(), budget).with_storage(storage_limits()?);
     let state = AppState {
@@ -372,6 +376,8 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
         web_dir: std::env::var_os("COCAT_WEB_DIR")
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from),
+        providers: Arc::new(crate::relay::providers()),
+        http: crate::relay::http_client(env("COCAT_PUBLIC_URL").as_deref())?,
     };
 
     let listener = TcpListener::bind((host, port)).await?;

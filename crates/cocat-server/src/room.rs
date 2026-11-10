@@ -1702,8 +1702,8 @@ fn handle_update(
 /// Who an update comes from, as its stamp records it.
 #[derive(Debug, Clone, Copy)]
 pub enum Author {
-    #[cfg(test)]
-    Nobody,
+    /// The server itself, as the relay writes: no user.
+    Server,
     Client(Uuid),
     Restore {
         user: Uuid,
@@ -1714,8 +1714,7 @@ pub enum Author {
 impl Author {
     fn stamp(self, record: u64, at_ms: i64, payload: &[u8]) -> Stamp {
         match self {
-            #[cfg(test)]
-            Self::Nobody => stamp_for(record, None, at_ms, payload),
+            Self::Server => stamp_for(record, None, at_ms, payload),
             Self::Client(user) => stamp_for(record, Some(user), at_ms, payload),
             Self::Restore { user, version } => Stamp {
                 restored_from: Some(version),
@@ -2329,7 +2328,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 update.clone(),
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2343,7 +2342,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 update,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_none(),
@@ -2384,7 +2383,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 second,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2398,7 +2397,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 first,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2436,7 +2435,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             insert.clone(),
-            Author::Nobody,
+            Author::Server,
         )
         .unwrap()
         .expect("the insert is broadcast");
@@ -2460,7 +2459,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 deletion,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2497,7 +2496,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             insert.clone(),
-            Author::Nobody,
+            Author::Server,
         )
         .unwrap()
         .expect("the insert is broadcast");
@@ -2521,7 +2520,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 deletion.clone(),
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2535,7 +2534,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 deletion,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_none(),
@@ -2565,7 +2564,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             first.clone(),
-            Author::Nobody,
+            Author::Server,
         )
         .unwrap()
         .expect("the first update is broadcast");
@@ -2590,7 +2589,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 combined,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2633,7 +2632,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 first,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2652,7 +2651,7 @@ mod tests {
                 &mut seen,
                 u64::MAX,
                 second,
-                Author::Nobody
+                Author::Server
             )
             .unwrap()
             .is_some(),
@@ -2775,7 +2774,7 @@ mod tests {
             &mut seen,
             u64::MAX,
             first,
-            Author::Nobody,
+            Author::Server,
         )
         .unwrap();
 
@@ -2789,7 +2788,7 @@ mod tests {
                 &mut seen,
                 limit,
                 second,
-                Author::Nobody
+                Author::Server
             ),
             Err(CloseReason::Full),
             "the room file fits, its stamps do not"

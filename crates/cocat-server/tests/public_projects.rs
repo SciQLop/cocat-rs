@@ -49,6 +49,8 @@ impl World {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         let reader = db::create_user(&state.pool, "reader@example.org", "pwd", false, true)
             .await

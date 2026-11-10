@@ -56,6 +56,8 @@ impl Fixture {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
+            providers: Default::default(),
+            http: Default::default(),
         };
         Self {
             state,

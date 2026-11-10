@@ -162,7 +162,9 @@ pub(crate) fn answer(
 ) -> Response {
     let text = match result {
         Ok(()) => done,
-        Err(LifecycleError::NotFound(text)) | Err(LifecycleError::Forbidden(text)) => text,
+        Err(LifecycleError::NotFound(text))
+        | Err(LifecycleError::Forbidden(text))
+        | Err(LifecycleError::Relayed(text)) => text,
         Err(LifecycleError::Conflict(text)) | Err(LifecycleError::Invalid(text)) => text.to_owned(),
         Err(error) => {
             tracing::warn!(%error, "a page action failed");

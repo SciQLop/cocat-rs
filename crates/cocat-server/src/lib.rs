@@ -29,6 +29,7 @@ pub mod password;
 pub mod presence;
 pub mod public_api;
 pub mod ratelimit;
+pub mod relay;
 pub mod room;
 pub mod sign_in;
 pub mod sign_in_api;
@@ -68,4 +69,8 @@ pub struct AppState {
     pub oidc: Vec<Provider>,
     /// `COCAT_WEB_DIR`: the catalogue browser's bundle; `None` answers that it is not installed.
     pub web_dir: Option<PathBuf>,
+    /// The catalogue providers the relay runs.
+    pub providers: Arc<Vec<Arc<dyn relay::Provider>>>,
+    /// What providers fetch with.
+    pub http: reqwest::Client,
 }

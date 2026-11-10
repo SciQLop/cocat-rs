@@ -920,6 +920,8 @@ impl World {
             links: Links::default(),
             oidc: providers.to_vec(),
             web_dir: Some(web_bundle(dir.path())),
+            providers: Default::default(),
+            http: Default::default(),
         };
         let owner = user(&state, "owner@example.org", hashed).await;
         let editor = user(&state, "editor@example.org", hashed).await;
@@ -1281,7 +1283,7 @@ async fn public_catalogue(state: &AppState, by: Uuid) -> String {
         counted_file: None,
     };
     assert!(
-        db::create_public_room(&state.pool, &room, by)
+        db::create_public_room(&state.pool, &room, Some(by))
             .await
             .unwrap()
     );

@@ -158,6 +158,7 @@ impl From<LifecycleError> for ApiError {
             LifecycleError::NotFound(detail) => Self::NotFound(detail),
             LifecycleError::Forbidden(detail) => Self::Forbidden(detail),
             LifecycleError::Conflict(detail) => Self::Conflict(detail.to_owned()),
+            LifecycleError::Relayed(detail) => Self::Conflict(detail),
             LifecycleError::Invalid(detail) => Self::BadRequest(detail.to_owned()),
             LifecycleError::Db(error) => Self::from(error),
             LifecycleError::Role(error) => {
@@ -481,6 +482,7 @@ async fn rename_room(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is not the owner", body = Detail),
         (status = 404, description = "No such room", body = Detail),
+        (status = 409, description = "It is a public catalogue that follows a provider", body = Detail),
     )
 )]
 async fn delete_room(

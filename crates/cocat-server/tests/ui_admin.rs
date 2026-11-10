@@ -240,7 +240,7 @@ async fn a_public_catalogue_shows_as_public_and_takes_no_owner() {
         counted_file: None,
     };
     assert!(
-        db::create_public_room(&fixture.state.pool, &room, heir)
+        db::create_public_room(&fixture.state.pool, &room, Some(heir))
             .await
             .unwrap()
     );

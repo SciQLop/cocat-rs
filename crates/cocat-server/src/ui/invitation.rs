@@ -122,17 +122,18 @@ pub(crate) async fn accept(
 }
 
 fn refuse(state: &AppState, error: lifecycle::LifecycleError) -> Response {
-    let text =
-        match error {
-            lifecycle::LifecycleError::NotFound(text)
-            | lifecycle::LifecycleError::Forbidden(text) => text,
-            lifecycle::LifecycleError::Conflict(text)
-            | lifecycle::LifecycleError::Invalid(text) => text.to_owned(),
-            error => {
-                tracing::warn!(%error, "cannot accept an invitation");
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        };
+    let text = match error {
+        lifecycle::LifecycleError::NotFound(text)
+        | lifecycle::LifecycleError::Forbidden(text)
+        | lifecycle::LifecycleError::Relayed(text) => text,
+        lifecycle::LifecycleError::Conflict(text) | lifecycle::LifecycleError::Invalid(text) => {
+            text.to_owned()
+        }
+        error => {
+            tracing::warn!(%error, "cannot accept an invitation");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let back = Redirect::to(&state.links.path("/invitation")).into_response();
     frame::flash(&state.links, back, &text)
 }

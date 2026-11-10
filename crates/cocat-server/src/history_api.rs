@@ -26,7 +26,8 @@ use crate::db::{DocumentKind, RoomRow};
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Saved, Version, span, spans};
 use crate::openapi::Detail;
-use crate::room::Author;
+use crate::relay::store;
+use crate::room::{Author, RoomError};
 use crate::{AppState, db, documents, lifecycle, presence};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -563,25 +564,42 @@ pub(crate) async fn save_newest(
     name: Option<&str>,
     message: Option<&str>,
 ) -> Result<u64, ApiError> {
-    let saved = saved(state, room_id).await?;
+    save_newest_if_changed(state, room_id, Some(user), name, message)
+        .await?
+        .ok_or_else(nothing_changed)
+}
+
+/// Saves the room's newest version as `user`, or the server when `None`; its id, `None`
+/// when nothing changed since the last saved version.
+pub(crate) async fn save_newest_if_changed(
+    state: &AppState,
+    room_id: &str,
+    user: Option<Uuid>,
+    name: Option<&str>,
+    message: Option<&str>,
+) -> Result<Option<u64>, RoomError> {
+    let saved = marks(&db::version_commits(&state.pool, room_id).await?);
     let after = saved.last().copied().and_then(row);
-    let records = state
+    let Some(records) = state
         .rooms
         .read_log(room_id, 1, move |_, slots| spans(slots, &saved).pop())
         .await?
         .and_then(rows)
-        .ok_or_else(nothing_changed)?;
-    let version = u64::try_from(*records.start()).map_err(|_| nothing_changed())?;
+    else {
+        return Ok(None);
+    };
+    let Ok(version) = u64::try_from(*records.start()) else {
+        return Ok(None);
+    };
     let saving = db::SavedVersion {
         records,
         name,
         message,
         after,
     };
-    if !db::save_version(&state.pool, room_id, &saving, user).await? {
-        return Err(nothing_changed());
-    }
-    Ok(version)
+    Ok(db::save_version(&state.pool, room_id, &saving, user)
+        .await?
+        .then_some(version))
 }
 
 fn nothing_changed() -> ApiError {
@@ -795,9 +813,12 @@ pub(crate) async fn views(
     } else {
         author_emails(state, &versions).await?
     };
+    let server = store::relayed(&state.pool, project)
+        .await?
+        .map(|relayed| relayed.source);
     Ok(versions
         .into_iter()
-        .map(|version| view(version, &names, &commits, &emails))
+        .map(|version| view(version, &names, &commits, &emails, server.as_deref()))
         .map(|view| author_unless_anonymous(anonymous, view))
         .collect())
 }
@@ -845,15 +866,17 @@ fn view(
     names: &BTreeMap<i64, String>,
     commits: &BTreeMap<i64, Option<String>>,
     emails: &HashMap<Uuid, String>,
+    server: Option<&str>,
 ) -> VersionView {
     let commit = row(version.last).and_then(|last| commits.get(&last));
     let stored = row(version.id)
         .zip(row(version.last))
         .and_then(|(first, last)| names.range(first..=last).next())
         .map(|(_, name)| name.clone());
-    let author_email = version
-        .author
-        .and_then(|author| emails.get(&author).cloned());
+    let author_email = match version.author {
+        Some(author) => emails.get(&author).cloned(),
+        None => server.map(str::to_owned),
+    };
     VersionView {
         author_color: author_email.as_deref().map(presence::color),
         author_email,

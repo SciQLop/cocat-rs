@@ -185,6 +185,8 @@ async fn login_sets_a_cookie_for_the_right_password() {
         links: Links::default(),
         oidc: Vec::new(),
         web_dir: None,
+        providers: Default::default(),
+        http: Default::default(),
     };
 
     let response =
@@ -221,6 +223,8 @@ async fn login_rejects_a_wrong_password_and_an_inactive_user() {
         links: Links::default(),
         oidc: Vec::new(),
         web_dir: None,
+        providers: Default::default(),
+        http: Default::default(),
     };
 
     let unknown = auth::login(&pool, "nobody@example.org", "hunter2", false).await;
@@ -301,6 +305,8 @@ async fn bcrypt_login_rehashes_to_argon2() {
         links: Links::default(),
         oidc: Vec::new(),
         web_dir: None,
+        providers: Default::default(),
+        http: Default::default(),
     };
     let response =
         auth::login_handler(State(state.clone()), form("user@example.org", "hunter2")).await;

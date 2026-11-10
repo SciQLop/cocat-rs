@@ -21,6 +21,7 @@ use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody};
 use crate::db::{self, PublicRoom};
 use crate::lifecycle::{self, Noun};
 use crate::openapi::Detail;
+use crate::relay::store::{self, RelayedRow};
 
 const NOT_A_CURATOR: &str = "Only curators can create public catalogues";
 const NOT_A_CURATOR_TO_CHANGE: &str = "Only curators can change public catalogues";
@@ -48,12 +49,38 @@ struct PublicOut {
     /// Where its events come from: "AMDA".
     source: Option<String>,
     description: Option<String>,
-    /// `editor` for curators, `viewer` for everyone else.
+    /// `editor` for curators, `viewer` for everyone else and for a relayed catalogue.
     role: &'static str,
     /// When its events last changed (RFC 3339), `null` while it holds none.
     changed: Option<String>,
     /// How many events it holds outside the trash; `null` when it could not be counted.
     count: Option<i64>,
+    /// The provider it follows; `null` for a catalogue people keep.
+    relay: Option<RelayOut>,
+}
+
+/// Where a relayed catalogue comes from.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct RelayOut {
+    /// The provider's name: "DONKI (NASA CCMC)".
+    source: String,
+    /// The list at its source.
+    url: Option<String>,
+    /// When the relay last refreshed it (RFC 3339).
+    refreshed_at: Option<String>,
+    /// False once the provider stopped publishing it: it stays as it was last refreshed.
+    published: bool,
+}
+
+impl From<RelayedRow> for RelayOut {
+    fn from(row: RelayedRow) -> Self {
+        Self {
+            source: row.source,
+            url: row.url,
+            refreshed_at: row.refreshed_at,
+            published: row.published,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -92,7 +119,7 @@ async fn index(
     let role = role_of(&state, user.id).await?;
     let mut listed = Vec::new();
     for room in db::public_rooms(&state.pool).await? {
-        listed.push(out(&state, room, role).await);
+        listed.push(out(&state, room, role).await?);
     }
     Ok(Json(listed))
 }
@@ -120,7 +147,7 @@ async fn create(
         return Err(ApiError::Forbidden(NOT_A_CURATOR.to_owned()));
     }
     let room = checked(body)?;
-    if !db::create_public_room(&state.pool, &room, user.id).await? {
+    if !db::create_public_room(&state.pool, &room, Some(user.id)).await? {
         return Err(ApiError::Conflict(format!(
             "A public catalogue already has the id {}",
             room.id
@@ -128,7 +155,7 @@ async fn create(
     }
     Ok((
         StatusCode::CREATED,
-        Json(out(&state, room, Role::Editor).await),
+        Json(out(&state, room, Role::Editor).await?),
     ))
 }
 
@@ -144,6 +171,7 @@ async fn create(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is not a curator", body = Detail),
         (status = 404, description = "No public catalogue has that id", body = Detail),
+        (status = 409, description = "It follows a provider: nobody changes it by hand", body = Detail),
         (status = 422, description = "The body is not a change", body = Detail),
     )
 )]
@@ -159,9 +187,10 @@ async fn change(
     let room = db::public_room(&state.pool, &room_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(NO_SUCH_CATALOGUE.to_owned()))?;
+    lifecycle::refuse_relayed(&state, &room_id).await?;
     let room = changed(room, body)?;
     db::update_public_room(&state.pool, &room).await?;
-    Ok(Json(out(&state, room, Role::Editor).await))
+    Ok(Json(out(&state, room, Role::Editor).await?))
 }
 
 async fn role_of(state: &AppState, user: Uuid) -> Result<Role, ApiError> {
@@ -171,13 +200,19 @@ async fn role_of(state: &AppState, user: Uuid) -> Result<Role, ApiError> {
     })
 }
 
-async fn out(state: &AppState, room: PublicRoom, role: Role) -> PublicOut {
+/// The row as `role` sees it; a relayed catalogue is read-only for everyone.
+async fn out(state: &AppState, room: PublicRoom, role: Role) -> Result<PublicOut, ApiError> {
+    let relay = store::relayed(&state.pool, &room.id).await?;
+    let role = match relay {
+        Some(_) => Role::Viewer,
+        None => role,
+    };
     let changed = state
         .rooms
         .room_changed(&room.id)
         .and_then(|at| OffsetDateTime::from(at).format(&Rfc3339).ok());
     let count = counted(state, &room).await;
-    PublicOut {
+    Ok(PublicOut {
         id: room.id,
         name: room.name,
         folder: room.folder,
@@ -186,7 +221,8 @@ async fn out(state: &AppState, room: PublicRoom, role: Role) -> PublicOut {
         role: role.as_str(),
         changed,
         count,
-    }
+        relay: relay.map(RelayOut::from),
+    })
 }
 
 /// The events the catalogue holds: the stored count while the room file is the one it was
