@@ -66,6 +66,8 @@ pub struct SharedList {
     /// `AMDA/` and the list's folders in the tree.
     pub folder: String,
     pub description: String,
+    /// How many intervals the tree says the list holds.
+    pub intervals: usize,
 }
 
 /// Every shared list of one of AMDA's trees (catalogues, or time tables): an element with an
@@ -97,10 +99,14 @@ pub fn shared_lists(tree: &str) -> Result<Vec<SharedList>, String> {
 }
 
 fn shared_list(element: &BytesStart<'_>, folders: &[String]) -> Result<Option<SharedList>, String> {
-    if attribute(element, "nbIntervals").is_none() {
+    let Some(intervals) = attribute(element, "nbIntervals") else {
         return Ok(None);
-    }
+    };
     let id = attribute(element, "xml:id").ok_or("a shared list has no id")?;
+    let intervals = intervals
+        .trim()
+        .parse()
+        .map_err(|_| format!("{id}: the interval count {intervals} is not a number"))?;
     let folder = std::iter::once(SOURCE)
         .chain(folders.iter().map(String::as_str))
         .collect::<Vec<_>>()
@@ -109,6 +115,7 @@ fn shared_list(element: &BytesStart<'_>, folders: &[String]) -> Result<Option<Sh
         id,
         name: attribute(element, "name").unwrap_or_else(|| tag(element)),
         folder,
+        intervals,
         description: attribute(element, "description")
             .unwrap_or_default()
             .trim()
@@ -131,7 +138,7 @@ fn tag(element: &BytesStart<'_>) -> String {
 
 /// The list read from its VOTable, its first table as speasy reads it.
 pub fn fetched_list(list: &SharedList, votable: &str) -> Fetched {
-    entry(list, read(&list.id, votable))
+    entry(list, read(list, votable))
 }
 
 /// The list's entry, holding its columns and events or why they could not be read.
@@ -152,14 +159,22 @@ fn entry(list: &SharedList, read: Result<(Vec<String>, Vec<EventRecord>), String
     }
 }
 
-fn read(list: &str, votable: &str) -> Result<(Vec<String>, Vec<EventRecord>), String> {
+/// A table without rows for a list the tree says has intervals is an answer cut short, not
+/// an emptied list.
+fn read(list: &SharedList, votable: &str) -> Result<(Vec<String>, Vec<EventRecord>), String> {
     let imported = votable::import(votable).map_err(|error| error.to_string())?;
     let table = imported
         .tables
         .into_iter()
         .next()
         .ok_or("the VOTable holds no table")?;
-    let events = events(list, table.events)?;
+    if table.events.is_empty() && list.intervals > 0 {
+        return Err(format!(
+            "AMDA sent no intervals for a list of {}",
+            list.intervals
+        ));
+    }
+    let events = events(&list.id, table.events)?;
     Ok((filled(table.columns, &events), events))
 }
 
@@ -283,11 +298,16 @@ async fn document(
     request: reqwest::RequestBuilder,
 ) -> Result<String, String> {
     let answer = text(request).await?;
+    text(http.get(link(&answer)?)).await
+}
+
+/// The link AMDA answered, when it is one to its own site.
+fn link(answer: &str) -> Result<&str, String> {
     let url = answer.trim();
     if !url.starts_with(SITE) {
-        return Err(format!("AMDA answered {url:.200}"));
+        return Err("AMDA did not answer with a link to its site".to_owned());
     }
-    text(http.get(url)).await
+    Ok(url)
 }
 
 async fn text(request: reqwest::RequestBuilder) -> Result<String, String> {
@@ -495,12 +515,7 @@ mod tests {
 
     #[test]
     fn the_nth_copy_of_an_interval_gets_occurrence_n() {
-        let copies = SharedList {
-            id: "sharedcatalog_1".into(),
-            name: "copies".into(),
-            folder: "AMDA".into(),
-            description: String::new(),
-        };
+        let copies = made_up("sharedcatalog_1");
 
         let fetched = fetched_list(&copies, COPIES);
 
@@ -517,12 +532,7 @@ mod tests {
 
     #[test]
     fn columns_become_attributes_as_the_script_wrote_them() {
-        let copies = SharedList {
-            id: "sharedcatalog_1".into(),
-            name: "copies".into(),
-            folder: "AMDA".into(),
-            description: String::new(),
-        };
+        let copies = made_up("sharedcatalog_1");
 
         let fetched = fetched_list(&copies, COPIES);
 
@@ -568,6 +578,7 @@ mod tests {
             name: id.into(),
             folder: "AMDA".into(),
             description: String::new(),
+            intervals: 4,
         }
     }
 
@@ -620,6 +631,49 @@ mod tests {
             ]
         );
         assert!(columns(list(TIME_TABLES, "sharedtimeTable_10"), SUBSTORMS).is_empty());
+    }
+
+    #[test]
+    fn the_tree_gives_each_list_its_interval_count() {
+        assert_eq!(list(CATALOGS, "sharedcatalog_63").intervals, 21);
+        assert_eq!(list(TIME_TABLES, "sharedtimeTable_10").intervals, 4);
+    }
+
+    #[test]
+    fn a_list_sent_without_its_intervals_is_unreadable_not_emptied() {
+        let empty = SUBSTORMS
+            .split("<TR>")
+            .next()
+            .map(|head| format!("{head}</TABLEDATA></DATA></TABLE></RESOURCE></VOTABLE>"))
+            .unwrap();
+        let mut nothing_promised = made_up("sharedtimeTable_99");
+        nothing_promised.intervals = 0;
+
+        let promised = fetched_list(&list(TIME_TABLES, "sharedtimeTable_10"), &empty);
+
+        assert_eq!(
+            promised.events,
+            Err("AMDA sent no intervals for a list of 4".to_owned())
+        );
+        assert_eq!(
+            fetched_list(&nothing_promised, &empty).events,
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn an_answer_that_is_not_a_link_to_amda_is_not_repeated() {
+        let error = link("<html>Fatal error at /var/www/secret.php</html>").unwrap_err();
+
+        assert_eq!(error, "AMDA did not answer with a link to its site");
+        assert_eq!(
+            link("https://elsewhere.example.org/x.xml").unwrap_err(),
+            error
+        );
+        assert_eq!(
+            link("\nhttps://amda.irap.omp.eu/data/WSRESULT/x.xml\n"),
+            Ok("https://amda.irap.omp.eu/data/WSRESULT/x.xml")
+        );
     }
 
     #[test]

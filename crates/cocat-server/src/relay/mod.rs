@@ -29,6 +29,7 @@ use crate::ws;
 
 const PROJECT_URL: &str = "https://github.com/SciQLop/cocat-rs";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
+const MAX_REDIRECTS: usize = 5;
 
 /// One list a provider publishes: a public catalogue `public.<provider>.<key>` holding one
 /// catalogue, uuid `catalogue`, and `events`, whose uuids stay the same across fetches.
@@ -86,8 +87,9 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
     ]
 }
 
-/// The client providers fetch with: a timeout per request, and a User-Agent naming cocat and
-/// where to reach this server, or else the project.
+/// The client providers fetch with: a timeout per request, a User-Agent naming cocat and
+/// where to reach this server, or else the project, and redirects followed only on the host
+/// asked, so a provider cannot send the server to another one.
 pub fn http_client(public_url: Option<&str>) -> Result<reqwest::Client, reqwest::Error> {
     let contact = public_url
         .filter(|url| !url.is_empty())
@@ -98,7 +100,21 @@ pub fn http_client(public_url: Option<&str>) -> Result<reqwest::Client, reqwest:
             env!("CARGO_PKG_VERSION")
         ))
         .timeout(FETCH_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if follows(attempt.url(), attempt.previous()) {
+                attempt.follow()
+            } else {
+                attempt.error("a redirect to another host, or too many redirects")
+            }
+        }))
         .build()
+}
+
+/// Whether a redirect to `next` is followed, `previous` holding the URLs requested so far,
+/// the first being the one asked for.
+fn follows(next: &reqwest::Url, previous: &[reqwest::Url]) -> bool {
+    let asked = previous.first().and_then(reqwest::Url::host_str);
+    previous.len() <= MAX_REDIRECTS && asked.is_some() && asked == next.host_str()
 }
 
 /// What a run did.
@@ -369,5 +385,27 @@ mod tests {
         let report = report.without(&["s3cr3t".to_owned()]);
 
         assert_eq!(report.unreadable, ["flares: 403 for api_key=•••"]);
+    }
+
+    fn url(text: &str) -> reqwest::Url {
+        reqwest::Url::parse(text).unwrap()
+    }
+
+    #[test]
+    fn a_redirect_is_followed_only_on_the_same_host_and_at_most_five_times() {
+        let asked = url("https://cdaw.gsfc.nasa.gov/CME_list/a.txt");
+        let same = url("https://cdaw.gsfc.nasa.gov/CME_list/b.txt");
+
+        assert!(follows(&same, std::slice::from_ref(&asked)));
+        assert!(!follows(
+            &url("https://evil.example.org/a.txt"),
+            std::slice::from_ref(&asked)
+        ));
+        assert!(!follows(
+            &url("http://localhost:8080/admin"),
+            std::slice::from_ref(&asked)
+        ));
+        assert!(follows(&same, &vec![asked.clone(); 5]));
+        assert!(!follows(&same, &vec![asked; 6]));
     }
 }
