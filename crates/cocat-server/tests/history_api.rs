@@ -1402,3 +1402,77 @@ async fn catalogue_history_is_unchanged() {
     let notebook_versions = fixture.notebook_history(&notebook, fixture.alice).await;
     assert_eq!(ids(&notebook_versions), [2, 1, 0]);
 }
+
+impl Fixture {
+    async fn restore_body(&self, room: &str, body: Value) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{room}/history/0/restore");
+        let (status, _, bytes) = self.call(Method::POST, &path, self.bob, Some(body)).await;
+        (status, json_of(&bytes))
+    }
+}
+
+#[tokio::test]
+async fn a_path_is_restored_from_the_manifest_only() {
+    let fixture = two_versions().await;
+    let notebook = fixture.edited_notebook().await;
+
+    let (status, body) = fixture.restore_body(ROOM, json!({ "path": "a.txt" })).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["detail"], "A path is restored from the manifest only");
+
+    let in_notebook = json!({ "document": notebook.id, "path": "a.txt" });
+    let (status, body) = fixture.restore_body(WORKSPACE, in_notebook).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(ids(&fixture.history(fixture.alice).await), [1, 0]);
+    let versions = fixture.notebook_history(&notebook, fixture.alice).await;
+    assert_eq!(ids(&versions), [1, 0]);
+}
+
+#[tokio::test]
+async fn a_restore_names_a_catalogue_or_a_document_not_both() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+
+    let both = json!({ "document": notebook.id, "catalogue": "c" });
+    let (status, body) = fixture.restore_body(WORKSPACE, both).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["detail"], "Name a catalogue or a document, not both");
+    let versions = fixture.notebook_history(&notebook, fixture.alice).await;
+    assert_eq!(ids(&versions), [1, 0]);
+}
+
+#[tokio::test]
+async fn a_documents_history_takes_no_catalogue_or_event_filter() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+
+    for filter in ["catalogue=c", "event=e"] {
+        let path = format!(
+            "/api/rooms/{WORKSPACE}/history?document={}&{filter}",
+            notebook.id
+        );
+        let (status, body) = fixture.get(&path, fixture.alice).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{filter}");
+        assert_eq!(
+            body["detail"],
+            "Catalogue and event filters apply to catalogues only"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_stranger_gets_404_for_a_document() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+    let dave = db::create_user(&fixture.state.pool, "dave@x.org", "hunter2", false, true)
+        .await
+        .unwrap();
+
+    for path in ["history", "history/0/state"] {
+        let path = format!("/api/rooms/{WORKSPACE}/{path}?document={}", notebook.id);
+        let (status, body) = fixture.get(&path, dave).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(body["detail"], format!("Project {WORKSPACE} not found"));
+    }
+}

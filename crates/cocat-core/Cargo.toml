@@ -14,7 +14,7 @@ quick-xml = "0.42"
 regex = "1"
 serde.workspace = true
 serde_json.workspace = true
-similar = { version = "3.2.1", default-features = false, features = ["text"] }
+similar = { version = "3.2.1", default-features = false, features = ["std", "text"] }
 strsim = "0.11"
 thiserror.workspace = true
 time.workspace = true
@@ -26,6 +26,8 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# std::time::Instant panics in the browser; the diff deadline reads web time there.
+similar = { version = "3.2.1", features = ["wasm32_web_time"] }
 time = { workspace = true, features = ["wasm-bindgen"] }
 uuid = { version = "1", features = ["v4", "js"] }
 

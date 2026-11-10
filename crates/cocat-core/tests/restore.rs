@@ -206,3 +206,126 @@ fn the_json_of_a_document_names_its_roots() {
     assert_eq!(json["cells"][1]["source"], "x = 2");
     assert_eq!(json["state"]["dirty"], false);
 }
+
+/// Merges what each replica has that the other lacks.
+fn merge(one: &Doc, other: &Doc) {
+    let to_other = one
+        .transact()
+        .encode_state_as_update_v1(&other.transact().state_vector());
+    let to_one = other
+        .transact()
+        .encode_state_as_update_v1(&one.transact().state_vector());
+    other
+        .transact_mut()
+        .apply_update(Update::decode_v1(&to_other).unwrap())
+        .unwrap();
+    one.transact_mut()
+        .apply_update(Update::decode_v1(&to_one).unwrap())
+        .unwrap();
+}
+
+fn cells_with_id(doc: &Doc, id: &str) -> Vec<Value> {
+    json(doc)["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|cell| cell["id"] == id)
+        .cloned()
+        .collect()
+}
+
+/// The notebook's past, and a present where cell "b" was deleted.
+fn past_and_b_deleted() -> (Doc, Doc) {
+    let past = replica(&notebook());
+    let live = replica(&past);
+    {
+        let mut txn = live.transact_mut();
+        txn.get_or_insert_array("cells").remove(&mut txn, 1);
+    }
+    (past, replica(&live))
+}
+
+#[test]
+fn a_concurrent_cell_edit_survives_a_restore() {
+    let (past, live) = past_and_b_deleted();
+    let colleague = replica(&live);
+    edit_first_source(&mut colleague.transact_mut(), 0, "# mine\n");
+
+    restored(&live, &past, None);
+    merge(&live, &colleague);
+
+    let a = cells_with_id(&live, "a");
+    assert_eq!(a.len(), 1, "{}", json(&live));
+    assert_eq!(a[0]["source"], "# mine\nprint(1)\nprint(2)");
+    assert_eq!(cells_with_id(&live, "b").len(), 1);
+    assert_eq!(json(&live), json(&colleague));
+}
+
+#[test]
+fn two_racing_restores_do_not_duplicate_kept_cells() {
+    let past = replica(&notebook());
+    let live = replica(&past);
+    edit_first_source(&mut live.transact_mut(), 0, "# changed\n");
+    let live = replica(&live);
+    let other = replica(&live);
+
+    restored(&live, &past, None);
+    restored(&other, &past, None);
+    merge(&live, &other);
+
+    let a = cells_with_id(&live, "a");
+    assert_eq!(a.len(), 1, "{}", json(&live));
+    assert_eq!(a[0]["source"], "print(1)\nprint(2)");
+    assert_eq!(cells_with_id(&live, "b").len(), 1);
+}
+
+#[test]
+fn a_nested_array_is_restored_item_by_item() {
+    let past = Doc::new();
+    {
+        let mut txn = past.transact_mut();
+        let outputs = ArrayPrelim::from(vec![
+            yrs::In::from(MapPrelim::from([(
+                "text".to_owned(),
+                yrs::In::Text(TextPrelim::new("one").into()),
+            )])),
+            yrs::In::from("two"),
+        ]);
+        txn.get_or_insert_map("cell")
+            .insert(&mut txn, "outputs", outputs);
+    }
+    let past = replica(&past);
+    let live = replica(&past);
+    {
+        let mut txn = live.transact_mut();
+        let Some(yrs::Out::YArray(outputs)) = txn.get_or_insert_map("cell").get(&txn, "outputs")
+        else {
+            panic!("no outputs")
+        };
+        outputs.remove(&mut txn, 1);
+    }
+    let live = replica(&live);
+    let colleague = replica(&live);
+    {
+        let mut txn = colleague.transact_mut();
+        let Some(yrs::Out::YArray(outputs)) = txn.get_or_insert_map("cell").get(&txn, "outputs")
+        else {
+            panic!("no outputs")
+        };
+        let Some(yrs::Out::YMap(first)) = outputs.get(&txn, 0) else {
+            panic!("no first output")
+        };
+        let Some(yrs::Out::YText(text)) = first.get(&txn, "text") else {
+            panic!("no text")
+        };
+        text.insert(&mut txn, 3, "!");
+    }
+
+    restored(&live, &past, None);
+    merge(&live, &colleague);
+
+    assert_eq!(
+        json(&live)["cell"]["outputs"],
+        serde_json::json!([{ "text": "one!" }, "two"])
+    );
+}

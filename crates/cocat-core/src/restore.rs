@@ -3,7 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use similar::{DiffTag, TextDiff};
+use std::time::Duration;
+
+use similar::{Algorithm, DiffTag, TextDiff, capture_diff_slices};
 use yrs::types::{AsPrelim, ToJson};
 use yrs::{
     Any, Array, ArrayRef, Doc, GetString, In, Map, MapRef, OffsetKind, Out, ReadTxn, Text, TextRef,
@@ -21,8 +23,9 @@ enum Kind {
 }
 
 /// Makes every root type of the live document equal to `past`'s, writing only what differs:
-/// maps set changed keys and remove missing ones, nested maps and texts are edited in place,
-/// arrays are rebuilt. With `only`, just that entry of the manifest's files.
+/// maps set changed keys and remove missing ones, texts take a character diff, arrays an
+/// item diff, and nested types are edited in place. With `only`, just that entry of the
+/// manifest's files.
 pub fn restore_document(txn: &mut TransactionMut<'_>, past: &Doc, only: Option<&str>) {
     let past = past.transact();
     match only {
@@ -124,37 +127,105 @@ fn restore_entry<P: ReadTxn>(
         (None, Some(_)) => {
             live.remove(txn, key);
         }
-        (Some(Out::YMap(want)), Some(Out::YMap(have))) => {
-            restore_map(txn, past, &have, Some(&want));
+        (Some(want), Some(have)) => {
+            if !restore_in_place(txn, past, &have, &want) {
+                live.insert(txn, key, want.as_prelim(past));
+            }
         }
-        (Some(Out::YText(want)), Some(Out::YText(have))) => {
-            restore_text(txn, &have, &want.get_string(past));
-        }
-        (Some(want), Some(have)) if want.to_json(past) == have.to_json(txn) => {}
-        (Some(want), _) => {
+        (Some(want), None) => {
             live.insert(txn, key, want.as_prelim(past));
         }
     }
 }
 
+/// Edits `have` until it equals `want` when both are the same shared type, keeping the live
+/// object and the edits others make to it; false when `have` must be replaced.
+fn restore_in_place<P: ReadTxn>(
+    txn: &mut TransactionMut<'_>,
+    past: &P,
+    have: &Out,
+    want: &Out,
+) -> bool {
+    match (have, want) {
+        (Out::YMap(have), Out::YMap(want)) => restore_map(txn, past, have, Some(want)),
+        (Out::YArray(have), Out::YArray(want)) => restore_array(txn, past, have, Some(want)),
+        (Out::YText(have), Out::YText(want)) => restore_text(txn, have, &want.get_string(past)),
+        _ => return have.to_json(txn) == want.to_json(past),
+    }
+    true
+}
+
+/// Diffs the items by their key, so kept items stay the live objects (a colleague's edit to a
+/// kept cell survives, and two racing restores do not each copy it); only removed and
+/// inserted runs are written. Applied from the end so the indexes still to apply stay valid.
 fn restore_array<P: ReadTxn>(
     txn: &mut TransactionMut<'_>,
     past: &P,
     live: &ArrayRef,
     was: Option<&ArrayRef>,
 ) {
-    let wanted: Vec<Out> = was.map(|was| was.iter(past).collect()).unwrap_or_default();
-    let have: Vec<Any> = live.iter(txn).map(|value| value.to_json(txn)).collect();
-    let want: Vec<Any> = wanted.iter().map(|value| value.to_json(past)).collect();
-    if have == want {
-        return;
-    }
-    let len = live.len(txn);
-    live.remove_range(txn, 0, len);
-    for value in wanted {
-        live.push_back(txn, value.as_prelim(past));
+    let have: Vec<Out> = live.iter(txn).collect();
+    let want: Vec<Out> = was.map(|was| was.iter(past).collect()).unwrap_or_default();
+    let have_keys: Vec<Key> = have.iter().map(|item| key_of(txn, item)).collect();
+    let want_keys: Vec<Key> = want.iter().map(|item| key_of(past, item)).collect();
+    let ops = capture_diff_slices(Algorithm::Myers, &have_keys, &want_keys);
+    for op in ops.iter().rev() {
+        let (tag, old, new) = op.as_tag_tuple();
+        if tag == DiffTag::Equal {
+            for (at, wanted) in old.zip(new) {
+                restore_item(txn, past, live, at, &have[at], &want[wanted]);
+            }
+            continue;
+        }
+        let at = index(old.start);
+        if !old.is_empty() {
+            live.remove_range(txn, at, index(old.len()));
+        }
+        for (offset, wanted) in new.enumerate() {
+            live.insert(txn, at + index(offset), want[wanted].as_prelim(past));
+        }
     }
 }
+
+fn restore_item<P: ReadTxn>(
+    txn: &mut TransactionMut<'_>,
+    past: &P,
+    live: &ArrayRef,
+    at: usize,
+    have: &Out,
+    want: &Out,
+) {
+    if !restore_in_place(txn, past, have, want) {
+        live.remove(txn, index(at));
+        live.insert(txn, index(at), want.as_prelim(past));
+    }
+}
+
+/// What an item is matched on across versions: a cell's `id`, else its content.
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum Key {
+    Id(String),
+    Content(String),
+}
+
+fn key_of<T: ReadTxn>(txn: &T, item: &Out) -> Key {
+    if let Out::YMap(map) = item
+        && let Some(Out::Any(Any::String(id))) = map.get(txn, "id")
+    {
+        return Key::Id(id.to_string());
+    }
+    let mut content = String::new();
+    item.to_json(txn).to_json(&mut content);
+    Key::Content(content)
+}
+
+fn index(at: usize) -> u32 {
+    u32::try_from(at).unwrap_or(u32::MAX)
+}
+
+/// Past it the diff settles for a coarser, still correct edit: a huge, very different text
+/// cannot hold the room's worker.
+const TEXT_DIFF_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// One character diff of the live text against the past one, applied from the end so the
 /// offsets still to apply stay valid.
@@ -162,7 +233,9 @@ fn restore_text(txn: &mut TransactionMut<'_>, live: &TextRef, was: &str) {
     let now = live.get_string(txn);
     let at = offsets(&now, txn.doc().offset_kind());
     let wanted = char_starts(was);
-    let diff = TextDiff::from_chars(now.as_str(), was);
+    let diff = TextDiff::configure()
+        .timeout(TEXT_DIFF_TIMEOUT)
+        .diff_chars(now.as_str(), was);
     for op in diff.ops().iter().rev() {
         let (tag, old, new) = op.as_tag_tuple();
         if tag == DiffTag::Equal {

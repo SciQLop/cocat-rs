@@ -21,7 +21,7 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{self, ApiError, ApiPath, CurrentUser, JsonBody, membership};
-use crate::db::RoomRow;
+use crate::db::{DocumentKind, RoomRow};
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Saved, Version, span, spans};
 use crate::openapi::Detail;
@@ -72,19 +72,24 @@ struct DocumentQuery {
     document: Option<Uuid>,
 }
 
-/// The key whose log the history reads: the project's catalogues, or one of its documents.
+/// The key whose log the history reads, the project's catalogues or one of its documents,
+/// with that document's kind.
 async fn history_key(
     state: &AppState,
     room_id: &str,
     document: Option<Uuid>,
-) -> Result<String, ApiError> {
+) -> Result<(String, Option<DocumentKind>), ApiError> {
     let Some(document) = document else {
-        return Ok(room_id.to_owned());
+        return Ok((room_id.to_owned(), None));
     };
     match db::document_kind(&state.pool, room_id, document).await? {
-        Some(_) => Ok(documents::key(room_id, document)),
+        Some(kind) => Ok((documents::key(room_id, document), Some(kind))),
         None => Err(ApiError::NotFound("No such document".to_owned())),
     }
+}
+
+fn unprocessable(detail: &str) -> ApiError {
+    ApiError::Unprocessable(detail.to_owned())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -144,6 +149,7 @@ struct NameBody {
         (status = 200, description = "The versions, newest first", body = History),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room or document, or the caller is not a member", body = Detail),
+        (status = 422, description = "A catalogue or event filter together with a document", body = Detail),
     )
 )]
 async fn list(
@@ -153,7 +159,13 @@ async fn list(
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<History>, ApiError> {
     let role = membership(&state, &room_id, user.id).await?;
-    let key = history_key(&state, &room_id, query.document).await?;
+    let filtered = query.catalogue.is_some() || query.event.is_some();
+    if filtered && query.document.is_some() {
+        return Err(unprocessable(
+            "Catalogue and event filters apply to catalogues only",
+        ));
+    }
+    let (key, _) = history_key(&state, &room_id, query.document).await?;
     let filter = match query.catalogue {
         Some(uuid) => Some(Filter::new(&state, &room_id, uuid).await?),
         None => None,
@@ -239,7 +251,7 @@ async fn state_at(
     Query(query): Query<DocumentQuery>,
 ) -> Result<Response, ApiError> {
     membership(&state, &room_id, user.id).await?;
-    let key = history_key(&state, &room_id, query.document).await?;
+    let (key, _) = history_key(&state, &room_id, query.document).await?;
     if query.document.is_none() {
         let update = past(&state, &key, version, state_until).await?;
         let binary = [(header::CONTENT_TYPE, "application/octet-stream")];
@@ -594,6 +606,7 @@ struct Restored {
         (status = 403, description = "The caller cannot write to the room", body = Detail),
         (status = 404, description = "No such room, document, version or membership", body = Detail),
         (status = 409, description = "The room reached its storage limit", body = Detail),
+        (status = 422, description = "A path without the manifest as document, or a catalogue and a document together", body = Detail),
     )
 )]
 async fn restore(
@@ -603,7 +616,13 @@ async fn restore(
     JsonBody(body): JsonBody<RestoreBody>,
 ) -> Result<Json<Restored>, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
-    let key = history_key(&state, &room_id, body.document).await?;
+    if body.catalogue.is_some() && body.document.is_some() {
+        return Err(unprocessable("Name a catalogue or a document, not both"));
+    }
+    let (key, kind) = history_key(&state, &room_id, body.document).await?;
+    if body.path.is_some() && kind != Some(DocumentKind::Manifest) {
+        return Err(unprocessable("A path is restored from the manifest only"));
+    }
     let saved = saved(&state, &key).await?;
     let update = state
         .rooms
