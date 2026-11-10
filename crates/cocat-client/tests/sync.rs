@@ -372,3 +372,31 @@ async fn a_viewer_drops_unshared_changes_and_writes_nothing() {
     assert!(reopened.is_read_only());
     assert_eq!(names(&reopened), ["shared"]);
 }
+
+/// A relayed catalogue such as LASCO's CMEs holds about 20 MiB, more than the 16 MiB a
+/// websocket message may carry by default.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_room_larger_than_16_mib_opens() {
+    let server = Server::start().await;
+    let token = seeded(&server, ROOM, "owner@x.org").await;
+    let mut big = new_event(E1, "2024-05-14T16:46:00Z", "2024-05-14T17:08:00Z");
+    big.attributes
+        .insert("remarks".into(), "x".repeat(20 << 20).into());
+    let doc = yrs::Doc::new();
+    let mut txn = doc.transact_mut();
+    model::create_event(&mut txn, &big).unwrap();
+    let update = txn.encode_update_v1();
+    server
+        .state()
+        .rooms
+        .write_as(ROOM, u64::MAX, cocat_server::room::Author::Server, update)
+        .await
+        .unwrap();
+
+    let dir = cache();
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    room.connect(&server.url(), &token).unwrap();
+    room.wait_synced(WAIT).unwrap();
+
+    assert!(model::event(&room.doc().transact(), E1).is_some());
+}

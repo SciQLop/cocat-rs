@@ -13,8 +13,9 @@ use tokio_tungstenite::tungstenite::Message as Frame;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::handshake::client::Response;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config};
 use url::Url;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
@@ -29,6 +30,10 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// The first wait after a dropped session, doubling up to [`MAX_BACKOFF`].
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+/// The largest message the client reads. The server sends a room's whole state in one
+/// message, and a relayed catalogue (LASCO's CMEs) is ~20 MiB, past tungstenite's 16 MiB.
+const MAX_MESSAGE_BYTES: usize = 256 * 1024 * 1024;
 
 /// Keeps one room connected until the server refuses the session or the project.
 ///
@@ -147,7 +152,10 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     let Some(request) = request(url, cookie) else {
         return Ending::Lost { synced: false };
     };
-    let (mut socket, role) = match connect_async(request).await {
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_MESSAGE_BYTES));
+    let (mut socket, role) = match connect_async_with_config(request, Some(config), false).await {
         Ok((socket, response)) => (socket, announced_role(&response)),
         Err(SocketError::Http(response)) => {
             let status = response.status();
