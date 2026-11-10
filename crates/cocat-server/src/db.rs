@@ -680,8 +680,11 @@ pub async fn replace_password<'e, E: Executor<'e, Database = Sqlite>>(
     Ok(updated.rows_affected() > 0)
 }
 
-/// How long a browser session lasts, and how long a token lasts unused.
-const BROWSER_LIFETIME: &str = "+3600 seconds";
+/// How long a browser session lasts unused (each use moves it on, once an hour at most), the
+/// most it lasts from its sign-in however used, and how long a token lasts unused. Like the
+/// big web apps: people in steady use stay signed in; an idle or very old session ends.
+const BROWSER_IDLE_LIFETIME: &str = "+30 days";
+pub const BROWSER_MAX_LIFETIME_DAYS: i64 = 90;
 const TOKEN_IDLE_LIFETIME: &str = "+6 months";
 
 /// Record a browser session for the cookie value whose hash this is. Expired sessions of the
@@ -691,7 +694,7 @@ pub async fn create_session(
     token_hash: &str,
     user_id: Uuid,
 ) -> Result<(), DbError> {
-    insert_session(pool, token_hash, user_id, None, BROWSER_LIFETIME).await
+    insert_session(pool, token_hash, user_id, None, BROWSER_IDLE_LIFETIME).await
 }
 
 /// Record a token an app signs in with, under the name the account page shows.
@@ -729,8 +732,8 @@ async fn insert_session(
     Ok(())
 }
 
-/// Who a live session belongs to, and whether it is a token whose last use is over an hour
-/// old: the caller then moves its expiry, so a token in steady use writes once an hour at most.
+/// Who a live session belongs to, and whether its last use is over an hour old: the caller then
+/// moves its expiry, so a session in steady use writes once an hour at most.
 #[derive(Debug)]
 pub struct SessionHolder {
     pub user: User,
@@ -745,8 +748,7 @@ pub async fn session_user(
 ) -> Result<Option<SessionHolder>, DbError> {
     let row = sqlx::query(r#"SELECT "user".id, "user".email, "user".hashed_password, "user".is_active,
                   "user".is_superuser, "user".is_verified,
-                  session.name IS NOT NULL
-                    AND session.last_used_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds')
+                  session.last_used_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds')
                     AS stale
            FROM session JOIN "user" ON "user".id = session.user_id
            WHERE session.token_hash = ? AND session.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"#)
@@ -762,12 +764,22 @@ pub async fn session_user(
     Ok(holder.transpose()?)
 }
 
-/// Mark a token used now and give it six more months.
+/// Mark a session used now and move its expiry on: a token by six months, a browser session by
+/// thirty days but never past ninety days from its sign-in.
 pub async fn touch_token(pool: &SqlitePool, token_hash: &str) -> Result<(), DbError> {
-    sqlx::query("UPDATE session
-         SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
-         WHERE token_hash = ? AND name IS NOT NULL")
+    sqlx::query(
+        "UPDATE session
+         SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+             expires_at = CASE WHEN name IS NOT NULL
+                 THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)
+                 ELSE MIN(strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+                          strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?))
+             END
+         WHERE token_hash = ?",
+    )
     .bind(TOKEN_IDLE_LIFETIME)
+    .bind(BROWSER_IDLE_LIFETIME)
+    .bind(format!("+{BROWSER_MAX_LIFETIME_DAYS} days"))
     .bind(token_hash)
     .execute(pool)
     .await?;

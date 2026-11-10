@@ -112,8 +112,9 @@ at login.
 Apps sign in with a **token**: a named session ("Python on lpp-jupyter") sent as
 `Authorization: Bearer <token>`, accepted wherever the session cookie is (API, websocket,
 history, public catalogues, submissions). A token lasts until revoked, or six months unused;
-using it moves that date, at most once an hour. A password change ends browser sessions and
-keeps tokens. The account page lists them under "Signed-in apps", each with Revoke, and so
+using it moves that date, at most once an hour. A browser session lasts 30 days unused, moved
+on the same way, and never more than 90 days from its sign-in; its cookie survives closing the
+browser. A password change ends browser sessions and keeps tokens. The account page lists them under "Signed-in apps", each with Revoke, and so
 does the API:
 
 | Route | Answer |

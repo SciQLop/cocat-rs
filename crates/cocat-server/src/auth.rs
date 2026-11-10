@@ -342,8 +342,11 @@ fn is_bcrypt(hashed: &str) -> bool {
     hashed.starts_with("$2a$") || hashed.starts_with("$2b$") || hashed.starts_with("$2y$")
 }
 
+/// The sign-in cookie: kept by the browser across restarts for as long as a session can last
+/// at most; the server decides, on every request, whether the session behind it still holds.
 pub fn set_cookie(token: &str) -> String {
-    session_cookie_conf(token, None).to_string()
+    let lasts = cookie::time::Duration::days(db::BROWSER_MAX_LIFETIME_DAYS);
+    session_cookie_conf(token, Some(lasts)).to_string()
 }
 
 /// The same attributes the login cookie sets, with the empty value and `Max-Age=0` that

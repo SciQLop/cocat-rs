@@ -224,6 +224,80 @@ async fn deleting_the_user_drops_sessions() {
     assert_eq!(me_status(&fixture, &token).await, StatusCode::UNAUTHORIZED);
 }
 
+async fn seconds_left(fixture: &Fixture) -> i64 {
+    sqlx::query_scalar(
+        "SELECT CAST((julianday(expires_at) - julianday('now')) * 86400 AS INTEGER) FROM session",
+    )
+    .fetch_one(&fixture.state.pool)
+    .await
+    .unwrap()
+}
+
+async fn age_session(fixture: &Fixture, created: &str, last_used: &str, expires: &str) {
+    sqlx::query(
+        "UPDATE session SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+                            last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?),
+                            expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)",
+    )
+    .bind(created)
+    .bind(last_used)
+    .bind(expires)
+    .execute(&fixture.state.pool)
+    .await
+    .unwrap();
+}
+
+const DAY: i64 = 86_400;
+
+#[tokio::test]
+async fn a_new_browser_session_lasts_thirty_days_unused() {
+    let fixture = Fixture::start().await;
+    fixture.verified("member@example.org").await;
+    api_login(&fixture, "member@example.org", PASSWORD).await;
+
+    let left = seconds_left(&fixture).await;
+    assert!((29 * DAY..=30 * DAY).contains(&left), "{left}");
+}
+
+#[tokio::test]
+async fn a_browser_session_in_use_slides_thirty_days_on() {
+    let fixture = Fixture::start().await;
+    fixture.verified("member@example.org").await;
+    let token = api_login(&fixture, "member@example.org", PASSWORD).await;
+    age_session(&fixture, "-5 days", "-2 hours", "+1 minute").await;
+
+    assert_eq!(me_status(&fixture, &token).await, StatusCode::OK);
+
+    let left = seconds_left(&fixture).await;
+    assert!((29 * DAY..=30 * DAY).contains(&left), "{left}");
+}
+
+#[tokio::test]
+async fn a_browser_session_used_this_hour_writes_nothing() {
+    let fixture = Fixture::start().await;
+    fixture.verified("member@example.org").await;
+    let token = api_login(&fixture, "member@example.org", PASSWORD).await;
+    age_session(&fixture, "-5 days", "-10 minutes", "+3 days").await;
+
+    assert_eq!(me_status(&fixture, &token).await, StatusCode::OK);
+
+    let left = seconds_left(&fixture).await;
+    assert!(left <= 3 * DAY, "{left}");
+}
+
+#[tokio::test]
+async fn a_browser_session_ends_ninety_days_after_sign_in_however_used() {
+    let fixture = Fixture::start().await;
+    fixture.verified("member@example.org").await;
+    let token = api_login(&fixture, "member@example.org", PASSWORD).await;
+    age_session(&fixture, "-89 days", "-2 hours", "+1 minute").await;
+
+    assert_eq!(me_status(&fixture, &token).await, StatusCode::OK);
+
+    let left = seconds_left(&fixture).await;
+    assert!(left <= DAY, "the session cannot outlive 90 days: {left}");
+}
+
 #[tokio::test]
 async fn expired_session_refused() {
     let fixture = Fixture::start().await;
@@ -290,7 +364,7 @@ async fn expired_rows_are_pruned_on_the_next_login() {
 }
 
 #[tokio::test]
-async fn the_cookie_contract_is_unchanged() {
+async fn the_cookie_keeps_the_sign_in_for_ninety_days() {
     let fixture = Fixture::start().await;
     fixture.verified("member@example.org").await;
 
@@ -310,7 +384,8 @@ async fn the_cookie_contract_is_unchanged() {
     assert!(cookie.contains("Path=/"), "{cookie}");
     assert!(cookie.contains("HttpOnly"), "{cookie}");
     assert!(cookie.contains("SameSite=Lax"), "{cookie}");
-    assert!(!cookie.contains("Max-Age="), "{cookie}");
+    assert!(cookie.contains("Secure"), "{cookie}");
+    assert!(cookie.contains("Max-Age=7776000"), "{cookie}");
 }
 
 #[tokio::test]
