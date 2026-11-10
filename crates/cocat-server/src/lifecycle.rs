@@ -17,6 +17,8 @@ pub(crate) const NO_MEMBERS: &str =
     "A public catalogue has no members: it cannot be shared, left or handed over";
 pub(crate) const NO_DOCUMENTS: &str =
     "A catalogue project holds one catalogues document: only a workspace holds documents";
+pub(crate) const NO_CATALOGUES: &str =
+    "A workspace holds documents and files: only a catalogue project holds catalogues";
 pub(crate) const PERSONAL: &str =
     "“My catalogues” is personal: copy catalogues into another project to share them.";
 
@@ -123,6 +125,18 @@ pub(crate) async fn require_workspace(
     match db::project_kind(&state.pool, room_id).await? {
         Some(db::ProjectKind::Workspace) => Ok(()),
         Some(db::ProjectKind::Catalogues) => Err(LifecycleError::Conflict(NO_DOCUMENTS)),
+        None => Err(room_not_found(room_id)),
+    }
+}
+
+/// Refuses a project that is not a catalogue project: a workspace holds no catalogues.
+pub(crate) async fn require_catalogues(
+    state: &AppState,
+    room_id: &str,
+) -> Result<(), LifecycleError> {
+    match db::project_kind(&state.pool, room_id).await? {
+        Some(db::ProjectKind::Catalogues) => Ok(()),
+        Some(db::ProjectKind::Workspace) => Err(LifecycleError::Conflict(NO_CATALOGUES)),
         None => Err(room_not_found(room_id)),
     }
 }

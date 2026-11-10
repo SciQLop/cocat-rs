@@ -8,7 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use axum::body::{Body, to_bytes};
+use axum::body::{Body, Bytes, to_bytes};
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -26,7 +26,7 @@ use crate::api::{ApiError, ApiPath, CurrentUser};
 use crate::db::{self, DbError};
 use crate::lifecycle;
 use crate::openapi::Detail;
-use crate::submissions_api::bytes;
+use crate::submissions_api::{bytes, within_quota};
 
 const FOLDER: &str = "blobs";
 
@@ -117,10 +117,10 @@ async fn record(
     Ok(())
 }
 
-async fn read_body(body: Body, cap: u64) -> Result<Vec<u8>, ApiError> {
+async fn read_body(body: Body, cap: u64) -> Result<Bytes, ApiError> {
     let limit = usize::try_from(cap).unwrap_or(usize::MAX);
     match to_bytes(body, limit).await {
-        Ok(content) => Ok(content.to_vec()),
+        Ok(content) => Ok(content),
         Err(_) => Err(ApiError::TooLarge(format!(
             "This file is too big to store: a file holds at most {}",
             bytes(cap)
@@ -133,17 +133,6 @@ async fn owner_left(state: &AppState, room_id: &str) -> Result<u64, ApiError> {
         .await?
         .ok_or(ApiError::Internal)?;
     Ok(state.rooms.owner_left(&state.pool, owner, None).await?)
-}
-
-fn within_quota(size: u64, left: u64) -> Result<(), ApiError> {
-    if size <= left {
-        return Ok(());
-    }
-    Err(ApiError::TooLarge(format!(
-        "Your storage is full: this file takes {}, and you have {} left",
-        bytes(size),
-        bytes(left)
-    )))
 }
 
 #[utoipa::path(
@@ -185,7 +174,10 @@ async fn put_blob(
         return Ok(StatusCode::OK);
     }
     let size = content.len() as u64;
-    within_quota(size, owner_left(&state, &room_id).await?)?;
+    // simplify: measure, then write, so concurrent uploads can overshoot the owner's quota by one
+    // file each. Upgrade path: reserve the bytes under a lock or in a database counter.
+    let left = owner_left(&state, &room_id).await?;
+    within_quota(size, left, "The project owner's", "file")?;
     write_file(&folder(state.rooms.update_dir(), &room_id), &hash, &content)
         .await
         .map_err(|error| {

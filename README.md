@@ -260,8 +260,10 @@ personal project is always a catalogues project.
 
 A workspace holds several documents. It starts with one, the manifest, a map of the
 project's files: for each path, its kind (`notebook`, `text` or `file`), the document or
-SHA-256 it points to, the size, who changed it and when. The server only stores these
-documents and never reads their content, except to show history and to restore.
+SHA-256 it points to, the size, who changed it and when. A second root map, `rules`, holds one
+key, `patterns`: text in `.gitignore` syntax saying which paths the project leaves out. The
+server only stores these documents and never reads their content, except to show history and
+to restore.
 
 | Route | Who | What |
 |---|---|---|
@@ -270,6 +272,9 @@ documents and never reads their content, except to show history and to restore.
 | `/room/{project}/{doc}` (websocket) | members | sync one document, with the same `cocat.v2` subprotocol and sign-in as `/room/{project}`. A workspace has no bare `/room/{project}` socket |
 | `PUT /api/rooms/{id}/blobs/{sha256}` | owner, editors | store a whole file under its SHA-256 (64 lowercase hex characters; 400 when the bytes do not hash to it). 201 when new, 200 when already there |
 | `GET /api/rooms/{id}/blobs/{sha256}` | any member | read it back |
+
+**Limits.** `COCAT_ROOM_MAX_MB` and the project's admin limit apply to each document file
+separately, still within the owner's `COCAT_OWNER_MAX_MB`.
 
 **Files.** A file is capped by `COCAT_FILE_MAX_MB` (20 by default; 413 above it). It counts toward
 the owner's `COCAT_OWNER_MAX_MB`, so the owner pays for what editors upload, and an upload that
@@ -283,7 +288,7 @@ pose as someone else. A message is capped at 16 KB. Public projects relay nothin
 **History.** The history routes take `?document=<id>` to list or read one document. A restore
 takes `{"document": "<id>"}`, and for the manifest also `{"path": "..."}` to bring back one
 entry. A request that names a catalogue and a document together, or a path on a document
-that is not the manifest, is 422. The `changes` view is for catalogues only (409 on a workspace).
+that is not the manifest, is 422. The `changes` view is for catalogues only: asking for it with `?document=` is 409. Naming and saving a version (`PUT .../name`, `POST .../history/commit`) work on the catalogues only: a body with a `document` field is 422.
 
 **Deleting.** Deleting a project deletes all its documents and files. Removing a member closes
 their sockets on every document (4403).

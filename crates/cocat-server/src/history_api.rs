@@ -130,6 +130,7 @@ impl TryFrom<String> for VersionName {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 struct NameBody {
     #[schema(value_type = String, min_length = 1, max_length = 100)]
     name: VersionName,
@@ -435,7 +436,7 @@ fn utc_minute(ms: i64) -> Option<String> {
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the room", body = Detail),
         (status = 404, description = "No such room, version or membership", body = Detail),
-        (status = 422, description = "The name is blank or longer than 100 characters", body = Detail),
+        (status = 422, description = "The name is blank or longer than 100 characters, or the body names a document: versions of catalogues only", body = Detail),
     )
 )]
 async fn name(
@@ -493,6 +494,7 @@ impl TryFrom<String> for Note {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 struct CommitBody {
     #[serde(default)]
     #[schema(value_type = Option<String>, min_length = 1, max_length = 100)]
@@ -522,7 +524,7 @@ struct Committed {
         (status = 403, description = "The caller cannot write to the room", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member", body = Detail),
         (status = 409, description = "Nothing changed since the last saved version", body = Detail),
-        (status = 422, description = "The name is blank or over 100 characters, or the note over 2000", body = Detail),
+        (status = 422, description = "The name is blank or over 100 characters, the note over 2000, or the body names a document: saves catalogues only", body = Detail),
     )
 )]
 async fn commit(

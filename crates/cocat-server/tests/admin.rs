@@ -329,3 +329,36 @@ async fn the_new_owner_need_not_be_a_member() {
         "the previous owner stays as an editor"
     );
 }
+
+async fn workspace_with_a_notebook_and_a_file(fixture: &Fixture, owner: uuid::Uuid) {
+    let pool = &fixture.state.pool;
+    db::create_room(pool, owner, "wk", "Notebooks", db::ProjectKind::Workspace)
+        .await
+        .unwrap();
+    let notebook = db::create_document(pool, "wk", db::DocumentKind::Notebook, owner)
+        .await
+        .unwrap();
+    let file = format!("wk%2F{notebook}.y");
+    fs::write(fixture.dir().join("rooms").join(file), vec![7u8; 300]).unwrap();
+    sqlx::query("INSERT INTO blob (room_id, sha256, size, created_by) VALUES ('wk', 'h', 1000, ?)")
+        .bind(owner.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_workspace_counts_its_documents_and_files_on_the_admin_pages() {
+    let fixture = Fixture::start().await;
+    let actor = superuser(&fixture, "admin@example.org").await;
+    let owner = fixture.verified("owner@example.org").await;
+    workspace_with_a_notebook_and_a_file(&fixture, owner).await;
+
+    let rooms = admin::rooms(&fixture.state, &actor).await.unwrap();
+    let users = admin::users(&fixture.state, &actor, Some("owner"))
+        .await
+        .unwrap();
+
+    assert_eq!(rooms[0].size_bytes, 1300);
+    assert_eq!(users[0].used_bytes, 1300);
+}

@@ -286,7 +286,8 @@ async fn a_notebook_keeps_cursors_and_selections() {
     assert_eq!(relayed["user"]["name"], "bob");
     assert_eq!(relayed["user"]["display_name"], "bob");
     assert!(relayed["user"]["color"].is_string());
-    assert!(relayed["user"].get("initials").is_none());
+    assert_eq!(relayed["user"]["username"], "bob@example.org");
+    assert_eq!(relayed["user"]["initials"], "B");
 }
 
 #[tokio::test]

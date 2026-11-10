@@ -1476,3 +1476,19 @@ async fn a_stranger_gets_404_for_a_document() {
         assert_eq!(body["detail"], format!("Project {WORKSPACE} not found"));
     }
 }
+
+#[tokio::test]
+async fn naming_and_saving_refuse_a_document_field() {
+    let fixture = two_versions().await;
+    let document = "00000000-0000-0000-0000-000000000001";
+
+    let path = format!("/api/rooms/{ROOM}/history/0/name");
+    let body = Some(json!({ "name": "v1", "document": document }));
+    let (named, _, _) = fixture.call(Method::PUT, &path, fixture.bob, body).await;
+    let (saved, _) = fixture
+        .save(fixture.bob, json!({ "name": "v1", "document": document }))
+        .await;
+
+    assert_eq!(named, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(saved, StatusCode::UNPROCESSABLE_ENTITY);
+}

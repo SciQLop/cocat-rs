@@ -192,8 +192,8 @@ fn vouched(json: &str, email: &str, wide: bool) -> Option<String> {
     }
 }
 
-/// A workspace document's account also carries the `name` and `display_name` JupyterLab
-/// shows for a collaborator.
+/// A workspace document's account also carries the `name`, `display_name`, `username` and
+/// `initials` JupyterLab shows for a collaborator.
 fn account(email: &str, wide: bool) -> Value {
     let mut user = Map::from_iter([
         ("email".to_owned(), json!(email)),
@@ -204,9 +204,20 @@ fn account(email: &str, wide: bool) -> Value {
         user.extend([
             ("name".to_owned(), json!(name)),
             ("display_name".to_owned(), json!(name)),
+            ("username".to_owned(), json!(email)),
+            ("initials".to_owned(), json!(initials(name))),
         ]);
     }
     Value::Object(user)
+}
+
+/// The first letters of the name's words, as JupyterLab shows them: `bob.durand` is `BD`.
+fn initials(name: &str) -> String {
+    name.split(|c: char| !c.is_alphanumeric())
+        .filter_map(|word| word.chars().next())
+        .flat_map(char::to_uppercase)
+        .take(2)
+        .collect()
 }
 
 /// The event the client says it edits; anything but a short string reads as none.
@@ -229,13 +240,28 @@ mod tests {
     use palette::color_difference::{EuclideanDistance, Wcag21RelativeContrast};
     use palette::{IntoColor, Oklab, Srgb};
 
-    use super::{COLORS, Presence, color, vouched};
+    use super::{COLORS, Presence, account, color, initials, vouched};
 
     /// The page's `--surface` in the dark theme.
     const DARK_SURFACE: &str = "#181e29";
 
     fn srgb(hex: &str) -> Srgb {
         hex.parse::<Srgb<u8>>().unwrap().into_format()
+    }
+
+    #[test]
+    fn initials_are_the_first_letters_of_the_name_words() {
+        assert_eq!(initials("bob.durand"), "BD");
+        assert_eq!(initials("alice"), "A");
+        assert_eq!(initials("a_b-c"), "AB");
+    }
+
+    #[test]
+    fn a_wide_account_carries_the_username_and_initials() {
+        let wide = account("bob.durand@example.org", true);
+        assert_eq!(wide["username"], "bob.durand@example.org");
+        assert_eq!(wide["initials"], "BD");
+        assert!(account("bob@example.org", false).get("initials").is_none());
     }
 
     #[test]

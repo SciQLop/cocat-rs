@@ -39,7 +39,7 @@ podman run -d --name cocat -p 6570:6570 \
 
 | Mount | Holds |
 |---|---|
-| `/storage` | the project files: `<room_id>.y` and its history stamps `<room_id>.y.h` |
+| `/storage` | the project files: `<room_id>.y` and its history stamps `<room_id>.y.h`; a workspace adds one `<project>%2F<document>.y` (and `.y.h`) per document, and its whole files under `blobs/` |
 | `/db` | `cocat-rs.db` (accounts, projects, memberships, sessions) and `cocat-rs.db.secret` |
 | `/log` | kept for the Python image's contract; the server prints to the container output (`podman logs cocat`) |
 
@@ -268,7 +268,7 @@ and so are accounts created there.
 
 Copy, together:
 
-- the project directory (`/storage`): every `<room_id>.y` and `<room_id>.y.h`;
+- the whole project directory (`/storage`), with its `blobs/` folder: every `<room_id>.y` and `<room_id>.y.h`, and for workspaces every `<project>%2F<document>.y` and `.y.h` plus `blobs/`;
 - the database `/db/cocat-rs.db`, with SQLite's online backup, never a plain file copy
   while the server runs:
 

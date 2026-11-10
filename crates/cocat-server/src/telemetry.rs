@@ -185,10 +185,11 @@ async fn sample(state: &AppState) {
         gauge!("cocat_rooms").set(total as f64);
     }
     if let Ok(rooms) = crate::db::admin_rooms(&state.pool).await {
-        let bytes: u64 = rooms
-            .iter()
-            .map(|room| state.rooms.room_size(&room.id))
-            .sum();
+        let mut bytes = 0u64;
+        for room in &rooms {
+            let size = state.rooms.project_bytes(&state.pool, &room.id).await;
+            bytes = bytes.saturating_add(size.unwrap_or(0));
+        }
         gauge!("cocat_room_file_bytes_total").set(bytes as f64);
     }
     let (open, _) = state.rooms.open_counts().await;

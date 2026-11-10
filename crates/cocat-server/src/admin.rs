@@ -202,7 +202,8 @@ pub async fn users(
         // simplify: one query and one stat per account; the admin page is not a hot path.
         let mut used_bytes = 0u64;
         for room in db::owned_rooms(&state.pool, user.id).await? {
-            used_bytes = used_bytes.saturating_add(state.rooms.room_size(&room));
+            let bytes = state.rooms.project_bytes(&state.pool, &room).await?;
+            used_bytes = used_bytes.saturating_add(bytes);
         }
         rows.push(UserRow {
             id: user.id,
@@ -230,7 +231,7 @@ pub async fn rooms(state: &AppState, actor: &User) -> Result<Vec<RoomRow>, Admin
             id: room.id.clone(),
             name: room.name,
             owner: room.owner,
-            size_bytes: state.rooms.room_size(&room.id),
+            size_bytes: state.rooms.project_bytes(&state.pool, &room.id).await?,
             limit_bytes: room.limit_mb.map(megabytes).unwrap_or(limits.room),
             limit_override_mb: room.limit_mb,
             members: room.members,

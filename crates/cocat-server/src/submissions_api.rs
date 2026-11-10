@@ -564,7 +564,7 @@ async fn snapshot_of(
     let size = u64::try_from(snapshot.len()).unwrap_or(u64::MAX);
     fits(size, state.rooms.limits().room)?;
     let left = state.rooms.owner_left(&state.pool, author, None).await?;
-    within_quota(size, left)?;
+    within_quota(size, left, "Your", "submission")?;
     Ok((name, snapshot))
 }
 
@@ -590,12 +590,13 @@ fn fits(size: u64, room_limit: u64) -> Result<(), ApiError> {
     )))
 }
 
-fn within_quota(size: u64, left: u64) -> Result<(), ApiError> {
+/// Refuses `size` bytes of `what` when the `whose` storage has only `left` bytes left.
+pub(crate) fn within_quota(size: u64, left: u64, whose: &str, what: &str) -> Result<(), ApiError> {
     if size <= left {
         return Ok(());
     }
     Err(ApiError::TooLarge(format!(
-        "Your storage is full: this submission takes {}, and you have {} left",
+        "{whose} storage is full: this {what} takes {}, and {} is left",
         bytes(size),
         bytes(left)
     )))
@@ -670,6 +671,7 @@ async fn copy_into(
     update: Vec<u8>,
 ) -> Result<(String, String), ApiError> {
     lifecycle::require_role(state, room_id, user, Role::Editor).await?;
+    lifecycle::require_catalogues(state, room_id).await?;
     if db::is_public(&state.pool, room_id).await? {
         return Err(ApiError::Conflict(INTO_PUBLIC.to_owned()));
     }

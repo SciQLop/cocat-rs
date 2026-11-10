@@ -59,7 +59,7 @@ const MEGABYTE: u64 = 1024 * 1024;
 /// A room can unload between being found and being written to; a retry opens it again.
 const WRITE_TRIES: usize = 3;
 
-async fn project_keys(pool: &SqlitePool, room_id: &str) -> Result<Vec<String>, RoomError> {
+async fn project_keys(pool: &SqlitePool, room_id: &str) -> Result<Vec<String>, crate::db::DbError> {
     let documents = crate::db::documents_of(pool, room_id).await?;
     let documents = documents
         .into_iter()
@@ -345,14 +345,35 @@ impl RoomManager {
         };
         let mut used = crate::submissions::stored_bytes(pool, owner).await?;
         for owned in crate::db::owned_rooms(pool, owner).await? {
-            used = used.saturating_add(crate::blobs::stored_bytes(pool, &owned).await?);
-            for key in project_keys(pool, &owned).await? {
-                if Some(key.as_str()) != except {
-                    used = used.saturating_add(self.room_size(&key));
-                }
-            }
+            used = used.saturating_add(self.bytes_except(pool, &owned, except).await?);
         }
         Ok(owner_limit.saturating_sub(used))
+    }
+
+    /// What a project takes in storage: its catalogues key, every document and the stored
+    /// whole files.
+    pub async fn project_bytes(
+        &self,
+        pool: &SqlitePool,
+        room_id: &str,
+    ) -> Result<u64, crate::db::DbError> {
+        self.bytes_except(pool, room_id, None).await
+    }
+
+    async fn bytes_except(
+        &self,
+        pool: &SqlitePool,
+        room_id: &str,
+        except: Option<&str>,
+    ) -> Result<u64, crate::db::DbError> {
+        let files = crate::blobs::stored_bytes(pool, room_id).await?;
+        let keys = project_keys(pool, room_id).await?;
+        Ok(keys
+            .iter()
+            .filter(|key| Some(key.as_str()) != except)
+            .fold(files, |total, key| {
+                total.saturating_add(self.room_size(key))
+            }))
     }
 
     /// Closes the user's sockets on the project's catalogues and on each of its documents.
