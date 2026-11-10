@@ -11,6 +11,7 @@ pub mod help;
 pub mod history;
 pub mod home;
 pub mod layout;
+pub mod markdown;
 pub mod notebook;
 pub mod period;
 pub mod presence;
