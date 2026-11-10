@@ -74,6 +74,9 @@ const COLUMNS: [(&str, &str); 23] = [
 fn parse(body: &[u8]) -> Result<Vec<EventRecord>, String> {
     let flares: Vec<Value> =
         serde_json::from_slice(body).map_err(|error| format!("not a list of flares: {error}"))?;
+    // simplify: a 30-day request holds at most 5000 flares, about 166 a day; the busiest
+    // stretch so far is about 70. Upgrade: a smaller REQUEST_SPAN, or split a window that
+    // reaches the cap and ask both halves.
     if flares.len() >= MAX_ROWS {
         return Err(format!(
             "{} flares in one request, the answer may be cut off at {MAX_ROWS}",

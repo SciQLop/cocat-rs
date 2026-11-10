@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use cocat_core::model::EventRecord;
 use cocat_core::time::Timestamp;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use time::PrimitiveDateTime;
 use time::macros::format_description;
 use uuid::Uuid;
@@ -75,26 +75,28 @@ fn parse(list: &List, body: &str) -> Result<Vec<EventRecord>, String> {
 }
 
 fn cme(list: &List, line: &str) -> Result<EventRecord, String> {
-    let fields: Vec<&str> = line.split('|').map(str::trim).collect();
-    let [number, onset, figures @ .., halo] = fields.as_slice() else {
-        return Err(format!("expected {FIELDS} fields"));
-    };
-    if figures.len() != FIGURES.len() {
-        return Err(format!("expected {FIELDS} fields"));
-    }
+    let fields: [&str; FIELDS] = line
+        .split('|')
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .try_into()
+        .map_err(|_| format!("expected {FIELDS} fields"))?;
+    let [number, onset, figures @ .., halo] = fields;
     let start = onset_time(onset)?;
     let figures = figures
         .iter()
-        .zip(FIGURES)
-        .map(|(text, name)| Ok((name.to_owned(), Value::from(figure(text)?))))
-        .collect::<Result<Map<_, _>, String>>()?;
+        .map(|text| figure(text))
+        .collect::<Result<Vec<_>, _>>()?;
     let key = format!("{}/{number}|{onset}", list.key);
     let uuid = Uuid::new_v5(&NAMESPACE, key.as_bytes()).to_string();
-    let hours = figures["dt0_h"].as_i64().unwrap_or_default();
-    let mut record = EventRecord::new(uuid, start, hours_after(start, hours)?);
-    record.attributes = figures;
+    let mut record = EventRecord::new(uuid, start, hours_after(start, figures[0])?);
+    record.attributes = FIGURES
+        .iter()
+        .zip(figures)
+        .map(|(name, figure)| ((*name).to_owned(), Value::from(figure)))
+        .collect();
     if !halo.is_empty() {
-        record.attributes.insert(HALO.to_owned(), (*halo).into());
+        record.attributes.insert(HALO.to_owned(), halo.into());
     }
     Ok(record)
 }
@@ -130,20 +132,28 @@ fn catalogue(list: &List, events: Vec<EventRecord>) -> Fetched {
     }
 }
 
-async fn fetch_list(http: &reqwest::Client, list: &List) -> Result<Fetched, String> {
-    let describe = |error: reqwest::Error| format!("{}: {}", list.name, super::fetch_error(error));
-    let body = http
-        .get(list.data_url)
+async fn download(http: &reqwest::Client, list: &List) -> Result<String, String> {
+    http.get(list.data_url)
         .send()
         .await
-        .map_err(describe)?
+        .map_err(super::fetch_error)?
         .error_for_status()
-        .map_err(describe)?
+        .map_err(super::fetch_error)?
         .text()
         .await
-        .map_err(describe)?;
-    let events = parse(list, &body).map_err(|error| format!("{}: {error}", list.name))?;
-    Ok(catalogue(list, events))
+        .map_err(super::fetch_error)
+}
+
+/// A list that could not be downloaded or read comes back unreadable, so that the other one
+/// is still kept up to date.
+fn read(list: &List, body: Result<String, String>) -> Fetched {
+    let events = body
+        .and_then(|body| parse(list, &body))
+        .map_err(|error| format!("{}: {error}", list.name));
+    Fetched {
+        events,
+        ..catalogue(list, Vec::new())
+    }
 }
 
 #[async_trait]
@@ -167,8 +177,8 @@ impl Provider for Cactus {
         _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         Ok(vec![
-            fetch_list(http, &LEVEL_ZERO).await?,
-            fetch_list(http, &QUICK_LOOK).await?,
+            read(&LEVEL_ZERO, download(http, &LEVEL_ZERO).await),
+            read(&QUICK_LOOK, download(http, &QUICK_LOOK).await),
         ])
     }
 }
@@ -305,6 +315,23 @@ mod tests {
 
         assert!(error.contains("0097|1997/13/45"), "{error}");
         assert!(parse(&LEVEL_ZERO, &format!("{LZ_SAMPLE}  0097|oops\n")).is_err());
+    }
+
+    #[test]
+    fn a_list_that_could_not_be_read_comes_back_unreadable_beside_the_other() {
+        let down = read(&LEVEL_ZERO, Err("Connection reset".to_owned()));
+        let garbled = read(&QUICK_LOOK, Ok("  0001|oops\n".to_owned()));
+        let fine = read(&QUICK_LOOK, Ok(QKL_SAMPLE.to_owned()));
+
+        assert_eq!(down.key, "lz");
+        assert!(down.events.unwrap_err().contains("Connection reset"));
+        assert!(
+            garbled
+                .events
+                .unwrap_err()
+                .contains("CACTus LASCO CMEs, quick-look")
+        );
+        assert_eq!(fine.events.unwrap().len(), 15);
     }
 
     #[test]

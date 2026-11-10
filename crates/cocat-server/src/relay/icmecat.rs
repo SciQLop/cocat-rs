@@ -23,6 +23,7 @@ use super::{Fetched, Provider};
 pub struct Icmecat;
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x9c4e7a15_2d3b_4f86_a1e0_5b7d3c8e6f42);
+const SITE: &str = "helioforecast.space";
 const PAGE: &str = "https://helioforecast.space/icmecat";
 const DESCRIPTION: &str = "Interplanetary coronal mass ejections seen in situ by {}, from the HELIO4CAST ICMECAT (Moestl et al.), https://helioforecast.space/icmecat. If results from this catalogue go into a peer-reviewed paper, the authors ask to be contacted about co-authorship.";
 /// The columns that are not attributes: the event's key, its catalogue and its two ends.
@@ -61,8 +62,17 @@ fn csv_url(page: &str) -> Result<String, String> {
         .filter_map(|link| link.attr("href"))
         .filter(|href| href.contains("ICMECAT") && href.ends_with(".csv"))
         .find_map(|href| base.join(href).ok())
-        .map(String::from)
         .ok_or_else(|| "the page links no CSV, has its layout changed?".to_owned())
+        .and_then(on_the_site)
+}
+
+fn on_the_site(url: reqwest::Url) -> Result<String, String> {
+    match (url.scheme(), url.host_str()) {
+        ("https", Some(SITE)) => Ok(url.into()),
+        _ => Err(format!(
+            "the page links a CSV outside https://{SITE}: {url}"
+        )),
+    }
 }
 
 /// A table row by column name.
@@ -119,20 +129,22 @@ fn attributes(row: &Row) -> Result<Map<String, Value>, String> {
         .iter()
         .filter(|(column, value)| !STRUCTURE.contains(&column.as_str()) && !value.is_empty());
     values
-        .map(|(column, value)| Ok((attribute_name(column), attribute_value(column, value)?)))
+        .filter_map(|(column, value)| {
+            let value = attribute_value(column, value).transpose()?;
+            Some(value.map(|value| (attribute_name(column), value)))
+        })
         .collect()
 }
 
-fn attribute_value(column: &str, text: &str) -> Result<Value, String> {
+/// `None` for a number that is not finite (`nan`, `inf`): the catalogue has none there.
+fn attribute_value(column: &str, text: &str) -> Result<Option<Value>, String> {
     let bad = || format!("{column} is {text}");
     if column.ends_with("_time") {
         let at = icme_time(text).ok_or_else(bad)?;
-        return Ok(Value::String(at.rfc3339().map_err(|_| bad())?));
+        return Ok(Some(Value::String(at.rfc3339().map_err(|_| bad())?)));
     }
     let number: f64 = text.parse().map_err(|_| bad())?;
-    serde_json::Number::from_f64(number)
-        .map(Value::Number)
-        .ok_or_else(bad)
+    Ok(serde_json::Number::from_f64(number).map(Value::Number))
 }
 
 fn attribute_name(column: &str) -> String {
@@ -329,6 +341,48 @@ mod tests {
             event.attributes["mo_start_time"],
             json!("2012-03-15T04:10:00Z")
         );
+    }
+
+    #[test]
+    fn a_link_to_another_host_is_refused() {
+        let foreign = "<a href=\"https://example.org/HELIO4CAST_ICMECAT_v24.csv\">csv</a>";
+        let insecure = "<a href=\"http://helioforecast.space/HELIO4CAST_ICMECAT_v24.csv\">csv</a>";
+
+        for page in [foreign, insecure] {
+            assert!(csv_url(page).unwrap_err().contains("helioforecast.space"));
+        }
+    }
+
+    #[test]
+    fn a_relative_link_stays_on_the_site() {
+        let page = "<a href=\"static/sync/icmecat/HELIO4CAST_ICMECAT_v24.csv\">csv</a>";
+
+        assert_eq!(
+            csv_url(page).unwrap(),
+            "https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v24.csv"
+        );
+    }
+
+    #[test]
+    fn a_number_that_is_not_finite_is_left_out_like_an_empty_one() {
+        let broken = SAMPLE
+            .replace("ICME_SOLO_MOESTL_20250527_01,SolarOrbiter,2025-05-27T01:20Z,2025-05-27T01:20Z,2025-05-27T11:27Z,0.8275,", "ICME_SOLO_MOESTL_20250527_01,SolarOrbiter,2025-05-27T01:20Z,2025-05-27T01:20Z,2025-05-27T11:27Z,nan,")
+            .replace(",-178.89,", ",inf,");
+
+        let a = lists(&broken)
+            .unwrap()
+            .into_iter()
+            .find(|list| list.key == "solarorbiter")
+            .unwrap()
+            .events
+            .unwrap()
+            .into_iter()
+            .map(|event| event.attributes)
+            .find(|a| a.contains_key("icme_bmax_nt") && !a.contains_key("mo_sc_heliodistance_au"))
+            .unwrap();
+
+        assert!(!a.contains_key("mo_sc_long_heeq_deg"));
+        assert!(a.contains_key("mo_sc_lat_heeq_deg"));
     }
 
     #[test]
