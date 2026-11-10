@@ -208,3 +208,87 @@ fn other_catalogues_and_their_events_stay_as_they_are() {
         Status::Confirmed
     );
 }
+
+#[test]
+fn a_big_feed_is_held_quickly() {
+    let doc = Doc::new();
+    let events: Vec<EventRecord> = (0..20_000)
+        .map(|n| record(&format!("e{n}"), n * 10_000))
+        .collect();
+    let feed = wanted("Flares", events);
+    let started = std::time::Instant::now();
+
+    let counts = run(&doc, &feed);
+    let again = run(&doc, &feed);
+
+    assert_eq!(counts.added, 20_000);
+    assert!(again.is_empty());
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn a_duplicated_uuid_keeps_the_last_one_and_holds_steadily() {
+    let doc = Doc::new();
+    let feed = wanted("Flares", vec![record("a", 0), record("a", 2_000)]);
+
+    let counts = run(&doc, &feed);
+
+    assert_eq!(
+        counts,
+        Counts {
+            added: 1,
+            ..Counts::default()
+        }
+    );
+    assert_eq!(
+        event(&doc.transact(), "a").unwrap().start,
+        record("a", 2_000).start
+    );
+    assert!(run(&doc, &feed).is_empty());
+}
+
+#[test]
+fn an_event_the_room_cannot_hold_is_counted_as_skipped() {
+    let doc = Doc::new();
+    let mut far = record("far", 0);
+    far.stop = Timestamp::from_unix_micros(100_000_000_000_000_000).unwrap();
+
+    let counts = run(&doc, &wanted("Flares", vec![record("a", 0), far.clone()]));
+
+    assert_eq!(
+        counts,
+        Counts {
+            added: 1,
+            skipped: 1,
+            ..Counts::default()
+        }
+    );
+    assert_eq!(live(&doc), ["a"]);
+    assert!(event(&doc.transact(), "far").is_none());
+}
+
+#[test]
+fn a_rewrite_the_room_refuses_is_skipped_not_changed() {
+    let doc = Doc::new();
+    run(&doc, &wanted("Flares", vec![record("a", 0)]));
+    let mut far = record("a", 0);
+    far.stop = Timestamp::from_unix_micros(100_000_000_000_000_000).unwrap();
+
+    let counts = run(&doc, &wanted("Flares", vec![far]));
+
+    assert_eq!(
+        counts,
+        Counts {
+            skipped: 1,
+            ..Counts::default()
+        }
+    );
+    assert_eq!(
+        event(&doc.transact(), "a").unwrap().stop,
+        record("a", 0).stop
+    );
+    assert_eq!(
+        event(&doc.transact(), "a").unwrap().attributes["speed"],
+        400
+    );
+}
