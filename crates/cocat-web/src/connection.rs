@@ -34,6 +34,8 @@ struct Link {
     render_queued: Rc<Cell<bool>>,
     /// Set once the page moved to another project: no more sockets.
     stopped: Cell<bool>,
+    /// How many times the socket closed, so a caller can tell a refusal happened.
+    drops: Cell<u32>,
     handlers: Handlers,
 }
 
@@ -45,6 +47,18 @@ impl Connection {
     /// observer lets go of the link.
     pub fn close(&self) {
         self.0.stop();
+    }
+
+    /// Asks the server for its state again: it answers after every frame sent before, so
+    /// the room goes Live again once the server has applied them.
+    pub fn resync(&self) {
+        self.0.room.status.set(Status::Connecting);
+        self.0.send(&hello(&self.0.room.doc));
+    }
+
+    /// How many times the socket closed so far; the server closes it on a refused update.
+    pub fn drops(&self) -> u32 {
+        self.0.drops.get()
     }
 }
 
@@ -59,6 +73,7 @@ pub fn connect(room: Room) -> Result<Connection, TransactionAcqError> {
         presence: RefCell::new(Presence::for_room(room.doc.clone(), &room.config.room_id)),
         render_queued: Rc::default(),
         stopped: Cell::new(false),
+        drops: Cell::new(0),
         handlers: handlers(link),
     });
     let observer = link.clone();
@@ -161,6 +176,7 @@ impl Link {
     }
 
     fn closed(self: &Rc<Self>) {
+        self.drops.set(self.drops.get() + 1);
         self.socket.replace(None);
         self.room.status.set(Status::Reconnecting);
         self.presence.borrow_mut().disconnected();

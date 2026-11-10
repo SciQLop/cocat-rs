@@ -56,20 +56,15 @@ pub type ProjectFiles = RwSignal<FilesState>;
 #[derive(Clone)]
 pub struct Files {
     files: Memo<Vec<Entry>>,
-    patterns: Memo<Option<String>>,
     socket: String,
     blobs: Blobs,
     manifest: String,
 }
 
 impl Files {
-    /// The manifest's id, its entries and its sharing rules now, for an upload.
-    pub fn upload_target(&self) -> (String, Vec<Entry>, Option<String>) {
-        (
-            self.manifest.clone(),
-            self.files.get_untracked(),
-            self.patterns.get_untracked(),
-        )
+    /// The id of the project's file list document.
+    pub fn manifest(&self) -> &str {
+        &self.manifest
     }
 }
 
@@ -135,12 +130,9 @@ fn ManifestSync(config: RoomConfig, manifest: String, state: ProjectFiles) {
         connection.try_with_value(|connection| connection.close());
         state.try_set(FilesState::Loading);
     });
-    let reader = room.clone();
-    let files = Memo::new(move |_| reader.read(|txn| manifest_files(txn)));
-    let patterns = Memo::new(move |_| room.read(|txn| cocat_core::files::patterns(txn)));
+    let files = Memo::new(move |_| room.read(|txn| manifest_files(txn)));
     state.set(FilesState::Ready(Files {
         files,
-        patterns,
         socket,
         blobs,
         manifest,
@@ -251,7 +243,7 @@ pub fn FilePane(state: ProjectFiles, path: String) -> impl IntoView {
 }
 
 /// The manifest's `files` map, read as entries.
-fn manifest_files<T: ReadTxn>(txn: &T) -> Vec<Entry> {
+pub fn manifest_files<T: ReadTxn>(txn: &T) -> Vec<Entry> {
     let Some(files) = txn.get_map("files") else {
         return Vec::new();
     };

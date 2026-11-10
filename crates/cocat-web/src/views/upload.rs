@@ -1,8 +1,8 @@
 //! Uploading files into a project's SciQLop workspace: the pickers, the run, and its report.
 
 use cocat_core::files::{
-    DEFAULT_PATTERNS, FileKind, ManifestEntry, Plan, Rules, plan, put_entry, set_patterns,
-    write_notebook, write_text,
+    DEFAULT_PATTERNS, FileKind, ManifestEntry, Plan, Rules, Skip, patterns, plan, put_entry,
+    set_patterns, write_notebook, write_text,
 };
 use cocat_core::time::Timestamp;
 use js_sys::Uint8Array;
@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{File, FileList};
-use yrs::TransactionMut;
+use yrs::{Transact, TransactionMut};
 
 use crate::api;
 use crate::connection;
@@ -22,7 +22,7 @@ use crate::session::RoomConfig;
 use crate::state::Room;
 use crate::sync::Status;
 use crate::upload::{Failure, failure_text, kept_document, path_of, sha256_hex, uploaded_text};
-use crate::views::files::{FilesState, ProjectFiles};
+use crate::views::files::{FilesState, ProjectFiles, manifest_files};
 use crate::workspace::Entry;
 
 /// Used when the server does not say: the server's own default.
@@ -79,12 +79,15 @@ impl Uploads {
     }
 }
 
-/// What the project's file list holds now, to write into.
+/// The largest notebook or text file sent as one live update: the server takes frames of
+/// up to 16 MB.
+const LIVE_MAX: u64 = 15 * 1024 * 1024;
+
+/// What an upload checks each file against: the files listed now and the sharing rules.
 struct Target {
-    manifest: String,
     files: Vec<Entry>,
-    patterns: Option<String>,
-    created: bool,
+    rules: Rules,
+    cap: u64,
 }
 
 async fn run(
@@ -93,35 +96,41 @@ async fn run(
     uploads: Uploads,
     picked: Vec<File>,
 ) -> (String, Vec<String>) {
-    let target = match target(config, state).await {
-        Ok(target) => target,
+    let shown = state.with_untracked(|state| match state {
+        FilesState::Ready(files) => Some(files.manifest().to_owned()),
+        _ => None,
+    });
+    let manifest = match shown.clone() {
+        Some(id) => Ok(id),
+        None => make_manifest(config).await,
+    };
+    let manifest = match manifest {
+        Ok(id) => open(config, &id).await,
+        Err(why) => Err(why),
+    };
+    let manifest = match manifest {
+        Ok(manifest) => manifest,
         Err(why) => return (format!("Nothing was uploaded: {why}"), Vec::new()),
     };
-    let rules = Rules::new(target.patterns.as_deref().unwrap_or(DEFAULT_PATTERNS));
-    let cap = config.file_max.unwrap_or(DEFAULT_FILE_MAX);
-    let total = picked.len();
-    let (mut entries, mut failures) = (Vec::new(), Vec::new());
-    for (index, file) in picked.iter().enumerate() {
-        uploads
-            .progress
-            .set(Some(format!("Uploading {} of {total}…", index + 1)));
-        let path = path_of(&file.name(), &relative_path(file));
-        match upload_one(config, &target, &rules, cap, file, &path).await {
-            Ok(entry) => entries.push((path, entry)),
-            Err(failure) => failures.push(failure_text(&path, &failure)),
-        }
-    }
-    let (created, count) = (target.created, entries.len());
-    let listed = write_document(config, &target.manifest, move |txn| {
-        if created {
-            set_patterns(txn, DEFAULT_PATTERNS);
-        }
-        for (path, entry) in &entries {
-            put_entry(txn, path, entry);
-        }
-    })
-    .await;
-    if created {
+    let target = manifest.room.read_untracked(|txn| Target {
+        files: manifest_files(txn),
+        rules: Rules::new(&patterns(txn).unwrap_or_else(|| DEFAULT_PATTERNS.to_owned())),
+        cap: config.file_max.unwrap_or(DEFAULT_FILE_MAX),
+    });
+    let (entries, failures) = upload_all(config, &target, uploads, &picked).await;
+    let count = entries.len();
+    let listed = manifest
+        .write(move |txn| {
+            if patterns(txn).is_none() {
+                set_patterns(txn, DEFAULT_PATTERNS);
+            }
+            for (path, entry) in &entries {
+                put_entry(txn, path, entry);
+            }
+            Ok(())
+        })
+        .await;
+    if shown.is_none() {
         uploads.files_on.set(true);
         state.set(FilesState::Loading);
     }
@@ -134,24 +143,23 @@ async fn run(
     }
 }
 
-/// The project's manifest and what it lists; one is made when the project has none.
-async fn target(config: &RoomConfig, state: ProjectFiles) -> Result<Target, String> {
-    if let FilesState::Ready(files) = state.get_untracked() {
-        let (manifest, files, patterns) = files.upload_target();
-        return Ok(Target {
-            manifest,
-            files,
-            patterns,
-            created: false,
-        });
+async fn upload_all(
+    config: &RoomConfig,
+    target: &Target,
+    uploads: Uploads,
+    picked: &[File],
+) -> (Vec<(String, ManifestEntry)>, Vec<String>) {
+    let (mut entries, mut failures) = (Vec::new(), Vec::new());
+    for (index, file) in picked.iter().enumerate() {
+        let progress = format!("Uploading {} of {}…", index + 1, picked.len());
+        uploads.progress.set(Some(progress));
+        let path = path_of(&file.name(), &relative_path(file));
+        match upload_one(config, target, file, &path).await {
+            Ok(entry) => entries.push((path, entry)),
+            Err(failure) => failures.push(failure_text(&path, &failure)),
+        }
     }
-    let manifest = make_manifest(config).await?;
-    Ok(Target {
-        manifest,
-        files: Vec::new(),
-        patterns: None,
-        created: true,
-    })
+    (entries, failures)
 }
 
 #[derive(Deserialize)]
@@ -182,58 +190,93 @@ async fn make_manifest(config: &RoomConfig) -> Result<String, String> {
         .ok_or_else(|| "the project's file list could not be made".to_owned())
 }
 
-async fn upload_one(
-    config: &RoomConfig,
-    target: &Target,
-    rules: &Rules,
-    cap: u64,
-    file: &File,
-    path: &str,
-) -> Result<ManifestEntry, Failure> {
-    let size = file.size() as u64;
-    let kind = match plan(path, size, rules, cap) {
+/// What a file becomes, or why it is skipped.
+fn kind_of(target: &Target, path: &str, size: u64) -> Result<FileKind, Failure> {
+    let kind = match plan(path, size, &target.rules, target.cap) {
         Plan::Skip(skip) => return Err(Failure::Skipped(skip)),
         Plan::Notebook => FileKind::Notebook,
         Plan::Text => FileKind::Text,
         Plan::File => FileKind::File,
     };
+    if kind != FileKind::File && size > LIVE_MAX {
+        return Err(Failure::Skipped(Skip::TooBig { cap: LIVE_MAX }));
+    }
+    Ok(kind)
+}
+
+async fn upload_one(
+    config: &RoomConfig,
+    target: &Target,
+    file: &File,
+    path: &str,
+) -> Result<ManifestEntry, Failure> {
+    let size = file.size() as u64;
+    let kind = kind_of(target, path, size)?;
     let bytes = bytes_of(file).await.map_err(Failure::Unreadable)?;
-    let entry = |kind, doc, hash| ManifestEntry {
+    let (kind, doc, hash) = match (kind, String::from_utf8(bytes)) {
+        (FileKind::Notebook, Ok(text)) => (
+            kind,
+            Some(upload_notebook(config, target, path, &text).await?),
+            None,
+        ),
+        (FileKind::Text, Ok(text)) => (
+            kind,
+            Some(upload_text(config, target, path, text).await?),
+            None,
+        ),
+        (FileKind::Notebook, Err(_)) => {
+            return Err(Failure::Unreadable(
+                "not a notebook (not UTF-8 text)".to_owned(),
+            ));
+        }
+        // Text that is not UTF-8 is kept whole, like any other file.
+        (_, bytes) => {
+            let bytes = bytes.map_or_else(|error| error.into_bytes(), String::into_bytes);
+            (
+                FileKind::File,
+                None,
+                Some(store_blob(config, &bytes).await?),
+            )
+        }
+    };
+    Ok(ManifestEntry {
         kind,
         doc,
         hash,
         size,
         by: Some(config.user_email.clone()),
         at: Timestamp::now().unix_millis(),
-    };
-    match (kind, String::from_utf8(bytes)) {
-        (FileKind::Notebook, Ok(text)) => {
-            let notebook: Value = serde_json::from_str(&text)
-                .map_err(|_| Failure::Unreadable("not a notebook (not JSON)".to_owned()))?;
-            let doc = live_document(config, target, path, FileKind::Notebook, move |txn| {
-                write_notebook(txn, &notebook).map_err(|error| error.to_string())
-            })
-            .await?;
-            Ok(entry(FileKind::Notebook, Some(doc), None))
-        }
-        (FileKind::Text, Ok(text)) => {
-            let doc = live_document(config, target, path, FileKind::Text, move |txn| {
-                write_text(txn, &text);
-                Ok(())
-            })
-            .await?;
-            Ok(entry(FileKind::Text, Some(doc), None))
-        }
-        (FileKind::Notebook, Err(_)) => Err(Failure::Unreadable(
-            "not a notebook (not UTF-8 text)".to_owned(),
-        )),
-        // Text that is not UTF-8 is kept whole, like any other file.
-        (_, bytes) => {
-            let bytes = bytes.map_or_else(|error| error.into_bytes(), String::into_bytes);
-            let hash = store_blob(config, &bytes).await?;
-            Ok(entry(FileKind::File, None, Some(hash)))
-        }
-    }
+    })
+}
+
+/// Checks the notebook on a scratch document first, so a bad one never makes a document.
+async fn upload_notebook(
+    config: &RoomConfig,
+    target: &Target,
+    path: &str,
+    text: &str,
+) -> Result<String, Failure> {
+    let notebook: Value = serde_json::from_str(text)
+        .map_err(|_| Failure::Unreadable("not a notebook (not JSON)".to_owned()))?;
+    write_notebook(&mut yrs::Doc::new().transact_mut(), &notebook)
+        .map_err(|error| Failure::Unreadable(format!("not a notebook: {error}")))?;
+    live_document(config, target, path, FileKind::Notebook, move |txn| {
+        write_notebook(txn, &notebook).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+async fn upload_text(
+    config: &RoomConfig,
+    target: &Target,
+    path: &str,
+    text: String,
+) -> Result<String, Failure> {
+    live_document(config, target, path, FileKind::Text, move |txn| {
+        write_text(txn, &text);
+        Ok(())
+    })
+    .await
 }
 
 /// Writes a notebook or a text file into the document `path` already has, or a new one.
@@ -242,17 +285,14 @@ async fn live_document(
     target: &Target,
     path: &str,
     kind: FileKind,
-    write: impl FnOnce(&mut TransactionMut<'_>) -> Result<(), String> + 'static,
+    write: impl FnOnce(&mut TransactionMut<'_>) -> Result<(), String>,
 ) -> Result<String, Failure> {
     let doc = match kept_document(&target.files, path, kind) {
         Some(doc) => doc,
         None => new_document(config, kind).await.map_err(Failure::Refused)?,
     };
-    let mut outcome = Ok(());
-    write_document(config, &doc, |txn| outcome = write(txn))
-        .await
-        .map_err(Failure::Refused)?;
-    outcome.map_err(Failure::Unreadable)?;
+    let document = open(config, &doc).await.map_err(Failure::Refused)?;
+    document.write(write).await.map_err(Failure::Refused)?;
     Ok(doc)
 }
 
@@ -284,9 +324,9 @@ async fn store_blob(config: &RoomConfig, bytes: &[u8]) -> Result<String, Failure
 }
 
 async fn bytes_of(file: &File) -> Result<Vec<u8>, String> {
-    let buffer = JsFuture::from(file.array_buffer())
-        .await
-        .map_err(|_| "the browser could not read the file".to_owned())?;
+    let buffer = JsFuture::from(file.array_buffer()).await.map_err(|_| {
+        "the browser could not read it (to upload a folder, use Upload a folder…)".to_owned()
+    })?;
     Ok(Uint8Array::new(&buffer).to_vec())
 }
 
@@ -294,13 +334,15 @@ async fn bytes_of(file: &File) -> Result<Vec<u8>, String> {
 const SYNC_WAIT_MS: u32 = 15_000;
 const POLL_MS: u32 = 100;
 
-/// Opens document `doc` of the project, applies `edit` once it holds the server's state,
-/// and closes it again.
-async fn write_document(
-    config: &RoomConfig,
-    doc: &str,
-    edit: impl FnOnce(&mut TransactionMut<'_>),
-) -> Result<(), String> {
+/// One document of the project, open on a socket of its own while the upload writes it.
+struct Opened {
+    room: Room,
+    connection: connection::Connection,
+    owner: Owner,
+}
+
+/// Opens document `doc` and waits until it holds the server's state.
+async fn open(config: &RoomConfig, doc: &str) -> Result<Opened, String> {
     let ws_url = api_url(&config.ws_url, &[doc]).ok_or("the address is invalid")?;
     let owner = Owner::new();
     let room = owner.with(|| {
@@ -312,19 +354,47 @@ async fn write_document(
     let connection = owner
         .with(|| connection::connect(room.clone()))
         .map_err(|error| error.to_string())?;
-    let synced = wait_live(&room).await;
-    let written = synced.then(|| {
-        room.write(|txn| {
-            edit(txn);
+    let opened = Opened {
+        room,
+        connection,
+        owner,
+    };
+    if wait_live(&opened.room).await {
+        return Ok(opened);
+    }
+    opened.close();
+    Err("the server did not answer in time".to_owned())
+}
+
+impl Opened {
+    /// Applies `edit` and closes the document once the server confirmed it has the edit: it
+    /// answers a fresh sync only after the frames sent before, and closes the socket on a
+    /// refused one (too large, over the storage quota).
+    async fn write(
+        self,
+        edit: impl FnOnce(&mut TransactionMut<'_>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut outcome = Ok(());
+        let written = self.room.write(|txn| {
+            outcome = edit(txn);
             Ok(())
-        })
-        .map_err(|error| error.to_string())
-    });
-    // The socket sends what is queued before its closing frame.
-    sleep(POLL_MS * 3).await;
-    connection.close();
-    owner.cleanup();
-    written.unwrap_or_else(|| Err("the server did not answer in time".to_owned()))
+        });
+        let drops = self.connection.drops();
+        self.connection.resync();
+        let confirmed = wait_live(&self.room).await && self.connection.drops() == drops;
+        self.close();
+        written.map_err(|error| error.to_string())?;
+        outcome?;
+        match confirmed {
+            true => Ok(()),
+            false => Err("the server refused it (too large, or the project is full)".to_owned()),
+        }
+    }
+
+    fn close(self) {
+        self.connection.close();
+        self.owner.cleanup();
+    }
 }
 
 async fn wait_live(room: &Room) -> bool {
