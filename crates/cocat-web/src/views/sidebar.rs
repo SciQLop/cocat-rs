@@ -10,7 +10,7 @@ use crate::views::files::{FilesSection, ProjectFiles};
 use crate::views::links::{LinkPicker, LinkedSection};
 use crate::views::submissions::waiting_submissions;
 use crate::views::transfer::Importer;
-use crate::views::upload::{UploadPanel, Uploads};
+use crate::views::upload::UploadPanel;
 
 #[component]
 pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
@@ -74,7 +74,6 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
 fn NewCatalogue() -> impl IntoView {
     let room = expect_context::<Room>();
     let importer = expect_context::<Importer>();
-    let uploads = expect_context::<Uploads>();
     let open = RwSignal::new(false);
     let linking = RwSignal::new(false);
     let menu = NodeRef::<leptos::html::Details>::new();
@@ -120,11 +119,6 @@ fn NewCatalogue() -> impl IntoView {
                 <button type="button" on:click=move |_| { close(); open.set(true); }>"New catalogue…"</button>
                 <button type="button" on:click=move |_| { close(); importer.open(None); }>"Import a file…"</button>
                 <button type="button" on:click=move |_| { close(); linking.set(true); }>"Link a catalogue from another project…"</button>
-                <Show when=move || !uploads.files_on.get()>
-                    <p class="menu-group">"SciQLop workspace"</p>
-                    <button type="button" on:click=move |_| { close(); uploads.pick(false); }>"Upload files…"</button>
-                    <button type="button" on:click=move |_| { close(); uploads.pick(true); }>"Upload a folder…"</button>
-                </Show>
                 <p class="menu-group">"New smart catalogue"</p>
                 {presets.into_iter().map(|(name, text)| view! {
                     <button type="button" class="preset" title=text.clone()

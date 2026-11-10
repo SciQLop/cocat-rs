@@ -163,10 +163,22 @@ pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
                 {move || {
                     let listed = project.files.get();
                     if listed.is_empty() {
-                        return view! { <p class="quiet">"No files yet."</p> }.into_any();
+                        return no_files(editor).into_any();
                     }
                     tree_view(tree(listed), open)
                 }}
+            </section>
+        }.into_any()),
+        // Editors see where files go even before the project has any.
+        FilesState::None if editor => Some(view! {
+            <section class="files-section" aria-label="Files"
+                on:dragover=over
+                on:drop=drop>
+                <div class="sidebar-head">
+                    <h2 class="eyebrow">"Files"</h2>
+                    <UploadMenu/>
+                </div>
+                {no_files(true)}
             </section>
         }.into_any()),
         FilesState::Unavailable(why) => Some(view! {
@@ -178,6 +190,14 @@ pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
         FilesState::Loading | FilesState::None => None,
     }
     }
+}
+
+fn no_files(editor: bool) -> impl IntoView {
+    let text = match editor {
+        true => "No files yet: upload notebooks, scripts or figures with +, or drop them here.",
+        false => "No files yet.",
+    };
+    view! { <p class="quiet">{text}</p> }
 }
 
 /// The Files section's "+": upload files, or a whole folder.
