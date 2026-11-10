@@ -226,6 +226,21 @@ pub fn size_text(bytes: u64) -> String {
     }
 }
 
+/// The versions, newest first, where a whole file's stored content (`None`: not there)
+/// differs from the version before: the ones its history lists. A file deleted then
+/// brought back shows both changes; one that never existed shows none.
+pub fn versions_that_changed(newest_first: &[(u64, Option<String>)]) -> Vec<u64> {
+    newest_first
+        .iter()
+        .enumerate()
+        .filter(|(index, (_, content))| match newest_first.get(index + 1) {
+            Some((_, older)) => content != older,
+            None => content.is_some(),
+        })
+        .map(|(_, (version, _))| *version)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +295,23 @@ mod tests {
         assert_eq!(size_text(512), "512 B");
         assert_eq!(size_text(4200), "4.2 kB");
         assert_eq!(size_text(2_345_678), "2.3 MB");
+    }
+
+    #[test]
+    fn a_whole_file_lists_only_the_versions_that_changed_it() {
+        let newest_first = [
+            (5, Some("c".to_owned())),
+            (4, Some("b".to_owned())),
+            (3, Some("b".to_owned())),
+            (2, None),
+            (1, Some("a".to_owned())),
+        ];
+        assert_eq!(versions_that_changed(&newest_first), [5, 3, 2, 1]);
+        assert_eq!(
+            versions_that_changed(&[(1, None)]),
+            Vec::<u64>::new(),
+            "never there"
+        );
     }
 
     #[test]

@@ -1573,3 +1573,12 @@ a.home-project:hover { color: var(--accent); }
 .image-output { max-width: 100%; height: auto; align-self: flex-start; white-space: normal; }
 .html-output { width: 100%; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
 .raw-cell { font-family: var(--mono); font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+.file-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.file-history { display: grid; grid-template-columns: minmax(200px, 260px) 1fr; gap: 20px; align-items: start; }
+.file-versions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.file-versions .version { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 8px 10px; border: 0; border-radius: var(--radius); background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.file-versions .version:hover { background: var(--chip); }
+.file-versions .version[aria-current="true"] { background: var(--accent-soft); }
+.file-past { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.restore-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

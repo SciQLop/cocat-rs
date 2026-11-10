@@ -72,6 +72,44 @@ pub async fn restore(
     Ok(restored["restored"].as_bool().unwrap_or(false))
 }
 
+/// The versions of one workspace document, newest first.
+pub async fn document_history(
+    config: &RoomConfig,
+    document: &str,
+) -> Result<Vec<Version>, ApiError> {
+    let url = url(config, &[], &[("document", document)])?;
+    let history: History = json(Request::get(&url)).await?;
+    Ok(history.versions)
+}
+
+/// A workspace document as of the version: its root types as JSON, by name.
+pub async fn document_state(
+    config: &RoomConfig,
+    version: u64,
+    document: &str,
+) -> Result<Value, ApiError> {
+    let url = url(
+        config,
+        &[&version.to_string(), "state"],
+        &[("document", document)],
+    )?;
+    json(Request::get(&url)).await
+}
+
+/// Makes a workspace document, or one entry of its file list (`path`), equal to the version
+/// again; false when it already was.
+pub async fn restore_document(
+    config: &RoomConfig,
+    version: u64,
+    document: &str,
+    path: Option<&str>,
+) -> Result<bool, ApiError> {
+    let url = url(config, &[&version.to_string(), "restore"], &[])?;
+    let body = json!({ "document": document, "path": path }).to_string();
+    let restored: Value = json_body(Request::post(&url), body).await?;
+    Ok(restored["restored"].as_bool().unwrap_or(false))
+}
+
 /// Names the version; a blank name removes its name.
 pub async fn name(config: &RoomConfig, version: u64, name: &str) -> Result<(), ApiError> {
     let url = url(config, &[&version.to_string(), "name"], &[])?;
