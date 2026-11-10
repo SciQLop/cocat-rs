@@ -47,8 +47,8 @@ issues SciQLop/SciQLop#132 and SciQLop/cocat#110.
 ## Anti-goals (a failure even if it works)
 
 - A colleague connecting **into** someone's machine. Every client dials out to cocat-rs.
-- Losing work silently: a merge that duplicates cells, a "newest wins" that drops an
-  offline edit to a binary file, a file deleted because a rule changed.
+- Losing work silently: a merge that duplicates cells, a file deleted because a rule
+  changed, an overwritten file version that cannot be restored.
 - A workspace that only works online.
 
 ## Decisions taken (the user's)
@@ -105,9 +105,13 @@ Server consequences:
    - `PUT/GET /api/rooms/{id}/blobs/{sha256}`; the server checks the hash on upload;
    - viewers read, editors write;
    - a hard size cap per file, enforced by the server whatever the client sends;
-   - *(Designer's call:)* no separate workspace quota: blobs count toward the owner's
-     existing storage quota, with the project's update files, as room files do today;
-   - blobs no manifest references any more are swept after a grace period.
+   - the owner pays (the user's decision): blobs count toward the workspace owner's
+     existing storage quota, with the project's update files, as room files do today; no
+     separate workspace quota. Members cannot run the owner out of space by surprise
+     because of the per-file cap and the excluded data formats; an owner short of space
+     hands ownership over or asks the admin for more;
+   - a blob is swept only when no manifest entry and no history version within the
+     project's history retention refers to it, so an overwritten version stays restorable.
    - Blob bytes never go through the merge documents.
 
 ### Sharing rules
@@ -125,12 +129,9 @@ Server consequences:
 ### Conflicts
 
 - Notebooks and text: merged edit by edit; no conflict to resolve.
-- Whole files changed by two people while apart: keep both, `name.ext` and
-  `name (alice's copy).ext`, instead of dropping one. *(Designer's call:)* each manifest
-  entry for a whole file carries `base`, the hash it replaced, and each client remembers
-  the hash it last synced per path. On reconnect, a client whose local file changed and
-  whose last-synced hash is not the entry's current hash has a clash: it uploads its
-  version under the copy name instead of overwriting.
+- Whole files changed by two people while apart: the last writer wins (the user's
+  decision). The version it replaced stays in the file's history and can be restored, so
+  nothing is lost, only replaced.
 - Delete versus edit: the edit wins and the file comes back. *(Designer's call:)* this is
   the client's job. A bridge that pushes edits to a document whose path is no longer in
   the manifest puts the entry back at its last path. The server keeps a document that no
