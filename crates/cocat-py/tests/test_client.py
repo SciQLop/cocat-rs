@@ -274,3 +274,34 @@ def test_a_frozen_catalogue_lists_where_it_came_from(server, signed_in, cache):
     assert hop["at"].year >= 2026
     assert smart.copied_from == []
     project.close()
+
+
+def test_a_project_links_a_catalogue_of_another_and_opens_it(server, signed_in, cache):
+    other_id = signed_in.create_project("other").id
+    other = signed_in.open(other_id, cache=cache)
+    shocks = other.create_catalogue(name="shocks")
+    other.save(10)
+    bench = signed_in.open("bench", cache=cache)
+
+    link = bench.link(shocks)
+
+    [found] = bench.links()
+    assert found["id"] == link
+    assert (found["project"], found["project_name"]) == (other_id, "other")
+    assert (found["catalogue"], found["name"]) == (shocks.uuid, "shocks")
+    assert found["by"] == server.email
+    assert found["at"].year >= 2026
+    with pytest.raises(ValueError, match="already linked"):
+        bench.link(shocks)
+    with pytest.raises(ValueError, match="already in this project"):
+        bench.link(bench.create_catalogue(name="own"))
+
+    original, catalogue = bench.open_link(link, cache=cache)
+    assert catalogue.uuid == shocks.uuid
+    assert catalogue.name == "shocks"
+
+    assert bench.unlink(link) is True
+    assert bench.links() == []
+    assert bench.unlink(link) is False
+    for project in (original, other, bench):
+        project.close()

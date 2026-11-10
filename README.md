@@ -734,6 +734,19 @@ a freeze) records the whole chain of copies it descends from, oldest first:
 at, by}`, the last one being the catalogue it was copied from. A catalogue never copied has
 an empty list. The chain keeps its first step and the latest 31.
 
+**Links.** A project can show a catalogue of another project without copying it:
+
+```python
+lab = cc.open("Solitary Waves")
+mine = cc.open()
+link_id = mine.link(lab.catalogue("Solitons"))   # ValueError if already linked
+mine.links()          # [{id, project, project_name, catalogue, name, by, at}]
+original, solitons = mine.open_link(link_id)      # the original project, opened
+solitons.add_events([...])                        # changes go to Solitary Waves
+original.close()
+mine.unlink(link_id)  # True; False when there was none
+```
+
 A malformed rule raises `ValueError` saying where: `rule.where.cmp: unknown operator '=~'`.
 The rule format (sets, interval operators, predicates) is in
 `docs/superpowers/specs/2026-11-07-catalogue-engine-v2-design.md`, section 3.

@@ -1292,6 +1292,51 @@ impl Project {
         };
     }
 
+    /// The catalogues of other projects this one links to, by name.
+    fn links<'py>(&self, py: Python<'py>) -> Result<Bound<'py, PyList>> {
+        let links = model::links(&self.room.doc().transact());
+        let dicts = links.iter().map(|link| {
+            let dict = PyDict::new(py);
+            dict.set_item("id", &link.id)?;
+            dict.set_item("project", &link.project)?;
+            dict.set_item("project_name", &link.project_name)?;
+            dict.set_item("catalogue", &link.catalogue)?;
+            dict.set_item("name", &link.name)?;
+            dict.set_item("by", link.by.as_deref())?;
+            let at = Timestamp::from_unix_millis(link.at)
+                .map(|at| to_python_datetime(py, at))
+                .transpose()?;
+            dict.set_item("at", at)?;
+            Ok::<_, PyErr>(dict)
+        });
+        PyList::new(py, dicts.collect::<Result<Vec<_>>>()?)
+    }
+
+    /// Links `catalogue`, of another project opened here, into this one. Answers the link's id.
+    fn link(&self, catalogue: &Catalogue) -> Result<String> {
+        let name = catalogue.name()?;
+        let source = catalogue.room.room_id().to_owned();
+        let project_name = lock(&catalogue.identity)
+            .project_name
+            .clone()
+            .unwrap_or_else(|| source.clone());
+        let link = model::NewLink {
+            project: source,
+            project_name,
+            catalogue: catalogue.uuid.clone(),
+            name,
+            by: lock(&self.identity).email.clone(),
+            at: now()?.unix_millis(),
+        };
+        let here = self.room.room_id().to_owned();
+        write(&self.room, |txn| model::add_link(txn, &here, link))?.map_err(value_error)
+    }
+
+    /// Removes link `id`; false when there was none.
+    fn unlink(&self, id: &str) -> Result<bool> {
+        write(&self.room, |txn| model::remove_link(txn, id))
+    }
+
     fn close(&self) {
         self.room.close();
     }

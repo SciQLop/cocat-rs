@@ -192,6 +192,17 @@ class Project:
             )
         return getattr(self._client, method)(self._id, *arguments)
 
+    def open_link(self, link_id, cache=None):
+        """Opens the project link `link_id` points into: answers it and the linked catalogue.
+        Changes made there go to the original project. Close the project when done."""
+        if self._client is None:
+            raise RuntimeError("This project was opened from a folder: open it with cocat_rs.open().")
+        link = next((link for link in self.links() if link["id"] == link_id), None)
+        if link is None:
+            raise LookupError(f"no link {link_id!r} in this project")
+        original = self._client.open(link["project"], cache=cache)
+        return original, original.catalogue(link["catalogue"])
+
     def history(self, catalogue=None):
         """The saved versions, newest first; with a catalogue's uuid, those that changed it."""
         return self._server_call("history", catalogue)
