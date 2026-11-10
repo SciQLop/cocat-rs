@@ -3,7 +3,7 @@
 mod ui_support;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use cocat_core::model::EventRecord;
 use cocat_core::time::Timestamp;
 use cocat_server::db;
 use cocat_server::relay::schedule::{self, Since};
-use cocat_server::relay::{Fetched, Provider, store};
+use cocat_server::relay::{self, Fetched, Provider, store};
 use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::macros::datetime;
@@ -26,6 +26,7 @@ struct Fake {
     runs: Arc<AtomicUsize>,
     started: Arc<Notify>,
     release: Option<Arc<Notify>>,
+    leaks_the_key: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -49,12 +50,18 @@ impl Provider for Fake {
     async fn fetch(
         &self,
         _http: &reqwest::Client,
-        _settings: &Value,
+        settings: &Value,
     ) -> Result<Vec<Fetched>, String> {
         self.runs.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
         if let Some(release) = &self.release {
             release.notified().await;
+        }
+        if self.leaks_the_key.load(Ordering::SeqCst) {
+            return Err(format!(
+                "401 for api_key={}",
+                settings["api_key"].as_str().unwrap()
+            ));
         }
         let day = |n: i64| Timestamp::from_unix_nanos(n * 86_400_000_000_000).unwrap();
         Ok(vec![Fetched {
@@ -75,6 +82,7 @@ struct World {
     runs: Arc<AtomicUsize>,
     started: Arc<Notify>,
     release: Option<Arc<Notify>>,
+    leaks_the_key: Arc<AtomicBool>,
 }
 
 impl World {
@@ -90,10 +98,12 @@ impl World {
         let mut fixture = Fixture::start().await;
         let runs = Arc::new(AtomicUsize::new(0));
         let started = Arc::new(Notify::new());
+        let leaks_the_key = Arc::new(AtomicBool::new(false));
         fixture.state.providers = Arc::new(vec![Arc::new(Fake {
             runs: runs.clone(),
             started: started.clone(),
             release: release.clone(),
+            leaks_the_key: leaks_the_key.clone(),
         })]);
         let admin = db::create_user(&fixture.state.pool, "admin@example.org", "pwd", true, true)
             .await
@@ -105,6 +115,7 @@ impl World {
             runs,
             started,
             release,
+            leaks_the_key,
         }
     }
 
@@ -318,5 +329,54 @@ async fn a_non_admin_cannot_reach_the_providers() {
             .unwrap()
             .is_none()
     );
+    assert_eq!(world.runs.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_secret_never_reaches_the_stored_result() {
+    let world = World::start().await;
+    world
+        .save(&[("enabled", "on"), ("setting.api_key", SECRET)])
+        .await;
+    world.leaks_the_key.store(true, Ordering::SeqCst);
+
+    let error = relay::run(&world.fixture.state, "fake").await.unwrap_err();
+
+    assert!(!error.to_string().contains(SECRET), "{error}");
+    let row = world.row().await;
+    let result = row.last_result.unwrap();
+    assert!(result.contains("401 for api_key=•••"), "{result}");
+    assert!(!world.page().await.contains(SECRET));
+}
+
+#[tokio::test]
+async fn a_failing_provider_is_not_retried_by_a_regular_pass() {
+    let world = World::start().await;
+    let now = datetime!(2026-11-10 12:00 UTC);
+    world.save(&[("enabled", "on")]).await;
+    sqlx::query("UPDATE relay_provider SET last_ok_at = ?, last_run_at = ? WHERE id = 'fake'")
+        .bind((now - Span::days(3)).format(&Rfc3339).unwrap())
+        .bind((now - Span::minutes(1)).format(&Rfc3339).unwrap())
+        .execute(&world.fixture.state.pool)
+        .await
+        .unwrap();
+
+    schedule::run_due(&world.fixture.state, now, Since::Attempt).await;
+
+    assert_eq!(world.runs.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_running_provider_is_not_due() {
+    let world = World::start().await;
+    let now = datetime!(2026-11-10 12:00 UTC);
+    world.save(&[("enabled", "on")]).await;
+    sqlx::query("UPDATE relay_provider SET running = 1 WHERE id = 'fake'")
+        .execute(&world.fixture.state.pool)
+        .await
+        .unwrap();
+
+    schedule::run_due(&world.fixture.state, now, Since::Success).await;
+
     assert_eq!(world.runs.load(Ordering::SeqCst), 0);
 }

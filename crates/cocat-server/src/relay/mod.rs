@@ -139,9 +139,11 @@ pub async fn run(state: &AppState, provider: &str) -> Result<RunReport, RelayErr
 
 /// Refreshes, then records the outcome whatever it was, a panic included.
 async fn run_to_end(state: AppState, provider: Arc<dyn Provider>) -> Result<RunReport, RelayError> {
+    let secrets = secret_values(&store::settings(&state.pool, provider.id()).await?);
     let refreshed = tokio::spawn(refresh(state.clone(), provider.clone()))
         .await
-        .unwrap_or_else(|error| Err(RelayError::Panicked(panic_message(error))));
+        .unwrap_or_else(|error| Err(RelayError::Panicked(panic_message(error))))
+        .map_err(|error| error.without(&secrets));
     let result = match &refreshed {
         Ok(report) => report.as_json(),
         Err(error) => serde_json::json!({ "error": error.to_string() }),
@@ -151,6 +153,36 @@ async fn run_to_end(state: AppState, provider: Arc<dyn Provider>) -> Result<RunR
         tracing::error!(%error, provider = provider.id(), "the end of a relay run was not recorded");
     }
     refreshed
+}
+
+/// The non-empty values of the settings the admin page masks.
+fn secret_values(settings: &str) -> Vec<String> {
+    match serde_json::from_str(settings) {
+        Ok(serde_json::Value::Object(settings)) => settings
+            .into_iter()
+            .filter(|(key, _)| admin::is_secret(key))
+            .filter_map(|(_, value)| value.as_str().map(str::to_owned))
+            .filter(|value| !value.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+impl RelayError {
+    /// The error with every secret in what the provider said replaced, so that neither the
+    /// stored result nor a log line carries one.
+    fn without(self, secrets: &[String]) -> Self {
+        let hide = |text: String| {
+            secrets
+                .iter()
+                .fold(text, |text, secret| text.replace(secret, "•••"))
+        };
+        match self {
+            Self::Fetch(text) => Self::Fetch(hide(text)),
+            Self::Panicked(text) => Self::Panicked(hide(text)),
+            other => other,
+        }
+    }
 }
 
 fn panic_message(error: JoinError) -> String {

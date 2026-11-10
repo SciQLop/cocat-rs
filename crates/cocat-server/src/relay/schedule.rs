@@ -75,7 +75,7 @@ async fn is_due(
     since: Since,
 ) -> bool {
     let row = match store::provider(&state.pool, provider.id()).await {
-        Ok(Some(row)) if row.enabled => row,
+        Ok(Some(row)) if row.enabled && !row.running => row,
         Ok(_) => return false,
         Err(error) => {
             tracing::warn!(%error, provider = provider.id(), "the relay schedule cannot be read");

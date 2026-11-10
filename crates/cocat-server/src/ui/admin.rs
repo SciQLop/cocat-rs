@@ -496,30 +496,24 @@ fn when(stamp: &str) -> String {
 }
 
 fn run_counts(result: &serde_json::Value) -> String {
-    let count = |name: &str| result[name].as_u64().unwrap_or(0);
     if result["catalogues"].is_null() {
         return String::new();
     }
-    let mut parts: Vec<String> = [
-        ("catalogues", "catalogues"),
-        ("added", "added"),
-        ("changed", "changed"),
-        ("removed", "removed"),
-        ("restored", "restored"),
+    let count = |name: &str| result[name].as_u64().unwrap_or(0);
+    let always = ["catalogues", "added", "changed", "removed", "restored"]
+        .map(|name| format!("{} {name}", count(name)));
+    let when_any = [
+        ("skipped", "skipped"),
+        ("unpublished", "no longer published"),
     ]
-    .iter()
-    .map(|(key, word)| format!("{} {word}", count(key)))
-    .collect();
-    parts.extend(
-        [
-            ("skipped", "skipped"),
-            ("unpublished", "no longer published"),
-        ]
-        .iter()
-        .filter(|(key, _)| count(key) > 0)
-        .map(|(key, word)| format!("{} {word}", count(key))),
-    );
-    parts.join(", ")
+    .into_iter()
+    .filter(|(name, _)| count(name) > 0)
+    .map(|(name, label)| format!("{} {label}", count(name)));
+    always
+        .into_iter()
+        .chain(when_any)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
