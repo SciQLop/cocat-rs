@@ -143,6 +143,47 @@ async fn an_admins_page_says_so() {
 }
 
 #[tokio::test]
+async fn a_workspace_page_says_it_is_a_workspace() {
+    let mut fixture = Fixture::start().await;
+    fixture.state.web_dir = Some(bundle(&fixture));
+    let owner = db::create_user(&fixture.state.pool, "owner@example.org", "p", true, false)
+        .await
+        .unwrap();
+    let workspace = lifecycle::create_project(
+        &fixture.state,
+        owner,
+        "Notebooks",
+        db::ProjectKind::Workspace,
+    )
+    .await
+    .unwrap()
+    .id;
+    let catalogues = lifecycle::create_room(&fixture.state, owner, "Lab")
+        .await
+        .unwrap()
+        .id;
+    let token = fixture.token(owner).await;
+    let page = |room: String| {
+        let (fixture, token) = (&fixture, &token);
+        async move {
+            body_text(
+                fixture
+                    .get(&format!("/ui/rooms/{room}/browse"), Some(token))
+                    .await,
+            )
+            .await
+        }
+    };
+
+    let body = page(workspace).await;
+    assert!(
+        body.contains(r#"<meta name="cocat-kind" content="workspace">"#),
+        "{body}"
+    );
+    assert!(!page(catalogues).await.contains("cocat-kind"));
+}
+
+#[tokio::test]
 async fn behind_a_proxy_the_socket_url_is_public_and_secure() {
     let mut fixture = Fixture::start().await;
     fixture.state.web_dir = Some(bundle(&fixture));

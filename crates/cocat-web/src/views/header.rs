@@ -17,6 +17,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     let config = room.config.clone();
     let status = room.status;
     let read_only = !config.role.can_write();
+    let catalogues = config.kind == crate::session::Kind::Catalogues;
     let projects = expect_context::<Projects>();
     let shareable = {
         let room_id = config.room_id.clone();
@@ -37,6 +38,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                 <Show when=shareable>
                     <ShareButton/>
                 </Show>
+                {catalogues.then(|| view! {
                 <Show
                     when=move || !in_history()
                     fallback=move || view! {
@@ -45,6 +47,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                 >
                     <a class="button history-button" href=history.clone()>"History"</a>
                 </Show>
+                })}
                 <HelpButton/>
                 <Show when=move || read_only>
                     <span class="chip">"Read-only"</span>

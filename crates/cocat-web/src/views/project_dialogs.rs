@@ -7,6 +7,7 @@ use leptos::task::spawn_local;
 
 use crate::api::{self, ApiError};
 use crate::projects::delete_confirmed;
+use crate::session::Kind;
 use crate::views::controls::{Error, Hint, error_line};
 use crate::views::projects::Projects;
 use crate::views::transfer::ExportDialog;
@@ -14,6 +15,7 @@ use crate::views::transfer::ExportDialog;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
     Create,
+    CreateWorkspace,
     Rename,
     Leave,
     Delete,
@@ -30,7 +32,8 @@ pub fn ProjectDialog(which: Dialog, dialog: RwSignal<Option<Dialog>>) -> impl In
         }
     });
     let body = match which {
-        Dialog::Create => view! { <Create dialog/> }.into_any(),
+        Dialog::Create => view! { <Create dialog kind=Kind::Catalogues/> }.into_any(),
+        Dialog::CreateWorkspace => view! { <Create dialog kind=Kind::Workspace/> }.into_any(),
         Dialog::Rename => view! { <Rename dialog/> }.into_any(),
         Dialog::Leave => view! { <Leave dialog/> }.into_any(),
         Dialog::Delete => view! { <Delete dialog/> }.into_any(),
@@ -93,7 +96,7 @@ fn Buttons(
 }
 
 #[component]
-fn Create(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
+fn Create(dialog: RwSignal<Option<Dialog>>, kind: Kind) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let input = NodeRef::<Input>::new();
     let (error, busy): (Error, _) = (RwSignal::new(None), RwSignal::new(false));
@@ -103,14 +106,22 @@ fn Create(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
         send(
             error,
             busy,
-            async move { api::create_project(&api, &name).await },
+            async move { api::create_project(&api, &name, kind).await },
             move |project| projects.created(project),
         );
     };
     view! {
         <form method="dialog" class="name-form" on:submit=submit>
-            <h2>"New project"</h2>
-            <Hint text="A project holds catalogues you share with the same people." anchor="projects" topic="projects"/>
+            {match kind {
+                Kind::Catalogues => view! {
+                    <h2>"New project"</h2>
+                    <Hint text="A project holds catalogues you share with the same people." anchor="projects" topic="projects"/>
+                }.into_any(),
+                Kind::Workspace => view! {
+                    <h2>"New workspace"</h2>
+                    <Hint text="A workspace holds a SciQLop workspace's notebooks and files, shared with the same people." anchor="workspaces" topic="workspaces"/>
+                }.into_any(),
+            }}
             <label>
                 <span class="field-label">"Name"</span>
                 <input type="text" node_ref=input required maxlength="200" autofocus

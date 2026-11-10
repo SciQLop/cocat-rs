@@ -9,7 +9,7 @@ use url::Url;
 
 use cocat_core::room_id::path_segment;
 
-use crate::session::RoomConfig;
+use crate::session::{Kind, RoomConfig};
 
 /// One project as `GET /api/rooms` lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -25,6 +25,8 @@ pub struct Project {
     /// The visitor's own project, "My catalogues", which never gains people.
     #[serde(default)]
     pub personal: bool,
+    #[serde(default)]
+    pub kind: Kind,
 }
 
 fn allowed() -> bool {
@@ -81,6 +83,7 @@ impl RoomConfig {
             room_name: project.name.clone(),
             role: project.role,
             ws_url: socket_for(&self.ws_url, &project.id)?,
+            kind: project.kind,
             ..self.clone()
         })
     }
@@ -180,6 +183,7 @@ mod tests {
             api_url: "https://cocat.example.org/cocat-dev/api".into(),
             user_email: "alice@example.org".into(),
             admin: true,
+            kind: Kind::Catalogues,
         }
     }
 
@@ -190,6 +194,7 @@ mod tests {
             role,
             editors_can_share: true,
             personal: false,
+            kind: Kind::Catalogues,
         }
     }
 
@@ -267,6 +272,26 @@ mod tests {
     }
 
     #[test]
+    fn a_project_without_a_kind_is_a_catalogue_project() {
+        let listed: Vec<Project> =
+            serde_json::from_str(r#"[{"id":"a","name":"A","role":"owner"}]"#).unwrap();
+        assert_eq!(listed[0].kind, Kind::Catalogues);
+    }
+
+    #[test]
+    fn a_workspace_is_read_as_one_and_opens_as_one() {
+        let listed: Vec<Project> = serde_json::from_str(
+            r#"[{"id":"w","name":"Notebooks","role":"editor","kind":"workspace"}]"#,
+        )
+        .unwrap();
+        assert_eq!(listed[0].kind, Kind::Workspace);
+        assert_eq!(
+            config().for_project(&listed[0]).unwrap().kind,
+            Kind::Workspace
+        );
+    }
+
+    #[test]
     fn the_share_button_is_for_projects_that_may_gain_people() {
         let listed: Vec<Project> = serde_json::from_str(
             r#"[{"id":"mine","name":"My catalogues","role":"owner","personal":true},
@@ -311,6 +336,7 @@ mod tests {
                 api_url: "https://cocat.example.org/cocat-dev/api".into(),
                 user_email: "alice@example.org".into(),
                 admin: true,
+                kind: Kind::Catalogues,
             }
         );
     }

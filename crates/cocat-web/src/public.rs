@@ -29,6 +29,7 @@ impl PublicCatalogue {
             role: self.role,
             editors_can_share: false,
             personal: false,
+            kind: crate::session::Kind::Catalogues,
         }
     }
 

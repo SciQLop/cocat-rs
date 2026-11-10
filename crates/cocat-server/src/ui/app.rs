@@ -30,6 +30,7 @@ struct Head<'a> {
     api: String,
     email: &'a str,
     admin: bool,
+    workspace: bool,
     flash: Option<String>,
     share_link: Option<String>,
 }
@@ -60,6 +61,13 @@ pub(crate) async fn browse(
     let Some(index) = index(&state).await else {
         return missing(&state, &user, flash);
     };
+    let kind = match db::project_kind(&state.pool, &room.id).await {
+        Ok(kind) => kind,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read a project's kind");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let head = Head {
         base: state.links.path("/app/"),
         room_id: &room.id,
@@ -69,6 +77,7 @@ pub(crate) async fn browse(
         api: state.links.app("/api"),
         email: &user.email,
         admin: user.is_superuser,
+        workspace: kind == Some(db::ProjectKind::Workspace),
         flash,
         share_link,
     };

@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use crate::connection;
 use crate::route::Route;
 use crate::rows::Row;
-use crate::session::{ConfigError, RoomConfig};
+use crate::session::{ConfigError, Kind, RoomConfig};
 use crate::state::Room;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
@@ -19,6 +19,7 @@ use crate::views::projects::set_title;
 use crate::views::public::{PublicSidebar, PublicSpace};
 use crate::views::sidebar::Sidebar;
 use crate::views::transfer::{ImportDialog, Importer, drop_on};
+use crate::views::workspace::WorkspaceApp;
 use cocat_core::model;
 
 pub fn start() {
@@ -82,7 +83,10 @@ fn Shell(config: RoomConfig) -> impl IntoView {
         }
         opened.with(|_| {
             let config = projects.open.get_untracked();
-            view! { <App config/> }.into_any()
+            match config.kind {
+                Kind::Workspace => view! { <WorkspaceApp config/> }.into_any(),
+                Kind::Catalogues => view! { <App config/> }.into_any(),
+            }
         })
     }
 }
