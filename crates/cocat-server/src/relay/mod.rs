@@ -5,6 +5,7 @@
 
 pub mod admin;
 pub mod amda;
+pub mod cactus;
 pub mod cdaw;
 pub mod donki;
 pub mod icmecat;
@@ -90,6 +91,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(amda::Amda),
         Arc::new(icmecat::Icmecat),
         Arc::new(stix::Stix),
+        Arc::new(cactus::Cactus),
     ]
 }
 

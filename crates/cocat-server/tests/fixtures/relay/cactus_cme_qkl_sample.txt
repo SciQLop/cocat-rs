@@ -1,0 +1,40 @@
+
+:Issued: Tue Nov 10 01:43:23 2026
+:Product: CACTus catalogue (http://sidc.be/cactus)
+#----------------------------------------------------------------------
+# Instrument: LASCO| Detector: c2 # Instrument: LASCO| Detector: c3
+# Threshold : 0.300000 | Factor : 6 | Minimal CME width: 5
+# 
+# 
+#----------------------------------------------------------------------
+# Output: Detected cmemap with the following characteristics:
+# 
+#    CME: CME number 
+#   Flow: Flow number. Flows are suspicious detections, their color in the detectionmap is dark blue
+#     t0: onset time, earliest indication of liftoff
+#    dt0: duration of liftoff (hours)
+#     pa: principal angle, counterclockwise from North (degrees)
+#     da: angular width (degrees), 
+#      v: median velocity (km/s)
+#     dv: variation (1 sigma) of velocity over the width of the CME
+#   minv: lowest velocity detected within the CME
+#   maxv: highest velocity detected within the CME
+#  halo?: II if da>90, III if da>180, IV if da>270, indicating potential halo/partial halo CME
+# 
+# CME |          t0    | dt0| pa | da |  v  |  dv | minv| maxv| halo?
+
+  0001|2010/07/09 06:54| 01 | 073| 008| 0512| 0713| 0267| 1748|    
+  0002|2010/07/09 20:30| 01 | 053| 012| 0331| 0107| 0161| 0438|    
+  0003|2010/07/10 09:32| 03 | 267| 060| 0331| 0038| 0217| 0377|    
+  0004|2010/07/10 09:54| 06 | 059| 072| 0179| 0040| 0101| 0240|    
+  0005|2010/07/10 13:54| 02 | 108| 006| 0187| 0058| 0137| 0292|    
+  0006|2010/07/11 03:54| 06 | 257| 088| 0258| 0033| 0186| 0332|    
+  0007|2010/07/11 07:54| 00 | 051| 008| 0578| 0073| 0520| 0679|    
+  0008|2010/07/11 09:54| 01 | 055| 012| 0614| 0479| 0528| 1656|    
+  0009|2010/07/11 10:34| 01 | 048| 010| 0381| 0087| 0231| 0496|    
+  0010|2010/07/16 03:30| 01 | 093| 008| 1517| 0298| 1249| 1953|    
+  0011|2010/07/16 10:54| 03 | 291| 020| 0244| 0107| 0112| 0472|    
+  0012|2010/07/16 14:06| 01 | 295| 012| 0344| 0185| 0153| 0710|    
+  0121|2026/03/30 08:00| 01 | 126| 006| 0431| 0142| 0371| 0710|    
+  0122|2026/03/30 12:30| 01 | 099| 012| 0520| 0266| 0434| 1077|    
+  0123|2026/03/31 20:36| 01 | 330| 006| 0794| 0500| 0488| 1737|    
