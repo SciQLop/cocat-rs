@@ -17,6 +17,7 @@ mod migrate;
 mod provenance;
 mod read;
 mod registry;
+mod relay;
 mod restore;
 mod search;
 mod submission;
@@ -42,6 +43,7 @@ pub use read::{
     is_v1, listed_events, live_event_count, trash,
 };
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
+pub use relay::{Counts, Wanted, hold};
 pub use restore::restore;
 pub use search::{Search, search};
 pub use submission::{adopt, extract};
