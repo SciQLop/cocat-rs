@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use cocat_client::{Change, Credentials, Room as ClientRoom, RoomInfo as ClientRoomInfo};
 use cocat_core::model::{
-    self, AttributeType, EventField, EventRecord, Member, NewCatalogue, Origin, OriginKind, Status,
-    Used, Vertex,
+    self, AttributeType, EventField, EventRecord, Hop, Member, NewCatalogue, Origin, OriginKind,
+    Status, Used, Vertex,
 };
 use cocat_core::time::Timestamp;
 use cocat_core::{query, tfcat, tscat_json, votable};
@@ -625,14 +625,28 @@ impl Catalogue {
     /// A new static catalogue named `name` holding this catalogue's current members; each
     /// derived interval becomes an event whose origin records the rule.
     fn materialize(&self, py: Python<'_>, name: String) -> Result<Py<Catalogue>> {
+        let created = now()?;
         let into = NewCatalogue {
             uuid: uuid_argument(None)?,
             name,
-            created: Some(now()?),
+            created: Some(created),
             ..NewCatalogue::default()
         };
-        let found = write(&self.room, |txn| model::materialize(txn, &self.uuid, &into))?
-            .map_err(value_error)?;
+        let found = write(&self.room, |txn| {
+            let smart = model::catalogue(txn, &self.uuid)?;
+            let hop = Hop {
+                project: self.room.room_id().to_owned(),
+                project_name: self.room.room_id().to_owned(),
+                catalogue: smart.uuid,
+                catalogue_name: smart.name,
+                version: None,
+                at: (created.unix_micros() / 1000) as i64,
+                by: None,
+            };
+            Some(model::materialize(txn, &self.uuid, &into, hop))
+        })?
+        .ok_or_else(|| unknown("catalogue"))?
+        .map_err(value_error)?;
         if !found {
             return Err(unknown("catalogue"));
         }

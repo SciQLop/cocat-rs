@@ -178,8 +178,7 @@ pub fn Freeze(uuid: String, form: RwSignal<Form>) -> impl IntoView {
         }
     });
     let submit = move |name: String| {
-        let author = room.config.user_email.clone();
-        let made = room.write(|txn| edit::materialize(txn, &uuid, &name, &author))?;
+        let made = room.write(|txn| edit::materialize(txn, &uuid, &name, &room.config))?;
         go_to(&Route::Catalogue(made).hash());
         Ok(())
     };

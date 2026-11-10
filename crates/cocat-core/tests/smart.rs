@@ -1,7 +1,9 @@
 //! Smart catalogues: a catalogue's members are the events it lists plus what its rule yields
 //! (design section 3).
 
-use cocat_core::model::{self, EventRecord, Member, NewCatalogue, OriginKind, Status, WriteError};
+use cocat_core::model::{
+    self, EventRecord, Hop, Member, NewCatalogue, OriginKind, Status, WriteError,
+};
 use cocat_core::rules::{Problem, RuleError};
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value, json};
@@ -11,6 +13,18 @@ const SMART: &str = "5a5a5a5a-0000-4000-8000-000000000001";
 const OTHER: &str = "5a5a5a5a-0000-4000-8000-000000000002";
 const THIRD: &str = "5a5a5a5a-0000-4000-8000-000000000003";
 const BASE: i64 = 1_738_317_600_000_000_000; // 2025-01-31 10:00:00 UTC
+fn hop() -> Hop {
+    Hop {
+        project: "lab".to_owned(),
+        project_name: "Lab".to_owned(),
+        catalogue: SMART.to_owned(),
+        catalogue_name: "Smart".to_owned(),
+        version: None,
+        at: 1_700_000_000_000,
+        by: Some("carol@example.org".to_owned()),
+    }
+}
+
 const SECOND: i64 = 1_000_000_000;
 
 fn at(offset: i64) -> Timestamp {
@@ -403,7 +417,7 @@ fn materialize_copies_events_and_makes_derived_intervals_events_of_a_rule_origin
         author: Some("carol".to_owned()),
         ..NewCatalogue::default()
     };
-    assert!(model::materialize(&mut doc.transact_mut(), SMART, &copy).unwrap());
+    assert!(model::materialize(&mut doc.transact_mut(), SMART, &copy, hop()).unwrap());
 
     let txn = doc.transact();
     let summary = model::catalogue(&txn, OTHER).unwrap();
@@ -428,7 +442,7 @@ fn materialize_of_an_unknown_catalogue_writes_nothing() {
         uuid: OTHER.to_owned(),
         ..NewCatalogue::default()
     };
-    assert!(!model::materialize(&mut doc.transact_mut(), SMART, &copy).unwrap());
+    assert!(!model::materialize(&mut doc.transact_mut(), SMART, &copy, hop()).unwrap());
     assert!(model::catalogue(&doc.transact(), OTHER).is_none());
 }
 
@@ -440,8 +454,34 @@ fn materialize_without_derived_intervals_makes_no_origin() {
         uuid: OTHER.to_owned(),
         ..NewCatalogue::default()
     };
-    assert!(model::materialize(&mut doc.transact_mut(), SMART, &copy).unwrap());
+    assert!(model::materialize(&mut doc.transact_mut(), SMART, &copy, hop()).unwrap());
     let txn = doc.transact();
     assert_eq!(event_uuids(&doc, OTHER), uuids(&[1]));
     assert!(txn.get_map(model::ORIGINS).is_none());
+}
+
+#[test]
+fn a_frozen_catalogue_names_the_smart_one_it_froze() {
+    let doc = room();
+    catalogue(&doc, SMART, &uuids(&[1]), None);
+    let earlier = Hop {
+        catalogue: "earlier".to_owned(),
+        ..hop()
+    };
+    model::set_copied_from(
+        &mut doc.transact_mut(),
+        SMART,
+        std::slice::from_ref(&earlier),
+    );
+    catalogue(&doc, THIRD, &[], None);
+    let copy = NewCatalogue {
+        uuid: OTHER.to_owned(),
+        ..NewCatalogue::default()
+    };
+    assert!(model::materialize(&mut doc.transact_mut(), SMART, &copy, hop()).unwrap());
+
+    let frozen = model::catalogue(&doc.transact(), OTHER).unwrap();
+    assert_eq!(frozen.copied_from, [earlier, hop()]);
+    let untouched = model::catalogue(&doc.transact(), THIRD).unwrap();
+    assert!(untouched.copied_from.is_empty());
 }

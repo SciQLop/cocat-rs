@@ -67,6 +67,19 @@ fn a_copy_extends_its_sources_chain() {
 }
 
 #[test]
+fn every_field_of_a_hop_survives_a_round_trip() {
+    let doc = doc_with(&[SOURCE]);
+    let bare = Hop {
+        version: None,
+        by: None,
+        ..hop(2)
+    };
+    set_copied_from(&mut doc.transact_mut(), SOURCE, &[hop(1), bare.clone()]);
+
+    assert_eq!(chain(&doc, SOURCE), [hop(1), bare]);
+}
+
+#[test]
 fn the_chain_keeps_the_original_and_the_latest() {
     let doc = doc_with(&[SOURCE]);
     let long: Vec<Hop> = (1..=32).map(hop).collect();
@@ -149,6 +162,7 @@ fn an_extract_carries_the_chain() {
 #[test]
 fn restoring_an_older_state_keeps_the_current_chain() {
     let live = doc_with(&[SOURCE]);
+    set_copied_from(&mut live.transact_mut(), SOURCE, &[hop(7)]);
     let past = Doc::new();
     past.transact_mut()
         .apply_update(

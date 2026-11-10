@@ -2,6 +2,7 @@
 
 use yrs::TransactionMut;
 
+use super::copies::{Hop, copy_chain, set_copied_from};
 use super::members::{Member, catalogue_members, rule_of};
 use super::provenance::create_origin;
 use super::read::object;
@@ -12,11 +13,13 @@ use crate::time::Timestamp;
 
 /// Creates the catalogue `into` listing the current members of catalogue `uuid`. Its events
 /// are listed as they are; each derived interval becomes a new event whose origin is a
-/// `rule` origin recording the rule. Returns false when the room holds no catalogue `uuid`.
+/// `rule` origin recording the rule. The copy's chain is the smart catalogue's, then
+/// `copied`. Returns false when the room holds no catalogue `uuid`.
 pub fn materialize(
     txn: &mut TransactionMut<'_>,
     uuid: &str,
     into: &NewCatalogue,
+    copied: Hop,
 ) -> Result<bool, WriteError> {
     let Some(members) = catalogue_members(txn, uuid) else {
         return Ok(false);
@@ -34,6 +37,8 @@ pub fn materialize(
     }
     create_catalogue(txn, into)?;
     add_catalogue_events(txn, &into.uuid, &listed);
+    let chain = copy_chain(txn, uuid, copied);
+    set_copied_from(txn, &into.uuid, &chain);
     Ok(true)
 }
 

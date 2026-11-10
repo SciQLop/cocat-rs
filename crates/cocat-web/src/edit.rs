@@ -2,7 +2,7 @@
 //! and checks everything it was given before it writes anything: a refused edit leaves the
 //! room as it was.
 
-use cocat_core::model::{self, EventField, EventRecord, NewCatalogue, Status, WriteError};
+use cocat_core::model::{self, EventField, EventRecord, Hop, NewCatalogue, Status, WriteError};
 use cocat_core::rules::{self, RuleError};
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value};
@@ -11,6 +11,7 @@ use yrs::TransactionMut;
 
 use crate::format::time_text;
 use crate::rule_text::describe;
+use crate::session::RoomConfig;
 
 const MINUTE: i64 = 60 * 1_000_000_000;
 
@@ -302,11 +303,21 @@ pub fn materialize(
     txn: &mut TransactionMut<'_>,
     uuid: &str,
     name: &str,
-    author: &str,
+    project: &RoomConfig,
 ) -> Result<String, EditError> {
-    let catalogue = named(name, author)?;
+    let catalogue = named(name, &project.user_email)?;
+    let smart = model::catalogue(txn, uuid).ok_or(EditError::NoCatalogue)?;
+    let hop = Hop {
+        project: project.room_id.clone(),
+        project_name: project.room_name.clone(),
+        catalogue: smart.uuid,
+        catalogue_name: smart.name,
+        version: None,
+        at: (Timestamp::now().unix_micros() / 1000) as i64,
+        by: Some(project.user_email.clone()),
+    };
     found(
-        model::materialize(txn, uuid, &catalogue)?,
+        model::materialize(txn, uuid, &catalogue, hop)?,
         EditError::NoCatalogue,
     )?;
     Ok(catalogue.uuid)
@@ -389,11 +400,27 @@ mod tests {
     use yrs::updates::decoder::Decode;
     use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
+    use crate::session::Kind;
+    use cocat_core::role::Role;
+
     use super::*;
     use crate::fixture::{DAY0, SECOND, at, room};
 
     fn edited<R>(doc: &Doc, edit: impl FnOnce(&mut TransactionMut<'_>) -> R) -> R {
         edit(&mut doc.transact_mut())
+    }
+
+    fn project() -> RoomConfig {
+        RoomConfig {
+            room_id: "lab".into(),
+            room_name: "Lab".into(),
+            role: Role::Owner,
+            ws_url: "wss://cocat.example.org/room/lab".into(),
+            api_url: "https://cocat.example.org/api".into(),
+            user_email: "ann@example.org".into(),
+            admin: false,
+            kind: Kind::Catalogues,
+        }
     }
 
     fn event(doc: &Doc, uuid: &str) -> model::EventRecord {
@@ -672,13 +699,35 @@ mod tests {
     fn materializing_makes_a_static_catalogue_of_the_members() {
         let doc = room();
         let uuid = edited(&doc, |txn| {
-            materialize(txn, "c-smart", "Waves, frozen", "ann@example.org")
+            materialize(txn, "c-smart", "Waves, frozen", &project())
         })
         .unwrap();
         let catalogue = model::catalogue(&doc.transact(), &uuid).unwrap();
         assert_eq!(catalogue.name, "Waves, frozen");
         assert_eq!(catalogue.rule, None);
         assert_eq!(catalogue.event_count, 3);
+    }
+
+    #[test]
+    fn a_frozen_catalogue_records_the_smart_one_and_who_froze_it() {
+        let doc = room();
+        let uuid = edited(&doc, |txn| {
+            materialize(txn, "c-smart", "Waves, frozen", &project())
+        })
+        .unwrap();
+        let [hop] = model::catalogue(&doc.transact(), &uuid)
+            .unwrap()
+            .copied_from
+            .try_into()
+            .unwrap();
+        assert_eq!(
+            (hop.project.as_str(), hop.project_name.as_str()),
+            ("lab", "Lab")
+        );
+        assert_eq!(hop.catalogue, "c-smart");
+        assert_eq!(hop.version, None);
+        assert!(hop.at > 0);
+        assert_eq!(hop.by.as_deref(), Some("ann@example.org"));
     }
 
     #[test]
