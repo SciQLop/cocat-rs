@@ -17,7 +17,9 @@ use uuid::Uuid;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
-use yrs::{Doc, ReadTxn, Transact, TransactionMut, Update};
+use yrs::{
+    Array as _, Doc, Map as _, ReadTxn, Text as _, Transact, TransactionMut, Update, WriteTxn as _,
+};
 
 const ROOM: &str = "history-room";
 const MINUTE: i64 = 60_000;
@@ -99,21 +101,22 @@ impl Fixture {
 
     /// Appends one record to the room file, stamped with `user` at `at_ms`.
     fn write<T>(&self, user: Uuid, at_ms: i64, edit: impl FnOnce(&mut TransactionMut) -> T) {
-        let record = self.record(edit);
-        let (mut store, records) = FileRoomStore::open(&self.update_dir, ROOM).unwrap();
+        self.append(ROOM, user, at_ms, self.record(edit));
+    }
+
+    /// Appends `record` to the file stored under `key`, stamped with `user` at `at_ms`.
+    fn append(&self, key: &str, user: Uuid, at_ms: i64, record: Bytes) {
+        let (mut store, records) = FileRoomStore::open(&self.update_dir, key).unwrap();
         let index = records.len() as u64;
         store.append(record.clone()).unwrap();
         store.flush().unwrap();
-        let mut stamps = StampFile::open(&self.update_dir, ROOM).unwrap();
+        let mut stamps = StampFile::open(&self.update_dir, key).unwrap();
         stamps.append(stamp_for(index, Some(user), at_ms, &record));
         stamps.write().unwrap();
     }
 
     fn record<T>(&self, edit: impl FnOnce(&mut TransactionMut) -> T) -> Bytes {
-        let before = self.doc.transact().state_vector();
-        let mut txn = self.doc.transact_mut();
-        edit(&mut txn);
-        Bytes::from(txn.encode_diff_v1(&before))
+        record(&self.doc, edit)
     }
 
     async fn call(
@@ -181,6 +184,13 @@ impl Fixture {
         let (status, _, bytes) = self.call(Method::PUT, &path, user, body).await;
         (status, json_of(&bytes))
     }
+}
+
+fn record<T>(doc: &Doc, edit: impl FnOnce(&mut TransactionMut) -> T) -> Bytes {
+    let before = doc.transact().state_vector();
+    let mut txn = doc.transact_mut();
+    edit(&mut txn);
+    Bytes::from(txn.encode_diff_v1(&before))
 }
 
 fn json_of(bytes: &[u8]) -> Value {
@@ -1109,4 +1119,286 @@ async fn a_copy_whose_first_version_cannot_be_named_leaves_no_project() {
         .unwrap();
     let ids: Vec<_> = rooms.into_iter().map(|(room, _)| room.id).collect();
     assert_eq!(ids, [ROOM]);
+}
+
+const WORKSPACE: &str = "workspace-room";
+
+/// A notebook in a workspace beside the catalogue project, with the same members, and the
+/// replica its records are encoded against.
+struct Notebook {
+    id: Uuid,
+    key: String,
+    doc: Doc,
+}
+
+impl Fixture {
+    async fn workspace(&self) {
+        let pool = &self.state.pool;
+        db::create_room(
+            pool,
+            self.alice,
+            WORKSPACE,
+            "Work",
+            db::ProjectKind::Workspace,
+        )
+        .await
+        .unwrap();
+        db::add_member(pool, WORKSPACE, self.bob, Role::Editor)
+            .await
+            .unwrap();
+        db::add_member(pool, WORKSPACE, self.carol, Role::Viewer)
+            .await
+            .unwrap();
+    }
+
+    async fn notebook(&self) -> Notebook {
+        self.workspace().await;
+        let pool = &self.state.pool;
+        let id = db::create_document(pool, WORKSPACE, db::DocumentKind::Notebook, self.alice)
+            .await
+            .unwrap();
+        Notebook {
+            id,
+            key: cocat_server::documents::key(WORKSPACE, id),
+            doc: Doc::new(),
+        }
+    }
+
+    fn write_notebook(
+        &self,
+        notebook: &Notebook,
+        user: Uuid,
+        at_ms: i64,
+        edit: impl FnOnce(&mut TransactionMut),
+    ) {
+        self.append(&notebook.key, user, at_ms, record(&notebook.doc, edit));
+    }
+
+    /// Alice writes two cells, then Bob edits the first and deletes the second: versions 0
+    /// and 1.
+    async fn edited_notebook(&self) -> Notebook {
+        let notebook = self.notebook().await;
+        self.write_notebook(&notebook, self.alice, 0, |txn| {
+            txn.get_or_insert_map("meta").insert(txn, "nbformat", 4);
+            let cells = txn.get_or_insert_array("cells");
+            cells.push_back(txn, cell("a", "print(1)"));
+            cells.push_back(txn, cell("b", "x = 2"));
+        });
+        self.write_notebook(&notebook, self.bob, MINUTE, |txn| {
+            let cells = txn.get_or_insert_array("cells");
+            let Some(yrs::Out::YMap(first)) = cells.get(txn, 0) else {
+                panic!("no first cell")
+            };
+            let Some(yrs::Out::YText(source)) = first.get(txn, "source") else {
+                panic!("no source")
+            };
+            source.insert(txn, 7, "0");
+            cells.remove(txn, 1);
+        });
+        notebook
+    }
+
+    async fn notebook_history(&self, notebook: &Notebook, user: Uuid) -> Vec<Value> {
+        let path = format!("/api/rooms/{WORKSPACE}/history?document={}", notebook.id);
+        let (status, body) = self.get(&path, user).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["versions"].as_array().unwrap().clone()
+    }
+
+    async fn notebook_state(&self, notebook: &Notebook, version: u64) -> Value {
+        let path = format!(
+            "/api/rooms/{WORKSPACE}/history/{version}/state?document={}",
+            notebook.id
+        );
+        let (status, content_type, bytes) = self.call(Method::GET, &path, self.carol, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(content_type.as_deref(), Some("application/json"));
+        json_of(&bytes)
+    }
+
+    async fn restore_notebook(
+        &self,
+        notebook: &Notebook,
+        version: u64,
+        user: Uuid,
+    ) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{WORKSPACE}/history/{version}/restore");
+        let body = Some(json!({ "document": notebook.id }));
+        let (status, _, bytes) = self.call(Method::POST, &path, user, body).await;
+        (status, json_of(&bytes))
+    }
+}
+
+fn cell(id: &str, source: &str) -> yrs::MapPrelim {
+    yrs::MapPrelim::from([
+        ("id".to_owned(), yrs::In::from(id)),
+        (
+            "source".to_owned(),
+            yrs::In::Text(yrs::TextPrelim::new(source).into()),
+        ),
+    ])
+}
+
+#[tokio::test]
+async fn a_notebook_has_its_own_history() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, create("a"));
+    let notebook = fixture.edited_notebook().await;
+
+    let versions = fixture.notebook_history(&notebook, fixture.carol).await;
+
+    assert_eq!(ids(&versions), [1, 0]);
+    assert_eq!(versions[0]["author_email"], "bob@x.org");
+    assert_eq!(versions[1]["author_email"], "alice@x.org");
+    let first = fixture.notebook_state(&notebook, 0).await;
+    assert_eq!(first["meta"], json!({ "nbformat": 4 }));
+    assert_eq!(
+        first["cells"],
+        json!([{ "id": "a", "source": "print(1)" }, { "id": "b", "source": "x = 2" }])
+    );
+    let second = fixture.notebook_state(&notebook, 1).await;
+    assert_eq!(
+        second["cells"],
+        json!([{ "id": "a", "source": "print(10)" }])
+    );
+}
+
+#[tokio::test]
+async fn what_a_notebook_version_changed_is_not_listed() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+
+    let path = format!("/api/rooms/{WORKSPACE}/history/0?document={}", notebook.id);
+    let (status, body) = fixture.get(&path, fixture.carol).await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["detail"], "Changes are listed for catalogues only");
+}
+
+#[tokio::test]
+async fn a_document_of_another_project_is_404() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+
+    let elsewhere = format!("/api/rooms/{ROOM}/history?document={}", notebook.id);
+    let (status, body) = fixture.get(&elsewhere, fixture.alice).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["detail"], "No such document");
+
+    let unknown = format!("/api/rooms/{WORKSPACE}/history?document={}", Uuid::new_v4());
+    assert_eq!(
+        fixture.get(&unknown, fixture.alice).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn an_editor_restores_a_notebook() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+
+    let (status, body) = fixture.restore_notebook(&notebook, 0, fixture.bob).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "restored": true }));
+    let versions = fixture.notebook_history(&notebook, fixture.alice).await;
+    assert_eq!(ids(&versions), [2, 1, 0]);
+    assert_eq!(versions[0]["author_email"], "bob@x.org");
+    assert_eq!(versions[0]["restored_from"], json!(0));
+    assert_eq!(
+        fixture.notebook_state(&notebook, 2).await,
+        fixture.notebook_state(&notebook, 0).await
+    );
+    let (_, again) = fixture.restore_notebook(&notebook, 0, fixture.bob).await;
+    assert_eq!(again, json!({ "restored": false }));
+}
+
+#[tokio::test]
+async fn a_viewer_cannot_restore_a_notebook() {
+    let fixture = Fixture::start().await;
+    let notebook = fixture.edited_notebook().await;
+
+    let (status, body) = fixture.restore_notebook(&notebook, 0, fixture.carol).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        body["detail"],
+        format!("Project {WORKSPACE} requires the editor role")
+    );
+    let versions = fixture.notebook_history(&notebook, fixture.alice).await;
+    assert_eq!(ids(&versions), [1, 0]);
+}
+
+#[tokio::test]
+async fn one_path_of_the_manifest_is_restored_alone() {
+    let fixture = Fixture::start().await;
+    fixture.workspace().await;
+    let manifest = db::create_document(
+        &fixture.state.pool,
+        WORKSPACE,
+        db::DocumentKind::Manifest,
+        fixture.alice,
+    )
+    .await
+    .unwrap();
+    let key = cocat_server::documents::key(WORKSPACE, manifest);
+    let doc = Doc::new();
+    let entry = |size: i64| yrs::MapPrelim::from([("size".to_owned(), yrs::In::from(size))]);
+    fixture.append(
+        &key,
+        fixture.alice,
+        0,
+        record(&doc, |txn| {
+            let files = txn.get_or_insert_map("files");
+            files.insert(txn, "a.ipynb", entry(1));
+            files.insert(txn, "b.txt", entry(2));
+        }),
+    );
+    fixture.append(
+        &key,
+        fixture.bob,
+        MINUTE,
+        record(&doc, |txn| {
+            let files = txn.get_or_insert_map("files");
+            files.insert(txn, "a.ipynb", entry(10));
+            files.remove(txn, "b.txt");
+        }),
+    );
+
+    let path = format!("/api/rooms/{WORKSPACE}/history/0/restore");
+    let body = Some(json!({ "document": manifest, "path": "b.txt" }));
+    let (status, _, bytes) = fixture.call(Method::POST, &path, fixture.bob, body).await;
+
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&bytes));
+    let state = format!("/api/rooms/{WORKSPACE}/history/2/state?document={manifest}");
+    let (_, _, bytes) = fixture.call(Method::GET, &state, fixture.bob, None).await;
+    assert_eq!(
+        json_of(&bytes)["files"],
+        json!({ "a.ipynb": { "size": 10 }, "b.txt": { "size": 2 } })
+    );
+}
+
+#[tokio::test]
+async fn catalogue_history_is_unchanged() {
+    let fixture = two_versions().await;
+    let notebook = fixture.edited_notebook().await;
+    fixture.write_notebook(&notebook, fixture.carol, 2 * MINUTE, |txn| {
+        txn.get_or_insert_map("meta")
+            .insert(txn, "kernel", "python3");
+    });
+
+    let versions = fixture.history(fixture.alice).await;
+    assert_eq!(ids(&versions), [1, 0]);
+    assert_eq!(versions[0]["events_added"], 1);
+    let (status, body) = fixture.restore(0, fixture.bob).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    assert_eq!(ids(&fixture.history(fixture.alice).await), [2, 1, 0]);
+    let restored = fixture.latest().await;
+    assert_eq!(
+        model::event(&restored.transact(), "b").unwrap().status,
+        model::Status::Deleted
+    );
+    let notebook_versions = fixture.notebook_history(&notebook, fixture.alice).await;
+    assert_eq!(ids(&notebook_versions), [2, 1, 0]);
 }

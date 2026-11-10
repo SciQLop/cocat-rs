@@ -14,6 +14,7 @@ quick-xml = "0.42"
 regex = "1"
 serde.workspace = true
 serde_json.workspace = true
+similar = { version = "3.2.1", default-features = false, features = ["text"] }
 strsim = "0.11"
 thiserror.workspace = true
 time.workspace = true

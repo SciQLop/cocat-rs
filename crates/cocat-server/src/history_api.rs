@@ -7,9 +7,10 @@ use std::ops::{Range, RangeInclusive};
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use cocat_core::model;
+use cocat_core::restore::{document_json, restore_document};
 use cocat_core::role::Role;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -25,7 +26,7 @@ use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Saved, Version, span, spans};
 use crate::openapi::Detail;
 use crate::room::Author;
-use crate::{AppState, db, lifecycle, presence};
+use crate::{AppState, db, documents, lifecycle, presence};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -42,6 +43,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 struct ChangesQuery {
     catalogue: Option<String>,
     since: Option<u64>,
+    document: Option<Uuid>,
 }
 
 /// The records a diff replays: the version's own, or, with `since`, those from the end of the
@@ -62,6 +64,27 @@ fn compared(
 struct HistoryQuery {
     catalogue: Option<String>,
     event: Option<String>,
+    document: Option<Uuid>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DocumentQuery {
+    document: Option<Uuid>,
+}
+
+/// The key whose log the history reads: the project's catalogues, or one of its documents.
+async fn history_key(
+    state: &AppState,
+    room_id: &str,
+    document: Option<Uuid>,
+) -> Result<String, ApiError> {
+    let Some(document) = document else {
+        return Ok(room_id.to_owned());
+    };
+    match db::document_kind(&state.pool, room_id, document).await? {
+        Some(_) => Ok(documents::key(room_id, document)),
+        None => Err(ApiError::NotFound("No such document".to_owned())),
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -114,12 +137,13 @@ struct NameBody {
         ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("catalogue" = Option<String>, Query, description = "Only the versions that touched this catalogue or its members' events; for a smart catalogue, any event"),
         ("event" = Option<String>, Query, description = "Only the versions that added, changed or removed this event"),
+        ("document" = Option<String>, Query, description = "A workspace document's versions instead of the catalogues'"),
     ),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "The versions, newest first", body = History),
         (status = 401, description = "No valid session", body = Detail),
-        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+        (status = 404, description = "No such room or document, or the caller is not a member", body = Detail),
     )
 )]
 async fn list(
@@ -129,11 +153,12 @@ async fn list(
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<History>, ApiError> {
     let role = membership(&state, &room_id, user.id).await?;
+    let key = history_key(&state, &room_id, query.document).await?;
     let filter = match query.catalogue {
         Some(uuid) => Some(Filter::new(&state, &room_id, uuid).await?),
         None => None,
     };
-    let mut versions = room_versions(&state, &room_id).await?;
+    let mut versions = room_versions(&state, &key).await?;
     if let Some(filter) = filter {
         versions.retain(|version| filter.keeps(version));
         for version in &mut versions {
@@ -143,7 +168,7 @@ async fn list(
     if let Some(event) = query.event {
         versions.retain(|version| version.events.contains(&event));
     }
-    let versions = views(&state, &room_id, role, versions).await?;
+    let versions = views(&state, &key, role, versions).await?;
     Ok(Json(History { versions }))
 }
 
@@ -155,12 +180,14 @@ async fn list(
         ("version" = u64, Path, description = "Version id: its first record"),
         ("catalogue" = Option<String>, Query, description = "Only this catalogue and its members"),
         ("since" = Option<u64>, Query, description = "Another version: what changed from the end of the older of the two to the end of the newer"),
+        ("document" = Option<String>, Query, description = "A workspace document: refused, changes are listed for catalogues only"),
     ),
     security(("cookie" = [])),
     responses(
         (status = 200, description = "What the version changed, or what changed between two versions", body = Diff),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, version or membership", body = Detail),
+        (status = 409, description = "A document was named: changes are listed for catalogues only", body = Detail),
     )
 )]
 async fn changes(
@@ -170,6 +197,11 @@ async fn changes(
     Query(query): Query<ChangesQuery>,
 ) -> Result<Json<Diff>, ApiError> {
     membership(&state, &room_id, user.id).await?;
+    if query.document.is_some() {
+        return Err(ApiError::Conflict(
+            "Changes are listed for catalogues only".to_owned(),
+        ));
+    }
     let saved = saved(&state, &room_id).await?;
     let changes = state
         .rooms
@@ -191,10 +223,11 @@ async fn changes(
     params(
         ("room_id" = String, Path, description = "Project id (a room in the API)"),
         ("version" = u64, Path, description = "Version id: its first record"),
+        ("document" = Option<String>, Query, description = "A workspace document instead of the catalogues"),
     ),
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The room as of the version, as one Yjs v1 update", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 200, description = "The room as of the version, as one Yjs v1 update; a document as the JSON of its root types, by name", content((Vec<u8> = "application/octet-stream"), (Object = "application/json"))),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, version or membership", body = Detail),
     )
@@ -203,17 +236,43 @@ async fn state_at(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
-) -> Result<impl IntoResponse, ApiError> {
+    Query(query): Query<DocumentQuery>,
+) -> Result<Response, ApiError> {
     membership(&state, &room_id, user.id).await?;
-    let saved = saved(&state, &room_id).await?;
-    let update = state
+    let key = history_key(&state, &room_id, query.document).await?;
+    if query.document.is_none() {
+        let update = past(&state, &key, version, state_until).await?;
+        let binary = [(header::CONTENT_TYPE, "application/octet-stream")];
+        return Ok((binary, update).into_response());
+    }
+    let json = past(&state, &key, version, json_until).await?;
+    let json = json.map_err(|error| {
+        tracing::warn!(%error, key, "a document's past state is not JSON");
+        ApiError::Internal
+    })?;
+    Ok(Json(json).into_response())
+}
+
+/// `read` of the log under `key` up to the end of the version.
+async fn past<T: Send + 'static>(
+    state: &AppState,
+    key: &str,
+    version: u64,
+    read: fn(&[Bytes], usize) -> T,
+) -> Result<T, ApiError> {
+    let saved = saved(state, key).await?;
+    state
         .rooms
-        .read_log(&room_id, 1, move |records, slots| {
-            Some(state_until(records, span(slots, &saved, version)?.end))
+        .read_log(key, 1, move |records, slots| {
+            Some(read(records, span(slots, &saved, version)?.end))
         })
         .await?
-        .ok_or_else(no_such_version)?;
-    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], update))
+        .ok_or_else(no_such_version)
+}
+
+/// A document as of the version ending before record `end`, as its root types' JSON.
+fn json_until(records: &[Bytes], end: usize) -> Result<serde_json::Value, serde_json::Error> {
+    document_json(&replay_until(&records[..end], u64::MAX))
 }
 
 /// The room as of the version ending before record `end`, as one update.
@@ -506,6 +565,12 @@ struct RestoreBody {
     /// Restore only this catalogue and its members' events; the whole room when absent.
     #[serde(default)]
     catalogue: Option<String>,
+    /// Restore this workspace document instead of the catalogues.
+    #[serde(default)]
+    document: Option<Uuid>,
+    /// With the manifest as `document`, restore only this path's entry.
+    #[serde(default)]
+    path: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -524,10 +589,10 @@ struct Restored {
     request_body = RestoreBody,
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The room, or the catalogue, equals the version again, through one new change by the caller", body = Restored),
+        (status = 200, description = "The room, the catalogue, the document or the manifest path equals the version again, through one new change by the caller", body = Restored),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller cannot write to the room", body = Detail),
-        (status = 404, description = "No such room, version or membership", body = Detail),
+        (status = 404, description = "No such room, document, version or membership", body = Detail),
         (status = 409, description = "The room reached its storage limit", body = Detail),
     )
 )]
@@ -538,20 +603,25 @@ async fn restore(
     JsonBody(body): JsonBody<RestoreBody>,
 ) -> Result<Json<Restored>, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Editor).await?;
-    let saved = saved(&state, &room_id).await?;
+    let key = history_key(&state, &room_id, body.document).await?;
+    let saved = saved(&state, &key).await?;
     let update = state
         .rooms
-        .read_log(&room_id, 2, move |records, slots| {
+        .read_log(&key, 2, move |records, slots| {
             let end = span(slots, &saved, version)?.end;
-            Some(restore_update(records, end, body.catalogue.as_deref()))
+            let update = match body.document {
+                Some(_) => document_update(records, end, body.path.as_deref()),
+                None => restore_update(records, end, body.catalogue.as_deref()),
+            };
+            Some(update)
         })
         .await?
         .ok_or_else(no_such_version)?;
-    let allowance = state.rooms.allowance(&state.pool, &room_id).await?;
+    let allowance = state.rooms.allowance(&state.pool, &key).await?;
     let restored = state
         .rooms
         .write_as(
-            &room_id,
+            &key,
             allowance,
             Author::Restore {
                 user: user.id,
@@ -570,6 +640,14 @@ fn restore_update(records: &[Bytes], end: usize, catalogue: Option<&str>) -> Vec
     let (past, present) = before_and_after(records, end, records.len());
     let mut txn = present.transact_mut();
     model::restore(&mut txn, &past, catalogue);
+    txn.encode_update_v1()
+}
+
+/// The same for a workspace document, or only one `path` of its manifest.
+fn document_update(records: &[Bytes], end: usize, path: Option<&str>) -> Vec<u8> {
+    let (past, present) = before_and_after(records, end, records.len());
+    let mut txn = present.transact_mut();
+    restore_document(&mut txn, &past, path);
     txn.encode_update_v1()
 }
 
@@ -666,16 +744,17 @@ pub(crate) async fn room_versions(
 }
 
 /// The versions as a member with `role` sees them: named, with their authors, who stay
-/// anonymous to a public catalogue's readers.
+/// anonymous to a public project's readers. `key` is the project's, or one document's.
 pub(crate) async fn views(
     state: &AppState,
-    room_id: &str,
+    key: &str,
     role: Role,
     versions: Vec<Version>,
 ) -> Result<Vec<VersionView>, ApiError> {
-    let commits = db::version_commits(&state.pool, room_id).await?;
-    let names = db::version_names(&state.pool, room_id).await?;
-    let anonymous = db::is_public(&state.pool, room_id).await? && !role.can_write();
+    let commits = db::version_commits(&state.pool, key).await?;
+    let names = db::version_names(&state.pool, key).await?;
+    let project = documents::project_of(key);
+    let anonymous = db::is_public(&state.pool, project).await? && !role.can_write();
     let emails = if anonymous {
         author_labels(state, &versions).await?
     } else {
