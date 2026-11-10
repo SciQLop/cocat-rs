@@ -8,6 +8,7 @@ pub mod detail;
 pub mod edit;
 pub mod format;
 pub mod help;
+pub mod highlight;
 pub mod history;
 pub mod home;
 pub mod layout;

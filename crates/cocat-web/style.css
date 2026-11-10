@@ -42,6 +42,13 @@
   --radius: 6px;
   --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --focus: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  --tone-keyword: #8f3fb5;
+  --tone-string: #17695f;
+  --tone-number: #b4531a;
+  --tone-comment: #5f6b7e;
+  --tone-function: #2753b8;
+  --tone-type: #8a5300;
+  --tone-punctuation: #6b7587;
   color-scheme: light;
 }
 
@@ -83,6 +90,13 @@
     --notice-bg: #2a2214;
     --notice-rule: #4a3b1c;
     --notice-ink: #f0ad2e;
+    --tone-keyword: #c79bf0;
+    --tone-string: #6fd0c0;
+    --tone-number: #f0a35e;
+    --tone-comment: #97a1b3;
+    --tone-function: #8fb0f7;
+    --tone-type: #f0b45e;
+    --tone-punctuation: #97a1b3;
     color-scheme: dark;
   }
 }
@@ -1519,3 +1533,11 @@ a.home-project:hover { color: var(--accent); }
 .entry-menu .menu button:hover { background: var(--chip); }
 .entry-menu .menu .danger { color: var(--danger); }
 @media (hover: none) { .entry-menu summary { opacity: 1; } }
+
+.tone-keyword { color: var(--tone-keyword); }
+.tone-string { color: var(--tone-string); }
+.tone-number { color: var(--tone-number); }
+.tone-comment { color: var(--tone-comment); font-style: italic; }
+.tone-function { color: var(--tone-function); }
+.tone-type { color: var(--tone-type); }
+.tone-punctuation { color: var(--tone-punctuation); }
