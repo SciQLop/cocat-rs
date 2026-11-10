@@ -176,11 +176,12 @@ class Client:
         """Lets the project's copies name it and their author. Without the answer, they
         name the project by its id and no author: opening must not fail on it."""
         try:
-            name = next((info.name for info in projects if info.id == project_id), None)
+            info = next((info for info in projects if info.id == project_id), None)
             email = self.account()["email"]
         except (Unauthorized, Forbidden, RuntimeError, OSError, KeyError, ValueError):
             return
-        project._native.set_identity(name or project_id, email)
+        name = info.name if info else project_id
+        project._native.set_identity(name, email, bool(info and info.personal))
 
     def account_id(self, fresh: bool = False) -> str:
         if self._account is None or fresh:

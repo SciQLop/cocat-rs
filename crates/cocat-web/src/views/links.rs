@@ -185,6 +185,14 @@ fn unlink(room: &Room, id: &str, on_screen: bool) {
     }
 }
 
+/// Whether project `id` is the visitor's own ("My catalogues"), the only place links go.
+pub fn is_personal(projects: Projects, id: &str) -> bool {
+    projects.list.with(|list| {
+        list.iter()
+            .any(|project| project.id == id && project.personal)
+    })
+}
+
 /// The form that links a catalogue: a project of the visitor's, then one of its catalogues.
 #[component]
 pub fn LinkPicker(open: RwSignal<bool>) -> impl IntoView {
@@ -242,8 +250,10 @@ pub fn LinkPicker(open: RwSignal<bool>) -> impl IntoView {
             error.set(Some("Pick a catalogue to link.".to_owned()));
             return;
         };
-        match writer.write(|txn| edit::link_catalogue(txn, &writer.config, &project, &uuid, &name))
-        {
+        let personal = is_personal(projects, &writer.config.room_id);
+        match writer.write(|txn| {
+            edit::link_catalogue(txn, &writer.config, personal, &project, &uuid, &name)
+        }) {
             Ok(id) => {
                 open.set(false);
                 go_to(&Route::Link(id).hash());

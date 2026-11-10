@@ -467,6 +467,8 @@ pub struct Catalogue {
 struct Identity {
     project_name: Option<String>,
     email: Option<String>,
+    /// The project is its owner's own ("My catalogues"), the only place links go.
+    personal: bool,
 }
 
 impl Catalogue {
@@ -1284,11 +1286,14 @@ impl Project {
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
-    /// The project's name and the signed-in email, recorded in the copies made from here.
-    fn set_identity(&self, project_name: String, email: String) {
+    /// The project's name, the signed-in email and whether the project is "My catalogues",
+    /// recorded in the copies and links made from here.
+    #[pyo3(signature = (project_name, email, personal = false))]
+    fn set_identity(&self, project_name: String, email: String, personal: bool) {
         *lock(&self.identity) = Identity {
             project_name: Some(project_name),
             email: Some(email),
+            personal,
         };
     }
 
@@ -1329,7 +1334,11 @@ impl Project {
             at: now()?.unix_millis(),
         };
         let here = self.room.room_id().to_owned();
-        write(&self.room, |txn| model::add_link(txn, &here, link))?.map_err(value_error)
+        let personal = lock(&self.identity).personal;
+        write(&self.room, |txn| {
+            model::add_link(txn, &here, personal, link)
+        })?
+        .map_err(value_error)
     }
 
     /// Removes link `id`; false when there was none.

@@ -76,6 +76,13 @@ fn NewCatalogue() -> impl IntoView {
     let importer = expect_context::<Importer>();
     let open = RwSignal::new(false);
     let linking = RwSignal::new(false);
+    let personal = {
+        let (projects, id) = (
+            expect_context::<crate::views::projects::Projects>(),
+            room.config.room_id.clone(),
+        );
+        move || crate::views::links::is_personal(projects, &id)
+    };
     let menu = NodeRef::<leptos::html::Details>::new();
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
@@ -118,7 +125,9 @@ fn NewCatalogue() -> impl IntoView {
             <div class="menu">
                 <button type="button" on:click=move |_| { close(); open.set(true); }>"New catalogue…"</button>
                 <button type="button" on:click=move |_| { close(); importer.open(None); }>"Import a file…"</button>
-                <button type="button" on:click=move |_| { close(); linking.set(true); }>"Link a catalogue from another project…"</button>
+                <Show when=move || personal()>
+                    <button type="button" on:click=move |_| { close(); linking.set(true); }>"Link a catalogue from another project…"</button>
+                </Show>
                 <p class="menu-group">"New smart catalogue"</p>
                 {presets.into_iter().map(|(name, text)| view! {
                     <button type="button" class="preset" title=text.clone()

@@ -43,6 +43,10 @@ pub struct NewLink {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum LinkError {
+    #[error(
+        "Links go into My catalogues: share the project or copy the catalogue to show it elsewhere"
+    )]
+    NotPersonal,
     #[error("that catalogue is already in this project")]
     SameProject,
     #[error("that catalogue is already linked")]
@@ -96,12 +100,20 @@ fn stored_links<T: ReadTxn>(txn: &T) -> Vec<Link> {
     links
 }
 
-/// Adds a link and returns its id; `this_project` is the project the document belongs to.
+/// Adds a link and returns its id; `this_project` is the project the document belongs to,
+/// `personal` whether it is its owner's own ("My catalogues").
+// Links are bookmarks: in a shared project its members not in the original would see links
+// they cannot open, and the others already see the catalogue in its own project. Loosening
+// this later is easy; tightening it would break links people made.
 pub fn add_link(
     txn: &mut TransactionMut<'_>,
     this_project: &str,
+    personal: bool,
     link: NewLink,
 ) -> Result<String, LinkError> {
+    if !personal {
+        return Err(LinkError::NotPersonal);
+    }
     if link.project == this_project {
         return Err(LinkError::SameProject);
     }

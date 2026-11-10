@@ -328,6 +328,10 @@ async fn the_catalogue_help_says_what_a_link_is() {
     assert!(catalogues.contains("your role there"), "{catalogues}");
     assert!(catalogues.contains("No longer available"), "{catalogues}");
     assert!(
+        catalogues.contains("Links go into My catalogues"),
+        "{catalogues}"
+    );
+    assert!(
         catalogues.contains("A smart catalogue cannot use a linked catalogue"),
         "{catalogues}"
     );

@@ -25,8 +25,28 @@ fn link(doc: &Doc, project: &str, catalogue: &str, name: &str) -> Result<String,
     add_link(
         &mut doc.transact_mut(),
         HERE,
+        true,
         new_link(project, catalogue, name),
     )
+}
+
+#[test]
+fn a_link_goes_only_into_a_personal_project() {
+    let doc = Doc::new();
+
+    let refused = add_link(
+        &mut doc.transact_mut(),
+        HERE,
+        false,
+        new_link("other", "cat-1", "Shocks"),
+    );
+
+    assert_eq!(refused, Err(LinkError::NotPersonal));
+    assert_eq!(
+        LinkError::NotPersonal.to_string(),
+        "Links go into My catalogues: share the project or copy the catalogue to show it elsewhere"
+    );
+    assert!(links(&doc.transact()).is_empty());
 }
 
 #[test]

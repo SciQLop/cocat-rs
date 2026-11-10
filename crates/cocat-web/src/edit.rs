@@ -327,10 +327,12 @@ pub fn materialize(
     Ok(catalogue.uuid)
 }
 
-/// Links catalogue `uuid`, named `name`, of `source` into `project`. Answers the link's id.
+/// Links catalogue `uuid`, named `name`, of `source` into `project`, which must be its
+/// owner's own ("My catalogues": `personal`). Answers the link's id.
 pub fn link_catalogue(
     txn: &mut TransactionMut<'_>,
     project: &RoomConfig,
+    personal: bool,
     source: &crate::projects::Project,
     uuid: &str,
     name: &str,
@@ -343,7 +345,7 @@ pub fn link_catalogue(
         by: Some(project.user_email.clone()),
         at: Timestamp::now().unix_millis(),
     };
-    Ok(model::add_link(txn, &project.room_id, link)?)
+    Ok(model::add_link(txn, &project.room_id, personal, link)?)
 }
 
 pub fn unlink(txn: &mut TransactionMut<'_>, id: &str) -> Result<(), EditError> {
@@ -849,7 +851,7 @@ mod tests {
     fn a_link_names_who_made_it_and_where_it_points() {
         let doc = Doc::new();
         let id = edited(&doc, |txn| {
-            link_catalogue(txn, &project(), &lab(), "c9", "Shocks")
+            link_catalogue(txn, &project(), true, &lab(), "c9", "Shocks")
         })
         .unwrap();
         let links = model::links(&doc.transact());
@@ -859,7 +861,7 @@ mod tests {
         assert_eq!(links[0].by.as_deref(), Some("ann@example.org"));
         assert!(links[0].at > 1_700_000_000_000);
         let again = edited(&doc, |txn| {
-            link_catalogue(txn, &project(), &lab(), "c9", "Shocks")
+            link_catalogue(txn, &project(), true, &lab(), "c9", "Shocks")
         });
         assert_eq!(
             again.unwrap_err().to_string(),
@@ -868,10 +870,22 @@ mod tests {
     }
 
     #[test]
+    fn a_link_goes_only_into_my_catalogues() {
+        let doc = Doc::new();
+        let refused = edited(&doc, |txn| {
+            link_catalogue(txn, &project(), false, &lab(), "c9", "Shocks")
+        });
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "Links go into My catalogues: share the project or copy the catalogue to show it elsewhere"
+        );
+    }
+
+    #[test]
     fn removing_a_link_that_is_gone_says_so() {
         let doc = Doc::new();
         let id = edited(&doc, |txn| {
-            link_catalogue(txn, &project(), &lab(), "c9", "Shocks")
+            link_catalogue(txn, &project(), true, &lab(), "c9", "Shocks")
         })
         .unwrap();
         edited(&doc, |txn| unlink(txn, &id)).unwrap();

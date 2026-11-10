@@ -319,7 +319,10 @@ project_name, catalogue, name, by?, at}` (`at` in milliseconds since the Unix ep
 `project_name` and `name` are the names when linked). The web app lists them under
 "Linked" and opens the original catalogue in its own project, with the visitor's role
 there. One link per (project, catalogue); when two clients link the same one while apart,
-the lowest id is shown and removing it removes both. Exports and restores leave links alone,
+the lowest id is shown and removing it removes both. Links go into the owner's own project
+("My catalogues") only: `add_link` refuses any other project ("Links go into My catalogues:
+share the project or copy the catalogue to show it elsewhere"); links already sitting in a
+shared project stay readable and removable. Exports and restores leave links alone,
 and clients that do not know the map ignore it.
 
 ## Public catalogues
@@ -762,7 +765,8 @@ an empty list. The chain keeps its first step and the latest 31.
 ```python
 lab = cc.open("Solitary Waves")
 mine = cc.open()
-link_id = mine.link(lab.catalogue("Solitons"))   # ValueError if already linked
+link_id = mine.link(lab.catalogue("Solitons"))   # ValueError if already linked, or if
+                                                  # `mine` is not My catalogues
 mine.links()          # [{id, project, project_name, catalogue, name, by, at}]
 original, solitons = mine.open_link(link_id)      # the original project, opened
 solitons.add_events([...])                        # changes go to Solitary Waves
