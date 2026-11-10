@@ -254,7 +254,6 @@ pub fn ProjectMenu() -> impl IntoView {
                 <For each=move || projects.list.get() key=|project| (project.id.clone(), project.name.clone(), project.role) children=entry/>
                 <hr/>
                 <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Create)>"+ New project"</button>
-                <button type="button" role="menuitem" on:click=move |_| pick(Dialog::CreateWorkspace)>"+ New SciQLop workspace"</button>
                 <Show when=move || held && actions().rename>
                     <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Rename)>
                         {move || format!("Rename “{}”…", name())}

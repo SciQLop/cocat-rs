@@ -155,15 +155,9 @@ pub async fn projects(api: &str) -> Result<Vec<Project>, ApiError> {
     json(Request::get(&at(api, &["rooms"])?)).await
 }
 
-/// A new project, owned by the visitor.
-/// A new project; `with_files` also gives it a file list for a SciQLop workspace.
-pub async fn create_project(api: &str, name: &str, with_files: bool) -> Result<Project, ApiError> {
-    let kind = if with_files {
-        "workspace"
-    } else {
-        "catalogues"
-    };
-    let body = json!({ "name": name, "kind": kind }).to_string();
+/// A new project, owned by the visitor; it gains its file list when SciQLop shares into it.
+pub async fn create_project(api: &str, name: &str) -> Result<Project, ApiError> {
+    let body = json!({ "name": name }).to_string();
     json_body(Request::post(&at(api, &["rooms"])?), body).await
 }
 

@@ -14,7 +14,6 @@ use crate::views::transfer::ExportDialog;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
     Create,
-    CreateWorkspace,
     Rename,
     Leave,
     Delete,
@@ -31,8 +30,7 @@ pub fn ProjectDialog(which: Dialog, dialog: RwSignal<Option<Dialog>>) -> impl In
         }
     });
     let body = match which {
-        Dialog::Create => view! { <Create dialog with_files=false/> }.into_any(),
-        Dialog::CreateWorkspace => view! { <Create dialog with_files=true/> }.into_any(),
+        Dialog::Create => view! { <Create dialog/> }.into_any(),
         Dialog::Rename => view! { <Rename dialog/> }.into_any(),
         Dialog::Leave => view! { <Leave dialog/> }.into_any(),
         Dialog::Delete => view! { <Delete dialog/> }.into_any(),
@@ -95,7 +93,7 @@ fn Buttons(
 }
 
 #[component]
-fn Create(dialog: RwSignal<Option<Dialog>>, with_files: bool) -> impl IntoView {
+fn Create(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let input = NodeRef::<Input>::new();
     let (error, busy): (Error, _) = (RwSignal::new(None), RwSignal::new(false));
@@ -105,22 +103,14 @@ fn Create(dialog: RwSignal<Option<Dialog>>, with_files: bool) -> impl IntoView {
         send(
             error,
             busy,
-            async move { api::create_project(&api, &name, with_files).await },
+            async move { api::create_project(&api, &name).await },
             move |project| projects.created(project),
         );
     };
     view! {
         <form method="dialog" class="name-form" on:submit=submit>
-            {match with_files {
-                false => view! {
-                    <h2>"New project"</h2>
-                    <Hint text="A project holds catalogues you share with the same people." anchor="projects" topic="projects"/>
-                }.into_any(),
-                true => view! {
-                    <h2>"New SciQLop workspace"</h2>
-                    <Hint text="A project ready for a SciQLop workspace's files: its notebooks and scripts, beside its catalogues. You edit them in SciQLop; the web app shows them." anchor="workspaces" topic="workspaces"/>
-                }.into_any(),
-            }}
+            <h2>"New project"</h2>
+            <Hint text="A project holds catalogues you share with the same people, and a SciQLop workspace's files once you share one into it." anchor="projects" topic="projects"/>
             <label>
                 <span class="field-label">"Name"</span>
                 <input type="text" node_ref=input required maxlength="200" autofocus

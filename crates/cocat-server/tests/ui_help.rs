@@ -267,7 +267,7 @@ async fn the_workspace_help_says_what_the_web_app_shows() {
         "SciQLop",
         "File history",
         "Restore",
-        "New SciQLop",
+        "when you share one from SciQLop",
         "download",
         "live",
     ] {
@@ -276,6 +276,7 @@ async fn the_workspace_help_says_what_the_web_app_shows() {
             "{expected} missing: {workspaces}"
         );
     }
+    assert!(!help.contains("New SciQLop workspace"), "{help}");
 }
 
 #[tokio::test]
