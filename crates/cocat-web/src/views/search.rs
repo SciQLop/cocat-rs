@@ -12,7 +12,7 @@ use crate::search::{
     needs_value, pieces, search_text,
 };
 use crate::state::Room;
-use crate::views::controls::{Error, commit, error_line, go_to};
+use crate::views::controls::{Error, commit, error_line};
 
 /// The shown catalogue's own search: `None` when the box cannot edit it (not a catalogue,
 /// or a rule with time operations), `Some(None)` when it has none yet.
@@ -189,6 +189,7 @@ fn SaveSearch(
         None => "It keeps every event of the project that matches the search, as people edit it."
             .to_owned(),
     };
+    let show = crate::views::links::opener();
     let create = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
         let text = query.get_untracked();
@@ -204,7 +205,7 @@ fn SaveSearch(
         match made {
             Ok(uuid) => {
                 saving.set(false);
-                go_to(&Route::Catalogue(uuid).hash());
+                show(uuid);
             }
             Err(failure) => error.set(Some(failure.to_string())),
         }

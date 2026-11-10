@@ -177,9 +177,10 @@ pub fn Freeze(uuid: String, form: RwSignal<Form>) -> impl IntoView {
             form.set(Form::Closed);
         }
     });
+    let show = crate::views::links::opener();
     let submit = move |name: String| {
         let made = room.write(|txn| edit::materialize(txn, &uuid, &name, &room.config))?;
-        go_to(&Route::Catalogue(made).hash());
+        show(made);
         Ok(())
     };
     view! {

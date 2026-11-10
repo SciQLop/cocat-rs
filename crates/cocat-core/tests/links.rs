@@ -13,6 +13,7 @@ const HERE: &str = "project-here";
 fn new_link(project: &str, catalogue: &str, name: &str) -> NewLink {
     NewLink {
         project: project.to_owned(),
+        project_name: format!("{project} name"),
         catalogue: catalogue.to_owned(),
         name: name.to_owned(),
         by: Some("a@x.org".to_owned()),
@@ -43,6 +44,7 @@ fn a_link_is_kept_with_who_and_when() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].id, id);
     assert_eq!(found[0].project, "other");
+    assert_eq!(found[0].project_name, "other name");
     assert_eq!(found[0].catalogue, "cat-1");
     assert_eq!(found[0].name, "Shocks");
     assert_eq!(found[0].by.as_deref(), Some("a@x.org"));
@@ -95,6 +97,31 @@ fn removing_a_link_leaves_the_others() {
 
     let names: Vec<String> = links(&doc.transact()).into_iter().map(|l| l.name).collect();
     assert_eq!(names, ["two"]);
+}
+
+#[test]
+fn a_link_written_without_its_projects_name_reads_with_none() {
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        let root = txn.get_or_insert_map("links");
+        let fields = [
+            ("project", Any::from("o")),
+            ("catalogue", Any::from("c")),
+            ("name", Any::from("Older")),
+            ("at", Any::from(1_i64)),
+        ];
+        root.insert(
+            &mut txn,
+            "older",
+            MapPrelim::from_iter(fields.map(|(key, value)| (key.to_owned(), In::Any(value)))),
+        );
+    }
+
+    let found = links(&doc.transact());
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].project_name, "");
 }
 
 #[test]

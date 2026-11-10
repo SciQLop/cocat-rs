@@ -12,6 +12,7 @@ pub mod highlight;
 pub mod history;
 pub mod home;
 pub mod layout;
+pub mod links;
 pub mod markdown;
 pub mod notebook;
 pub mod period;

@@ -7,6 +7,7 @@ use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
 use crate::views::files::{FilesSection, ProjectFiles};
+use crate::views::links::{LinkPicker, LinkedSection};
 use crate::views::submissions::waiting_submissions;
 use crate::views::transfer::Importer;
 
@@ -23,6 +24,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let everything =
         Memo::new(move |_| reader.read(|txn| cocat_core::model::live_event_count(txn)));
     let public = page.clone();
+    let linked = page.clone();
     let entries = NodeRef::<leptos::html::Nav>::new();
     keep_current_in_view(entries, move || shown.track());
     view! {
@@ -47,6 +49,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                     <p class="quiet">"No catalogues in this project yet."</p>
                 </Show>
             </nav>
+            <LinkedSection shown page=linked/>
             <FilesSection state=files shown/>
             <a
                 class="catalogue trash"
@@ -70,6 +73,7 @@ fn NewCatalogue() -> impl IntoView {
     let room = expect_context::<Room>();
     let importer = expect_context::<Importer>();
     let open = RwSignal::new(false);
+    let linking = RwSignal::new(false);
     let menu = NodeRef::<leptos::html::Details>::new();
     let close = move || {
         if let Some(menu) = menu.get_untracked() {
@@ -112,6 +116,7 @@ fn NewCatalogue() -> impl IntoView {
             <div class="menu">
                 <button type="button" on:click=move |_| { close(); open.set(true); }>"New catalogue…"</button>
                 <button type="button" on:click=move |_| { close(); importer.open(None); }>"Import a file…"</button>
+                <button type="button" on:click=move |_| { close(); linking.set(true); }>"Link a catalogue from another project…"</button>
                 <p class="menu-group">"New smart catalogue"</p>
                 {presets.into_iter().map(|(name, text)| view! {
                     <button type="button" class="preset" title=text.clone()
@@ -124,6 +129,11 @@ fn NewCatalogue() -> impl IntoView {
             <div class="sidebar-form">
                 <NameForm label="Name of the new catalogue" action="Create" initial="" open
                     submit=move |name| submit.with_value(|submit| submit(name))/>
+            </div>
+        </Show>
+        <Show when=move || linking.get()>
+            <div class="sidebar-form">
+                <LinkPicker open=linking/>
             </div>
         </Show>
     }

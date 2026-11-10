@@ -29,6 +29,8 @@ pub enum Route {
     },
     /// A project's file, by its path in the file list.
     File(String),
+    /// A catalogue of another project this one links to, by the link's id.
+    Link(String),
 }
 
 impl Route {
@@ -47,6 +49,7 @@ impl Route {
         match hash.split_once('=') {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
+            Some(("link", id)) if !id.is_empty() => Route::Link(id.to_owned()),
             Some(("submission", id)) => id.parse().map_or(Route::Default, Route::Submission),
             None if hash == "home" => Route::Home,
             None if hash == "all" => Route::AllEvents,
@@ -156,6 +159,7 @@ impl Route {
             Route::MySubmissions => "#my-submissions".to_owned(),
             Route::Submission(id) => format!("#submission={id}"),
             Route::Group(id) => format!("#group={id}"),
+            Route::Link(id) => format!("#link={id}"),
             Route::History { catalogue, version } => {
                 let version = version.map(|version| format!("={version}"));
                 let catalogue = catalogue.as_ref().map(|uuid| format!("&c={uuid}"));
@@ -212,6 +216,14 @@ mod tests {
             assert_eq!(Route::parse(&route.hash()), route, "{path}");
         }
         assert_eq!(Route::parse("file="), Route::Default);
+    }
+
+    #[test]
+    fn a_link_is_named_by_its_id() {
+        assert_eq!(Route::parse("#link=l1"), Route::Link("l1".into()));
+        assert_eq!(Route::Link("l1".into()).hash(), "#link=l1");
+        assert_eq!(Route::parse("#link="), Route::Default);
+        assert_eq!(Route::Link("l1".into()).history(), history(None, None));
     }
 
     #[test]

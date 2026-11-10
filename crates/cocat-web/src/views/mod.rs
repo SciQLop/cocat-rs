@@ -11,6 +11,7 @@ pub mod header;
 pub mod history;
 pub mod home;
 pub mod invite;
+pub mod links;
 pub mod menus;
 pub mod notebook;
 pub mod notice;

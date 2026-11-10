@@ -88,6 +88,11 @@ impl Projects {
 
     /// Opens `project` as a new step of the browser's history.
     pub fn switch(self, project: &Project) {
+        self.switch_to(project, None);
+    }
+
+    /// Opens `project` on `view` (its default view when none) as a new step of the history.
+    pub fn switch_to(self, project: &Project, view: Option<&Route>) {
         let open = self.open.with_untracked(|config| config.room_id.clone());
         let elsewhere = self.route.with_untracked(Route::holds_no_project);
         if stays(&open, &project.id, elsewhere) {
@@ -99,9 +104,12 @@ impl Projects {
         else {
             return;
         };
+        let target = match view {
+            Some(view) => view.href(&browse_href(&project.id)),
+            None => browse_href(&project.id),
+        };
         if let Ok(history) = window().history() {
-            let _ =
-                history.push_state_with_url(&JsValue::NULL, "", Some(&browse_href(&project.id)));
+            let _ = history.push_state_with_url(&JsValue::NULL, "", Some(&target));
         }
         if open != project.id {
             self.show(next);

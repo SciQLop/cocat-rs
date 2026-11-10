@@ -19,6 +19,9 @@ pub const LINKS: &str = "links";
 pub struct Link {
     pub id: String,
     pub project: String,
+    /// The project's name when linked, for those who are not in it. Older links have none.
+    #[serde(default)]
+    pub project_name: String,
     pub catalogue: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,6 +34,7 @@ pub struct Link {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewLink {
     pub project: String,
+    pub project_name: String,
     pub catalogue: String,
     pub name: String,
     pub by: Option<String>,
@@ -49,6 +53,8 @@ pub enum LinkError {
 #[derive(Deserialize)]
 struct Stored {
     project: String,
+    #[serde(default)]
+    project_name: String,
     catalogue: String,
     name: String,
     #[serde(default)]
@@ -78,6 +84,7 @@ fn stored_links<T: ReadTxn>(txn: &T) -> Vec<Link> {
             Some(Link {
                 id,
                 project: stored.project,
+                project_name: stored.project_name,
                 catalogue: stored.catalogue,
                 name: stored.name,
                 by: stored.by,
@@ -134,6 +141,7 @@ fn link_map(link: &NewLink) -> MapPrelim {
     MapPrelim::from_iter(
         [
             ("project", Some(Any::from(link.project.as_str()))),
+            ("project_name", Some(Any::from(link.project_name.as_str()))),
             ("catalogue", Some(Any::from(link.catalogue.as_str()))),
             ("name", Some(Any::from(link.name.as_str()))),
             ("by", by),

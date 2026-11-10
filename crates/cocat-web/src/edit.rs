@@ -41,6 +41,10 @@ pub enum EditError {
     Search(#[from] cocat_core::query::QueryError),
     #[error(transparent)]
     Write(#[from] WriteError),
+    #[error(transparent)]
+    Link(#[from] model::LinkError),
+    #[error("this link is no longer in the project")]
+    NoLink,
 }
 
 /// The statuses a person picks from: `deleted` is the trash's, reached by trashing.
@@ -321,6 +325,29 @@ pub fn materialize(
         EditError::NoCatalogue,
     )?;
     Ok(catalogue.uuid)
+}
+
+/// Links catalogue `uuid`, named `name`, of `source` into `project`. Answers the link's id.
+pub fn link_catalogue(
+    txn: &mut TransactionMut<'_>,
+    project: &RoomConfig,
+    source: &crate::projects::Project,
+    uuid: &str,
+    name: &str,
+) -> Result<String, EditError> {
+    let link = model::NewLink {
+        project: source.id.clone(),
+        project_name: source.name.clone(),
+        catalogue: uuid.to_owned(),
+        name: name.to_owned(),
+        by: Some(project.user_email.clone()),
+        at: Timestamp::now().unix_millis(),
+    };
+    Ok(model::add_link(txn, &project.room_id, link)?)
+}
+
+pub fn unlink(txn: &mut TransactionMut<'_>, id: &str) -> Result<(), EditError> {
+    found(model::remove_link(txn, id), EditError::NoLink)
 }
 
 pub fn trash_catalogue(txn: &mut TransactionMut<'_>, uuid: &str) -> Result<(), EditError> {
@@ -804,5 +831,53 @@ mod tests {
         assert_eq!(rule(&doc), None);
         let listed = model::listed_events(&doc.transact(), "c-static");
         assert_eq!(listed, ["e1", "e3", "e4"], "the picked events stay");
+    }
+
+    fn lab() -> crate::projects::Project {
+        crate::projects::Project {
+            id: "other".into(),
+            name: "Other lab".into(),
+            role: Role::Viewer,
+            editors_can_share: true,
+            personal: false,
+            files: false,
+        }
+    }
+
+    #[test]
+    fn a_link_names_who_made_it_and_where_it_points() {
+        let doc = Doc::new();
+        let id = edited(&doc, |txn| {
+            link_catalogue(txn, &project(), &lab(), "c9", "Shocks")
+        })
+        .unwrap();
+        let links = model::links(&doc.transact());
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, id);
+        assert_eq!(links[0].project_name, "Other lab");
+        assert_eq!(links[0].by.as_deref(), Some("ann@example.org"));
+        assert!(links[0].at > 1_700_000_000_000);
+        let again = edited(&doc, |txn| {
+            link_catalogue(txn, &project(), &lab(), "c9", "Shocks")
+        });
+        assert_eq!(
+            again.unwrap_err().to_string(),
+            "that catalogue is already linked"
+        );
+    }
+
+    #[test]
+    fn removing_a_link_that_is_gone_says_so() {
+        let doc = Doc::new();
+        let id = edited(&doc, |txn| {
+            link_catalogue(txn, &project(), &lab(), "c9", "Shocks")
+        })
+        .unwrap();
+        edited(&doc, |txn| unlink(txn, &id)).unwrap();
+        assert!(model::links(&doc.transact()).is_empty());
+        assert!(matches!(
+            edited(&doc, |txn| unlink(txn, &id)),
+            Err(EditError::NoLink)
+        ));
     }
 }

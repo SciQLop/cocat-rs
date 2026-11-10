@@ -14,6 +14,7 @@ use crate::views::groups::GroupsPage;
 use crate::views::header::Header;
 use crate::views::history::HistoryPage;
 use crate::views::home::HomeSpace;
+use crate::views::links::{LinkedCatalogue, Lookups};
 use crate::views::notice::{Notice, NoticeBar};
 use crate::views::projects::Projects;
 use crate::views::projects::set_title;
@@ -97,6 +98,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     let with_files = config.files.then(|| config.clone());
     let room = Room::new(config);
     provide_context(room.clone());
+    Lookups::provide(&room);
     let files: ProjectFiles = RwSignal::new(FilesState::initial(config_has_files));
     provide_context(files);
     let connection = match connection::connect(room.clone()) {
@@ -124,6 +126,10 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let file_path = Memo::new(move |_| match shown.get() {
         Route::File(path) => Some(path),
+        _ => None,
+    });
+    let link = Memo::new(move |_| match shown.get() {
+        Route::Link(id) => Some(id),
         _ => None,
     });
     let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
@@ -159,11 +165,12 @@ fn App(config: RoomConfig) -> impl IntoView {
                         None => view! { <Sidebar shown/> }.into_any(),
                     }}
                     <div class="pane">
-                        {move || match file_path.get() {
-                            Some(path) => view! {
+                        {move || match (file_path.get(), link.get()) {
+                            (_, Some(id)) => view! { <LinkedCatalogue id/> }.into_any(),
+                            (Some(path), None) => view! {
                                 <main class="content file-pane" on:dragover=drag_over on:drop=drop><FilePane state=files path/></main>
                             }.into_any(),
-                            None => view! {
+                            (None, None) => view! {
                                 <main class="content" on:dragover=drag_over on:drop=drop>
                                     <CataloguePage shown selected screen/>
                                 </main>

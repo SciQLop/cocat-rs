@@ -749,7 +749,7 @@ a.button { text-decoration: none; }
 .field-stack { display: flex; flex-direction: column; gap: 8px; }
 .field-stack + .field-error { margin-top: -8px; }
 
-.panel input[type="text"], .panel select, .panel textarea, .name-form input, .rule-editor textarea {
+.panel input[type="text"], .panel select, .panel textarea, .name-form :is(input, select), .rule-editor textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -759,11 +759,11 @@ a.button { text-decoration: none; }
   font: inherit;
   font-size: 14px;
 }
-.panel input[type="text"], .panel select, .name-form input { height: 34px; padding: 0 8px; }
+.panel input[type="text"], .panel select, .name-form :is(input, select) { height: 34px; padding: 0 8px; }
 .panel input.mono { font-family: var(--mono); font-size: 13px; }
 .panel textarea, .rule-editor textarea { padding: 6px 8px; resize: vertical; }
 .rule-editor textarea { font-family: var(--mono); font-size: 13px; }
-.panel :is(input, select, textarea):focus-visible, .name-form input:focus-visible, .rule-editor textarea:focus-visible {
+.panel :is(input, select, textarea):focus-visible, .name-form :is(input, select):focus-visible, .rule-editor textarea:focus-visible {
   border-color: var(--accent);
 }
 .panel .add { margin-top: 8px; }
@@ -1584,3 +1584,17 @@ a.home-project:hover { color: var(--accent); }
 .file-versions .version[aria-current="true"] { background: var(--accent-soft); }
 .file-past { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .restore-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Links to catalogues of other projects */
+.linked-section { margin-top: 16px; flex: none; }
+.linked-section .eyebrow { margin: 0 0 8px; }
+.catalogue.linked .link-mark { color: var(--muted); flex: none; }
+.catalogue.linked .label { display: flex; flex-direction: column; min-width: 0; }
+.catalogue.linked .from { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.catalogue.linked.gone .link-name { color: var(--muted); text-decoration: line-through; }
+.linked-from { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+.link-gone { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-width: 46em; }
+.link-gone p { margin: 0; }
+.link-picker .quiet { padding: 0; }
+.sidebar:has(.linked-section) .catalogue-list { flex: none; }
+.sidebar:has(.linked-section):not(:has(.files-section)) .linked-section { flex: 1; }
