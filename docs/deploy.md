@@ -135,9 +135,10 @@ The admin pages cut them off at once.
 
 ## Catalogue providers
 
-The server can keep public catalogues in step with lists published elsewhere. Three
+The server can keep public catalogues in step with lists published elsewhere. Six
 providers are built in: DONKI (NASA CCMC's space weather database), CDAW (the SOHO/LASCO CME
-catalogue and the Wind/STEREO WAVES type II bursts) and AMDA. Each is off until an
+catalogue and the Wind/STEREO WAVES type II bursts), AMDA, HELIO4CAST ICMECAT, the STIX flare
+list and CACTus. Each is off until an
 administrator turns it on, in the admin page under "Catalogue providers", where each one has
 its schedule (a cron line in UTC, or its default), its settings, its last run and "Refresh
 now". The provider is the source of truth: nobody, curators included, edits a catalogue it
@@ -150,6 +151,13 @@ follows.
   Daily at 03:30 UTC by default.
 - **CDAW** needs nothing; weekly, Monday 05:30 UTC (the LASCO list is updated weekly).
 - **AMDA**: below.
+- **HELIO4CAST ICMECAT** needs nothing: one catalogue per spacecraft, weekly. Its authors ask
+  to be contacted about co-authorship when results go into a peer-reviewed paper; the
+  catalogues' descriptions say so.
+- **STIX** (Solar Orbiter flare list, FHNW data center) needs nothing: the first run reads
+  every flare since 2020 in 30-day requests, later runs the last 90 days; daily.
+- **CACTus** (SIDC) needs nothing: the level-zero list (ends 2015) and the quick-look list
+  (recent), both fully automatic detections; weekly.
 
 Providers fetch through OpenSSL with the User-Agent `cocat-relay/<version>` (CDAW's firewall
 refuses rustls clients and User-Agents holding an address), follow redirects on the same host

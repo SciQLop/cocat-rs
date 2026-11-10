@@ -350,7 +350,7 @@ presence in either direction. A reader's history names each author "a curator" o
 ### Relayed catalogues
 
 Some public catalogues follow a provider built into the server (`crates/cocat-server/src/relay/`:
-DONKI, CDAW, AMDA). A run fetches the provider's lists and makes each public catalogue
+DONKI, CDAW, AMDA, ICMECAT, STIX, CACTus). A run fetches the provider's lists and makes each public catalogue
 hold exactly them (`cocat_core::model::hold`): new events added, changed ones rewritten,
 removed ones trashed, one history version per changed catalogue, authored by the source.
 Ids are `public.<provider>.<key>`; curators cannot create keys under a provider's prefix.
