@@ -1601,3 +1601,13 @@ a.home-project:hover { color: var(--accent); }
 
 /* The hidden attribute wins over a display set by a class, like .button. */
 [hidden] { display: none !important; }
+
+/* Uploading a SciQLop workspace's files */
+.files-section .sidebar-head { margin-bottom: 8px; }
+.files-section .sidebar-head .eyebrow { margin: 0; }
+.upload-status { padding: 8px 8px 0; font-size: 13px; }
+.upload-report { margin: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+.upload-report p { margin: 0; }
+.upload-report ul { margin: 0; padding-left: 16px; color: var(--muted); overflow-wrap: anywhere; }
+.upload-report .button { align-self: flex-start; }

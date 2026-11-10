@@ -185,6 +185,7 @@ mod tests {
             user_email: "alice@example.org".into(),
             admin: true,
             files: false,
+            file_max: None,
         }
     }
 
@@ -335,6 +336,7 @@ mod tests {
                 user_email: "alice@example.org".into(),
                 admin: true,
                 files: false,
+                file_max: None,
             }
         );
     }

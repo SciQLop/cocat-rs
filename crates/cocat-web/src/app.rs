@@ -21,6 +21,7 @@ use crate::views::projects::set_title;
 use crate::views::public::{PublicSidebar, PublicSpace};
 use crate::views::sidebar::Sidebar;
 use crate::views::transfer::{ImportDialog, Importer, drop_on};
+use crate::views::upload::Uploads;
 use cocat_core::model;
 
 pub fn start() {
@@ -95,12 +96,14 @@ fn App(config: RoomConfig) -> impl IntoView {
     let public = cocat_core::room_id::is_public_id(&config.room_id);
     let current = public.then(|| config.room_id.clone());
     let config_has_files = config.files;
-    let with_files = config.files.then(|| config.clone());
+    let loader_config = config.clone();
     let room = Room::new(config);
     provide_context(room.clone());
     Lookups::provide(&room);
     let files: ProjectFiles = RwSignal::new(FilesState::initial(config_has_files));
     provide_context(files);
+    // An upload into a project without files makes its file list; the page syncs it then.
+    let files_on = Uploads::provide(config_has_files).files_on;
     let connection = match connection::connect(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => return failure(format!("The project cannot sync: {error}")).into_any(),
@@ -150,7 +153,7 @@ fn App(config: RoomConfig) -> impl IntoView {
         }
     });
     view! {
-        {with_files.map(|config| view! { <FilesLoader config state=files/> })}
+        {move || files_on.get().then(|| view! { <FilesLoader config=loader_config.clone() state=files/> })}
         <Header shown/>
         <NoticeBar/>
         {move || importer.is_open().then(|| view! { <ImportDialog/> })}

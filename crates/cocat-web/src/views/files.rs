@@ -56,9 +56,21 @@ pub type ProjectFiles = RwSignal<FilesState>;
 #[derive(Clone)]
 pub struct Files {
     files: Memo<Vec<Entry>>,
+    patterns: Memo<Option<String>>,
     socket: String,
     blobs: Blobs,
     manifest: String,
+}
+
+impl Files {
+    /// The manifest's id, its entries and its sharing rules now, for an upload.
+    pub fn upload_target(&self) -> (String, Vec<Entry>, Option<String>) {
+        (
+            self.manifest.clone(),
+            self.files.get_untracked(),
+            self.patterns.get_untracked(),
+        )
+    }
 }
 
 /// Finds the project's file list and keeps it synced while the page shows the project.
@@ -123,9 +135,12 @@ fn ManifestSync(config: RoomConfig, manifest: String, state: ProjectFiles) {
         connection.try_with_value(|connection| connection.close());
         state.try_set(FilesState::Loading);
     });
-    let files = Memo::new(move |_| room.read(|txn| manifest_files(txn)));
+    let reader = room.clone();
+    let files = Memo::new(move |_| reader.read(|txn| manifest_files(txn)));
+    let patterns = Memo::new(move |_| room.read(|txn| cocat_core::files::patterns(txn)));
     state.set(FilesState::Ready(Files {
         files,
+        patterns,
         socket,
         blobs,
         manifest,
@@ -139,11 +154,20 @@ pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
         Route::File(path) => Some(path),
         _ => None,
     });
+    let room = expect_context::<Room>();
+    let editor = room.can_write();
+    let (over, drop) = crate::views::upload::drop_files((*room.config).clone(), state);
     move || {
+        let (over, drop) = (over.clone(), drop.clone());
         match state.get() {
         FilesState::Ready(project) => Some(view! {
-            <section class="files-section" aria-label="Files">
-                <h2 class="eyebrow">"Files"</h2>
+            <section class="files-section" aria-label="Files"
+                on:dragover=move |event| if editor { over(event) }
+                on:drop=move |event| if editor { drop(event) }>
+                <div class="sidebar-head">
+                    <h2 class="eyebrow">"Files"</h2>
+                    {editor.then(|| view! { <UploadMenu/> })}
+                </div>
                 {move || {
                     let listed = project.files.get();
                     if listed.is_empty() {
@@ -161,6 +185,32 @@ pub fn FilesSection(state: ProjectFiles, shown: Memo<Route>) -> impl IntoView {
         }.into_any()),
         FilesState::Loading | FilesState::None => None,
     }
+    }
+}
+
+/// The Files section's "+": upload files, or a whole folder.
+#[component]
+fn UploadMenu() -> impl IntoView {
+    let uploads = expect_context::<crate::views::upload::Uploads>();
+    let menu = NodeRef::<leptos::html::Details>::new();
+    let pick = move |folder: bool| {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+        uploads.pick(folder);
+    };
+    view! {
+        <details class="menu-button add-menu" data-menu node_ref=menu>
+            <summary class="icon add-catalogue" aria-label="Upload files">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            </summary>
+            <div class="menu">
+                <button type="button" on:click=move |_| pick(false)>"Upload files…"</button>
+                <button type="button" on:click=move |_| pick(true)>"Upload a folder…"</button>
+                <p class="menu-hint">"Or drop files here. Notebooks and text files stay editable together in SciQLop."</p>
+            </div>
+        </details>
     }
 }
 

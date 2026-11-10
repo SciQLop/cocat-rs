@@ -21,6 +21,8 @@ pub struct RoomConfig {
     pub admin: bool,
     /// The project holds a SciQLop workspace's files besides its catalogues.
     pub files: bool,
+    /// The largest whole file the project takes, in bytes, when the server says.
+    pub file_max: Option<u64>,
 }
 
 #[derive(Debug, Error)]
@@ -50,6 +52,7 @@ impl RoomConfig {
             user_email: tag("cocat-user")?,
             admin: meta("cocat-admin").is_some_and(|value| value == "true"),
             files: meta("cocat-files").is_some_and(|value| value == "true"),
+            file_max: meta("cocat-file-max").and_then(|value| value.parse().ok()),
         })
     }
 }
@@ -127,6 +130,7 @@ mod tests {
                 user_email: "alice@example.org".into(),
                 admin: false,
                 files: false,
+                file_max: None,
             }
         );
     }
@@ -136,6 +140,14 @@ mod tests {
         let mut meta = full("/room/lab");
         meta.insert("cocat-admin".into(), "true".into());
         assert!(read(&meta, BASE).unwrap().admin);
+    }
+
+    #[test]
+    fn the_page_names_the_largest_file_it_takes() {
+        let mut meta = full("/room/lab");
+        assert_eq!(read(&meta, BASE).unwrap().file_max, None);
+        meta.insert("cocat-file-max".into(), "20971520".into());
+        assert_eq!(read(&meta, BASE).unwrap().file_max, Some(20_971_520));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 <meta name="cocat-ws" content="{{ socket }}">
 <meta name="cocat-api" content="{{ api }}">
 <meta name="cocat-user" content="{{ email }}">
+<meta name="cocat-file-max" content="{{ file_max }}">
 {% if admin %}<meta name="cocat-admin" content="true">
 {% endif %}{% if files %}<meta name="cocat-files" content="true">
 {% endif %}{% match flash %}{% when Some with (text) %}<meta name="cocat-flash" content="{{ text }}">

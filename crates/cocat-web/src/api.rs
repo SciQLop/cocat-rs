@@ -225,6 +225,13 @@ pub async fn post(api: &str, segments: &[&str], body: Value) -> Result<(), ApiEr
     write(Request::post, api, segments, body).await
 }
 
+/// A PUT of raw bytes, like a whole file.
+pub async fn put_bytes(api: &str, segments: &[&str], bytes: &[u8]) -> Result<(), ApiError> {
+    let body = js_sys::Uint8Array::from(bytes);
+    let request = Request::put(&at(api, segments)?).body(body)?;
+    checked(request.send().await?).await.map(|_| ())
+}
+
 /// A POST that makes something, and what it made.
 pub async fn create<T: DeserializeOwned>(
     api: &str,

@@ -184,6 +184,33 @@ async fn the_app_page_says_when_a_project_has_files() {
 }
 
 #[tokio::test]
+async fn the_app_page_names_the_largest_file_a_project_takes() {
+    let mut fixture = Fixture::start().await;
+    fixture.state.web_dir = Some(bundle(&fixture));
+    let owner = db::create_user(&fixture.state.pool, "owner@example.org", "p", true, false)
+        .await
+        .unwrap();
+    let lab = lifecycle::create_room(&fixture.state, owner, "Lab")
+        .await
+        .unwrap()
+        .id;
+    let token = fixture.token(owner).await;
+
+    let body = body_text(
+        fixture
+            .get(&format!("/ui/rooms/{lab}/browse"), Some(&token))
+            .await,
+    )
+    .await;
+
+    let cap = fixture.state.rooms.limits().file;
+    assert!(
+        body.contains(&format!(r#"<meta name="cocat-file-max" content="{cap}">"#)),
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn behind_a_proxy_the_socket_url_is_public_and_secure() {
     let mut fixture = Fixture::start().await;
     fixture.state.web_dir = Some(bundle(&fixture));

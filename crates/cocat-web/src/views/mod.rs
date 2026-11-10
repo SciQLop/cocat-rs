@@ -29,3 +29,4 @@ pub mod table;
 pub mod timeline;
 pub mod transfer;
 pub mod trash;
+pub mod upload;

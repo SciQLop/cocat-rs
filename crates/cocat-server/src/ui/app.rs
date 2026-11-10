@@ -31,6 +31,8 @@ struct Head<'a> {
     email: &'a str,
     admin: bool,
     files: bool,
+    /// The largest whole file the project takes, in bytes.
+    file_max: u64,
     flash: Option<String>,
     share_link: Option<String>,
 }
@@ -78,6 +80,7 @@ pub(crate) async fn browse(
         email: &user.email,
         admin: user.is_superuser,
         files,
+        file_max: state.rooms.limits().file,
         flash,
         share_link,
     };

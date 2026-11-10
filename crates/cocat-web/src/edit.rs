@@ -446,6 +446,7 @@ mod tests {
             user_email: "ann@example.org".into(),
             admin: false,
             files: false,
+            file_max: None,
         }
     }
 
