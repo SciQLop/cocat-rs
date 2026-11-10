@@ -137,3 +137,41 @@ Fetch: `GET https://amda.irap.omp.eu/php/rest/getCatalogsList.php` and `getTimeT
 ### Task 8: Docs (controller)
 
 - [ ] Help (Public catalogues): relayed catalogues, their sources, why they cannot be edited, copying them. README: providers, admin section, settings, schedule, User-Agent. docs/deploy.md: turning providers on, DONKI key. Help test first; gate; commit.
+
+---
+
+## Second wave of providers (user, 2026-11-10: "go ahead" with ICMECAT, STIX, CACTus)
+
+Same Global Constraints. Each provider: one module in `crates/cocat-server/src/relay/`, pure
+parsing from saved samples (fixtures cut once from the real source; tests never touch the
+network), a thin fetch layer through `relay::http_client` and `relay::fetch_error`, columns in
+the source's own order, uuid5 with a fixed namespace per provider, registered in
+`providers()`, off by default. Before writing, the implementer finds the current
+machine-readable address of the source and records it in the module doc.
+
+### Task 9: ICMECAT (HELIO4CAST)
+
+Source: the HELIO4CAST ICME catalogue (Möstl et al.), current version, CSV or JSON from
+helioforecast.space/icmecat (figshare holds older versions). One catalogue per spacecraft
+(`ICMECAT/<spacecraft>`, e.g. "ICMECAT/Solar Orbiter") or one catalogue for all with a
+`spacecraft` attribute — implementer's call, say which (prefer per spacecraft: people
+compare by observer). Event = ICME start to MO end (the catalogue's own fields), key = the
+catalogue's `icmecat_id`; attributes: the catalogue's parameters with units in the names.
+Source name "HELIO4CAST ICMECAT"; description says the authors ask to be contacted about
+co-authorship when results go into a peer-reviewed paper. Weekly.
+
+### Task 10: STIX flare list (Solar Orbiter)
+
+Source: the STIX data center (datacenter.stix.i4ds.net) flare list through its JSON API (find
+the endpoint stixdcpy uses). One catalogue "STIX flares" in folder `Solar Orbiter`; key = the
+data center's flare id; start/peak/end, peak counts, GOES class estimate, location if given.
+Rolling window like DONKI (full history on a list's first refresh, then the last 90 days,
+per-list last refresh). Daily.
+
+### Task 11: CACTus CME catalogue (SIDC)
+
+Source: `https://www.sidc.be/cactus/catalog/LASCO/2_5_0/cme_lz.txt` (lz = level zero, the
+reference data set; qkl is quick-look) — check the current path. One catalogue "CACTus
+LASCO CMEs" in folder `SIDC`; key = CACTus CME number + start; attributes as the file's
+header names them. Description says the list is fully automatic, without human review.
+Weekly.
