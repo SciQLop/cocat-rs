@@ -1,4 +1,4 @@
-"""Build ynotebook.bin and ynotebook.json: a notebook as jupyter_ydoc (what JupyterLab and
+"""Build ynotebook.bin/.json and ynotebook_bare.bin/.json (empty metadata, no nbformat keys: the defaults): a notebook as jupyter_ydoc (what JupyterLab and
 SciQLop use) writes it, with the notebook it was made from.
 
 The Rust writer is checked against this: both documents must have the same Y types and values.
@@ -81,11 +81,22 @@ NOTEBOOK = {
 }
 
 
-def main(out: Path) -> None:
+BARE = {
+    "metadata": {},
+    "cells": [{"id": "a", "cell_type": "markdown", "metadata": {}, "source": "x"}],
+}
+
+
+def write(out: Path, name: str, value: dict) -> None:
     notebook = YNotebook()
-    notebook.set(NOTEBOOK)
-    (out / "ynotebook.bin").write_bytes(notebook.ydoc.get_update())
-    (out / "ynotebook.json").write_text(json.dumps(NOTEBOOK, indent=2) + "\n")
+    notebook.set(value)
+    (out / f"{name}.bin").write_bytes(notebook.ydoc.get_update())
+    (out / f"{name}.json").write_text(json.dumps(value, indent=2) + "\n")
+
+
+def main(out: Path) -> None:
+    write(out, "ynotebook", NOTEBOOK)
+    write(out, "ynotebook_bare", BARE)
 
 
 if __name__ == "__main__":

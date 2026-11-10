@@ -15,6 +15,8 @@ use yrs::{Array, Doc, GetString, Map, ReadTxn, Transact, Update};
 
 const FIXTURE: &[u8] = include_bytes!("fixtures/ynotebook.bin");
 const FIXTURE_JSON: &str = include_str!("fixtures/ynotebook.json");
+const BARE: &[u8] = include_bytes!("fixtures/ynotebook_bare.bin");
+const BARE_JSON: &str = include_str!("fixtures/ynotebook_bare.json");
 
 /// The wire may hold a whole number as an integer or a float; Yjs reads both as one number.
 fn floats(value: Value) -> Value {
@@ -87,19 +89,31 @@ fn written(notebook: &Value) -> Doc {
     doc
 }
 
-#[test]
-fn a_notebook_is_written_as_jupyterlab_writes_it() {
+fn assert_written_as_jupyterlab(update: &[u8], notebook: &str, cells: usize) {
     let jupyterlab = Doc::new();
     jupyterlab
         .transact_mut()
-        .apply_update(Update::decode_v1(FIXTURE).unwrap())
+        .apply_update(Update::decode_v1(update).unwrap())
         .unwrap();
-    let ours = written(&fixture_notebook());
+    let ours = written(&serde_json::from_str(notebook).unwrap());
     let (expected, actual) = (roots(&jupyterlab), roots(&ours));
-    assert_eq!(expected["cells"]["array"].as_array().map(Vec::len), Some(5));
+    assert_eq!(
+        expected["cells"]["array"].as_array().map(Vec::len),
+        Some(cells)
+    );
     for (name, root) in &expected {
         assert_eq!(&actual[name], root, "root {name}");
     }
+}
+
+#[test]
+fn a_notebook_is_written_as_jupyterlab_writes_it() {
+    assert_written_as_jupyterlab(FIXTURE, FIXTURE_JSON, 5);
+}
+
+#[test]
+fn the_defaults_of_a_bare_notebook_are_jupyterlabs() {
+    assert_written_as_jupyterlab(BARE, BARE_JSON, 1);
 }
 
 #[test]
@@ -249,6 +263,19 @@ fn the_default_rules_leave_out_caches_and_data() {
     for kept in ["analysis.ipynb", "src/main.py", "figs/a.png", "README.md"] {
         assert!(!rules.leaves_out(kept), "{kept}");
     }
+}
+
+#[test]
+fn a_leading_slash_does_not_matter() {
+    let rules = Rules::new(DEFAULT_PATTERNS);
+    assert!(rules.leaves_out("/data/a.cdf"));
+    assert!(!rules.leaves_out("/a.py"));
+}
+
+#[test]
+fn a_file_left_out_and_too_big_is_left_out_by_the_rules() {
+    let rules = Rules::new("*.cdf");
+    assert_eq!(plan("a.cdf", 99, &rules, 10), Plan::Skip(Skip::Rules));
 }
 
 #[test]

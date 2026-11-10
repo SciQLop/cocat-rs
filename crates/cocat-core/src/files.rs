@@ -35,7 +35,7 @@ impl FileKind {
 pub enum FileError {
     #[error("not a notebook: it has no list of cells")]
     NoCells,
-    #[error("cell {0} is not a notebook cell")]
+    #[error("cell {0} is not a notebook cell, or one of its outputs is malformed")]
     BadCell(usize),
 }
 
@@ -305,7 +305,10 @@ impl Rules {
 
     /// Whether `path` is left out, itself or through a folder it is in.
     pub fn leaves_out(&self, path: &str) -> bool {
-        self.0.matched_path_or_any_parents(path, false).is_ignore()
+        let relative = path.trim_start_matches('/');
+        self.0
+            .matched_path_or_any_parents(relative, false)
+            .is_ignore()
     }
 }
 
