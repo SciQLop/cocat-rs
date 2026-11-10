@@ -62,7 +62,7 @@ values, and which mistakes stop the server at startup. The ones an operator sets
 | Secret | `COCAT_SECRET` | signs mailed links and the provider sign-in cookie. Unset, the server keeps one in `/db/cocat-rs.db.secret`: back it up with the database. |
 | Mail | `COCAT_SMTP_HOST`, `COCAT_SMTP_PORT`, `COCAT_SMTP_STARTTLS`, `COCAT_SMTP_USERNAME`, `COCAT_SMTP_PASSWORD`, `COCAT_MAIL_FROM`, `COCAT_MAIL_DIR` | see [Mail](#mail) |
 | Web app | `COCAT_WEB_DIR` | the catalogue web app's bundle; the image sets it to `/usr/share/cocat/web` |
-| Quotas | `COCAT_ROOM_MEMORY_BUDGET`, `COCAT_ROOM_MAX_MB`, `COCAT_OWNER_MAX_MB` | memory ceiling for open projects; largest project file; total per owner |
+| Quotas | `COCAT_ROOM_MEMORY_BUDGET`, `COCAT_ROOM_MAX_MB`, `COCAT_OWNER_MAX_MB`, `COCAT_FILE_MAX_MB` | memory ceiling for open projects; largest project file; total per owner; largest whole file in a workspace (20 by default, counted in the owner's total) |
 | Metrics | `COCAT_METRICS_BIND`, `COCAT_METRICS_TOKEN` | see [Metrics](#metrics) |
 | Sign-in providers | `COCAT_OAUTH_PROVIDERS` | OpenID Connect providers such as ORCID; see the README's [Provider sign-in](../README.md#provider-sign-in) |
 

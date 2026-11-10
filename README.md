@@ -84,6 +84,7 @@ gracefully on SIGINT or SIGTERM, after flushing every open project. Project file
 | `COCAT_ROOM_MEMORY_BUDGET` | Ceiling in **megabytes** for loaded projects. Unset or empty means no limit; a value that is not a positive integer stops the server at startup and names the variable. A project is charged sixteen times its `.y` file size (a measured 37.8 MB project is ~566 MB resident), so the budget estimates the memory a run can reach rather than measuring it. An open that would exceed the budget is refused; the project stays on disk. |
 | `COCAT_ROOM_MAX_MB` | Largest `.y` file one project may reach, 1024 by default. Unset or empty means the default; a value that is not a positive integer stops the server at startup and names the variable. An update that would take the file past the limit is refused: nothing is applied, appended or broadcast, and its sender is closed with 4507 while the other clients stay. |
 | `COCAT_OWNER_MAX_MB` | Total `.y` bytes the projects one account owns may reach, 5120 by default, measured when a project opens. Editors' writes count against the owner. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
+| `COCAT_FILE_MAX_MB` | Largest whole file a workspace accepts, 20 by default; it counts toward the owner's `COCAT_OWNER_MAX_MB`. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
 | `COCAT_METRICS_BIND` | Address for the Prometheus endpoint, such as `127.0.0.1:9187`. Unset or empty exports nothing; a value that is not an address stops the server at startup and names the variable. The endpoint is a separate listener, never the public port. |
 | `COCAT_METRICS_TOKEN` | Bearer token for the metrics endpoint. Unset or empty leaves `/metrics` open; anything shorter than 16 characters stops the server at startup and names the variable. The token is never logged and never appears in a label. |
 | `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
@@ -249,6 +250,49 @@ Nobody can demote or remove the owner, or grant the owner role.
 Removing someone from a project directly does **not** remove group access: while a group they
 belong to still holds a grant, they keep the project at the group's role. Remove them from the
 group, or unshare the project, to cut access.
+
+## Workspaces
+
+A project is either a catalogues project (the default) or a workspace. Create one with
+`POST /api/rooms {"name": "...", "kind": "workspace"}`; every project in the JSON carries its
+`kind`. A catalogues project works as before: `/room/{project}` is its one document. A
+personal project is always a catalogues project.
+
+A workspace holds several documents. It starts with one, the manifest, a map of the
+project's files: for each path, its kind (`notebook`, `text` or `file`), the document or
+SHA-256 it points to, the size, who changed it and when. The server only stores these
+documents and never reads their content, except to show history and to restore.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/rooms/{id}/documents` | any member | the documents of a workspace |
+| `POST /api/rooms/{id}/documents` | owner, editors | add one, `{"kind": "notebook"\|"text"}`; answers 201 `{id, kind}`. A workspace has one manifest already: asking for another is 400. A catalogues project holds no documents: 409 |
+| `/room/{project}/{doc}` (websocket) | members | sync one document, with the same `cocat.v2` subprotocol and sign-in as `/room/{project}`. A workspace has no bare `/room/{project}` socket |
+| `PUT /api/rooms/{id}/blobs/{sha256}` | owner, editors | store a whole file under its SHA-256 (64 lowercase hex characters; 400 when the bytes do not hash to it). 201 when new, 200 when already there |
+| `GET /api/rooms/{id}/blobs/{sha256}` | any member | read it back |
+
+**Files.** A file is capped by `COCAT_FILE_MAX_MB` (20 by default; 413 above it). It counts toward
+the owner's `COCAT_OWNER_MAX_MB`, so the owner pays for what editors upload, and an upload that
+does not fit is 413. Viewers read and never write: their uploads are refused and their socket
+updates dropped.
+
+**Presence.** On a workspace document the server relays every awareness field (cursor,
+selection, colour) except `user`, which it sets to the signed-in account, so nobody can
+pose as someone else. A message is capped at 16 KB. Public projects relay nothing.
+
+**History.** The history routes take `?document=<id>` to list or read one document. A restore
+takes `{"document": "<id>"}`, and for the manifest also `{"path": "..."}` to bring back one
+entry. A request that names a catalogue and a document together, or a path on a document
+that is not the manifest, is 422. The `changes` view is for catalogues only (409 on a workspace).
+
+**Deleting.** Deleting a project deletes all its documents and files. Removing a member closes
+their sockets on every document (4403).
+
+**Not yet.**
+- History is per document. There is no single timeline across the whole project.
+- Nothing sweeps files no manifest entry points to, or documents the manifest dropped. They stay until the
+  project is deleted.
+- Two restores at the same moment that both bring back the same deleted cell insert it twice.
 
 ## Public catalogues
 
