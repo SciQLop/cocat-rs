@@ -145,14 +145,16 @@ follows.
 
 - **DONKI** needs a NASA API key (free, at once, from https://api.nasa.gov): set `api_key`
   in its settings. The demo key allows about ten requests an hour, and the first run reads
-  every type from 2010 in yearly windows (136 requests); later runs read the last 90 days.
+  every type from 2010 in yearly windows (136 requests); later runs read the last 90 days,
+  except for a type whose catalogue is new or was deleted, which is read whole again.
   Daily at 03:30 UTC by default.
 - **CDAW** needs nothing; weekly, Monday 05:30 UTC (the LASCO list is updated weekly).
 - **AMDA**: below.
 
 Providers fetch through OpenSSL with the User-Agent `cocat-relay/<version>` (CDAW's firewall
 refuses rustls clients and User-Agents holding an address), follow redirects on the same host
-only, and never write a list they could not read.
+only, and never write a list they could not read. A list that comes back empty never
+empties a catalogue holding events: the run reports it unreadable and leaves it as it is.
 
 ## Public catalogues from AMDA
 
