@@ -490,7 +490,7 @@ impl Catalogue {
             catalogue: self.uuid.clone(),
             catalogue_name: name,
             version: None,
-            at: (at.unix_micros() / 1000) as i64,
+            at: at.unix_millis(),
             by: identity.email.clone(),
         }
     }
@@ -684,14 +684,10 @@ impl Catalogue {
             dict.set_item("catalogue", &hop.catalogue)?;
             dict.set_item("catalogue_name", &hop.catalogue_name)?;
             dict.set_item("version", hop.version)?;
-            dict.set_item(
-                "at",
-                to_python_datetime(
-                    py,
-                    Timestamp::from_unix_micros(i128::from(hop.at) * 1000)
-                        .ok_or_else(|| value_error("bad time"))?,
-                )?,
-            )?;
+            let at = Timestamp::from_unix_millis(hop.at)
+                .map(|at| to_python_datetime(py, at))
+                .transpose()?;
+            dict.set_item("at", at)?;
             dict.set_item("by", hop.by.as_deref())?;
             Ok::<_, PyErr>(dict)
         });

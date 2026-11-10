@@ -23,6 +23,16 @@ pub fn catalogues<T: ReadTxn>(txn: &T) -> Vec<CatalogueSummary> {
     catalogues
 }
 
+/// Every catalogue the room holds, the trash included, sorted by uuid.
+pub fn all_catalogues<T: ReadTxn>(txn: &T) -> Vec<CatalogueSummary> {
+    let mut catalogues: Vec<CatalogueSummary> = entries(txn, CATALOGUES)
+        .into_iter()
+        .map(|(uuid, map)| summary(txn, &uuid, &map))
+        .collect();
+    catalogues.sort_by(|left, right| left.uuid.cmp(&right.uuid));
+    catalogues
+}
+
 /// The catalogues not in the trash as `(uuid, name)`: how a search names them.
 pub fn catalogue_names<T: ReadTxn>(txn: &T) -> Vec<(String, String)> {
     catalogues(txn)

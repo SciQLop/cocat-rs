@@ -1209,3 +1209,84 @@ async fn accepting_an_update_does_not_replace_the_public_chain_with_the_copys() 
 
     assert_eq!(world.chain(&public, "pub").await, [origin]);
 }
+
+fn hop_by(project: &str, by: Option<&str>) -> Hop {
+    Hop {
+        project: project.to_owned(),
+        project_name: project.to_owned(),
+        catalogue: "pub".to_owned(),
+        catalogue_name: "pub name".to_owned(),
+        version: None,
+        at: 1_700_000_000_000,
+        by: by.map(str::to_owned),
+    }
+}
+
+impl World {
+    async fn submit_copy_of_copy(&self) -> i64 {
+        let public = self.public().await;
+        self.copy(self.author, &public, Some(&self.project)).await;
+        let carols = vec![hop_by("p1", Some("carol@example.org"))];
+        self.edit(&self.project, self.author, move |txn| {
+            model::set_copied_from(txn, "pub", &carols);
+        })
+        .await;
+        let (_, made) = self
+            .submit(json!({"room": self.project, "catalogue": "pub", "title": "Again"}))
+            .await;
+        made["id"].as_i64().unwrap()
+    }
+
+    async fn accept(&self, id: i64) -> String {
+        let (status, decided) = self.review(self.curator, id, json!({"accept": true})).await;
+        assert_eq!(status, StatusCode::OK, "{decided}");
+        let (_, detail) = self.detail(self.author, id).await;
+        detail["target"].as_str().unwrap().to_owned()
+    }
+}
+
+#[tokio::test]
+async fn a_public_chain_names_only_the_submitting_author() {
+    let world = World::start().await;
+    let id = world.submit_copy_of_copy().await;
+
+    let public = world.accept(id).await;
+
+    let chain = world.chain(&public, "pub").await;
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].project, "p1");
+    assert_eq!(chain[0].by, None, "a copier's email stays private");
+    assert_eq!(chain[1].by.as_deref(), Some("author@example.org"));
+}
+
+#[tokio::test]
+async fn the_author_hop_is_taken_when_submitting_not_when_accepting() {
+    let world = World::start().await;
+    let id = world.submit_copy_of_copy().await;
+    lifecycle::rename_room(&world.state, &world.project, world.author, "Renamed")
+        .await
+        .unwrap();
+
+    let public = world.accept(id).await;
+
+    let chain = world.chain(&public, "pub").await;
+    assert_eq!(chain.last().unwrap().project_name, "Lab");
+}
+
+#[tokio::test]
+async fn the_author_hop_survives_deleting_the_authors_project_before_acceptance() {
+    let world = World::start().await;
+    let id = world.submit_copy_of_copy().await;
+    lifecycle::delete_room(&world.state, &world.project, world.author)
+        .await
+        .unwrap();
+
+    let public = world.accept(id).await;
+
+    let chain = world.chain(&public, "pub").await;
+    let last = chain.last().unwrap();
+    assert_eq!(
+        (last.project.as_str(), last.project_name.as_str()),
+        (world.project.as_str(), "Lab")
+    );
+}

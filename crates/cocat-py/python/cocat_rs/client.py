@@ -145,7 +145,8 @@ class Client:
 
         Its copy is kept in `cache`, by default in this account's folder of the user cache.
         """
-        project_id = self._project_id(project_id)
+        projects = self.projects()
+        project_id = self._project_id(projects, project_id)
         project = Project.open(str(cache or self._cache_folder()), project_id)
         project._opened_with(self, project_id)
         project.connect(self.server, self._require_session(), self._credentials)
@@ -166,14 +167,16 @@ class Client:
                 f"You cannot open {project_id!r} on {self.server}: "
                 "it does not exist or you are not a member."
             ) from None
-        self._name_copies(project, project_id)
+        self._name_copies(project, project_id, projects)
         return project
 
-    def _name_copies(self, project: "Project", project_id: str) -> None:
+    def _name_copies(
+        self, project: "Project", project_id: str, projects: list[ProjectInfo]
+    ) -> None:
         """Lets the project's copies name it and their author. Without the answer, they
         name the project by its id and no author: opening must not fail on it."""
         try:
-            name = next((info.name for info in self.projects() if info.id == project_id), None)
+            name = next((info.name for info in projects if info.id == project_id), None)
             email = self.account()["email"]
         except (Unauthorized, Forbidden, RuntimeError, OSError, KeyError, ValueError):
             return
@@ -367,9 +370,8 @@ class Client:
             / self.account_id()
         )
 
-    def _project_id(self, wanted: str | None) -> str:
-        """The id of the project with this id or name; `None` is your own project."""
-        projects = self.projects()
+    def _project_id(self, projects: list[ProjectInfo], wanted: str | None) -> str:
+        """The id, among `projects`, of the one with this id or name; `None` is your own."""
         if wanted is None:
             own = [project.id for project in projects if project.personal]
             if not own:

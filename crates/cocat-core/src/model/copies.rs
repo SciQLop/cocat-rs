@@ -56,18 +56,17 @@ pub fn copy_chain<T: ReadTxn>(txn: &T, source: &str, hop: Hop) -> Vec<Hop> {
     chain
 }
 
-/// Sets the chain of `catalogue`, or removes it when empty. Returns false when the room
+/// Sets the chain of `catalogue`, or removes it when empty; nothing happens when the room
 /// holds no such catalogue.
-pub fn set_copied_from(txn: &mut TransactionMut<'_>, catalogue: &str, chain: &[Hop]) -> bool {
+pub fn set_copied_from(txn: &mut TransactionMut<'_>, catalogue: &str, chain: &[Hop]) {
     let Some(object) = object(txn, CATALOGUES, catalogue) else {
-        return false;
+        return;
     };
     if chain.is_empty() {
         object.remove(txn, KEY);
     } else {
         object.insert(txn, KEY, ArrayPrelim::from_iter(chain.iter().map(hop_map)));
     }
-    true
 }
 
 fn hop_map(hop: &Hop) -> MapPrelim {

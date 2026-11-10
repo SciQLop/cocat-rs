@@ -17,7 +17,7 @@ use yrs::{Doc, Transact};
 
 use crate::AppState;
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
-use crate::copy_chain::{Source, record_copy};
+use crate::copy_chain::{Source, keep_only_last_author, record_copy};
 use crate::db::{self, PublicRoom};
 use crate::history::diff::{Diff, before_and_after, diff, replay_until};
 use crate::history::versions::{apply, newest};
@@ -263,7 +263,14 @@ async fn submit(
     JsonBody(body): JsonBody<NewBody>,
 ) -> Result<(StatusCode, Json<SubmissionOut>), ApiError> {
     lifecycle::require_role(&state, &body.room, user.id, Role::Editor).await?;
-    let (name, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id).await?;
+    let (name, snapshot) = snapshot_of(
+        &state,
+        &body.room,
+        &body.catalogue,
+        user.id,
+        Some(&user.email),
+    )
+    .await?;
     let title = title(body.title.unwrap_or(name))?;
     let folder = folder_or_source(body.folder)?;
     let description = description(body.description)?;
@@ -313,7 +320,7 @@ async fn submit_update(
         .find(|proposal| proposal.catalogue == body.catalogue)
         .ok_or_else(|| ApiError::NotFound(NOT_A_COPY.to_owned()))?;
     let note = note(body.note)?;
-    let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id).await?;
+    let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id, None).await?;
     let new = NewSubmission {
         author: user.id,
         room: &body.room,
@@ -547,11 +554,14 @@ async fn stored(state: &AppState, id: i64, curator: bool) -> Result<SubmissionOu
 }
 
 /// The catalogue's name and the catalogue alone as one update, once `author` may store it.
+/// A new submission passes the email of `copier`, and its snapshot then records the copy out
+/// of the project as it is now; an update does not, as accepting it keeps the target's chain.
 async fn snapshot_of(
     state: &AppState,
     room_id: &str,
     catalogue: &str,
     author: Uuid,
+    copier: Option<&str>,
 ) -> Result<(String, Vec<u8>), ApiError> {
     if submissions::pending(&state.pool, author).await? >= MAX_PENDING {
         return Err(ApiError::Conflict(TOO_MANY_PENDING.to_owned()));
@@ -562,6 +572,10 @@ async fn snapshot_of(
         .read(room_id, move |doc| extracted(doc, &uuid))
         .await?
         .ok_or_else(|| ApiError::NotFound(NO_SUCH_CATALOGUE.to_owned()))?;
+    let snapshot = match copier {
+        Some(email) => recorded_copy(state, room_id, email, snapshot).await?,
+        None => snapshot,
+    };
     let size = u64::try_from(snapshot.len()).unwrap_or(u64::MAX);
     fits(size, state.rooms.limits().room)?;
     let left = state.rooms.owner_left(&state.pool, author, None).await?;
@@ -813,7 +827,7 @@ async fn new_public(
     snapshot: Vec<u8>,
     author: Uuid,
 ) -> Result<String, ApiError> {
-    let snapshot = recorded_copy(state, submission, snapshot).await?;
+    let snapshot = without_copiers(snapshot);
     let room = create_public(state, submission, curator).await?;
     let allowance = state.rooms.allowance(&state.pool, &room.id).await?;
     let written = state
@@ -830,26 +844,37 @@ async fn new_public(
     Ok(room.id)
 }
 
-/// The snapshot recording that its author copied it out of their project, when it still
-/// exists. The version is unknown: a snapshot does not say which one it was taken at.
+/// The snapshot recording that `by` copied it out of project `room_id` at its newest version.
 async fn recorded_copy(
     state: &AppState,
-    submission: &Submission,
+    room_id: &str,
+    by: &str,
     snapshot: Vec<u8>,
 ) -> Result<Vec<u8>, ApiError> {
-    let Some(room) = &submission.room else {
-        return Ok(snapshot);
-    };
-    let project_name = db::room_name(&state.pool, room).await?.unwrap_or_default();
+    let project_name = db::room_name(&state.pool, room_id)
+        .await?
+        .unwrap_or_default();
+    let saved = saved(state, room_id).await?;
+    let version = state
+        .rooms
+        .read_log(room_id, 0, move |_, slots| newest(slots, &saved))
+        .await?;
     let doc = doc_of(&snapshot);
     let source = Source {
-        project: room,
+        project: room_id,
         project_name: &project_name,
-        version: None,
-        by: &submission.author_email,
+        version,
+        by,
     };
     record_copy(&doc, &source);
     Ok(encoded(&doc))
+}
+
+/// The snapshot as a public catalogue keeps it: only its submitting author is named.
+fn without_copiers(snapshot: Vec<u8>) -> Vec<u8> {
+    let doc = doc_of(&snapshot);
+    keep_only_last_author(&doc);
+    encoded(&doc)
 }
 
 /// The public catalogue `public.<slug of the title>`, with `-2`, `-3`… when taken. Taken is

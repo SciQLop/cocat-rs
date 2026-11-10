@@ -94,6 +94,16 @@ impl Timestamp {
         i64::try_from(self.0.unix_timestamp_nanos()).ok()
     }
 
+    /// Milliseconds since the Unix epoch, rounded down.
+    pub fn unix_millis(self) -> i64 {
+        self.0.unix_timestamp().saturating_mul(1_000) + i64::from(self.0.millisecond())
+    }
+
+    /// The instant at `millis` since the Unix epoch, or `None` when out of range.
+    pub fn from_unix_millis(millis: i64) -> Option<Self> {
+        Self::from_unix_micros(i128::from(millis) * 1_000)
+    }
+
     pub fn from_unix_nanos(nanos: i64) -> Option<Self> {
         OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
             .ok()
@@ -217,6 +227,15 @@ mod tests {
 
         let offset = Timestamp::parse("2025-01-31 13:00:00+02:00").unwrap();
         assert_eq!(offset.as_text().unwrap(), "2025-01-31 11:00:00+00:00");
+    }
+
+    #[test]
+    fn milliseconds_round_trip() {
+        let instant = Timestamp::parse("2025-01-31T11:00:00.123Z").unwrap();
+        let millis = instant.unix_millis();
+        assert_eq!(millis, 1_738_321_200_123);
+        assert_eq!(Timestamp::from_unix_millis(millis), Some(instant));
+        assert_eq!(Timestamp::from_unix_millis(i64::MAX), None);
     }
 
     #[test]

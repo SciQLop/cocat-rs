@@ -1531,3 +1531,21 @@ async fn a_copied_version_names_its_source_project() {
     assert_eq!(hop.by.as_deref(), Some("carol@x.org"));
     assert!(hop.at >= now_ms() - 60_000, "{}", hop.at);
 }
+
+#[tokio::test]
+async fn a_copied_version_names_its_source_for_trashed_catalogues_too() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, COPIED_AT, |txn| {
+        model::create_catalogue(txn, &catalogue("old")).unwrap();
+        assert!(model::delete_catalogue(txn, "old"));
+    });
+
+    let (_, body) = fixture.copy(0, fixture.carol, "try").await;
+
+    let copied = fixture
+        .state_of(body["room"].as_str().unwrap(), 0, fixture.carol)
+        .await;
+    let found = model::catalogue(&copied.transact(), "old").unwrap();
+    assert!(found.deleted);
+    assert_eq!(found.copied_from.len(), 1);
+}

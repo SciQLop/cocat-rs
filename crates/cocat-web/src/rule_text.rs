@@ -1,9 +1,11 @@
 //! A smart catalogue's rule in words, for the catalogue's header.
 
+use cocat_core::model::Hop;
 use cocat_core::rules::{self, Op, Predicate, RuleError, Set, intervals::seconds, relative};
+use cocat_core::time::Timestamp;
 use serde_json::Value;
 
-use crate::format::{duration_text, value_text};
+use crate::format::{date_text, duration_text, person_text, value_text};
 
 /// The rule as a sentence; `name` gives a catalogue's name from its uuid.
 pub fn describe(rule: &Value, name: &dyn Fn(&str) -> Option<String>) -> Result<String, RuleError> {
@@ -293,27 +295,31 @@ pub fn counts_text(
 
 /// Where a copied catalogue came from: a line naming its direct source, and a hover text
 /// listing the whole chain of copies, oldest first. `None` when it was never copied.
-pub fn copied_text(chain: &[cocat_core::model::Hop]) -> Option<(String, String)> {
+pub fn copied_text(chain: &[Hop]) -> Option<(String, String)> {
     let source = chain.last()?;
-    let step = |hop: &cocat_core::model::Hop| {
-        let when = crate::format::date_text(hop.at.saturating_mul(1_000_000));
-        let base = format!("{} › {}, {when}", hop.project_name, hop.catalogue_name);
-        match hop.by.as_deref() {
-            Some(by) => format!("{base}, by {}", crate::format::person_text(by)),
-            None => base,
-        }
-    };
-    let when = crate::format::date_text(source.at.saturating_mul(1_000_000));
-    let line = format!(
-        "Copied from {} › {}, {when}",
-        source.project_name, source.catalogue_name
-    );
+    let line = format!("Copied from {}", place_text(source));
     let steps: Vec<String> = chain
         .iter()
         .enumerate()
-        .map(|(index, hop)| format!("{}. {}", index + 1, step(hop)))
+        .map(|(index, hop)| format!("{}. {}", index + 1, step_text(hop)))
         .collect();
     Some((line, format!("Copied, oldest first:\n{}", steps.join("\n"))))
+}
+
+/// "<project> › <catalogue>, <date>".
+fn place_text(hop: &Hop) -> String {
+    let when = Timestamp::from_unix_millis(hop.at)
+        .and_then(Timestamp::unix_nanos)
+        .map(date_text)
+        .unwrap_or_default();
+    format!("{} › {}, {when}", hop.project_name, hop.catalogue_name)
+}
+
+fn step_text(hop: &Hop) -> String {
+    match hop.by.as_deref() {
+        Some(by) => format!("{}, by {}", place_text(hop), person_text(by)),
+        None => place_text(hop),
+    }
 }
 
 #[cfg(test)]

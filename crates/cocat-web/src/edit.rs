@@ -313,7 +313,7 @@ pub fn materialize(
         catalogue: smart.uuid,
         catalogue_name: smart.name,
         version: None,
-        at: (Timestamp::now().unix_micros() / 1000) as i64,
+        at: Timestamp::now().unix_millis(),
         by: Some(project.user_email.clone()),
     };
     found(
