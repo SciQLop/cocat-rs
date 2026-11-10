@@ -46,9 +46,15 @@ async fn create_room_assigns_the_owner() {
         .await
         .unwrap();
 
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         db::role_in(&pool, "room-1", owner).await.unwrap(),
@@ -65,9 +71,15 @@ async fn add_user_to_room_sets_the_role() {
     let viewer = db::create_user(&pool, "viewer@example.org", "hunter2", false, true)
         .await
         .unwrap();
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     db::add_member(&pool, "room-1", viewer, Role::Viewer)
         .await
@@ -448,7 +460,14 @@ async fn create_room_refuses_an_id_kept_for_public_catalogues() {
         .arg(dir.path().join("test.db"))
         .output()
         .unwrap();
-    let direct = db::create_room(&pool, owner, "public.other", "Other").await;
+    let direct = db::create_room(
+        &pool,
+        owner,
+        "public.other",
+        "Other",
+        db::ProjectKind::Catalogues,
+    )
+    .await;
 
     assert!(!output.status.success(), "create-room took a public id");
     let stderr = String::from_utf8_lossy(&output.stderr);

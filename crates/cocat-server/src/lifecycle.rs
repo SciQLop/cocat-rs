@@ -73,7 +73,7 @@ pub async fn create_room(
 ) -> Result<RoomRow, LifecycleError> {
     let id = Uuid::new_v4().simple().to_string();
     let name = clean_name(name, Noun::Room)?;
-    db::create_room(&state.pool, owner, &id, &name).await?;
+    db::create_room(&state.pool, owner, &id, &name, db::ProjectKind::Catalogues).await?;
     Ok(RoomRow { id, name })
 }
 

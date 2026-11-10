@@ -1038,9 +1038,15 @@ async fn only_a_superuser_reaches_users_by_id() {
 async fn an_emailed_invitation_returns_no_token_and_mails_the_link() {
     let fixture = Fixture::start_with_mail().await;
     let owner = fixture.verified("owner@example.org").await;
-    db::create_room(fixture.pool(), owner, "room-a", "Room A")
-        .await
-        .unwrap();
+    db::create_room(
+        fixture.pool(),
+        owner,
+        "room-a",
+        "Room A",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let token = fixture.session("owner@example.org").await;
 
     let response = fixture
@@ -1087,9 +1093,15 @@ async fn an_emailed_invitation_returns_no_token_and_mails_the_link() {
 async fn a_failed_invitation_mail_creates_nothing() {
     let fixture = Fixture::start_with_broken_mail().await;
     let owner = fixture.verified("owner@example.org").await;
-    db::create_room(fixture.pool(), owner, "room-a", "Room A")
-        .await
-        .unwrap();
+    db::create_room(
+        fixture.pool(),
+        owner,
+        "room-a",
+        "Room A",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let token = fixture.session("owner@example.org").await;
 
     let response = fixture

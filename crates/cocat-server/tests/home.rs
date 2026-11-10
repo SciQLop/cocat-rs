@@ -85,9 +85,15 @@ impl World {
     }
 
     async fn project(&self, id: &str, name: &str, owner: Uuid) {
-        db::create_room(&self.state.pool, owner, id, name)
-            .await
-            .unwrap();
+        db::create_room(
+            &self.state.pool,
+            owner,
+            id,
+            name,
+            db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
     }
 
     async fn join(&self, room: &str, user: Uuid, role: Role) {

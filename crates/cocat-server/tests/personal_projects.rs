@@ -52,7 +52,7 @@ impl World {
             .await
             .unwrap()
             .unwrap();
-        db::create_room(&state.pool, owner, LAB, "Lab")
+        db::create_room(&state.pool, owner, LAB, "Lab", db::ProjectKind::Catalogues)
             .await
             .unwrap();
         let team = groups::create(&state, owner, "team").await.unwrap().id;

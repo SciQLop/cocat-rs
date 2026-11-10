@@ -44,7 +44,7 @@ impl Server {
         let owner = db::create_user(&pool, "owner@example.org", "hunter2", false, true)
             .await
             .unwrap();
-        db::create_room(&pool, owner, ROOM_ID, "Serve")
+        db::create_room(&pool, owner, ROOM_ID, "Serve", db::ProjectKind::Catalogues)
             .await
             .unwrap();
         pool.close().await;

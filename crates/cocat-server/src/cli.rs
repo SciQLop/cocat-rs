@@ -293,7 +293,14 @@ async fn create_room(
         .ok_or_else(|| CliError::NoSuchUser(owner_email.to_owned()))?;
     let room_id = room_id.unwrap_or_else(|| Uuid::new_v4().simple().to_string());
     let name = name.unwrap_or_else(|| room_id.clone());
-    db::create_room(&pool, owner.id, &room_id, &name).await?;
+    db::create_room(
+        &pool,
+        owner.id,
+        &room_id,
+        &name,
+        db::ProjectKind::Catalogues,
+    )
+    .await?;
     println!("{room_id}");
     Ok(())
 }

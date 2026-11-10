@@ -38,9 +38,15 @@ async fn every_signal_is_named_and_no_identifier_is_a_label() {
     let fixture = Fixture::start().await;
     let user = fixture.verified("metrics@example.org").await;
     let token = fixture.token(user).await;
-    db::create_room(&fixture.state.pool, user, "metric-room", "Metric room")
-        .await
-        .expect("the room is created");
+    db::create_room(
+        &fixture.state.pool,
+        user,
+        "metric-room",
+        "Metric room",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .expect("the room is created");
 
     let me = fixture.get("/api/me", Some(&token)).await;
     assert_eq!(me.status(), StatusCode::OK);

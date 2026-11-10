@@ -107,7 +107,7 @@ impl Fixture {
 
 /// A room owned by `owner`, shared with a group whose members are `members`, at `role`.
 async fn seed(pool: &SqlitePool, owner: Uuid, members: &[Uuid], role: &str) -> String {
-    db::create_room(pool, owner, ROOM, "Group room")
+    db::create_room(pool, owner, ROOM, "Group room", db::ProjectKind::Catalogues)
         .await
         .unwrap();
     let group_id = Uuid::new_v4().simple().to_string();

@@ -45,7 +45,7 @@ impl World {
         let owner = user(&state, "owner@example.org").await;
         let editor = user(&state, "editor@example.org").await;
         let viewer = user(&state, "viewer@example.org").await;
-        db::create_room(&state.pool, owner, ROOM, "Lab")
+        db::create_room(&state.pool, owner, ROOM, "Lab", db::ProjectKind::Catalogues)
             .await
             .unwrap();
         db::add_member(&state.pool, ROOM, editor, Role::Editor)

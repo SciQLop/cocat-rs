@@ -2731,7 +2731,7 @@ mod tests {
             .await
             .unwrap();
         for room in ["first", "second"] {
-            crate::db::create_room(&pool, owner, room, room)
+            crate::db::create_room(&pool, owner, room, room, crate::db::ProjectKind::Catalogues)
                 .await
                 .unwrap();
         }
@@ -2752,12 +2752,24 @@ mod tests {
         let owner = crate::db::create_user(&pool, "owner@example.org", "pwd", false, true)
             .await
             .unwrap();
-        crate::db::create_room(&pool, owner, "first", "First")
-            .await
-            .unwrap();
-        crate::db::create_room(&pool, owner, "second", "Second")
-            .await
-            .unwrap();
+        crate::db::create_room(
+            &pool,
+            owner,
+            "first",
+            "First",
+            crate::db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
+        crate::db::create_room(
+            &pool,
+            owner,
+            "second",
+            "Second",
+            crate::db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
         let (mut store, _records) = FileRoomStore::open(dir.path(), "first").unwrap();
         store
             .append(Bytes::from(update_with("key", "value")))

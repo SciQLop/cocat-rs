@@ -87,9 +87,15 @@ impl Fixture {
     }
 
     async fn room(&self, room_id: &str, owner: Uuid) {
-        db::create_room(&self.pool, owner, room_id, room_id)
-            .await
-            .unwrap();
+        db::create_room(
+            &self.pool,
+            owner,
+            room_id,
+            room_id,
+            db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
     }
 
     async fn send(

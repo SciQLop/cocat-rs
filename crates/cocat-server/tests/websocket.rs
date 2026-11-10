@@ -239,9 +239,15 @@ async fn an_anonymous_handshake_is_refused_with_401() {
 async fn a_non_member_handshake_is_refused_with_403() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-members", "Members")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-members",
+        "Members",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let outsider = fixture.user("outsider@example.org").await;
 
     let status = fixture
@@ -256,9 +262,15 @@ async fn a_non_member_handshake_is_refused_with_403() {
 async fn a_member_receives_the_sync_step2() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-step", "Step")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-step",
+        "Step",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture
         .connect("room-step", Some(&fixture.token(owner).await))
         .await;
@@ -281,9 +293,15 @@ async fn the_upgrade_answer_names_the_role() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let viewer = fixture.user("viewer@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-role", "Role")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-role",
+        "Role",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&fixture.pool, "room-role", viewer, Role::Viewer)
         .await
         .unwrap();
@@ -305,9 +323,15 @@ async fn an_editor_update_reaches_another_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let editor = fixture.user("editor@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-editors", "Editors")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-editors",
+        "Editors",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&fixture.pool, "room-editors", editor, Role::Editor)
         .await
         .unwrap();
@@ -339,9 +363,15 @@ async fn viewer_update_does_not_land() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let viewer = fixture.user("viewer@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-viewer", "Viewer")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-viewer",
+        "Viewer",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&fixture.pool, "room-viewer", viewer, Role::Viewer)
         .await
         .unwrap();
@@ -373,9 +403,15 @@ async fn viewer_update_does_not_land() {
 async fn short_frames_do_not_close_the_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-short", "Short")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-short",
+        "Short",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture
         .connect("room-short", Some(&fixture.token(owner).await))
         .await;
@@ -402,9 +438,15 @@ async fn short_frames_do_not_close_the_socket() {
 async fn a_client_that_does_not_read_is_closed_1013() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-slow", "Slow")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-slow",
+        "Slow",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let token = fixture.token(owner).await;
     let mut silent = fixture.connect("room-slow", Some(&token)).await;
     let mut writer = fixture.connect("room-slow", Some(&token)).await;
@@ -440,9 +482,15 @@ async fn a_client_that_does_not_read_is_closed_1013() {
 async fn a_client_that_stops_reading_does_not_pin_the_room() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-pinned", "Pinned")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-pinned",
+        "Pinned",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let (mut sink, _never_read) = fixture
         .connect("room-pinned", Some(&fixture.token(owner).await))
         .await
@@ -495,7 +543,7 @@ async fn a_downgrade_between_handshake_and_attach_is_honoured() {
         let owner = db::create_user(&pool, "owner@example.org", "hunter2", false, true)
             .await
             .unwrap();
-        db::create_room(&pool, owner, ROOM, "Downgrade")
+        db::create_room(&pool, owner, ROOM, "Downgrade", db::ProjectKind::Catalogues)
             .await
             .unwrap();
         let editor = db::create_user(&pool, "editor@example.org", "hunter2", false, true)
@@ -548,9 +596,15 @@ async fn an_over_budget_room_closes_1013() {
     // One byte of budget: any room with a file on disk is over it.
     let fixture = Fixture::start_with_budget(1).await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-budget", "Budget")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-budget",
+        "Budget",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let (mut store, _) =
         cocat_core::store::FileRoomStore::open(&fixture.rooms_dir, "room-budget").unwrap();
     store
@@ -586,9 +640,15 @@ async fn deleting_over_http_closes_the_sockets_and_the_file() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let token = fixture.token(owner).await;
-    db::create_room(&fixture.pool, owner, "room-deleted", "Deleted")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-deleted",
+        "Deleted",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture.connect("room-deleted", Some(&token)).await;
     next_message(&mut socket).await;
     socket
@@ -630,9 +690,15 @@ async fn accepting_a_higher_invitation_closes_the_old_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     let guest = fixture.user("guest@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-grant", "Grant")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-grant",
+        "Grant",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&fixture.pool, "room-grant", guest, Role::Viewer)
         .await
         .unwrap();
@@ -671,9 +737,15 @@ async fn deleting_a_user_closes_their_sockets() {
     let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
         .await
         .unwrap();
-    db::create_room(&fixture.pool, victim, "room-a", "Room A")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        victim,
+        "room-a",
+        "Room A",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture
         .connect("room-a", Some(&fixture.token(victim).await))
         .await;
@@ -717,9 +789,15 @@ async fn deleting_a_user_refuses_the_next_handshake() {
     let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
         .await
         .unwrap();
-    db::create_room(&fixture.pool, victim, "room-a", "Room A")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        victim,
+        "room-a",
+        "Room A",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     let request = Request::builder()
         .method(Method::DELETE)
@@ -757,9 +835,15 @@ async fn deactivating_a_user_closes_their_sockets() {
     let admin = db::create_user(&fixture.pool, "admin@example.org", "hunter2", true, true)
         .await
         .unwrap();
-    db::create_room(&fixture.pool, victim, "room-a", "Room A")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        victim,
+        "room-a",
+        "Room A",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture
         .connect("room-a", Some(&fixture.token(victim).await))
         .await;
@@ -808,9 +892,15 @@ async fn deactivating_a_user_closes_their_sockets() {
 async fn sixteen_mib_update_is_accepted() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-16mib", "Sixteen")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-16mib",
+        "Sixteen",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture
         .connect("room-16mib", Some(&fixture.token(owner).await))
         .await;
@@ -838,9 +928,15 @@ async fn sixteen_mib_update_is_accepted() {
 async fn oversized_message_closes_the_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-too-big", "TooBig")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-too-big",
+        "TooBig",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let mut socket = fixture
         .connect_wide("room-too-big", Some(&fixture.token(owner).await))
         .await;
@@ -885,9 +981,15 @@ async fn oversized_message_closes_the_socket() {
 async fn a_handshake_without_the_v2_subprotocol_is_refused_with_426() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-v1", "Old client")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-v1",
+        "Old client",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let file = fixture.rooms_dir.join("room-v1.y");
     let (mut store, _) =
         cocat_core::store::FileRoomStore::open(&fixture.rooms_dir, "room-v1").unwrap();
@@ -912,9 +1014,15 @@ async fn a_handshake_without_the_v2_subprotocol_is_refused_with_426() {
 async fn an_accepted_handshake_names_the_v2_subprotocol() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-v2", "New client")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-v2",
+        "New client",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let request = fixture.request("room-v2", Some(&fixture.token(owner).await));
 
     let (_socket, response) = connect_async(request).await.unwrap();
@@ -932,9 +1040,15 @@ const V1_ROOM: &[u8] = include_bytes!("../../cocat-core/tests/fixtures/catalogue
 async fn a_room_file_of_the_first_layout_is_never_served() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-old", "Not imported")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-old",
+        "Not imported",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let file = fixture.rooms_dir.join("room-old.y");
     fs::write(&file, V1_ROOM).unwrap();
 
@@ -954,9 +1068,15 @@ async fn a_room_file_of_the_first_layout_is_never_served() {
 async fn a_socket_relays_awareness_under_the_account_email() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-presence", "Presence")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-presence",
+        "Presence",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let viewer = fixture.user("viewer@example.org").await;
     db::add_member(&fixture.pool, "room-presence", viewer, Role::Viewer)
         .await
@@ -1013,9 +1133,15 @@ async fn close_code(socket: &mut Socket) -> Option<u16> {
 async fn a_bearer_token_opens_a_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-bearer", "Bearer")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-bearer",
+        "Bearer",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let token = auth::start_token(&fixture.pool, owner, "Python on laptop")
         .await
         .unwrap();
@@ -1037,9 +1163,15 @@ async fn a_bearer_token_opens_a_socket() {
 async fn revoking_a_token_closes_its_socket_at_once() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
-    db::create_room(&fixture.pool, owner, "room-revoke", "Revoke")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-revoke",
+        "Revoke",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let token = auth::start_token(&fixture.pool, owner, "Python on laptop")
         .await
         .unwrap();

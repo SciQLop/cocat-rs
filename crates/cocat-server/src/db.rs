@@ -872,17 +872,114 @@ fn taken_email(error: sqlx::Error, email: &str) -> DbError {
     }
 }
 
+/// What a project holds: one catalogues document, or a workspace of files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+pub enum ProjectKind {
+    Catalogues,
+    Workspace,
+}
+
+impl ProjectKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Catalogues => "catalogues",
+            Self::Workspace => "workspace",
+        }
+    }
+}
+
+/// What a workspace document holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+pub enum DocumentKind {
+    Manifest,
+    Notebook,
+    Text,
+}
+
+impl DocumentKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manifest => "manifest",
+            Self::Notebook => "notebook",
+            Self::Text => "text",
+        }
+    }
+}
+
+pub async fn project_kind(
+    pool: &SqlitePool,
+    room_id: &str,
+) -> Result<Option<ProjectKind>, DbError> {
+    Ok(sqlx::query_scalar("SELECT kind FROM room WHERE id = ?")
+        .bind(room_id)
+        .fetch_optional(pool)
+        .await?)
+}
+
+pub async fn create_document(
+    executor: impl Executor<'_, Database = Sqlite>,
+    room_id: &str,
+    kind: DocumentKind,
+    by: Uuid,
+) -> Result<Uuid, DbError> {
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO document (room_id, id, kind, created_by) VALUES (?, ?, ?, ?)")
+        .bind(room_id)
+        .bind(id.to_string())
+        .bind(kind)
+        .bind(by.to_string())
+        .execute(executor)
+        .await?;
+    Ok(id)
+}
+
+pub async fn document_kind(
+    pool: &SqlitePool,
+    room_id: &str,
+    doc: Uuid,
+) -> Result<Option<DocumentKind>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT kind FROM document WHERE room_id = ? AND id = ?")
+            .bind(room_id)
+            .bind(doc.to_string())
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn documents_of(
+    pool: &SqlitePool,
+    room_id: &str,
+) -> Result<Vec<(Uuid, DocumentKind)>, DbError> {
+    let rows: Vec<(String, DocumentKind)> =
+        sqlx::query_as("SELECT id, kind FROM document WHERE room_id = ? ORDER BY created_at, id")
+            .bind(room_id)
+            .fetch_all(pool)
+            .await?;
+    rows.into_iter()
+        .map(|(id, kind)| {
+            Ok((
+                Uuid::parse_str(&id).map_err(|e| sqlx::Error::Decode(e.into()))?,
+                kind,
+            ))
+        })
+        .collect()
+}
+
 pub async fn create_room(
     pool: &SqlitePool,
     owner_id: Uuid,
     room_id: &str,
     name: &str,
+    kind: ProjectKind,
 ) -> Result<(), DbError> {
     if cocat_core::room_id::is_public_id(room_id) {
         return Err(DbError::ReservedId(room_id.to_owned()));
     }
     let mut tx = pool.begin().await?;
-    insert_room(&mut tx, owner_id, room_id, name).await?;
+    insert_room(&mut tx, owner_id, room_id, name, kind).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -892,12 +989,14 @@ async fn insert_room(
     owner_id: Uuid,
     room_id: &str,
     name: &str,
+    kind: ProjectKind,
 ) -> Result<(), DbError> {
     validate_room_id(room_id)?;
-    sqlx::query("INSERT INTO room (id, name, created_by) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO room (id, name, created_by, kind) VALUES (?, ?, ?, ?)")
         .bind(room_id)
         .bind(name)
         .bind(owner_id.to_string())
+        .bind(kind)
         .execute(&mut **tx)
         .await?;
     insert_membership(tx, room_id, owner_id, Role::Owner).await?;
@@ -914,7 +1013,14 @@ pub const PERSONAL_ROOM_NAME: &str = "My catalogues";
 pub async fn create_personal_room(pool: &SqlitePool, user: Uuid) -> Result<(), DbError> {
     let room_id = Uuid::new_v4().simple().to_string();
     let mut tx = pool.begin().await?;
-    insert_room(&mut tx, user, &room_id, PERSONAL_ROOM_NAME).await?;
+    insert_room(
+        &mut tx,
+        user,
+        &room_id,
+        PERSONAL_ROOM_NAME,
+        ProjectKind::Catalogues,
+    )
+    .await?;
     sqlx::query(r#"UPDATE "user" SET personal_room = ? WHERE id = ?"#)
         .bind(&room_id)
         .bind(user.to_string())

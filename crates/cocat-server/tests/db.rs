@@ -44,9 +44,15 @@ async fn migrations_create_the_tables_on_a_new_file() {
         "the second open must not run a migration twice"
     );
     let owner = user(&pool, "owner@example.org").await;
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -54,9 +60,15 @@ async fn a_second_owner_is_rejected_by_the_schema() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;
     let other = user(&pool, "other@example.org").await;
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     let promoted = db::add_member(&pool, "room-1", other, Role::Owner).await;
 
@@ -70,9 +82,15 @@ async fn add_member_never_lowers_a_role() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;
     let other = user(&pool, "other@example.org").await;
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     let kept = db::add_member(&pool, "room-1", owner, Role::Editor)
         .await
@@ -96,9 +114,15 @@ async fn add_member_raises_a_role() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;
     let other = user(&pool, "other@example.org").await;
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     let viewer = db::add_member(&pool, "room-1", other, Role::Viewer)
         .await
@@ -117,9 +141,15 @@ async fn set_owner_moves_the_owner_role() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;
     let other = user(&pool, "other@example.org").await;
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&pool, "room-1", other, Role::Editor)
         .await
         .unwrap();
@@ -152,9 +182,15 @@ async fn deleting_a_room_removes_its_memberships() {
     let (_dir, pool) = seeded().await;
     let owner = user(&pool, "owner@example.org").await;
     let other = user(&pool, "other@example.org").await;
-    db::create_room(&pool, owner, "room-1", "Room one")
-        .await
-        .unwrap();
+    db::create_room(
+        &pool,
+        owner,
+        "room-1",
+        "Room one",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&pool, "room-1", other, Role::Viewer)
         .await
         .unwrap();
@@ -387,4 +423,89 @@ async fn the_own_project_is_forgotten_when_deleted_or_given_away() {
 
     assert_eq!(db::personal_room(&pool, alice).await.unwrap(), None);
     assert_eq!(db::personal_room(&pool, bob).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_new_project_is_a_catalogue_project_unless_asked() {
+    let (_dir, pool) = seeded().await;
+    let owner = user(&pool, "owner@example.org").await;
+    db::create_room(&pool, owner, "cats", "Cats", db::ProjectKind::Catalogues)
+        .await
+        .unwrap();
+    db::create_room(&pool, owner, "work", "Work", db::ProjectKind::Workspace)
+        .await
+        .unwrap();
+    db::create_personal_room(&pool, owner).await.unwrap();
+    let personal = db::personal_room(&pool, owner).await.unwrap().unwrap();
+
+    assert_eq!(
+        db::project_kind(&pool, "cats").await.unwrap(),
+        Some(db::ProjectKind::Catalogues)
+    );
+    assert_eq!(
+        db::project_kind(&pool, "work").await.unwrap(),
+        Some(db::ProjectKind::Workspace)
+    );
+    assert_eq!(
+        db::project_kind(&pool, &personal).await.unwrap(),
+        Some(db::ProjectKind::Catalogues)
+    );
+    assert_eq!(db::project_kind(&pool, "nope").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_document_belongs_to_its_project() {
+    let (_dir, pool) = seeded().await;
+    let owner = user(&pool, "owner@example.org").await;
+    for id in ["one", "two"] {
+        db::create_room(&pool, owner, id, id, db::ProjectKind::Workspace)
+            .await
+            .unwrap();
+    }
+    let manifest = db::create_document(&pool, "one", db::DocumentKind::Manifest, owner)
+        .await
+        .unwrap();
+    let notebook = db::create_document(&pool, "one", db::DocumentKind::Notebook, owner)
+        .await
+        .unwrap();
+    let elsewhere = db::create_document(&pool, "two", db::DocumentKind::Text, owner)
+        .await
+        .unwrap();
+
+    let mut listed = db::documents_of(&pool, "one").await.unwrap();
+    listed.sort_by_key(|(_, kind)| kind.as_str());
+    assert_eq!(
+        listed,
+        vec![
+            (manifest, db::DocumentKind::Manifest),
+            (notebook, db::DocumentKind::Notebook)
+        ]
+    );
+    assert_eq!(
+        db::document_kind(&pool, "one", notebook).await.unwrap(),
+        Some(db::DocumentKind::Notebook)
+    );
+    assert_eq!(
+        db::document_kind(&pool, "one", elsewhere).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_project_deletes_its_documents() {
+    let (_dir, pool) = seeded().await;
+    let owner = user(&pool, "owner@example.org").await;
+    db::create_room(&pool, owner, "one", "One", db::ProjectKind::Workspace)
+        .await
+        .unwrap();
+    db::create_document(&pool, "one", db::DocumentKind::Text, owner)
+        .await
+        .unwrap();
+
+    sqlx::query("DELETE FROM room WHERE id = 'one'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(db::documents_of(&pool, "one").await.unwrap().is_empty());
 }

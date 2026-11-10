@@ -641,9 +641,15 @@ async fn a_curator_changes_what_the_index_says_and_nobody_else_can() {
         .await;
     assert_eq!(status, StatusCode::OK);
 
-    db::create_room(&world.state.pool, world.curator, "lab", "Lab")
-        .await
-        .unwrap();
+    db::create_room(
+        &world.state.pool,
+        world.curator,
+        "lab",
+        "Lab",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     for (target, body, wanted) in [
         (
             "/api/public/public.nope",

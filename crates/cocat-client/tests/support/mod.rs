@@ -214,9 +214,15 @@ pub async fn user(server: &Server, email: &str) -> Uuid {
 }
 
 pub async fn room(server: &Server, room_id: &str, owner: Uuid) {
-    db::create_room(&server.pool, owner, room_id, "a room")
-        .await
-        .unwrap();
+    db::create_room(
+        &server.pool,
+        owner,
+        room_id,
+        "a room",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 }
 
 pub async fn member(server: &Server, room_id: &str, user: Uuid, role: Role) {

@@ -47,9 +47,15 @@ impl Fixture {
     }
 
     async fn room(&self, room_id: &str, owner: Uuid) {
-        db::create_room(&self.state.pool, owner, room_id, "Lab")
-            .await
-            .unwrap();
+        db::create_room(
+            &self.state.pool,
+            owner,
+            room_id,
+            "Lab",
+            db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
     }
 
     async fn member(&self, room_id: &str, email: &str, role: Role) -> Uuid {
@@ -359,9 +365,15 @@ async fn a_revoked_invitation_belonging_to_another_room_is_not_found() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     fixture.room("lab", owner).await;
-    db::create_room(&fixture.state.pool, owner, "other", "Other")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        owner,
+        "other",
+        "Other",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     let (id, _) = fixture.invite("lab", owner, Role::Editor, None).await;
 
     let error = invitations::revoke(&fixture.state, "other", owner, id)

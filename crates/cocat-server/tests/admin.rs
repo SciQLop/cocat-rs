@@ -26,9 +26,15 @@ async fn account(fixture: &Fixture, id: uuid::Uuid) -> db::User {
 }
 
 async fn room_with_file(fixture: &Fixture, owner: uuid::Uuid, id: &str, name: &str, bytes: usize) {
-    db::create_room(&fixture.state.pool, owner, id, name)
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        owner,
+        id,
+        name,
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     fs::write(
         fixture.dir().join("rooms").join(format!("{id}.y")),
         vec![7u8; bytes],
@@ -42,9 +48,15 @@ async fn every_admin_function_refuses_a_plain_user() {
     let plain = fixture.verified("plain@example.org").await;
     let other = fixture.verified("other@example.org").await;
     let actor = account(&fixture, plain).await;
-    db::create_room(&fixture.state.pool, other, "lab", "Lab")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        other,
+        "lab",
+        "Lab",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     assert!(matches!(
         admin::overview(&fixture.state, &actor).await,
@@ -150,9 +162,15 @@ async fn changing_the_owner_goes_through_the_transfer() {
     let actor = superuser(&fixture, "admin@example.org").await;
     let owner = fixture.verified("owner@example.org").await;
     let member = fixture.verified("member@example.org").await;
-    db::create_room(&fixture.state.pool, owner, "lab", "Lab")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        owner,
+        "lab",
+        "Lab",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     db::add_member(&fixture.state.pool, "lab", member, Role::Editor)
         .await
         .unwrap();
@@ -199,9 +217,15 @@ async fn the_overview_counts_and_sizes_the_seeded_tenant() {
     let owner = fixture.verified("owner@example.org").await;
     fixture.unverified("pending@example.org").await;
     room_with_file(&fixture, owner, "lab", "Lab", 400).await;
-    db::create_room(&fixture.state.pool, owner, "ghost", "Ghost")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        owner,
+        "ghost",
+        "Ghost",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     let overview = admin::overview(&fixture.state, &actor).await.unwrap();
 

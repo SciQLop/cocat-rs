@@ -71,9 +71,15 @@ impl Fixture {
             user("bob@x.org").await,
             user("carol@x.org").await,
         );
-        db::create_room(&state.pool, alice, ROOM, "History")
-            .await
-            .unwrap();
+        db::create_room(
+            &state.pool,
+            alice,
+            ROOM,
+            "History",
+            db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
         db::add_member(&state.pool, ROOM, bob, Role::Editor)
             .await
             .unwrap();
@@ -1054,9 +1060,15 @@ async fn a_copy_name_follows_the_project_name_rule() {
 #[tokio::test]
 async fn a_copy_over_the_owners_quota_is_refused_and_leaves_no_project() {
     let fixture = a_project_worth_copying().await;
-    db::create_room(&fixture.state.pool, fixture.carol, "carols-big", "Big")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        fixture.carol,
+        "carols-big",
+        "Big",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
     fs::write(
         cocat_core::store::room_file(&fixture.update_dir, "carols-big"),
         vec![0u8; 1024 * 1024],

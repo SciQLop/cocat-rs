@@ -92,9 +92,15 @@ async fn the_forms_change_accounts_and_rooms() {
     let token = admin(&fixture).await;
     let user = fixture.verified("user@example.org").await;
     let heir = fixture.verified("heir@example.org").await;
-    db::create_room(&fixture.state.pool, user, "lab", "Lab")
-        .await
-        .unwrap();
+    db::create_room(
+        &fixture.state.pool,
+        user,
+        "lab",
+        "Lab",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
 
     let response = fixture
         .post(

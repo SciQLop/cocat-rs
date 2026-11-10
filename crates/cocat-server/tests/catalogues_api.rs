@@ -73,9 +73,15 @@ impl Fixture {
     }
 
     async fn room(&self, owner: Uuid) {
-        db::create_room(&self.state.pool, owner, ROOM, "Reading room")
-            .await
-            .unwrap();
+        db::create_room(
+            &self.state.pool,
+            owner,
+            ROOM,
+            "Reading room",
+            db::ProjectKind::Catalogues,
+        )
+        .await
+        .unwrap();
     }
 
     fn seed(&self, room_id: &str, doc: &Doc) {
