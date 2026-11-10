@@ -132,6 +132,7 @@ const ROWS: &[Row] = &[
     row("POST", "/auth/jwt/logout", Guard::Public, Style::Api),
     row("GET", "/rooms", Guard::SignedIn, Style::Api),
     row("GET", "/room/{room}", Guard::RoomViewer, Style::Ws).room_any(),
+    row("GET", "/room/{room}/{doc}", Guard::RoomViewer, Style::Ws).room_any(),
     row("GET", "/room/{room}/users", Guard::RoomViewer, Style::Api).room_any(),
     row("POST", "/auth/register", Guard::Public, Style::Api),
     row(
@@ -1003,6 +1004,7 @@ impl World {
     fn path(&self, template: &str) -> String {
         template
             .replace("{room}", &self.room)
+            .replace("{doc}", "6f0c1b0e-8f56-4a5e-9a39-1c5f2a6d7e10")
             .replace("{public}", &self.public)
             .replace("{submission}", &self.submission.to_string())
             .replace("{group_invitation}", &self.group_invitation.to_string())
@@ -1023,7 +1025,7 @@ impl World {
     async fn call(&self, row: &Row, token: Option<&str>) -> (StatusCode, Option<String>) {
         let path = self.path(row.path);
         if row.style == Style::Ws {
-            return self.handshake(token).await;
+            return self.handshake(&path, token).await;
         }
         let mut builder = Request::builder().method(row.method).uri(&path);
         if let Some(token) = token {
@@ -1187,13 +1189,13 @@ impl World {
 
     /// The websocket route needs a real connection: axum's upgrade extractor refuses a
     /// request that carries no `OnUpgrade` extension, so the handshake is made over TCP.
-    async fn handshake(&self, token: Option<&str>) -> (StatusCode, Option<String>) {
+    async fn handshake(&self, path: &str, token: Option<&str>) -> (StatusCode, Option<String>) {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let app = ws::router(self.state.clone());
         let serving = tokio::spawn(async move { axum::serve(listener, app).await });
-        let mut request = format!("ws://{address}/room/{}", self.room)
+        let mut request = format!("ws://{address}{path}")
             .into_client_request()
             .unwrap();
         request.headers_mut().insert(

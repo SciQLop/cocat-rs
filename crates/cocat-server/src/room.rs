@@ -934,7 +934,7 @@ fn room_loop(
     let mut full_state = None;
     let mut commands = Some(commands);
     let mut seen = doc.transact().state_vector();
-    let mut presence = Presence::for_room(&room_id);
+    let mut presence = Presence::for_room(crate::documents::project_of(&room_id));
 
     'serving: loop {
         let mut schedule = SyncSchedule::new(Instant::now());

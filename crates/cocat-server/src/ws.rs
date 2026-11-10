@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::db::User;
 use crate::room::{self, ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
-use crate::{AppState, auth, db, ui};
+use crate::{AppState, auth, db, documents, ui};
 
 pub const INTERNAL_ERROR: u16 = 1011;
 
@@ -68,31 +68,61 @@ pub fn router(state: AppState) -> Router {
         .merge(router)
         .route("/", get(ui::landing))
         .nest("/ui/", ui::router(&state))
-        .route("/room/{room_id}", get(room_socket))
+        .route("/room/{room_id}", get(catalogues_socket))
+        .route("/room/{room_id}/{doc_id}", get(document_socket))
         .merge(crate::openapi::router(&state.links, document))
         .layer(middleware::from_fn(ui::same_site))
         .layer(middleware::from_fn(crate::telemetry::track_http))
         .with_state(state)
 }
 
-async fn room_socket(
+async fn catalogues_socket(
     upgrade: WebSocketUpgrade,
     Path(room_id): Path<String>,
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
+    open_socket(upgrade, room_id, None, headers, state).await
+}
+
+async fn document_socket(
+    upgrade: WebSocketUpgrade,
+    Path((room_id, doc_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Response {
+    let Ok(doc) = doc_id.parse::<Uuid>() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    open_socket(upgrade, room_id, Some(doc), headers, state).await
+}
+
+/// Admits a member of the project to its catalogues (`doc` is `None`) or to one of a
+/// workspace's documents. Roles and the seen mark belong to the project; the room the socket
+/// relays is the one stored under the document's key.
+async fn open_socket(
+    upgrade: WebSocketUpgrade,
+    project: String,
+    doc: Option<Uuid>,
+    headers: HeaderMap,
+    state: AppState,
+) -> Response {
     let upgrade = upgrade.protocols([SUBPROTOCOL]);
     if upgrade.selected_protocol().is_none() {
         return old_client();
     }
-    let (user, role) = match lobby_role(&state, &room_id, &headers).await {
+    let (user, role) = match lobby_role(&state, &project, &headers).await {
         Ok(admitted) => admitted,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let room_id = match room_to_relay(&state, &project, doc).await {
+        Ok(room_id) => room_id,
         Err(refusal) => return refusal.into_response(),
     };
     let Some(session) = auth::request_token_hash(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    mark_seen(&state, &room_id, user.id).await;
+    mark_seen(&state, &project, user.id).await;
     let mut response = upgrade
         .max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
@@ -102,6 +132,27 @@ async fn room_socket(
         HeaderValue::from_static(role.as_str()),
     );
     response
+}
+
+/// The room a socket relays: the project's catalogues unless it is a workspace, which has
+/// none, or the key of the project's document, which must exist.
+async fn room_to_relay(
+    state: &AppState,
+    project: &str,
+    doc: Option<Uuid>,
+) -> Result<String, StatusCode> {
+    match doc {
+        Some(doc) => match db::document_kind(&state.pool, project, doc).await {
+            Ok(Some(_)) => Ok(documents::key(project, doc)),
+            Ok(None) => Err(StatusCode::NOT_FOUND),
+            Err(error) => Err(server_failed(&error)),
+        },
+        None => match db::project_kind(&state.pool, project).await {
+            Ok(Some(db::ProjectKind::Workspace)) => Err(StatusCode::NOT_FOUND),
+            Ok(_) => Ok(project.to_owned()),
+            Err(error) => Err(server_failed(&error)),
+        },
+    }
 }
 
 /// Python cocat and the old SciQLop plugin offer no subprotocol and would write the first
@@ -168,6 +219,7 @@ async fn bridge(
     role: Role,
     session: String,
 ) {
+    let project = documents::project_of(&room_id).to_owned();
     let mut ended_sessions = state.rooms.ended_sessions();
     if let Some(hook) = state.before_attach.clone() {
         hook().await;
@@ -196,7 +248,7 @@ async fn bridge(
         }
     };
 
-    let close_now = recheck_after_attach(&state, &room_id, user.id, role, &session).await;
+    let close_now = recheck_after_attach(&state, &project, user.id, role, &session).await;
 
     crate::telemetry::ws_connected(1);
     let (mut sink, mut stream) = socket.split();
@@ -247,7 +299,7 @@ async fn bridge(
     // client for an oversized message before the bridge gives up on it.
     drop(stream);
     room.detach(client).await;
-    mark_seen(&state, &room_id, user.id).await;
+    mark_seen(&state, &project, user.id).await;
     crate::telemetry::ws_connected(-1);
     if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
@@ -390,7 +442,10 @@ async fn attach(
     user: &User,
     role: Role,
 ) -> Result<(RoomHandle, Inbox), AttachError> {
-    let allowance = state.rooms.allowance(&state.pool, room_id).await?;
+    let allowance = state
+        .rooms
+        .allowance(&state.pool, documents::project_of(room_id))
+        .await?;
     for _ in 0..ATTACH_TRIES {
         let rooms = state.rooms.clone();
         let id = room_id.to_owned();
@@ -420,7 +475,7 @@ pub fn spawn_role_checks(state: AppState) -> tokio::task::JoinHandle<()> {
 pub async fn check_roles(state: &AppState) {
     let sockets: HashSet<_> = state.rooms.sockets().await.into_iter().collect();
     for (room_id, user, role) in sockets {
-        match db::role_in(&state.pool, &room_id, user).await {
+        match db::role_in(&state.pool, documents::project_of(&room_id), user).await {
             Ok(current) if current == Some(role) => {}
             Ok(_) => {
                 state

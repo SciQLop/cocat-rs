@@ -22,6 +22,14 @@ pub fn key(room_id: &str, doc: Uuid) -> String {
     format!("{room_id}/{doc}")
 }
 
+/// The project a room key belongs to: the key itself unless it ends in a document id.
+pub fn project_of(key: &str) -> &str {
+    match key.rsplit_once('/') {
+        Some((project, doc)) if doc.parse::<Uuid>().is_ok() => project,
+        _ => key,
+    }
+}
+
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list_documents, add_document))
 }
@@ -108,4 +116,18 @@ async fn add_document(
         kind: body.kind,
     };
     Ok((StatusCode::CREATED, Json(created)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_belongs_to_its_project_and_a_plain_id_to_itself() {
+        let doc = Uuid::new_v4();
+
+        assert_eq!(project_of(&key("lab", doc)), "lab");
+        assert_eq!(project_of("lab"), "lab");
+        assert_eq!(project_of("old/room"), "old/room");
+    }
 }
