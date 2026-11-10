@@ -456,6 +456,12 @@ async fn import_room_files(
     };
     let mut ids: BTreeSet<String> = BTreeSet::new();
     for room_id in room_ids(update_dir)? {
+        if room_id.contains('/') {
+            summary.skipped.push(format!(
+                "the room file {room_id}.y: a project id holds no slash (a workspace document?)"
+            ));
+            continue;
+        }
         if let Err(error) = FileRoomStore::open(update_dir, &room_id) {
             summary
                 .skipped

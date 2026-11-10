@@ -413,7 +413,7 @@ async fn a_document_id_that_is_not_a_uuid_is_unknown() {
     let addr = fixture.serve().await;
     let before = files_in(&fixture.rooms_dir);
 
-    for bad in ["..", "a%2Fb", &"x".repeat(300)] {
+    for bad in ["..", "a%2Fb", "not-a-uuid", &"x".repeat(300)] {
         let refused = handshake(addr, &format!("{room}/{bad}"), &owner).await;
         assert_eq!(refused.err(), Some(404), "{bad}");
     }
@@ -476,4 +476,36 @@ async fn the_role_check_keeps_a_members_notebook_socket_open() {
     let key = cocat_server::documents::key(&room, doc);
     fixture.state.rooms.flush(&key).await.unwrap();
     assert_eq!(fixture.state.rooms.clients_of(&key).await, 1);
+}
+
+#[tokio::test]
+async fn a_slash_project_row_does_not_reach_another_projects_document_room() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let (intruder, intruder_token) = fixture.user_token("intruder@example.org").await;
+    let room = fixture.project(&owner, "workspace").await;
+    let doc = notebook(&fixture, &owner, &room).await;
+    let fake = cocat_server::documents::key(&room, doc);
+    sqlx::query("INSERT INTO room (id, name, created_by) VALUES (?, ?, ?)")
+        .bind(&fake)
+        .bind(&fake)
+        .bind(intruder.to_string())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO membership (room_id, user_id, role) VALUES (?, ?, 'owner')")
+        .bind(&fake)
+        .bind(intruder.to_string())
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+    let addr = fixture.serve().await;
+
+    let refused = handshake(addr, &room_path_escaped(&fake), &intruder_token).await;
+
+    assert_eq!(refused.err(), Some(404));
+}
+
+fn room_path_escaped(id: &str) -> String {
+    id.replace('/', "%2F")
 }

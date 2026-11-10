@@ -761,3 +761,29 @@ async fn a_room_file_with_a_public_catalogue_id_stops_the_import() {
     assert!(error.contains("public.lab"), "{error}");
     assert!(!db::room_exists(&fixture.pool, "public.lab").await.unwrap());
 }
+
+#[tokio::test]
+async fn a_workspace_document_file_imports_no_project() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let key = cocat_server::documents::key("lab", Uuid::new_v4());
+    let (mut store, _) = FileRoomStore::open(&fixture.updates, &key).unwrap();
+    store.flush().unwrap();
+    drop(store);
+
+    let summary = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.rooms, 0);
+    assert!(!db::room_exists(&fixture.pool, &key).await.unwrap());
+    assert!(summary.skipped.iter().any(|line| line.contains("lab/")));
+}

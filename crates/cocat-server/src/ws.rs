@@ -82,6 +82,9 @@ async fn catalogues_socket(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
+    if room_id.contains('/') {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     open_socket(upgrade, room_id, None, headers, state).await
 }
 

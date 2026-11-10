@@ -129,5 +129,11 @@ mod tests {
         assert_eq!(project_of(&key("lab", doc)), "lab");
         assert_eq!(project_of("lab"), "lab");
         assert_eq!(project_of("old/room"), "old/room");
+        assert_eq!(
+            project_of(&key(&key("a", doc), doc)),
+            "a/".to_owned() + &doc.to_string()
+        );
+        let uuid_named = doc.to_string();
+        assert_eq!(project_of(&key(&uuid_named, doc)), uuid_named);
     }
 }
