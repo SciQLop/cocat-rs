@@ -198,11 +198,20 @@ need an adapter on jupyverse.
 Restoring puts back a single file (notebook, text or whole file) as it was at a version
 (the user's decision). Restoring a whole workspace to a moment is later.
 
-## The web app
+## The web app: a workspace viewer
 
-A workspace shows its file tree read-only (names, kinds, sizes, who changed what, when),
-with history per file. Editing stays in SciQLop/JupyterLab for now. Sharing, members,
-groups, invitations and trash work as for catalogue projects.
+- A workspace's page shows its file tree (names, kinds, sizes, who changed what, when),
+  and sharing, members, groups, invitations and trash as for catalogue projects.
+- Opening a file shows it, **live**: the web app joins the file's document like any
+  client (it already syncs catalogue documents with yrs), so a colleague's edits, new
+  cells and fresh outputs appear as they happen.
+  - Notebooks render as a notebook: markdown cells rendered, code cells with syntax
+    colouring, outputs (text, errors, PNG/JPEG/SVG images; HTML outputs sanitised or shown
+    as text).
+  - Text files show with syntax colouring by extension; whole files show as a download,
+    images inline.
+  - Each file has its history, and Restore for editors.
+- Viewing only: editing stays in SciQLop/JupyterLab for now.
 
 ## Left to the builder
 
@@ -212,7 +221,7 @@ groups, invitations and trash work as for catalogue projects.
 - The order of the work. A suggestion: (1) server: documents per project, sockets,
   storage, registry, presence for jupyter documents; (2) manifest and blobs; (3) the
   jupyqt bridge and front-end extensions; (4) the folder watcher; (5) AI agents; (6) the
-  web app's read-only tree.
+  web app's workspace viewer.
 
 ## Open risks
 
