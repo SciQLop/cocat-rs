@@ -1,0 +1,23 @@
+        The catalog is available as 
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23_pandas.p">python pandas dataframe (pickle),</a> 
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23_numpy.p">python numpy structured array (pickle),</a> 
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23_numpy.npy">python numpy structured array (.npy, no pickle),</a> 
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.json">json, </a>
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.csv">csv, </a>
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.xlsx">xlsx, </a>
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.txt">txt, </a> 
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.h5">hdf5, </a>        
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23_simple.html">html, </a>        
+        <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.html">html with header, </a>   
+        and this is the <a href="https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23_header.txt">header txt file with comments, references and parameter descriptions.</a>
+        <br>
+        <br>
+        <a href="https://colab.research.google.com/drive/1_zJMGJnX3XJx7FCHD04SC3Y0KCMdDGMz?usp=sharing">Here is a a google colab notebook</a> that demonstrates how to work with this and other catalogs on helioforecast.space in python. <br> 
+        Or simply use these lines to import the ICME catalog into python as a pandas dataframe:<br><br>       
+        
+        
+        <code>
+        import pandas as pd  <br>
+        url='https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.csv'  <br>
+        ic=pd.read_csv(url)<br>
+        ic.keys()<br>
