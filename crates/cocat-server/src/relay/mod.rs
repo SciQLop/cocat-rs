@@ -8,7 +8,9 @@ pub mod amda;
 pub mod cdaw;
 pub mod donki;
 pub mod icmecat;
+pub mod rolling;
 pub mod schedule;
+pub mod stix;
 pub mod store;
 
 use std::collections::HashMap;
@@ -87,6 +89,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(cdaw::Cdaw),
         Arc::new(amda::Amda),
         Arc::new(icmecat::Icmecat),
+        Arc::new(stix::Stix),
     ]
 }
 

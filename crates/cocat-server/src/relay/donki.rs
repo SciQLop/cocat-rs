@@ -11,10 +11,11 @@ use cocat_core::model::EventRecord;
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value};
 use time::macros::{date, format_description};
-use time::{Date, Duration, Month};
+use time::{Date, Duration};
 use uuid::Uuid;
 
-use super::{Fetched, Provider};
+use super::rolling::window_start;
+use super::{Fetched, Provider, rolling};
 
 pub struct Donki;
 
@@ -81,7 +82,6 @@ const NAMESPACE: Uuid = Uuid::from_u128(0x6ef18c5f_f0a8_49d6_8d92_7b8c37272eaf);
 const ENDPOINT: &str = "https://api.nasa.gov/DONKI";
 const DEFAULT_KEY: &str = "DEMO_KEY";
 const FIRST_DAY: Date = date!(2010 - 01 - 01);
-const WINDOW: Duration = Duration::days(90);
 /// A year per request, ends included.
 const REQUEST_SPAN: Duration = Duration::days(364);
 /// The fields that end an event, first to be found wins; an event with none is a point.
@@ -202,36 +202,8 @@ fn catalogue(kind: &Kind, events: Vec<EventRecord>) -> Fetched {
     }
 }
 
-/// Where this run starts reading a type: its whole history when its catalogue was never
-/// refreshed, else the window, or further back when the last refresh is older than that.
-fn first_day(refreshed: Option<Timestamp>, now: Timestamp) -> Result<Date, String> {
-    let Some(refreshed) = refreshed else {
-        return Ok(FIRST_DAY);
-    };
-    Ok(date_of(refreshed)?.min(date_of(window_start(now)?)?))
-}
-
 fn windows(refreshed: Option<Timestamp>, now: Timestamp) -> Result<Vec<(Date, Date)>, String> {
-    let last_day = date_of(now)?;
-    let first = first_day(refreshed, now)?;
-    let spans = std::iter::successors(Some(first), |start| {
-        Some(*start + REQUEST_SPAN + Duration::DAY)
-    })
-    .take_while(|start| *start <= last_day);
-    Ok(spans
-        .map(|start| (start, (start + REQUEST_SPAN).min(last_day)))
-        .collect())
-}
-
-fn window_start(now: Timestamp) -> Result<Timestamp, String> {
-    let micros = now.unix_micros() - WINDOW.whole_microseconds();
-    Timestamp::from_unix_micros(micros).ok_or_else(|| "the window starts out of range".to_owned())
-}
-
-fn date_of(at: Timestamp) -> Result<Date, String> {
-    let parts = at.parts();
-    let month = Month::try_from(parts.month).map_err(|error| error.to_string())?;
-    Date::from_calendar_date(parts.year, month, parts.day).map_err(|error| error.to_string())
+    rolling::windows(refreshed, now, FIRST_DAY, REQUEST_SPAN)
 }
 
 fn request_url(
@@ -330,6 +302,7 @@ mod tests {
     use yrs::{Doc, Transact};
 
     use super::*;
+    use crate::relay::rolling::date_of;
 
     fn fixture(code: &str) -> &'static [u8] {
         match code {
