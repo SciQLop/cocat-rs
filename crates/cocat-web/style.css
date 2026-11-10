@@ -1598,3 +1598,6 @@ a.home-project:hover { color: var(--accent); }
 .link-picker .quiet { padding: 0; }
 .sidebar:has(.linked-section) .catalogue-list { flex: none; }
 .sidebar:has(.linked-section):not(:has(.files-section)) .linked-section { flex: 1; }
+
+/* The hidden attribute wins over a display set by a class, like .button. */
+[hidden] { display: none !important; }

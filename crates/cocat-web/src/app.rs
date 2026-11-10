@@ -144,7 +144,8 @@ fn App(config: RoomConfig) -> impl IntoView {
         _ => kept.copied().flatten(),
     });
     Effect::new(move |_| {
-        if in_history.get() || in_groups.get() {
+        let elsewhere = file_path.with(Option::is_some) || link.with(Option::is_some);
+        if in_history.get() || in_groups.get() || elsewhere {
             selected.set(None);
         }
     });

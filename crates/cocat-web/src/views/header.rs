@@ -24,6 +24,8 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
     };
     let page = window().location().pathname().unwrap_or_default();
     let in_history = move || matches!(shown.get(), Route::History { .. });
+    // A link shows another project's catalogue: this project's history would mislead.
+    let on_link = move || matches!(shown.get(), Route::Link(_));
     let history = {
         let page = page.clone();
         move || shown.get().history().href(&page)
@@ -43,7 +45,7 @@ pub fn Header(shown: Memo<Route>) -> impl IntoView {
                         <a class="button history-button" href=close_history.clone()>"Close history"</a>
                     }
                 >
-                    <a class="button history-button" href=history.clone()>"History"</a>
+                    <a class="button history-button" href=history.clone() hidden=on_link>"History"</a>
                 </Show>
                 <HelpButton/>
                 <Show when=move || read_only>

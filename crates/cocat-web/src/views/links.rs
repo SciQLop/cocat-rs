@@ -4,13 +4,15 @@
 use std::collections::{HashMap, HashSet};
 
 use cocat_core::model::{self, Link};
+use cocat_core::role::Role;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
+use crate::api::ApiError;
 use crate::connection;
 use crate::edit;
 use crate::links::{
-    Listed, ListedCatalogues, Reach, linkable, project_name, reach, shown_name, sources,
+    Listed, ListedCatalogues, Reach, Unread, linkable, project_name, reach, shown_name, sources,
 };
 use crate::projects::Project;
 use crate::route::Route;
@@ -25,7 +27,7 @@ use crate::views::projects::Projects;
 /// Each linked project's catalogues, read once per page: names and whether they still exist.
 #[derive(Clone, Copy)]
 pub struct Lookups {
-    found: RwSignal<HashMap<String, Result<Vec<Listed>, ()>>>,
+    found: RwSignal<HashMap<String, Result<Vec<Listed>, Unread>>>,
     asked: StoredValue<HashSet<String>>,
 }
 
@@ -62,10 +64,19 @@ impl Lookups {
         }
         let (api, project) = (api.to_owned(), project.to_owned());
         spawn_local(async move {
-            let read = catalogues_of(&api, &project).await.map_err(|_| ());
+            let read = catalogues_of(&api, &project).await.map_err(unread);
             self.found.update(|found| {
                 found.insert(project, read);
             });
+        });
+    }
+
+    /// A fresher list of `project`'s catalogues, read by the picker.
+    fn known(self, project: &str, listed: Vec<Listed>) {
+        self.asked
+            .update_value(|asked| _ = asked.insert(project.to_owned()));
+        self.found.update(|found| {
+            found.insert(project.to_owned(), Ok(listed));
         });
     }
 
@@ -75,11 +86,18 @@ impl Lookups {
     }
 }
 
-async fn catalogues_of(api: &str, project: &str) -> Result<Vec<Listed>, String> {
+async fn catalogues_of(api: &str, project: &str) -> Result<Vec<Listed>, ApiError> {
     crate::api::read::<ListedCatalogues>(api, &["rooms", project, "catalogues"])
         .await
         .map(|listed| listed.catalogues)
-        .map_err(|error| error.to_string())
+}
+
+/// Only a missing answer is temporary; any refusal means the catalogues are out of reach.
+fn unread(error: ApiError) -> Unread {
+    match error {
+        ApiError::Network(_) => Unread::Unreachable,
+        _ => Unread::Refused,
+    }
 }
 
 /// The sidebar's links, under the catalogues; nothing when the project has none.
@@ -126,6 +144,7 @@ fn LinkEntry(link: Link, shown: Memo<Route>, page: String) -> impl IntoView {
     };
     let gone = move || state.with(|state| *state == Reach::Gone);
     let menu = NodeRef::<leptos::html::Details>::new();
+    let editor = room.can_write();
     let id = StoredValue::new(link.id.clone());
     let remove = move |_| {
         if let Some(menu) = menu.get_untracked() {
@@ -147,7 +166,7 @@ fn LinkEntry(link: Link, shown: Memo<Route>, page: String) -> impl IntoView {
                     <span class="label"><span class="link-name">{name}</span><small class="from">{from}</small></span>
                 </span>
             </a>
-            {room_can_write().then(|| view! {
+            {editor.then(|| view! {
                 <details class="entry-menu" data-menu node_ref=menu>
                     <summary aria-label=format!("Actions for the link “{}”", link.name)>"⋯"</summary>
                     <div class="menu" role="menu">
@@ -157,10 +176,6 @@ fn LinkEntry(link: Link, shown: Memo<Route>, page: String) -> impl IntoView {
             })}
         </div>
     }
-}
-
-fn room_can_write() -> bool {
-    expect_context::<Room>().can_write()
 }
 
 /// Removes link `id`; the page leaves it when it was on screen.
@@ -175,6 +190,7 @@ fn unlink(room: &Room, id: &str, on_screen: bool) {
 pub fn LinkPicker(open: RwSignal<bool>) -> impl IntoView {
     let room = expect_context::<Room>();
     let projects = expect_context::<Projects>();
+    let lookups = expect_context::<Lookups>();
     let here = room.config.room_id.clone();
     let offered = Memo::new(move |_| projects.list.with(|list| sources(list, &here)));
     let source = RwSignal::new(None::<Project>);
@@ -201,8 +217,11 @@ pub fn LinkPicker(open: RwSignal<bool>) -> impl IntoView {
         let api = projects.api();
         spawn_local(async move {
             let read = catalogues_of(&api, &project.id).await;
+            if let Ok(listed) = &read {
+                lookups.known(&project.id, listed.clone());
+            }
             if source.with_untracked(|now| now.as_ref() == Some(&project)) {
-                catalogues.set(Some(read));
+                catalogues.set(Some(read.map_err(|error| error.to_string())));
             }
         });
     };
@@ -284,7 +303,13 @@ enum Pane {
     Missing,
     Loading,
     Gone(String),
-    Open(Project, String),
+    Unreachable(String),
+    /// Only what the room depends on: a renamed project keeps its connection.
+    Open {
+        project: String,
+        role: Role,
+        uuid: String,
+    },
 }
 
 #[component]
@@ -293,23 +318,38 @@ pub fn LinkedCatalogue(id: String) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let lookups = expect_context::<Lookups>();
     let reader = room.clone();
+    let link_id = id.clone();
     let pane = Memo::new(move |_| {
         let links = reader.read(|txn| model::links(txn));
-        let Some(link) = links.into_iter().find(|link| link.id == id) else {
+        let Some(link) = links.into_iter().find(|link| link.id == link_id) else {
             return Pane::Missing;
         };
         projects.list.with(|list| match lookups.reach(&link, list) {
             Reach::Loading => Pane::Loading,
             Reach::Gone => Pane::Gone(project_name(&link, list)),
-            Reach::Open { project, .. } => Pane::Open(project, link.catalogue.clone()),
+            Reach::Unreachable => Pane::Unreachable(project_name(&link, list)),
+            Reach::Open { project, .. } => Pane::Open {
+                project: project.id,
+                role: project.role,
+                uuid: link.catalogue.clone(),
+            },
         })
     });
+    let listed = move |id: &str| {
+        projects
+            .list
+            .with_untracked(|list| list.iter().find(|project| project.id == id).cloned())
+    };
     move || {
         match pane.get() {
         Pane::Missing => gone_view("This link is no longer in the project.".to_owned(), None),
+        Pane::Unreachable(project) => gone_view(format!("{project} cannot be reached now. Reload the page to try again."), None),
         Pane::Loading => view! { <main class="content"><p class="quiet">"Opening the linked catalogue…"</p></main> }.into_any(),
-        Pane::Gone(project) => gone_view(no_longer(&project), Some(room.clone())),
-        Pane::Open(project, uuid) => view! { <Original project uuid/> }.into_any(),
+        Pane::Gone(project) => gone_view(no_longer(&project), Some((room.clone(), id.clone()))),
+        Pane::Open { project, uuid, .. } => match listed(&project) {
+            Some(project) => view! { <Original project uuid id=id.clone()/> }.into_any(),
+            None => gone_view(no_longer(&project), Some((room.clone(), id.clone()))),
+        },
     }
     }
 }
@@ -318,15 +358,9 @@ fn no_longer(project: &str) -> String {
     format!("No longer available: you are not in {project} any more, or the catalogue was deleted.")
 }
 
-/// Why a link does not open, with Remove link for those who may edit this project.
-fn gone_view(text: String, room: Option<Room>) -> AnyView {
-    let id = expect_context::<Projects>()
-        .route
-        .with_untracked(|route| match route {
-            Route::Link(id) => Some(id.clone()),
-            _ => None,
-        });
-    let remove = room.filter(Room::can_write).zip(id).map(|(room, id)| {
+/// Why a link does not open, with Remove link (of link `id` in `room`) for its editors.
+fn gone_view(text: String, removable: Option<(Room, String)>) -> AnyView {
+    let remove = removable.filter(|(room, _)| room.can_write()).map(|(room, id)| {
         view! { <button type="button" class="button" on:click=move |_| unlink(&room, &id, true)>"Remove link"</button> }
     });
     view! {
@@ -343,10 +377,13 @@ fn gone_view(text: String, room: Option<Room>) -> AnyView {
 /// The original catalogue, live: a room of its own for this subtree, with the visitor's role
 /// in the original project.
 #[component]
-fn Original(project: Project, uuid: String) -> impl IntoView {
+fn Original(project: Project, uuid: String, id: String) -> impl IntoView {
     let outer = expect_context::<Room>();
     let Some(config) = outer.config.for_project(&project) else {
-        return gone_view(no_longer(&project.name), Some(outer)).into_any();
+        return gone_view(
+            format!("{} cannot be opened from this page.", project.name),
+            None,
+        );
     };
     let room = Room::new(config);
     provide_context(room.clone());
@@ -380,7 +417,7 @@ fn Original(project: Project, uuid: String) -> impl IntoView {
     let name = project.name.clone();
     (move || {
         if deleted.get() {
-            return gone_view(no_longer(&name), Some(outer.clone()));
+            return gone_view(no_longer(&name), Some((outer.clone(), id.clone())));
         }
         view! {
             <main class="content">

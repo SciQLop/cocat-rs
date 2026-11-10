@@ -21,9 +21,17 @@ pub struct ListedCatalogues {
     pub catalogues: Vec<Listed>,
 }
 
-/// What reading another project's catalogues gave: `None` while it is on its way, an empty
-/// error when the visitor may not read them.
-pub type Lookup<'a> = Option<&'a Result<Vec<Listed>, ()>>;
+/// Why another project's catalogues could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    /// The server said no: the visitor is not in the project any more.
+    Refused,
+    /// No answer: the network or the server is down for now.
+    Unreachable,
+}
+
+/// What reading another project's catalogues gave: `None` while it is on its way.
+pub type Lookup<'a> = Option<&'a Result<Vec<Listed>, Unread>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reach {
@@ -33,6 +41,8 @@ pub enum Reach {
     Open { project: Project, name: String },
     /// Not in the original project any more, or the catalogue was deleted.
     Gone,
+    /// The original's catalogues could not be read for now.
+    Unreachable,
 }
 
 /// Whether `link` opens, from the visitor's `projects` (empty until read) and the original
@@ -47,11 +57,14 @@ pub fn reach(link: &Link, projects: &[Project], catalogues: Lookup<'_>) -> Reach
     let Some(listed) = catalogues else {
         return Reach::Loading;
     };
-    let found = listed.as_ref().ok().and_then(|catalogues| {
-        catalogues
-            .iter()
-            .find(|catalogue| catalogue.uuid == link.catalogue && !catalogue.deleted)
-    });
+    let catalogues = match listed {
+        Ok(catalogues) => catalogues,
+        Err(Unread::Refused) => return Reach::Gone,
+        Err(Unread::Unreachable) => return Reach::Unreachable,
+    };
+    let found = catalogues
+        .iter()
+        .find(|catalogue| catalogue.uuid == link.catalogue && !catalogue.deleted);
     match found {
         Some(catalogue) => Reach::Open {
             project: project.clone(),
@@ -193,8 +206,18 @@ mod tests {
             Reach::Gone
         );
         assert_eq!(
-            reach(&link("lab", "c1"), &projects, Some(&Err(()))),
+            reach(&link("lab", "c1"), &projects, Some(&Err(Unread::Refused))),
             Reach::Gone
+        );
+    }
+
+    #[test]
+    fn a_link_whose_project_cannot_be_reached_is_not_gone() {
+        let projects = [project("lab", "Lab")];
+        let unreachable = Err(Unread::Unreachable);
+        assert_eq!(
+            reach(&link("lab", "c1"), &projects, Some(&unreachable)),
+            Reach::Unreachable
         );
     }
 
