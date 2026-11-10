@@ -47,12 +47,12 @@ def test_only_a_curator_creates_one_and_everyone_lists_it(server):
         folder="AMDA/Solar wind",
         source="AMDA",
         description="Shocks seen by ACE",
-        key="amda.sharedcatalog_22",
+        key="ace.shocks_22",
     )
 
-    assert made == "public.amda.sharedcatalog_22"
+    assert made == "public.ace.shocks_22"
     with pytest.raises(cc.Conflict):
-        cc.raw.create_public_catalogue(server.url, curator, "Again", key="amda.sharedcatalog_22")
+        cc.raw.create_public_catalogue(server.url, curator, "Again", key="ace.shocks_22")
     [entry] = cc.raw.public_catalogues(server.url, server.cookie)
     assert entry["id"] == made
     assert entry["name"] == "Shocks"

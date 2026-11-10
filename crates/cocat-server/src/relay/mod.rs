@@ -42,7 +42,10 @@ pub struct Fetched {
     /// Where people read the list at its source.
     pub url: String,
     pub catalogue: String,
-    pub events: Vec<EventRecord>,
+    /// The attributes in the order the provider lists them, the catalogue's columns.
+    pub columns: Vec<String>,
+    /// The list's events, or why they could not be read this time.
+    pub events: Result<Vec<EventRecord>, String>,
 }
 
 #[async_trait]
@@ -99,13 +102,15 @@ pub fn http_client(public_url: Option<&str>) -> Result<reqwest::Client, reqwest:
 }
 
 /// What a run did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunReport {
     /// How many lists the provider published.
     pub catalogues: usize,
     pub counts: Counts,
     /// How many of its catalogues it no longer publishes.
     pub unpublished: usize,
+    /// The lists that could not be read this time, left as they were: "<name>: <why>".
+    pub unreadable: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -154,6 +159,7 @@ async fn run_to_end(state: AppState, provider: Arc<dyn Provider>) -> Result<RunR
     let refreshed = tokio::spawn(refresh(state.clone(), provider.clone()))
         .await
         .unwrap_or_else(|error| Err(RelayError::Panicked(panic_message(error))))
+        .map(|report| report.without(&secrets))
         .map_err(|error| error.without(&secrets));
     let result = match &refreshed {
         Ok(report) => report.as_json(),
@@ -183,17 +189,18 @@ impl RelayError {
     /// The error with every secret in what the provider said replaced, so that neither the
     /// stored result nor a log line carries one.
     fn without(self, secrets: &[String]) -> Self {
-        let hide = |text: String| {
-            secrets
-                .iter()
-                .fold(text, |text, secret| text.replace(secret, "•••"))
-        };
         match self {
-            Self::Fetch(text) => Self::Fetch(hide(text)),
-            Self::Panicked(text) => Self::Panicked(hide(text)),
+            Self::Fetch(text) => Self::Fetch(hide(text, secrets)),
+            Self::Panicked(text) => Self::Panicked(hide(text, secrets)),
             other => other,
         }
     }
+}
+
+fn hide(text: String, secrets: &[String]) -> String {
+    secrets
+        .iter()
+        .fold(text, |text, secret| text.replace(secret, "•••"))
 }
 
 fn panic_message(error: JoinError) -> String {
@@ -225,14 +232,21 @@ async fn refresh(state: AppState, provider: Arc<dyn Provider>) -> Result<RunRepo
         .map(|list| public_id(&format!("{}.{}", provider.id(), list.key)))
         .collect::<Result<Vec<_>, _>>()?;
     let mut counts = Counts::default();
-    for (room, list) in rooms.iter().zip(fetched) {
-        counts += relay_list(&state, &provider, room, list).await?;
+    let mut unreadable = Vec::new();
+    // simplify: every list is held at once, as `fetch` returns them all (AMDA: ~300k events,
+    // ~150 MB at peak); write list by list as fetched if that grows.
+    for (room, mut list) in rooms.iter().zip(fetched) {
+        match std::mem::replace(&mut list.events, Ok(Vec::new())) {
+            Ok(events) => counts += relay_list(&state, &provider, room, &list, events).await?,
+            Err(error) => unreadable.push(format!("{}: {error}", list.name)),
+        }
     }
     let unpublished = store::unpublish_others(&state.pool, provider.id(), &rooms).await?;
     Ok(RunReport {
         catalogues: rooms.len(),
         counts,
         unpublished,
+        unreadable,
     })
 }
 
@@ -242,13 +256,15 @@ async fn relay_list(
     state: &AppState,
     provider: &Arc<dyn Provider>,
     room: &str,
-    list: Fetched,
+    list: &Fetched,
+    events: Vec<EventRecord>,
 ) -> Result<Counts, RelayError> {
-    place(state, provider.as_ref(), room, &list).await?;
+    place(state, provider.as_ref(), room, list).await?;
     let wanted = Wanted {
-        catalogue: list.catalogue,
-        name: list.name,
-        events: list.events,
+        catalogue: list.catalogue.clone(),
+        name: list.name.clone(),
+        columns: list.columns.clone(),
+        events,
     };
     let (counts, update) = held(state, provider.clone(), room, wanted).await?;
     let allowance = state.rooms.allowance(&state.pool, room).await?;
@@ -312,6 +328,16 @@ async fn held(
 }
 
 impl RunReport {
+    /// The report with every secret in why a list could not be read replaced.
+    fn without(self, secrets: &[String]) -> Self {
+        let unreadable = self
+            .unreadable
+            .into_iter()
+            .map(|text| hide(text, secrets))
+            .collect();
+        Self { unreadable, ..self }
+    }
+
     fn as_json(&self) -> serde_json::Value {
         let counts = &self.counts;
         serde_json::json!({
@@ -322,6 +348,26 @@ impl RunReport {
             "restored": counts.restored,
             "skipped": counts.skipped,
             "unpublished": self.unpublished,
+            "unreadable": self.unreadable,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn why_a_list_could_not_be_read_carries_no_secret() {
+        let report = RunReport {
+            catalogues: 1,
+            counts: Counts::default(),
+            unpublished: 0,
+            unreadable: vec!["flares: 403 for api_key=s3cr3t".to_owned()],
+        };
+
+        let report = report.without(&["s3cr3t".to_owned()]);
+
+        assert_eq!(report.unreadable, ["flares: 403 for api_key=•••"]);
     }
 }

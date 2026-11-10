@@ -130,22 +130,45 @@ fn tag(element: &BytesStart<'_>) -> String {
 }
 
 /// The list read from its VOTable, its first table as speasy reads it.
-pub fn fetched_list(list: &SharedList, votable: &str) -> Result<Fetched, String> {
-    let imported = votable::import(votable).map_err(|error| error.to_string())?;
-    let table = imported
-        .tables
-        .into_iter()
-        .next()
-        .ok_or("the VOTable holds no table")?;
-    Ok(Fetched {
+pub fn fetched_list(list: &SharedList, votable: &str) -> Fetched {
+    entry(list, read(&list.id, votable))
+}
+
+/// The list's entry, holding its columns and events or why they could not be read.
+fn entry(list: &SharedList, read: Result<(Vec<String>, Vec<EventRecord>), String>) -> Fetched {
+    let (columns, events) = match read {
+        Ok((columns, events)) => (columns, Ok(events)),
+        Err(error) => (Vec::new(), Err(error)),
+    };
+    Fetched {
         key: list.id.clone(),
         folder: list.folder.clone(),
         name: list.name.clone(),
         description: index_description(&list.description),
         url: SITE.to_owned(),
         catalogue: Uuid::new_v5(&NAMESPACE, list.id.as_bytes()).to_string(),
-        events: events(&list.id, table.events)?,
-    })
+        columns,
+        events,
+    }
+}
+
+fn read(list: &str, votable: &str) -> Result<(Vec<String>, Vec<EventRecord>), String> {
+    let imported = votable::import(votable).map_err(|error| error.to_string())?;
+    let table = imported
+        .tables
+        .into_iter()
+        .next()
+        .ok_or("the VOTable holds no table")?;
+    let events = events(list, table.events)?;
+    Ok((filled(table.columns, &events), events))
+}
+
+/// The columns in AMDA's order, leaving out those no event fills.
+fn filled(columns: Vec<String>, events: &[EventRecord]) -> Vec<String> {
+    columns
+        .into_iter()
+        .filter(|column| events.iter().any(|e| e.attributes.contains_key(column)))
+        .collect()
 }
 
 fn index_description(description: &str) -> String {
@@ -290,9 +313,10 @@ async fn fetch_tree(http: &reqwest::Client, tree: &Tree) -> Result<Vec<Fetched>,
         let request = http
             .get(format!("{REST}{}", tree.get))
             .query(&[(tree.id, &list.id)]);
-        let votable = document(http, request).await;
-        let read = votable.and_then(|votable| fetched_list(&list, &votable));
-        fetched.push(read.map_err(|error| format!("{}: {error}", list.id))?);
+        fetched.push(match document(http, request).await {
+            Ok(votable) => fetched_list(&list, &votable),
+            Err(error) => entry(&list, Err(error)),
+        });
     }
     Ok(fetched)
 }
@@ -311,8 +335,8 @@ impl Provider for Amda {
         "0 4 * * *"
     }
 
-    /// One list AMDA cannot give fails the run, so no catalogue changes and the
-    /// administrator reads which list it was.
+    /// A list AMDA cannot give this time is reported as unreadable and left as it is; the
+    /// others are refreshed. Only a tree AMDA cannot give fails the run.
     async fn fetch(
         &self,
         http: &reqwest::Client,
@@ -337,6 +361,8 @@ mod tests {
     const TIME_TABLES: &str = include_str!("../../tests/fixtures/relay/amda_timetables.xml");
     const SOLO: &str = include_str!("../../tests/fixtures/relay/amda_sharedcatalog_63.xml");
     const SUBSTORMS: &str = include_str!("../../tests/fixtures/relay/amda_sharedtimeTable_10.xml");
+    /// Not from AMDA: typed columns with empty and non-finite cells.
+    const TYPED: &str = include_str!("../../tests/fixtures/relay/amda_typed_columns.xml");
 
     /// An AMDA-like table, every column text: one interval three times, one at a quarter
     /// second, blank and padded labels, and times written four ways.
@@ -352,8 +378,12 @@ mod tests {
             .unwrap()
     }
 
+    fn rows(fetched: &Fetched) -> &[EventRecord] {
+        fetched.events.as_ref().unwrap()
+    }
+
     fn uuids(fetched: &Fetched) -> Vec<&str> {
-        fetched.events.iter().map(|e| e.uuid.as_str()).collect()
+        rows(fetched).iter().map(|e| e.uuid.as_str()).collect()
     }
 
     #[test]
@@ -417,24 +447,21 @@ mod tests {
     fn a_long_description_is_cut_for_the_index() {
         let bepi = list(CATALOGS, "sharedcatalog_21");
 
-        let fetched = fetched_list(&bepi, SOLO).unwrap();
+        let fetched = fetched_list(&bepi, SOLO);
 
         assert_eq!(bepi.description.chars().count(), 2206);
         assert_eq!(fetched.description.chars().count(), 2000);
         assert!(fetched.description.ends_with("hee min_m…"));
         let solo = list(CATALOGS, "sharedcatalog_63");
-        assert_eq!(
-            fetched_list(&solo, SOLO).unwrap().description,
-            solo.description
-        );
+        assert_eq!(fetched_list(&solo, SOLO).description, solo.description);
     }
 
     /// The uuids below are the script's, computed by `tools/amda_public.py` with speasy
     /// reading the same files.
     #[test]
     fn a_list_keeps_the_scripts_ids() {
-        let solo = fetched_list(&list(CATALOGS, "sharedcatalog_63"), SOLO).unwrap();
-        let substorms = fetched_list(&list(TIME_TABLES, "sharedtimeTable_10"), SUBSTORMS).unwrap();
+        let solo = fetched_list(&list(CATALOGS, "sharedcatalog_63"), SOLO);
+        let substorms = fetched_list(&list(TIME_TABLES, "sharedtimeTable_10"), SUBSTORMS);
 
         assert_eq!(solo.key, "sharedcatalog_63");
         assert_eq!(solo.catalogue, "931dccc5-a77f-5e2b-8702-53b2df03b6ba");
@@ -447,11 +474,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            serde_json::Value::Object(solo.events[0].attributes.clone()),
+            serde_json::Value::Object(rows(&solo)[0].attributes.clone()),
             json!({"Orbit No.": "1", "Semi Axis.": "112546934.18", "Incl.": "22.07",
                    "Eccen.": "0.314", "Lon Asc.": "3.06", "Arg. Peri.": "323.55"})
         );
-        assert_eq!(solo.events[0].author.as_deref(), Some(SOURCE));
+        assert_eq!(rows(&solo)[0].author.as_deref(), Some(SOURCE));
         assert_eq!(substorms.key, "sharedtimeTable_10");
         assert_eq!(substorms.catalogue, "9053fd48-77cc-5d57-ace5-8f05d2b5648d");
         assert_eq!(
@@ -463,7 +490,7 @@ mod tests {
                 "600ebe10-677c-5c6f-ba34-03a2bdf6737c",
             ]
         );
-        assert!(substorms.events.iter().all(|e| e.attributes.is_empty()));
+        assert!(rows(&substorms).iter().all(|e| e.attributes.is_empty()));
     }
 
     #[test]
@@ -475,7 +502,7 @@ mod tests {
             description: String::new(),
         };
 
-        let fetched = fetched_list(&copies, COPIES).unwrap();
+        let fetched = fetched_list(&copies, COPIES);
 
         assert_eq!(
             uuids(&fetched),
@@ -497,10 +524,9 @@ mod tests {
             description: String::new(),
         };
 
-        let fetched = fetched_list(&copies, COPIES).unwrap();
+        let fetched = fetched_list(&copies, COPIES);
 
-        let attributes: Vec<Value> = fetched
-            .events
+        let attributes: Vec<Value> = rows(&fetched)
             .iter()
             .map(|e| Value::Object(e.attributes.clone()))
             .collect();
@@ -536,10 +562,74 @@ mod tests {
         }
     }
 
+    fn made_up(id: &str) -> SharedList {
+        SharedList {
+            id: id.into(),
+            name: id.into(),
+            folder: "AMDA".into(),
+            description: String::new(),
+        }
+    }
+
+    /// The values and uuids are the script's, from speasy reading the same file.
+    #[test]
+    fn typed_columns_lose_only_their_empty_and_non_finite_values() {
+        let fetched = fetched_list(&made_up("sharedcatalog_1"), TYPED);
+
+        let attributes: Vec<Value> = rows(&fetched)
+            .iter()
+            .map(|e| Value::Object(e.attributes.clone()))
+            .collect();
+        assert_eq!(
+            attributes,
+            [
+                json!({"label": "MSH", "n": 7, "speed": 412.5, "flag": true}),
+                json!({}),
+                json!({"label": "x", "n": 8, "speed": 1.0, "flag": false}),
+                json!({"label": "y", "flag": true}),
+            ]
+        );
+        assert_eq!(
+            uuids(&fetched),
+            [
+                "27374bde-8926-54b6-9c87-bc180e106936",
+                "b2a1c3bd-8dde-5e1b-9dc8-6c3964e2d50b",
+                "377a76d1-729e-54a7-aa89-8233bba6f7e6",
+                "2c1fe25f-374a-5e5f-aaf0-1ab98c394306",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_columns_are_amdas_order_without_the_empty_ones() {
+        let columns = |list: SharedList, votable| fetched_list(&list, votable).columns;
+
+        assert_eq!(
+            columns(made_up("sharedcatalog_1"), TYPED),
+            ["label", "n", "speed", "flag"]
+        );
+        assert_eq!(
+            columns(list(CATALOGS, "sharedcatalog_63"), SOLO),
+            [
+                "Orbit No.",
+                "Semi Axis.",
+                "Incl.",
+                "Eccen.",
+                "Lon Asc.",
+                "Arg. Peri."
+            ]
+        );
+        assert!(columns(list(TIME_TABLES, "sharedtimeTable_10"), SUBSTORMS).is_empty());
+    }
+
     #[test]
     fn a_tree_that_is_not_xml_is_an_error() {
         assert!(shared_lists("<catalogList><folder></catalogList>").is_err());
-        assert!(fetched_list(&list(CATALOGS, "sharedcatalog_63"), "no table").is_err());
+        assert!(
+            fetched_list(&list(CATALOGS, "sharedcatalog_63"), "no table")
+                .events
+                .is_err()
+        );
     }
 
     #[test]

@@ -72,7 +72,8 @@ impl Provider for Fake {
             description: String::new(),
             url: "https://fake.example.org/shocks".to_owned(),
             catalogue: "cat-shocks".to_owned(),
-            events: vec![EventRecord::new("e1", day(1), day(2))],
+            columns: Vec::new(),
+            events: Ok(vec![EventRecord::new("e1", day(1), day(2))]),
         }])
     }
 }

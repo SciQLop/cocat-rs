@@ -191,7 +191,8 @@ fn catalogue(kind: &Kind, events: Vec<EventRecord>) -> Fetched {
             kind.code
         ),
         catalogue: Uuid::new_v5(&NAMESPACE, kind.code.as_bytes()).to_string(),
-        events,
+        columns: Vec::new(),
+        events: Ok(events),
     }
 }
 
@@ -411,7 +412,12 @@ mod tests {
                 let events = parse(&kind, fixture(kind.code)).unwrap();
                 assert!(!events.is_empty(), "{}", kind.code);
                 let list = catalogue(&kind, events);
-                (list.key, list.folder, list.name, list.events.is_empty())
+                (
+                    list.key,
+                    list.folder,
+                    list.name,
+                    list.events.unwrap().is_empty(),
+                )
             })
             .collect();
 
@@ -508,6 +514,7 @@ mod tests {
         let wanted = |events| Wanted {
             catalogue: "c".into(),
             name: "Solar flares".into(),
+            columns: Vec::new(),
             events,
         };
         hold(

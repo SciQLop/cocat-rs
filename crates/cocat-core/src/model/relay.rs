@@ -10,7 +10,7 @@ use super::read::{catalogue, event, listed_events};
 use super::{
     EventRecord, NewCatalogue, Status, WriteError, add_catalogue_events, create_catalogue,
     create_event, delete_event, remove_event_attributes, rename_catalogue, restore_catalogue,
-    restore_event, set_event_attributes, set_event_range,
+    restore_event, set_catalogue_columns, set_event_attributes, set_event_range,
 };
 
 /// A catalogue and the events it must hold; the uuids are the caller's. A provider sets only
@@ -19,6 +19,8 @@ use super::{
 pub struct Wanted {
     pub catalogue: String,
     pub name: String,
+    /// The catalogue's columns: the attributes in the order the provider lists them.
+    pub columns: Vec<String>,
     pub events: Vec<EventRecord>,
 }
 
@@ -48,7 +50,7 @@ impl std::ops::AddAssign for Counts {
     }
 }
 
-/// Makes the catalogue exist under `wanted.name` and list exactly `wanted.events` (the last of
+/// Makes the catalogue exist under `wanted.name` with `wanted.columns`, and list exactly `wanted.events` (the last of
 /// two events with one uuid wins). Listed events nobody wants go to the trash unless `keep`
 /// says to leave them. Holding the same events twice writes nothing the second time.
 pub fn hold(
@@ -83,6 +85,7 @@ fn ensure_catalogue(txn: &mut TransactionMut<'_>, wanted: &Wanted) -> bool {
             let new = NewCatalogue {
                 uuid: wanted.catalogue.clone(),
                 name: wanted.name.clone(),
+                columns: wanted.columns.clone(),
                 ..NewCatalogue::default()
             };
             create_catalogue(txn, &new)
@@ -97,6 +100,9 @@ fn ensure_catalogue(txn: &mut TransactionMut<'_>, wanted: &Wanted) -> bool {
             }
             if existing.name != wanted.name {
                 rename_catalogue(txn, &wanted.catalogue, &wanted.name);
+            }
+            if existing.columns != wanted.columns {
+                set_catalogue_columns(txn, &wanted.catalogue, &wanted.columns);
             }
             true
         }

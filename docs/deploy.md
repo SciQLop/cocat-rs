@@ -148,8 +148,8 @@ changed columns and moves intervals AMDA dropped to the trash; nothing is duplic
 
 A server where the script already ran keeps its AMDA catalogues: the provider uses the same
 ids and uuids, so its first run changes nothing in a list AMDA did not change. Curators can no
-longer edit those catalogues once the provider follows them. If one list cannot be read, the
-whole run fails, no catalogue changes, and the admin page names the list.
+longer edit those catalogues once the provider follows them. A list AMDA cannot give is left as
+it was and named on the admin page; the other lists are refreshed.
 
 ## The catalogue web app
 

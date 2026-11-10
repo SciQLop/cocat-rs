@@ -402,6 +402,8 @@ pub struct ImportedTable {
     pub name: String,
     /// The `shape_axis` PARAM: what the shapes measure, in the PARAM's unit.
     pub shape_axis: Option<ShapeAxis>,
+    /// The fields carried as attributes, in the file's order.
+    pub columns: Vec<String>,
     pub events: Vec<EventRecord>,
 }
 
@@ -423,6 +425,12 @@ pub fn import(xml: &str) -> Result<Imported, VotableError> {
         imported.push(ImportedTable {
             name: table.name.clone(),
             shape_axis: table.shape_axis.clone(),
+            columns: table
+                .fields
+                .iter()
+                .filter(|field| !is_standard(&field.name))
+                .map(|field| field.name.clone())
+                .collect(),
             events: events(&table)?,
         });
     }
@@ -730,9 +738,9 @@ fn event(table: &Table, row: &[String]) -> Result<EventRecord, VotableError> {
             "products" => event.products = strings(field, value)?,
             name if is_standard(name) => {}
             _ => {
-                event
-                    .attributes
-                    .insert(field.name.clone(), Kind::import(field, value)?);
+                if let Some(value) = Kind::import(field, value)? {
+                    event.attributes.insert(field.name.clone(), value);
+                }
             }
         }
     }
@@ -774,21 +782,28 @@ impl Kind {
         )
     }
 
-    fn import(field: &Field, value: &str) -> Result<Value, VotableError> {
+    /// The cell's value; an empty number or boolean cell, or a number that is not finite
+    /// (`NaN`, `inf`), has none, as a VOTable reader masks it.
+    fn import(field: &Field, value: &str) -> Result<Option<Value>, VotableError> {
         let bad = || VotableError::BadValue(field.name.clone(), value.to_owned());
+        let typed = matches!(
+            field.datatype.as_str(),
+            "long" | "int" | "short" | "double" | "float" | "boolean"
+        );
+        if typed && value.trim().is_empty() {
+            return Ok(None);
+        }
         let parsed = match field.datatype.as_str() {
             "long" | "int" | "short" => {
-                Value::from(value.trim().parse::<i64>().map_err(|_| bad())?)
+                Some(Value::from(value.trim().parse::<i64>().map_err(|_| bad())?))
             }
             "double" | "float" => {
                 let number: f64 = value.trim().parse().map_err(|_| bad())?;
-                serde_json::Number::from_f64(number)
-                    .map(Value::Number)
-                    .ok_or_else(bad)?
+                serde_json::Number::from_f64(number).map(Value::Number)
             }
-            "boolean" => Value::from(matches!(value.trim(), "true" | "1" | "T")),
-            _ if field.utype == "json" => serde_json::from_str(value).map_err(|_| bad())?,
-            _ => Value::from(value.to_owned()),
+            "boolean" => Some(Value::from(matches!(value.trim(), "true" | "1" | "T"))),
+            _ if field.utype == "json" => Some(serde_json::from_str(value).map_err(|_| bad())?),
+            _ => Some(Value::from(value.to_owned())),
         };
         Ok(parsed)
     }
@@ -981,6 +996,51 @@ mod tests {
                 .cloned()
                 .expect("an object")
         );
+    }
+
+    #[test]
+    fn an_empty_or_non_finite_typed_cell_leaves_its_value_out() {
+        let mut fields = start_stop();
+        fields.extend([
+            field("count", "long", ""),
+            field("q", "double", ""),
+            field("flag", "boolean", ""),
+            field("mission", "char", ""),
+        ]);
+        let rows = [
+            "<TR><TD>2025-01-31 10:00:00</TD><TD>2025-01-31 10:01:00</TD><TD></TD><TD>NaN</TD><TD> </TD><TD>MMS</TD></TR>",
+            "<TR><TD>2025-01-31 10:00:00</TD><TD>2025-01-31 10:01:00</TD><TD>3</TD><TD>-inf</TD><TD>false</TD><TD></TD></TR>",
+        ];
+
+        let imported = import(&votable(&fields, &rows)).expect("an import");
+
+        let attributes: Vec<Value> = imported.tables[0]
+            .events
+            .iter()
+            .map(|event| Value::Object(event.attributes.clone()))
+            .collect();
+        assert_eq!(
+            attributes,
+            [
+                json!({"mission": "MMS"}),
+                json!({"count": 3, "flag": false, "mission": ""})
+            ]
+        );
+    }
+
+    #[test]
+    fn the_columns_are_the_attribute_fields_in_file_order() {
+        let mut fields = start_stop();
+        fields.extend([
+            field("zeta", "char", ""),
+            field("author", "char", ""),
+            field("alpha", "double", ""),
+            field("tags", "char", ""),
+        ]);
+
+        let imported = import(&votable(&fields, &[])).expect("an import");
+
+        assert_eq!(imported.tables[0].columns, ["zeta", "alpha"]);
     }
 
     #[test]

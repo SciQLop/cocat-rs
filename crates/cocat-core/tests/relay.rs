@@ -23,6 +23,7 @@ fn wanted(name: &str, events: Vec<EventRecord>) -> Wanted {
     Wanted {
         catalogue: CATALOGUE.to_owned(),
         name: name.to_owned(),
+        columns: Vec::new(),
         events,
     }
 }
@@ -290,5 +291,28 @@ fn a_rewrite_the_room_refuses_is_skipped_not_changed() {
     assert_eq!(
         event(&doc.transact(), "a").unwrap().attributes["speed"],
         400
+    );
+}
+
+#[test]
+fn the_catalogue_follows_the_wanted_columns() {
+    let doc = Doc::new();
+    let columns = |names: &[&str]| Wanted {
+        columns: names.iter().map(|name| (*name).to_owned()).collect(),
+        ..wanted("Flares", vec![record("a", 0)])
+    };
+    run(&doc, &columns(&["speed", "ratio"]));
+    let made = catalogue(&doc.transact(), CATALOGUE).unwrap().columns;
+    let before = doc.transact().state_vector();
+
+    run(&doc, &columns(&["speed", "ratio"]));
+    let unchanged = doc.transact().state_vector() == before;
+    run(&doc, &columns(&["ratio"]));
+
+    assert_eq!(made, ["speed", "ratio"]);
+    assert!(unchanged, "the same columns are not written again");
+    assert_eq!(
+        catalogue(&doc.transact(), CATALOGUE).unwrap().columns,
+        ["ratio"]
     );
 }

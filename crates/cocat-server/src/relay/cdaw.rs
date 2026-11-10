@@ -292,7 +292,8 @@ fn catalogue(list: &List, events: Vec<EventRecord>) -> Fetched {
         description: list.description.to_owned(),
         url: list.url.to_owned(),
         catalogue: Uuid::new_v5(&NAMESPACE, list.key.as_bytes()).to_string(),
-        events,
+        columns: Vec::new(),
+        events: Ok(events),
     }
 }
 

@@ -30,8 +30,11 @@ const SUBSTORMS_ROOM: &str = "public.amda.sharedtimeTable_10";
 const SOLO_DESCRIPTION: &str = "Solar Orbiter is a Sun-observing satellite, under development by the European Space Agency. The mission was launched with an Atlas V from the Cape Canaveral AFS in Florida on 09 February 2020. This catalog has been created using spice kernels provided by spdf and the JPL's orbnum tool (https://naif.jpl.nasa.gov/pub/naif/utilities/PC_Linux_64bit/orbnum.ug).";
 const SUBSTORMS_DESCRIPTION: &str = "THEMIS substorms list based on overview jpegs at station CHBG Substorm identification is done purely by visible inspection of all-sky images  There is no guarantee that a certain feature is really a substorm  Please see ftp://justice.ssl.berkeley.edu/events/ for more details; \n        Historic: From old AMDA;\n        Creation Date :  2013-11-22T13:52:49;";
 
-/// The AMDA provider reading the saved answers instead of AMDA.
-struct SavedAmda;
+/// The AMDA provider reading saved answers instead of AMDA: `solo` is what it gets for the
+/// solo list.
+struct SavedAmda {
+    solo: &'static str,
+}
 
 #[async_trait]
 impl Provider for SavedAmda {
@@ -54,8 +57,8 @@ impl Provider for SavedAmda {
         _last_ok: Option<Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         Ok(vec![
-            amda::fetched_list(&saved(CATALOGS, "sharedcatalog_63"), SOLO)?,
-            amda::fetched_list(&saved(TIME_TABLES, "sharedtimeTable_10"), SUBSTORMS)?,
+            amda::fetched_list(&saved(CATALOGS, "sharedcatalog_63"), self.solo),
+            amda::fetched_list(&saved(TIME_TABLES, "sharedtimeTable_10"), SUBSTORMS),
         ])
     }
 }
@@ -234,6 +237,10 @@ struct World {
 
 impl World {
     async fn start() -> Self {
+        Self::answering(SOLO).await
+    }
+
+    async fn answering(solo: &'static str) -> Self {
         let dir = TempDir::new().unwrap();
         let update_dir = dir.path().join("rooms");
         fs::create_dir_all(&update_dir).unwrap();
@@ -248,7 +255,7 @@ impl World {
             links: Links::default(),
             oidc: Vec::new(),
             web_dir: None,
-            providers: Arc::new(vec![Arc::new(SavedAmda)]),
+            providers: Arc::new(vec![Arc::new(SavedAmda { solo })]),
             http: reqwest::Client::new(),
         };
         let curator = db::create_user(&state.pool, "curator@example.org", "pwd", false, true)
@@ -364,4 +371,41 @@ async fn a_room_the_script_made_is_adopted_unchanged() {
         assert_eq!(world.versions(list.room).await, versions, "{}", list.room);
         assert_eq!(world.entry(list.room).await, entry, "{}", list.room);
     }
+}
+
+#[tokio::test]
+async fn a_list_made_fresh_gets_its_columns() {
+    let world = World::start().await;
+
+    relay::run(&world.state, "amda").await.unwrap();
+
+    let expected = solo();
+    let catalogue = expected.catalogue;
+    let columns = world
+        .state
+        .rooms
+        .read(SOLO_ROOM, move |doc: &Doc| {
+            model::catalogue(&doc.transact(), catalogue)
+                .unwrap()
+                .columns
+        })
+        .await
+        .unwrap();
+    assert_eq!(columns, expected.columns);
+}
+
+#[tokio::test]
+async fn a_list_amda_sends_unreadable_stays_as_the_script_made_it() {
+    let world = World::answering("<VOTABLE></VOTABLE>").await;
+    let lists = [solo(), substorms()];
+    for list in &lists {
+        world.made_by_the_script(list).await;
+    }
+    let before = world.versions(SOLO_ROOM).await;
+
+    let report = relay::run(&world.state, "amda").await.unwrap();
+
+    assert_eq!(report.unreadable, ["solo: the VOTable holds no table"]);
+    assert_eq!(report.unpublished, 0);
+    assert_eq!(world.versions(SOLO_ROOM).await, before);
 }

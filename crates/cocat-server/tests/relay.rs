@@ -223,7 +223,8 @@ fn list(key: &str, catalogue: &str, events: Vec<EventRecord>) -> Fetched {
         description: format!("The {key} the fake provider publishes"),
         url: format!("https://fake.example.org/{key}"),
         catalogue: catalogue.to_owned(),
-        events,
+        columns: Vec::new(),
+        events: Ok(events),
     }
 }
 
@@ -352,6 +353,55 @@ async fn an_empty_fetch_keeps_the_catalogues_and_records_a_failure() {
         .unwrap();
     assert_eq!(provider.last_ok_at, ok.last_ok_at);
     assert!(provider.last_result.unwrap().contains("error"));
+}
+
+#[tokio::test]
+async fn a_list_that_cannot_be_read_is_left_as_it_is_and_named() {
+    let world = World::start().await;
+    world.run().await.unwrap();
+    let shocks_before = world.versions(SHOCKS).await;
+    let mut unreadable = shocks(Vec::new());
+    unreadable.events = Err("the table is cut short".to_owned());
+    let more_storms = list(
+        "storms",
+        "cat-storms",
+        vec![event("s1", 10), event("s2", 11)],
+    );
+    world.answer(Ok(vec![unreadable, more_storms]));
+
+    let report = world.run().await.unwrap();
+
+    assert_eq!(report.unreadable, ["Fake shocks: the table is cut short"]);
+    assert_eq!(report.unpublished, 0);
+    assert_eq!(report.counts.added, 1);
+    assert_eq!(world.listed(SHOCKS, "cat-shocks").await, ["e1", "e2"]);
+    assert_eq!(world.versions(SHOCKS).await, shocks_before);
+    assert_eq!(world.row(SHOCKS).await["relay"]["published"], true);
+    assert_eq!(world.listed(STORMS, "cat-storms").await, ["s1", "s2"]);
+    let provider = store::provider(&world.state.pool, "fake")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(provider.last_run_at, provider.last_ok_at, "the run worked");
+    let result: Value = serde_json::from_str(&provider.last_result.unwrap()).unwrap();
+    assert_eq!(
+        result["unreadable"],
+        json!(["Fake shocks: the table is cut short"])
+    );
+}
+
+#[tokio::test]
+async fn a_list_never_read_is_not_made() {
+    let world = World::start().await;
+    let mut unreadable = shocks(Vec::new());
+    unreadable.events = Err("no answer".to_owned());
+    world.answer(Ok(vec![unreadable, storms()]));
+
+    let report = world.run().await.unwrap();
+
+    assert_eq!(report.unreadable, ["Fake shocks: no answer"]);
+    let index = world.index(world.reader).await;
+    assert!(index.iter().all(|row| row["id"] != SHOCKS), "{index:?}");
 }
 
 #[tokio::test]

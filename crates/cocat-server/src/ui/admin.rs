@@ -509,11 +509,34 @@ fn run_counts(result: &serde_json::Value) -> String {
     .into_iter()
     .filter(|(name, _)| count(name) > 0)
     .map(|(name, label)| format!("{} {label}", count(name)));
-    always
+    let counts = always
         .into_iter()
         .chain(when_any)
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+    match unreadable(result) {
+        Some(lists) => format!("{counts}; {lists}"),
+        None => counts,
+    }
+}
+
+/// "1 list could not be read: <name>: <why>", when some could not.
+fn unreadable(result: &serde_json::Value) -> Option<String> {
+    let lists: Vec<&str> = result["unreadable"]
+        .as_array()?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let noun = match lists.len() {
+        0 => return None,
+        1 => "list",
+        _ => "lists",
+    };
+    Some(format!(
+        "{} {noun} could not be read: {}",
+        lists.len(),
+        lists.join("; ")
+    ))
 }
 
 fn user_view(state: &AppState, actor: &User, row: UserRow) -> UserView {
@@ -663,4 +686,32 @@ fn answer(state: &AppState, page: &str, result: Result<(), AdminError>, done: &s
 fn back(state: &AppState, page: &str, text: &str) -> Response {
     let redirect = Redirect::to(&state.links.path(page)).into_response();
     frame::flash(&state.links, redirect, text)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::run_counts;
+
+    #[test]
+    fn the_counts_name_the_lists_that_could_not_be_read() {
+        let result = |unreadable: Vec<&str>| {
+            json!({"catalogues": 3, "added": 1, "changed": 0, "removed": 0, "restored": 0,
+                   "unreadable": unreadable})
+        };
+
+        assert_eq!(
+            run_counts(&result(vec![])),
+            "3 catalogues, 1 added, 0 changed, 0 removed, 0 restored"
+        );
+        assert_eq!(
+            run_counts(&result(vec!["solo: timed out"])),
+            "3 catalogues, 1 added, 0 changed, 0 removed, 0 restored; 1 list could not be read: solo: timed out"
+        );
+        assert_eq!(
+            run_counts(&result(vec!["a: x", "b: y"])),
+            "3 catalogues, 1 added, 0 changed, 0 removed, 0 restored; 2 lists could not be read: a: x; b: y"
+        );
+    }
 }
