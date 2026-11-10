@@ -486,7 +486,7 @@ async fn owner_grants_and_members_get_access() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        json!([{ "id": "room-granted", "name": "room-granted", "role": "editor", "personal": false, "editors_can_share": true }])
+        json!([{ "id": "room-granted", "name": "room-granted", "role": "editor", "personal": false, "editors_can_share": true, "kind": "catalogues" }])
     );
 
     let (status, body) = fixture.get("/room/room-granted/users", Some(bob)).await;

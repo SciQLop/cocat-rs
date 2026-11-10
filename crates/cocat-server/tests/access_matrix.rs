@@ -249,6 +249,20 @@ const ROWS: &[Row] = &[
     )
     .room_any(),
     row(
+        "GET",
+        "/api/rooms/{room}/documents",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "POST",
+        "/api/rooms/{room}/documents",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any(),
+    row(
         "PUT",
         "/api/rooms/{room}/editors-can-share",
         Guard::RoomOwner,
@@ -1079,6 +1093,7 @@ impl World {
             ("PATCH", "/api/rooms/{room}" | "/api/groups/{group}" | "/api/public/{public}") => {
                 (json, r#"{"name":"renamed"}"#.to_owned())
             }
+            ("POST", "/api/rooms/{room}/documents") => (json, r#"{"kind":"text"}"#.to_owned()),
             ("PATCH", "/api/rooms/{room}/members/{member}") => {
                 (json, r#"{"role":"viewer"}"#.to_owned())
             }

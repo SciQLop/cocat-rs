@@ -33,6 +33,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(legacy_rooms))
         .routes(routes!(legacy_room_users))
         .merge(crate::catalogues_api::router())
+        .merge(crate::documents::router())
         .merge(crate::history_api::router())
         .merge(crate::home_api::router())
         .merge(crate::groups_api::router())
@@ -252,6 +253,7 @@ struct ListedRoom {
     personal: bool,
     /// Whether the project's editors may share it as its owner does.
     editors_can_share: bool,
+    kind: db::ProjectKind,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -365,27 +367,32 @@ async fn list_rooms(
 ) -> Result<Json<Vec<ListedRoom>>, ApiError> {
     let own = db::personal_room(&state.pool, user.id).await?;
     let closed = db::rooms_closed_to_editors(&state.pool, user.id).await?;
-    let rooms = db::list_user_rooms(&state.pool, user.id)
-        .await?
-        .into_iter()
-        .map(|(room, role)| ListedRoom {
+    let mut rooms = Vec::new();
+    for (room, role) in db::list_user_rooms(&state.pool, user.id).await? {
+        // simplify: one query per project; fetch the kinds in the listing's own query if a
+        // user ever belongs to thousands.
+        let kind = db::project_kind(&state.pool, &room.id)
+            .await?
+            .unwrap_or(db::ProjectKind::Catalogues);
+        rooms.push(ListedRoom {
             personal: own.as_deref() == Some(room.id.as_str()),
             editors_can_share: !closed.contains(&room.id),
             id: room.id,
             name: room.name,
             role: role.as_str(),
-        })
-        .collect();
+            kind,
+        });
+    }
     Ok(Json(rooms))
 }
 
 #[utoipa::path(
     post,
     path = "/api/rooms",
-    request_body = NameBody,
+    request_body = NewRoomBody,
     security(("cookie" = [])),
     responses(
-        (status = 201, description = "The room, with the caller as owner", body = RoomOut),
+        (status = 201, description = "The room, with the caller as owner", body = CreatedRoom),
         (status = 400, description = "The name has control characters", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 422, description = "The name is empty or too long", body = Detail),
@@ -394,10 +401,35 @@ async fn list_rooms(
 async fn create_room(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    JsonBody(body): JsonBody<NameBody>,
-) -> Result<(StatusCode, Json<RoomOut>), ApiError> {
-    let room = lifecycle::create_room(&state, user.id, &body.name.0).await?;
-    Ok((StatusCode::CREATED, Json(RoomOut::new(room, Role::Owner))))
+    JsonBody(body): JsonBody<NewRoomBody>,
+) -> Result<(StatusCode, Json<CreatedRoom>), ApiError> {
+    let kind = body.kind.unwrap_or(db::ProjectKind::Catalogues);
+    let room = lifecycle::create_project(&state, user.id, &body.name.0, kind).await?;
+    let created = CreatedRoom {
+        room: RoomOut::new(room, Role::Owner),
+        kind,
+    };
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct NewRoomBody {
+    #[schema(
+        value_type = String,
+        min_length = 1,
+        max_length = 200,
+        pattern = "^(?!\\s*$)[^\\u0000-\\u001F\\u007F]+$"
+    )]
+    name: Name,
+    /// `catalogues` when left out.
+    kind: Option<db::ProjectKind>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct CreatedRoom {
+    #[serde(flatten)]
+    room: RoomOut,
+    kind: db::ProjectKind,
 }
 
 #[utoipa::path(

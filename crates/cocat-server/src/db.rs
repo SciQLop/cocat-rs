@@ -873,8 +873,20 @@ fn taken_email(error: sqlx::Error, email: &str) -> DbError {
 }
 
 /// What a project holds: one catalogues document, or a workspace of files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    sqlx::Type,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
+)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
 pub enum ProjectKind {
     Catalogues,
     Workspace,
@@ -890,8 +902,20 @@ impl ProjectKind {
 }
 
 /// What a workspace document holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    sqlx::Type,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
+)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
 pub enum DocumentKind {
     Manifest,
     Notebook,
@@ -949,6 +973,36 @@ pub async fn document_kind(
     )
 }
 
+/// A document as the API lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentRow {
+    pub id: Uuid,
+    pub kind: DocumentKind,
+    pub created_by: Option<Uuid>,
+    pub created_at: String,
+}
+
+pub async fn document_rows(pool: &SqlitePool, room_id: &str) -> Result<Vec<DocumentRow>, DbError> {
+    let rows: Vec<(String, DocumentKind, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, kind, created_by, CAST(created_at AS TEXT) FROM document
+         WHERE room_id = ? ORDER BY created_at, id",
+    )
+    .bind(room_id)
+    .fetch_all(pool)
+    .await?;
+    let uuid = |text: &str| Uuid::parse_str(text).map_err(|e| sqlx::Error::Decode(e.into()));
+    rows.into_iter()
+        .map(|(id, kind, created_by, created_at)| {
+            Ok(DocumentRow {
+                id: uuid(&id)?,
+                kind,
+                created_by: created_by.as_deref().map(uuid).transpose()?,
+                created_at,
+            })
+        })
+        .collect()
+}
+
 pub async fn documents_of(
     pool: &SqlitePool,
     room_id: &str,
@@ -982,6 +1036,20 @@ pub async fn create_room(
     insert_room(&mut tx, owner_id, room_id, name, kind).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// A workspace and its manifest document, made together: it is never without one.
+pub async fn create_workspace(
+    pool: &SqlitePool,
+    owner_id: Uuid,
+    room_id: &str,
+    name: &str,
+) -> Result<Uuid, DbError> {
+    let mut tx = pool.begin().await?;
+    insert_room(&mut tx, owner_id, room_id, name, ProjectKind::Workspace).await?;
+    let manifest = create_document(&mut *tx, room_id, DocumentKind::Manifest, owner_id).await?;
+    tx.commit().await?;
+    Ok(manifest)
 }
 
 async fn insert_room(

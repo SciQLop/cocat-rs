@@ -15,6 +15,8 @@ const LONG_NAME: &str = "Enter a name of at most 200 characters";
 pub(crate) const MAX_NAME: usize = 200;
 pub(crate) const NO_MEMBERS: &str =
     "A public catalogue has no members: it cannot be shared, left or handed over";
+pub(crate) const NO_DOCUMENTS: &str =
+    "A catalogue project holds one catalogues document: only a workspace holds documents";
 pub(crate) const PERSONAL: &str =
     "“My catalogues” is personal: copy catalogues into another project to share them.";
 
@@ -65,16 +67,64 @@ impl From<sqlx::Error> for LifecycleError {
     }
 }
 
-/// Creates a room owned by `owner`. The id is the hex UUID Python's `uuid4().hex` gives.
+/// Creates a catalogue project owned by `owner`.
 pub async fn create_room(
     state: &AppState,
     owner: Uuid,
     name: &str,
 ) -> Result<RoomRow, LifecycleError> {
+    create_project(state, owner, name, db::ProjectKind::Catalogues).await
+}
+
+/// Creates a project of `kind` owned by `owner`; a workspace gets its manifest with it. The
+/// id is the hex UUID Python's `uuid4().hex` gives.
+pub async fn create_project(
+    state: &AppState,
+    owner: Uuid,
+    name: &str,
+    kind: db::ProjectKind,
+) -> Result<RoomRow, LifecycleError> {
     let id = Uuid::new_v4().simple().to_string();
     let name = clean_name(name, Noun::Room)?;
-    db::create_room(&state.pool, owner, &id, &name, db::ProjectKind::Catalogues).await?;
+    match kind {
+        db::ProjectKind::Catalogues => {
+            db::create_room(&state.pool, owner, &id, &name, kind).await?
+        }
+        db::ProjectKind::Workspace => {
+            db::create_workspace(&state.pool, owner, &id, &name).await?;
+        }
+    }
     Ok(RoomRow { id, name })
+}
+
+/// Adds an empty notebook or text document to a workspace; its owner and editors may. The
+/// manifest is made with the workspace, so a second one is refused.
+pub async fn add_document(
+    state: &AppState,
+    room_id: &str,
+    actor: Uuid,
+    kind: db::DocumentKind,
+) -> Result<Uuid, LifecycleError> {
+    require_role(state, room_id, actor, Role::Editor).await?;
+    require_workspace(state, room_id).await?;
+    if kind == db::DocumentKind::Manifest {
+        return Err(LifecycleError::Invalid(
+            "A workspace has one manifest, made with it",
+        ));
+    }
+    Ok(db::create_document(&state.pool, room_id, kind, actor).await?)
+}
+
+/// Refuses a project that is not a workspace: only workspaces hold documents.
+pub(crate) async fn require_workspace(
+    state: &AppState,
+    room_id: &str,
+) -> Result<(), LifecycleError> {
+    match db::project_kind(&state.pool, room_id).await? {
+        Some(db::ProjectKind::Workspace) => Ok(()),
+        Some(db::ProjectKind::Catalogues) => Err(LifecycleError::Conflict(NO_DOCUMENTS)),
+        None => Err(room_not_found(room_id)),
+    }
 }
 
 /// Renames a room; its owner and its editors may. Answers the room and the actor's role.

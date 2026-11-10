@@ -8,6 +8,7 @@ pub mod auth;
 pub mod catalogues_api;
 pub mod cli;
 pub mod db;
+pub mod documents;
 pub mod groups;
 pub mod groups_api;
 pub mod hashing;
