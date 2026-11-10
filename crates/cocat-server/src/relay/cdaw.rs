@@ -7,6 +7,8 @@
 //! it comes after the fixed ones. A line the lists cannot be read from is an error, not a
 //! skipped row: a layout change must fail the run rather than silently shrink the catalogue.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use cocat_core::model::EventRecord;
 use cocat_core::time::Timestamp;
@@ -368,7 +370,7 @@ impl Provider for Cdaw {
         &self,
         http: &reqwest::Client,
         _settings: &Value,
-        _last_ok: Option<Timestamp>,
+        _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         Ok(vec![
             fetch_list(http, &LASCO, parse_lasco).await?,

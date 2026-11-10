@@ -2,6 +2,7 @@
 //! source of truth, and nobody editing them by hand. A fake provider stands in for the remote
 //! servers.
 
+use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,11 +37,14 @@ const FOLLOWS: &str = "This catalogue follows Fake source: it changes when Fake 
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 type Answer = Arc<Mutex<Result<Vec<Fetched>, String>>>;
+/// When each list was last refreshed, as the engine told the fake provider on its last fetch.
+type Asked = Arc<Mutex<Option<HashMap<String, Timestamp>>>>;
 
 /// Answers whatever the test put in `answer`; with `gate`, says it started and waits to be
 /// let go before answering.
 struct Fake {
     answer: Answer,
+    asked: Asked,
     gate: Option<(Arc<Notify>, Arc<Notify>)>,
 }
 
@@ -62,8 +66,9 @@ impl Provider for Fake {
         &self,
         _http: &reqwest::Client,
         _settings: &Value,
-        _last_ok: Option<Timestamp>,
+        refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
+        *self.asked.lock().unwrap() = Some(refreshed.clone());
         if let Some((started, release)) = &self.gate {
             started.notify_one();
             release.notified().await;
@@ -79,6 +84,7 @@ impl Provider for Fake {
 struct World {
     state: AppState,
     answer: Answer,
+    asked: Asked,
     reader: Uuid,
     curator: Uuid,
     author: Uuid,
@@ -96,8 +102,10 @@ impl World {
         fs::create_dir_all(&update_dir).unwrap();
         let pool = db::open(&dir.path().join("test.db")).await.unwrap();
         let answer: Answer = Arc::new(Mutex::new(Ok(two_lists())));
+        let asked: Asked = Arc::default();
         let fake = Fake {
             answer: answer.clone(),
+            asked: asked.clone(),
             gate,
         };
         let state = AppState {
@@ -121,6 +129,7 @@ impl World {
         Self {
             state,
             answer,
+            asked,
             reader,
             curator,
             author,
@@ -134,6 +143,35 @@ impl World {
 
     async fn run(&self) -> Result<relay::RunReport, RelayError> {
         relay::run(&self.state, "fake").await
+    }
+
+    /// The keys of the lists the engine said were refreshed before, on the last fetch.
+    fn asked_keys(&self) -> Vec<String> {
+        let asked = self.asked.lock().unwrap();
+        let mut keys: Vec<_> = asked.as_ref().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    async fn running(&self) -> bool {
+        sqlx::query_scalar("SELECT running FROM relay_provider WHERE id = 'fake'")
+            .fetch_one(&self.state.pool)
+            .await
+            .unwrap()
+    }
+
+    /// Breaks the provider's table the way a failing database would, for one column.
+    async fn break_column(&self, column: &str) {
+        sqlx::query("INSERT OR IGNORE INTO relay_provider (id) VALUES ('fake')")
+            .execute(&self.state.pool)
+            .await
+            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE relay_provider RENAME COLUMN {column} TO broken"
+        )))
+        .execute(&self.state.pool)
+        .await
+        .unwrap();
     }
 
     async fn call(
@@ -756,15 +794,82 @@ async fn nobody_takes_a_providers_ids_by_hand() {
 }
 
 #[tokio::test]
-async fn a_bad_key_fails_the_run_before_anything_is_written() {
+async fn a_list_whose_key_makes_no_id_is_named_unreadable_and_the_others_are_relayed() {
     let world = World::start().await;
     world.answer(Ok(vec![
         shocks(vec![event("e1", 1)]),
         list("not a key", "cat-bad", vec![event("b1", 1)]),
     ]));
 
+    let report = world.run().await.unwrap();
+
+    assert_eq!(report.catalogues, 2);
+    assert_eq!(report.unreadable.len(), 1, "{:?}", report.unreadable);
+    assert!(
+        report.unreadable[0].starts_with("Fake not a key: "),
+        "{:?}",
+        report.unreadable
+    );
+    let index = world.index(world.reader).await;
+    let ids: Vec<_> = index.iter().map(|row| row["id"].clone()).collect();
+    assert_eq!(ids, [json!(SHOCKS)]);
+}
+
+#[tokio::test]
+async fn unreadable_settings_fail_the_run_and_clear_running() {
+    let world = World::start().await;
+    world.break_column("settings").await;
+
     let failed = world.run().await;
 
-    assert!(matches!(failed, Err(RelayError::Key(_))), "{failed:?}");
-    assert!(world.index(world.reader).await.is_empty());
+    assert!(matches!(failed, Err(RelayError::Db(_))), "{failed:?}");
+    assert!(!world.running().await, "the provider stayed marked running");
+}
+
+#[tokio::test]
+async fn a_run_whose_end_cannot_be_recorded_still_clears_running() {
+    let world = World::start().await;
+    world.break_column("last_result").await;
+
+    world.run().await.unwrap();
+
+    assert!(!world.running().await, "the provider stayed marked running");
+}
+
+#[tokio::test]
+async fn the_provider_learns_which_lists_were_refreshed_and_a_deleted_one_is_not() {
+    let world = World::start().await;
+    world.run().await.unwrap();
+    assert!(
+        world.asked_keys().is_empty(),
+        "nothing was refreshed before"
+    );
+    world.run().await.unwrap();
+    assert_eq!(world.asked_keys(), ["shocks", "storms"]);
+    sqlx::query("DELETE FROM room WHERE id = ?")
+        .bind(STORMS)
+        .execute(&world.state.pool)
+        .await
+        .unwrap();
+
+    world.run().await.unwrap();
+
+    assert_eq!(world.asked_keys(), ["shocks"]);
+}
+
+#[tokio::test]
+async fn an_empty_list_never_empties_a_catalogue_that_held_events() {
+    let world = World::start().await;
+    world.run().await.unwrap();
+    let before = world.versions(SHOCKS).await;
+    world.answer(Ok(vec![shocks(Vec::new()), storms()]));
+
+    let report = world.run().await.unwrap();
+
+    assert_eq!(
+        report.unreadable,
+        ["Fake shocks: Fake source sent no events; the catalogue keeps those it holds"]
+    );
+    assert_eq!(world.listed(SHOCKS, "cat-shocks").await, ["e1", "e2"]);
+    assert_eq!(world.versions(SHOCKS).await, before);
 }

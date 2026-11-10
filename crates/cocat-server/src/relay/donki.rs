@@ -1,8 +1,10 @@
 //! DONKI, NASA CCMC's space weather database, read through api.nasa.gov: one public catalogue
 //! per type of event (flares, CMEs, shocks…).
 //!
-//! The first run reads the whole history, a year per request. Later runs read the last 90
-//! days, since DONKI revises recent events; what it holds from before that stays as it is.
+//! A type's first run reads the whole history, a year per request. Later runs read the last
+//! 90 days, since DONKI revises recent events; what it holds from before that stays as it is.
+
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use cocat_core::model::EventRecord;
@@ -177,9 +179,13 @@ fn joined(event: &Value, field: &str, member: &str) -> Option<String> {
     Some(names.join(", ")).filter(|names| !names.is_empty())
 }
 
+fn key(kind: &Kind) -> String {
+    kind.code.to_lowercase()
+}
+
 fn catalogue(kind: &Kind, events: Vec<EventRecord>) -> Fetched {
     Fetched {
-        key: kind.code.to_lowercase(),
+        key: key(kind),
         folder: format!("DONKI/{}", kind.name),
         name: kind.name.to_owned(),
         description: format!(
@@ -196,18 +202,18 @@ fn catalogue(kind: &Kind, events: Vec<EventRecord>) -> Fetched {
     }
 }
 
-/// Where this run starts reading: the whole history the first time, else the window, or
-/// further back when the last run is older than that.
-fn first_day(last_ok: Option<Timestamp>, now: Timestamp) -> Result<Date, String> {
-    let Some(last_ok) = last_ok else {
+/// Where this run starts reading a type: its whole history when its catalogue was never
+/// refreshed, else the window, or further back when the last refresh is older than that.
+fn first_day(refreshed: Option<Timestamp>, now: Timestamp) -> Result<Date, String> {
+    let Some(refreshed) = refreshed else {
         return Ok(FIRST_DAY);
     };
-    Ok(date_of(last_ok)?.min(date_of(window_start(now)?)?))
+    Ok(date_of(refreshed)?.min(date_of(window_start(now)?)?))
 }
 
-fn windows(last_ok: Option<Timestamp>, now: Timestamp) -> Result<Vec<(Date, Date)>, String> {
+fn windows(refreshed: Option<Timestamp>, now: Timestamp) -> Result<Vec<(Date, Date)>, String> {
     let last_day = date_of(now)?;
-    let first = first_day(last_ok, now)?;
+    let first = first_day(refreshed, now)?;
     let spans = std::iter::successors(Some(first), |start| {
         Some(*start + REQUEST_SPAN + Duration::DAY)
     })
@@ -300,11 +306,12 @@ impl Provider for Donki {
         &self,
         http: &reqwest::Client,
         settings: &Value,
-        last_ok: Option<Timestamp>,
+        refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
-        let windows = windows(last_ok, Timestamp::now())?;
+        let now = Timestamp::now();
         let mut lists = Vec::new();
         for kind in &KINDS {
+            let windows = windows(refreshed.get(&key(kind)).copied(), now)?;
             lists.push(fetch_kind(http, settings, &windows, kind).await?);
         }
         Ok(lists)

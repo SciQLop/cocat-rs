@@ -106,6 +106,15 @@ pub async fn configure(
     Ok(())
 }
 
+/// Clears the running mark alone, for when recording the whole end of a run failed.
+pub async fn stop(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    sqlx::query("UPDATE relay_provider SET running = 0 WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// No run survives a restart: whatever was marked running stopped with the old process.
 pub async fn stop_all(pool: &SqlitePool) -> Result<(), DbError> {
     sqlx::query("UPDATE relay_provider SET running = 0")
@@ -154,6 +163,21 @@ pub async fn refreshed(pool: &SqlitePool, room_id: &str) -> Result<(), DbError> 
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// When each of the provider's catalogues was last refreshed, by list key, as stored. A
+/// deleted catalogue takes its row with it.
+pub async fn refreshed_lists(
+    pool: &SqlitePool,
+    provider: &str,
+) -> Result<Vec<(String, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT key, refreshed_at FROM relay_catalogue
+         WHERE provider = ? AND refreshed_at IS NOT NULL",
+    )
+    .bind(provider)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// Marks the provider's catalogues outside `published` as no longer published; how many of

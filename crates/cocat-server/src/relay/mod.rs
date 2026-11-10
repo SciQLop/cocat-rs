@@ -10,12 +10,13 @@ pub mod donki;
 pub mod schedule;
 pub mod store;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cocat_core::model::{self, Counts, EventRecord, Wanted};
-use cocat_core::room_id::{InvalidRoomId, public_id};
+use cocat_core::room_id::public_id;
 use cocat_core::time::Timestamp;
 use tokio::task::JoinError;
 use yrs::Transact;
@@ -62,13 +63,14 @@ pub trait Provider: Send + Sync {
         &[]
     }
     /// Every list the provider publishes now; the error is what the administrator reads.
-    /// `last_ok` is when a run last worked, `None` on the first one: a provider that only
-    /// fetches what changed since then reads it.
+    /// `refreshed` says when each list, by key, was last written to its catalogue: a provider
+    /// that only fetches what changed since reads it, and fetches a list missing from it (new,
+    /// or its catalogue deleted) whole.
     async fn fetch(
         &self,
         http: &reqwest::Client,
         settings: &serde_json::Value,
-        last_ok: Option<Timestamp>,
+        refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String>;
     /// An event the provider no longer lists that stays anyway (it fell outside the window
     /// the provider fetches).
@@ -158,8 +160,6 @@ pub enum RelayError {
     #[error("the stored settings are not JSON: {0}")]
     Settings(#[from] serde_json::Error),
     #[error(transparent)]
-    Key(#[from] InvalidRoomId),
-    #[error(transparent)]
     Db(#[from] DbError),
     #[error(transparent)]
     Room(#[from] RoomError),
@@ -183,23 +183,45 @@ pub async fn run(state: &AppState, provider: &str) -> Result<RunReport, RelayErr
         .map_err(|error| RelayError::Panicked(panic_message(error)))?
 }
 
-/// Refreshes, then records the outcome whatever it was, a panic included.
+/// Refreshes, then records the outcome whatever it was, a panic or a database error included.
 async fn run_to_end(state: AppState, provider: Arc<dyn Provider>) -> Result<RunReport, RelayError> {
-    let secrets = secret_values(&store::settings(&state.pool, provider.id()).await?);
-    let refreshed = tokio::spawn(refresh(state.clone(), provider.clone()))
+    let refreshed = match store::settings(&state.pool, provider.id()).await {
+        Ok(settings) => refresh_hiding_secrets(&state, &provider, settings).await,
+        Err(error) => Err(error.into()),
+    };
+    record(&state, provider.id(), &refreshed).await;
+    refreshed
+}
+
+/// Refreshes on a task of its own, so a panic is caught, with the settings' secrets hidden
+/// in what it says.
+async fn refresh_hiding_secrets(
+    state: &AppState,
+    provider: &Arc<dyn Provider>,
+    settings: String,
+) -> Result<RunReport, RelayError> {
+    let secrets = secret_values(&settings);
+    tokio::spawn(refresh(state.clone(), provider.clone(), settings))
         .await
         .unwrap_or_else(|error| Err(RelayError::Panicked(panic_message(error))))
         .map(|report| report.without(&secrets))
-        .map_err(|error| error.without(&secrets));
-    let result = match &refreshed {
+        .map_err(|error| error.without(&secrets))
+}
+
+/// Stores how the run went; when that fails, the provider is still marked stopped.
+async fn record(state: &AppState, provider: &str, refreshed: &Result<RunReport, RelayError>) {
+    let result = match refreshed {
         Ok(report) => report.as_json(),
         Err(error) => serde_json::json!({ "error": error.to_string() }),
     };
     let ok = refreshed.is_ok();
-    if let Err(error) = store::finish(&state.pool, provider.id(), ok, &result.to_string()).await {
-        tracing::error!(%error, provider = provider.id(), "the end of a relay run was not recorded");
+    let Err(error) = store::finish(&state.pool, provider, ok, &result.to_string()).await else {
+        return;
+    };
+    tracing::error!(%error, provider, "the end of a relay run was not recorded");
+    if let Err(error) = store::stop(&state.pool, provider).await {
+        tracing::error!(%error, provider, "a relay run stays marked running until a restart");
     }
-    refreshed
 }
 
 /// The non-empty values of the settings the admin page masks.
@@ -244,40 +266,66 @@ fn panic_message(error: JoinError) -> String {
     }
 }
 
-async fn refresh(state: AppState, provider: Arc<dyn Provider>) -> Result<RunReport, RelayError> {
-    let settings = serde_json::from_str(&store::settings(&state.pool, provider.id()).await?)?;
-    let last_ok = store::provider(&state.pool, provider.id())
-        .await?
-        .and_then(|row| row.last_ok_at)
-        .and_then(|at| Timestamp::parse(&at));
+async fn refresh(
+    state: AppState,
+    provider: Arc<dyn Provider>,
+    settings: String,
+) -> Result<RunReport, RelayError> {
+    let settings = serde_json::from_str(&settings)?;
+    let refreshed = refreshed_lists(&state, provider.id()).await?;
     let fetched = provider
-        .fetch(&state.http, &settings, last_ok)
+        .fetch(&state.http, &settings, &refreshed)
         .await
         .map_err(RelayError::Fetch)?;
     if fetched.is_empty() {
         return Err(RelayError::Empty);
     }
-    let rooms = fetched
-        .iter()
-        .map(|list| public_id(&format!("{}.{}", provider.id(), list.key)))
-        .collect::<Result<Vec<_>, _>>()?;
+    let catalogues = fetched.len();
+    let mut rooms = Vec::new();
     let mut counts = Counts::default();
     let mut unreadable = Vec::new();
     // simplify: every list is held at once, as `fetch` returns them all (AMDA: ~300k events,
     // ~150 MB at peak); write list by list as fetched if that grows.
-    for (room, mut list) in rooms.iter().zip(fetched) {
+    for mut list in fetched {
+        let room = match public_id(&format!("{}.{}", provider.id(), list.key)) {
+            Ok(room) => room,
+            Err(error) => {
+                unreadable.push(format!("{}: {error}", list.name));
+                continue;
+            }
+        };
         match std::mem::replace(&mut list.events, Ok(Vec::new())) {
-            Ok(events) => counts += relay_list(&state, &provider, room, &list, events).await?,
+            Ok(events) => match relay_list(&state, &provider, &room, &list, events).await? {
+                Some(written) => counts += written,
+                None => unreadable.push(format!(
+                    "{}: {} sent no events; the catalogue keeps those it holds",
+                    list.name,
+                    provider.source()
+                )),
+            },
             Err(error) => unreadable.push(format!("{}: {error}", list.name)),
         }
+        rooms.push(room);
     }
     let unpublished = store::unpublish_others(&state.pool, provider.id(), &rooms).await?;
     Ok(RunReport {
-        catalogues: rooms.len(),
+        catalogues,
         counts,
         unpublished,
         unreadable,
     })
+}
+
+/// When each of the provider's catalogues was last refreshed, by list key.
+async fn refreshed_lists(
+    state: &AppState,
+    provider: &str,
+) -> Result<HashMap<String, Timestamp>, RelayError> {
+    let rows = store::refreshed_lists(&state.pool, provider).await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(key, at)| Some((key, Timestamp::parse(&at)?)))
+        .collect())
 }
 
 /// The catalogue's columns: those the provider names, else every attribute its events carry,
@@ -296,15 +344,18 @@ fn columns_of(named: &[String], events: &[EventRecord]) -> Vec<String> {
 }
 
 /// Makes public catalogue `room` the provider's list: what the index says, then its events,
-/// as one version named after the source when something changed.
+/// as one version named after the source when something changed. `None` when the list is
+/// empty and the catalogue holds events it would remove: an empty answer is more likely a
+/// glitch at the source than a list emptied, so the catalogue is left as it is.
 async fn relay_list(
     state: &AppState,
     provider: &Arc<dyn Provider>,
     room: &str,
     list: &Fetched,
     events: Vec<EventRecord>,
-) -> Result<Counts, RelayError> {
+) -> Result<Option<Counts>, RelayError> {
     place(state, provider.as_ref(), room, list).await?;
+    let empty = events.is_empty();
     let wanted = Wanted {
         catalogue: list.catalogue.clone(),
         name: list.name.clone(),
@@ -312,6 +363,9 @@ async fn relay_list(
         events,
     };
     let (counts, update) = held(state, provider.clone(), room, wanted).await?;
+    if empty && counts.removed > 0 {
+        return Ok(None);
+    }
     let allowance = state.rooms.allowance(&state.pool, room).await?;
     if state
         .rooms
@@ -322,7 +376,7 @@ async fn relay_list(
         save_newest_if_changed(state, room, None, Some(&name), None).await?;
     }
     store::refreshed(&state.pool, room).await?;
-    Ok(counts)
+    Ok(Some(counts))
 }
 
 /// The public catalogue as the index shows it, made when missing, and following the

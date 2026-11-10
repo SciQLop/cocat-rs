@@ -1,7 +1,8 @@
-//! Upgrading a server where `tools/amda_public.py` already made AMDA's public catalogues: the
-//! AMDA provider adopts them as they are. The provider reads saved AMDA answers here, never
+//! Upgrading a server where the former curator script (removed in 6313144) already made
+//! AMDA's public catalogues: the AMDA provider adopts them as they are. The provider reads saved AMDA answers here, never
 //! the network.
 
+use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 
@@ -54,7 +55,7 @@ impl Provider for SavedAmda {
         &self,
         _http: &reqwest::Client,
         _settings: &Value,
-        _last_ok: Option<Timestamp>,
+        _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         Ok(vec![
             amda::fetched_list(&saved(CATALOGS, "sharedcatalog_63"), self.solo),
@@ -72,8 +73,8 @@ fn saved(tree: &str, id: &str) -> SharedList {
 }
 
 /// What the script wrote for one shared list: its index entry, its one catalogue and the
-/// list's intervals, with the uuids and values `tools/amda_public.py` computed for these
-/// files.
+/// list's intervals, with the uuids and values the former curator script (removed in
+/// 6313144) computed for these files.
 struct ScriptList {
     room: &'static str,
     amda_id: &'static str,

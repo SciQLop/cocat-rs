@@ -1,8 +1,9 @@
 //! AMDA (CDPP, IRAP): the catalogues and time tables its users share. Each shared list is the
 //! public catalogue `public.amda.<AMDA id>`, filed under `AMDA/` and AMDA's folder.
 //!
-//! The ids, uuids and attribute values are the ones the curator script `tools/amda_public.py`
-//! wrote before this provider replaced it, so the catalogues it made are adopted as they are.
+//! The ids, uuids and attribute values are the ones the former curator script (removed in
+//! 6313144) wrote before this provider replaced it, so the catalogues it made are adopted as
+//! they are.
 //! The script read the same VOTables through speasy and wrote attributes with Python's rules,
 //! which are kept here where they differ from cocat's own reading: text is trimmed, empty
 //! values are left out and text that reads as a time is written as one.
@@ -11,7 +12,7 @@
 //! the shared lists, or one list as a VOTable.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use async_trait::async_trait;
 use cocat_core::model::EventRecord;
@@ -361,7 +362,7 @@ impl Provider for Amda {
         &self,
         http: &reqwest::Client,
         _settings: &Value,
-        _last_ok: Option<Timestamp>,
+        _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         let mut fetched = Vec::new();
         for tree in &TREES {
@@ -476,8 +477,8 @@ mod tests {
         assert_eq!(fetched_list(&solo, SOLO).description, solo.description);
     }
 
-    /// The uuids below are the script's, computed by `tools/amda_public.py` with speasy
-    /// reading the same files.
+    /// The uuids below are the ones the former curator script (removed in 6313144) computed
+    /// with speasy reading the same files.
     #[test]
     fn a_list_keeps_the_scripts_ids() {
         let solo = fetched_list(&list(CATALOGS, "sharedcatalog_63"), SOLO);

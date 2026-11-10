@@ -2,6 +2,7 @@
 
 mod ui_support;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -51,7 +52,7 @@ impl Provider for Fake {
         &self,
         _http: &reqwest::Client,
         settings: &Value,
-        _last_ok: Option<Timestamp>,
+        _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         self.runs.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
