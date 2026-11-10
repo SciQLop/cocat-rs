@@ -148,10 +148,7 @@ async fn exchange(
     pending: &Pending,
     code: &str,
 ) -> Result<Identity, ExchangeError> {
-    let http = openidconnect::reqwest::ClientBuilder::new()
-        .redirect(openidconnect::reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| ExchangeError::Http(error.to_string()))?;
+    let http = oidc::http_client().map_err(|error| ExchangeError::Http(error.to_string()))?;
     let token = provider
         .client
         .exchange_code(AuthorizationCode::new(code.to_owned()))

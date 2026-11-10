@@ -133,12 +133,19 @@ fn valid_name(name: &str) -> bool {
         })
 }
 
-/// Discover every provider, keeping those that answer; one that is down only loses its login.
-pub async fn discover(configs: Vec<ProviderConfig>, links: &Links) -> Vec<Provider> {
-    let http_client = match openidconnect::reqwest::ClientBuilder::new()
+/// The client sign-in talks to identity providers with. It asks for rustls: the relay
+/// enables reqwest's `native-tls` for its own client, which would make OpenSSL every client's
+/// default. Redirects are not followed, as OpenID Connect requires.
+pub fn http_client() -> Result<openidconnect::reqwest::Client, openidconnect::reqwest::Error> {
+    openidconnect::reqwest::ClientBuilder::new()
+        .use_rustls_tls()
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
-    {
+}
+
+/// Discover every provider, keeping those that answer; one that is down only loses its login.
+pub async fn discover(configs: Vec<ProviderConfig>, links: &Links) -> Vec<Provider> {
+    let http_client = match http_client() {
         Ok(client) => client,
         Err(error) => {
             tracing::warn!(%error, "cannot build the OpenID Connect client");
