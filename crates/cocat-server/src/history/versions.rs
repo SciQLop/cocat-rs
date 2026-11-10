@@ -194,6 +194,11 @@ pub fn spans(slots: &[Option<Stamp>], saved: &Saved) -> Vec<Range<usize>> {
     })
 }
 
+/// The id of the newest version, if there is any record.
+pub fn newest(slots: &[Option<Stamp>], saved: &Saved) -> Option<u64> {
+    spans(slots, saved).last().map(|span| index(span.start))
+}
+
 /// Whether record `next` belongs to the version that starts at record `first`.
 fn joins(slots: &[Option<Stamp>], first: usize, next: usize) -> bool {
     continues(&slots[next - 1], &slots[next]) && within_span(&slots[first], &slots[next])

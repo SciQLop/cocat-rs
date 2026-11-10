@@ -8,6 +8,7 @@ pub mod auth;
 pub mod blobs;
 pub mod catalogues_api;
 pub mod cli;
+pub mod copy_chain;
 pub mod db;
 pub mod documents;
 pub mod groups;

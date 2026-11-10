@@ -8,6 +8,7 @@ use yrs::{
     WriteTxn,
 };
 
+use super::copies::KEY as KEPT_KEY;
 use super::members::catalogue_events;
 use super::read::{is_deleted, members, object};
 use super::{CATALOGUES, EVENTS, Status};
@@ -52,15 +53,12 @@ fn restore_root<P: ReadTxn>(
     }
 }
 
-/// A catalogue's chain of copies belongs to the catalogue, not to a state of it: restoring
-/// or adopting a state never changes it.
-const KEPT: &str = "copied_from";
-
-/// Writes only the keys that differ, so restoring the present writes nothing.
+/// Writes only the keys that differ, except a catalogue's chain of copies: it belongs to the
+/// catalogue, not to a state of it, so restoring or adopting a state never changes it.
 fn restore_map<P: ReadTxn>(txn: &mut TransactionMut<'_>, past: &P, is: &MapRef, was: &MapRef) {
     let stale: Vec<String> = is
         .keys(txn)
-        .filter(|key| *key != KEPT && !was.contains_key(past, key))
+        .filter(|key| *key != KEPT_KEY && !was.contains_key(past, key))
         .map(str::to_owned)
         .collect();
     for key in stale {
@@ -70,7 +68,7 @@ fn restore_map<P: ReadTxn>(txn: &mut TransactionMut<'_>, past: &P, is: &MapRef, 
         .iter(past)
         .map(|(key, value)| (key.to_owned(), value))
         .collect();
-    for (key, value) in wanted.into_iter().filter(|(key, _)| key != KEPT) {
+    for (key, value) in wanted.into_iter().filter(|(key, _)| key != KEPT_KEY) {
         match (value, is.get(txn, &key)) {
             (Out::Any(want), Some(Out::Any(have))) if want == have => {}
             (Out::YMap(want), Some(Out::YMap(have))) => restore_map(txn, past, &have, &want),

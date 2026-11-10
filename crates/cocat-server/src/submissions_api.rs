@@ -13,14 +13,15 @@ use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
-use yrs::{Doc, ReadTxn, StateVector, Transact};
+use yrs::{Doc, Transact};
 
 use crate::AppState;
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::copy_chain::{Source, record_copy};
 use crate::db::{self, PublicRoom};
 use crate::history::diff::{Diff, before_and_after, diff, replay_until};
-use crate::history::versions::apply;
-use crate::history_api::{copy_name, make_copy, save_newest};
+use crate::history::versions::{apply, newest};
+use crate::history_api::{copy_name, encoded, make_copy, save_newest, saved};
 use crate::lifecycle;
 use crate::openapi::Detail;
 use crate::public_api::{description, folder_or_source};
@@ -457,7 +458,7 @@ async fn propose(
 ) -> Result<(StatusCode, Json<Copied>), ApiError> {
     let public = public_room(&state, &room_id).await?;
     let name = body.name.unwrap_or_else(|| proposal_name(&public.name));
-    let (copied, base) = copy_public(&state, user.id, &public, body.room, name).await?;
+    let (copied, base) = copy_public(&state, &user, &public, body.room, name).await?;
     submissions::link(
         &state.pool,
         &copied.room,
@@ -492,7 +493,7 @@ async fn copy(
 ) -> Result<(StatusCode, Json<Copied>), ApiError> {
     let public = public_room(&state, &room_id).await?;
     let name = public.name.chars().take(lifecycle::MAX_NAME).collect();
-    let (copied, _) = copy_public(&state, user.id, &public, body.room, name).await?;
+    let (copied, _) = copy_public(&state, &user, &public, body.room, name).await?;
     Ok((StatusCode::CREATED, Json(copied)))
 }
 
@@ -570,12 +571,13 @@ async fn snapshot_of(
 
 /// A catalogue outside the trash, alone, and its name.
 fn extracted(doc: &Doc, catalogue: &str) -> Option<(String, Vec<u8>)> {
+    let (name, alone) = extract_alone(doc, catalogue)?;
+    Some((name, encoded(&alone)))
+}
+
+fn extract_alone(doc: &Doc, catalogue: &str) -> Option<(String, Doc)> {
     let found = model::catalogue(&doc.transact(), catalogue).filter(|found| !found.deleted)?;
-    let alone = model::extract(doc, catalogue);
-    let update = alone
-        .transact()
-        .encode_state_as_update_v1(&StateVector::default());
-    Some((found.name, update))
+    Some((found.name, model::extract(doc, catalogue)))
 }
 
 fn fits(size: u64, room_limit: u64) -> Result<(), ApiError> {
@@ -611,16 +613,29 @@ pub(crate) fn bytes(size: u64) -> String {
     }
 }
 
-/// The public catalogue's catalogue, as one update holding it alone, and how many changes
-/// the public catalogue had: the copy's base.
-async fn public_copy(state: &AppState, public: &str) -> Result<(String, Vec<u8>, i64), ApiError> {
+/// The public catalogue's catalogue, as one update holding it alone and recording `by`
+/// copying it, and how many changes the public catalogue had: the copy's base.
+async fn public_copy(
+    state: &AppState,
+    public: &PublicRoom,
+    by: &str,
+) -> Result<(String, Vec<u8>, i64), ApiError> {
+    let saved = saved(state, &public.id).await?;
+    let (id, name, by) = (public.id.clone(), public.name.clone(), by.to_owned());
     state
         .rooms
-        .read_log(public, 1, |records, _| {
+        .read_log(&public.id, 1, move |records, slots| {
             let doc = replay_until(records, u64::MAX);
             let uuid = model::catalogues(&doc.transact()).into_iter().next()?.uuid;
-            let (_, update) = extracted(&doc, &uuid)?;
-            Some((uuid, update, count(records.len())))
+            let (_, alone) = extract_alone(&doc, &uuid)?;
+            let source = Source {
+                project: &id,
+                project_name: &name,
+                version: newest(slots, &saved),
+                by: &by,
+            };
+            record_copy(&alone, &source);
+            Some((uuid, encoded(&alone), count(records.len())))
         })
         .await?
         .ok_or_else(|| ApiError::Conflict(EMPTY_PUBLIC.to_owned()))
@@ -636,17 +651,17 @@ async fn public_room(state: &AppState, room_id: &str) -> Result<PublicRoom, ApiE
 /// and the copy's base.
 async fn copy_public(
     state: &AppState,
-    user: Uuid,
+    user: &db::User,
     public: &PublicRoom,
     room: Option<String>,
     name: String,
 ) -> Result<(Copied, i64), ApiError> {
-    let (catalogue, update, base) = public_copy(state, &public.id).await?;
+    let (catalogue, update, base) = public_copy(state, public, &user.email).await?;
     let (room, name) = match room {
-        Some(room) => copy_into(state, &room, user, &catalogue, update).await?,
+        Some(room) => copy_into(state, &room, user.id, &catalogue, update).await?,
         None => {
             let first = copy_name(&public.name, None);
-            let making = make_copy(state.clone(), user, name, update, first);
+            let making = make_copy(state.clone(), user.id, name, update, first);
             let made = tokio::spawn(making).await.map_err(|error| {
                 tracing::warn!(%error, "a copy stopped half way");
                 ApiError::Internal
@@ -798,6 +813,7 @@ async fn new_public(
     snapshot: Vec<u8>,
     author: Uuid,
 ) -> Result<String, ApiError> {
+    let snapshot = recorded_copy(state, submission, snapshot).await?;
     let room = create_public(state, submission, curator).await?;
     let allowance = state.rooms.allowance(&state.pool, &room.id).await?;
     let written = state
@@ -812,6 +828,28 @@ async fn new_public(
     }
     submissions::set_target(&state.pool, submission.id, &room.id).await?;
     Ok(room.id)
+}
+
+/// The snapshot recording that its author copied it out of their project, when it still
+/// exists. The version is unknown: a snapshot does not say which one it was taken at.
+async fn recorded_copy(
+    state: &AppState,
+    submission: &Submission,
+    snapshot: Vec<u8>,
+) -> Result<Vec<u8>, ApiError> {
+    let Some(room) = &submission.room else {
+        return Ok(snapshot);
+    };
+    let project_name = db::room_name(&state.pool, room).await?.unwrap_or_default();
+    let doc = doc_of(&snapshot);
+    let source = Source {
+        project: room,
+        project_name: &project_name,
+        version: None,
+        by: &submission.author_email,
+    };
+    record_copy(&doc, &source);
+    Ok(encoded(&doc))
 }
 
 /// The public catalogue `public.<slug of the title>`, with `-2`, `-3`… when taken. Taken is

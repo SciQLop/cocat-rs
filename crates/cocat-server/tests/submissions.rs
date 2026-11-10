@@ -3,7 +3,7 @@
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
-use cocat_core::model::{self, EventField, EventRecord, NewCatalogue, Status};
+use cocat_core::model::{self, EventField, EventRecord, Hop, NewCatalogue, Status};
 use cocat_core::role::Role;
 use cocat_core::time::Timestamp;
 use cocat_server::room::{Author, RoomManager, StorageLimits};
@@ -1071,4 +1071,141 @@ async fn a_copy_into_a_workspace_is_refused_and_writes_no_catalogues_file() {
 
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     assert!(!file.exists(), "a catalogues document was created");
+}
+
+impl World {
+    async fn chain(&self, room: &str, catalogue: &str) -> Vec<Hop> {
+        let doc = self.doc(room).await;
+        model::catalogue(&doc.transact(), catalogue)
+            .unwrap()
+            .copied_from
+    }
+
+    /// The author submits their copy of `catalogue` in `room` as a new public catalogue and
+    /// the curator accepts it; its id.
+    async fn publish(&self, room: &str, catalogue: &str) -> String {
+        let (_, made) = self
+            .submit(json!({"room": room, "catalogue": catalogue, "title": "Again"}))
+            .await;
+        let id = made["id"].as_i64().unwrap();
+        let (status, decided) = self.review(self.curator, id, json!({"accept": true})).await;
+        assert_eq!(status, StatusCode::OK, "{decided}");
+        let (_, detail) = self.detail(self.author, id).await;
+        detail["target"].as_str().unwrap().to_owned()
+    }
+}
+
+fn hop_from(project: &str, project_name: &str, catalogue_name: &str, by: &str) -> impl Fn(&Hop) {
+    let expected = (project.to_owned(), project_name.to_owned());
+    let (catalogue_name, by) = (catalogue_name.to_owned(), by.to_owned());
+    move |hop| {
+        assert_eq!((hop.project.clone(), hop.project_name.clone()), expected);
+        assert_eq!(hop.catalogue_name, catalogue_name);
+        assert_eq!(hop.by.as_deref(), Some(by.as_str()));
+        assert!(hop.at > 1_700_000_000_000, "{}", hop.at);
+    }
+}
+
+#[tokio::test]
+async fn a_copied_public_catalogue_knows_where_it_came_from() {
+    let world = World::start().await;
+    let public = world.public().await;
+    let (_, new) = world.copy(world.author, &public, None).await;
+    let (_, into) = world
+        .copy(world.author, &public, Some(&world.project))
+        .await;
+    let proposed = world.propose(&public).await;
+
+    for room in [new["room"].as_str().unwrap(), &world.project, &proposed] {
+        let chain = world.chain(room, "pub").await;
+
+        assert_eq!(chain.len(), 1, "{room}");
+        hop_from(&public, "Shocks", "pub name", "author@example.org")(&chain[0]);
+        assert_eq!(chain[0].catalogue, "pub");
+        assert_eq!(
+            chain[0].version,
+            Some(0),
+            "the public catalogue's one version"
+        );
+    }
+    assert_eq!(into["room"], world.project.as_str());
+}
+
+#[tokio::test]
+async fn a_copy_of_a_copy_lists_both_hops_oldest_first() {
+    let world = World::start().await;
+    let first = world.public().await;
+    let (_, copied) = world.copy(world.author, &first, Some(&world.project)).await;
+    let second = world.publish(&world.project, "pub").await;
+
+    let (_, again) = world.copy(world.stranger, &second, None).await;
+
+    let projects =
+        |chain: Vec<Hop>| -> Vec<String> { chain.into_iter().map(|hop| hop.project).collect() };
+    assert_eq!(copied["room"], world.project.as_str());
+    assert_eq!(
+        projects(world.chain(&second, "pub").await),
+        [first.clone(), world.project.clone()]
+    );
+    let in_b = world.chain(again["room"].as_str().unwrap(), "pub").await;
+    assert_eq!(
+        projects(in_b.clone()),
+        [first, world.project.clone(), second]
+    );
+    hop_from(&world.project, "Lab", "pub name", "author@example.org")(&in_b[1]);
+}
+
+#[tokio::test]
+async fn accepting_an_update_keeps_the_public_chain() {
+    let world = World::start().await;
+    let (public, _, id) = proposed_update(&world).await;
+    let before = world.chain(&public, "pub").await;
+
+    world
+        .review(world.curator, id, json!({"accept": true}))
+        .await;
+
+    assert_eq!(world.chain(&public, "pub").await, before);
+    assert!(before.is_empty(), "this public catalogue is an original");
+}
+
+#[tokio::test]
+async fn accepting_an_update_does_not_replace_the_public_chain_with_the_copys() {
+    let world = World::start().await;
+    let public = world.public().await;
+    let origin = Hop {
+        project: "elsewhere".to_owned(),
+        project_name: "Elsewhere".to_owned(),
+        catalogue: "pub".to_owned(),
+        catalogue_name: "pub name".to_owned(),
+        version: None,
+        at: 1_700_000_000_000,
+        by: None,
+    };
+    let kept = origin.clone();
+    world
+        .edit(&public, world.curator, move |txn| {
+            model::set_copied_from(txn, "pub", &[kept]);
+        })
+        .await;
+    let copy = world.propose(&public).await;
+    assert_eq!(world.chain(&copy, "pub").await.len(), 2);
+    let (_, made) = world
+        .call(
+            world.author,
+            Method::POST,
+            "/api/public/submissions/updates",
+            Some(json!({"room": copy, "catalogue": "pub"})),
+        )
+        .await;
+
+    world
+        .review(
+            world.curator,
+            made["id"].as_i64().unwrap(),
+            json!({"accept": true}),
+        )
+        .await;
+
+    assert_eq!(world.chain(&public, "pub").await, [origin]);
 }

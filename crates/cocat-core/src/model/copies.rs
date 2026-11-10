@@ -6,11 +6,12 @@ use serde::{Deserialize, Serialize};
 use yrs::types::ToJson;
 use yrs::{Any, Array, ArrayPrelim, In, Map as _, MapPrelim, MapRef, Out, ReadTxn, TransactionMut};
 
+use super::CATALOGUES;
 use super::read::object;
-use super::values::{typed, typed_any};
-use super::{CATALOGUES, WriteError};
+use super::values::typed;
 
-const KEY: &str = "copied_from";
+/// The key a catalogue keeps its chain under.
+pub(super) const KEY: &str = "copied_from";
 const MAX_HOPS: usize = 32;
 
 /// One copy: where it was made from, and when.
@@ -57,30 +58,35 @@ pub fn copy_chain<T: ReadTxn>(txn: &T, source: &str, hop: Hop) -> Vec<Hop> {
 
 /// Sets the chain of `catalogue`, or removes it when empty. Returns false when the room
 /// holds no such catalogue.
-pub fn set_copied_from(
-    txn: &mut TransactionMut<'_>,
-    catalogue: &str,
-    chain: &[Hop],
-) -> Result<bool, WriteError> {
-    let hops = chain.iter().map(hop_map).collect::<Result<Vec<_>, _>>()?;
+pub fn set_copied_from(txn: &mut TransactionMut<'_>, catalogue: &str, chain: &[Hop]) -> bool {
     let Some(object) = object(txn, CATALOGUES, catalogue) else {
-        return Ok(false);
+        return false;
     };
-    if hops.is_empty() {
+    if chain.is_empty() {
         object.remove(txn, KEY);
     } else {
-        object.insert(txn, KEY, ArrayPrelim::from_iter(hops));
+        object.insert(txn, KEY, ArrayPrelim::from_iter(chain.iter().map(hop_map)));
     }
-    Ok(true)
+    true
 }
 
-fn hop_map(hop: &Hop) -> Result<MapPrelim, WriteError> {
-    match typed_any(KEY, hop)? {
-        Any::Map(entries) => Ok(MapPrelim::from_iter(
-            entries
-                .iter()
-                .map(|(key, value)| (key.clone(), In::Any(value.clone()))),
-        )),
-        _ => unreachable!("a hop serializes to an object"),
-    }
+fn hop_map(hop: &Hop) -> MapPrelim {
+    let version = hop.version.map(|version| Any::from(version as f64));
+    let by = hop.by.as_deref().map(Any::from);
+    MapPrelim::from_iter(
+        [
+            ("project", Some(Any::from(hop.project.as_str()))),
+            ("project_name", Some(Any::from(hop.project_name.as_str()))),
+            ("catalogue", Some(Any::from(hop.catalogue.as_str()))),
+            (
+                "catalogue_name",
+                Some(Any::from(hop.catalogue_name.as_str())),
+            ),
+            ("version", version),
+            ("at", Some(Any::from(hop.at))),
+            ("by", by),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.to_owned(), In::Any(value?)))),
+    )
 }

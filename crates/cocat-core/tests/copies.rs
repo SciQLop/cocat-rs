@@ -4,7 +4,8 @@ use cocat_core::model::{
     self, Hop, NewCatalogue, adopt, catalogue, copy_chain, create_catalogue, extract,
     set_copied_from,
 };
-use yrs::{Any, Array, ArrayPrelim, Doc, In, Map, MapPrelim, Transact, WriteTxn};
+use yrs::updates::decoder::Decode;
+use yrs::{Any, Array, ArrayPrelim, Doc, In, Map, MapPrelim, ReadTxn, Transact, WriteTxn};
 
 const SOURCE: &str = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60";
 const COPY: &str = "0e4d2c31-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
@@ -53,14 +54,14 @@ fn a_catalogue_without_a_chain_has_none() {
 fn a_copy_extends_its_sources_chain() {
     let doc = doc_with(&[SOURCE]);
     let mut txn = doc.transact_mut();
-    set_copied_from(&mut txn, SOURCE, &[hop(1)]).unwrap();
+    set_copied_from(&mut txn, SOURCE, &[hop(1)]);
 
     let extended = copy_chain(&txn, SOURCE, hop(2));
     assert_eq!(extended, [hop(1), hop(2)]);
     drop(txn);
 
     let mut txn = doc.transact_mut();
-    set_copied_from(&mut txn, SOURCE, &extended).unwrap();
+    set_copied_from(&mut txn, SOURCE, &extended);
     drop(txn);
     assert_eq!(chain(&doc, SOURCE), [hop(1), hop(2)]);
 }
@@ -69,7 +70,7 @@ fn a_copy_extends_its_sources_chain() {
 fn the_chain_keeps_the_original_and_the_latest() {
     let doc = doc_with(&[SOURCE]);
     let long: Vec<Hop> = (1..=32).map(hop).collect();
-    set_copied_from(&mut doc.transact_mut(), SOURCE, &long).unwrap();
+    set_copied_from(&mut doc.transact_mut(), SOURCE, &long);
 
     let extended = copy_chain(&doc.transact(), SOURCE, hop(33));
 
@@ -106,9 +107,9 @@ fn a_malformed_chain_reads_what_parses() {
 #[test]
 fn adopting_a_proposal_keeps_the_targets_chain() {
     let public = doc_with(&[SOURCE]);
-    set_copied_from(&mut public.transact_mut(), SOURCE, &[hop(1)]).unwrap();
+    set_copied_from(&mut public.transact_mut(), SOURCE, &[hop(1)]);
     let proposed = extract(&public, SOURCE);
-    set_copied_from(&mut proposed.transact_mut(), SOURCE, &[hop(7), hop(8)]).unwrap();
+    set_copied_from(&mut proposed.transact_mut(), SOURCE, &[hop(7), hop(8)]);
 
     adopt(&mut public.transact_mut(), &proposed, SOURCE);
 
@@ -119,7 +120,7 @@ fn adopting_a_proposal_keeps_the_targets_chain() {
 fn adopting_does_not_give_the_target_a_chain_it_lacked() {
     let public = doc_with(&[SOURCE, COPY]);
     let proposed = extract(&public, COPY);
-    set_copied_from(&mut proposed.transact_mut(), COPY, &[hop(7)]).unwrap();
+    set_copied_from(&mut proposed.transact_mut(), COPY, &[hop(7)]);
 
     adopt(&mut public.transact_mut(), &proposed, COPY);
 
@@ -129,7 +130,7 @@ fn adopting_does_not_give_the_target_a_chain_it_lacked() {
 #[test]
 fn adopting_a_proposal_without_a_chain_keeps_the_targets_chain() {
     let public = doc_with(&[SOURCE]);
-    set_copied_from(&mut public.transact_mut(), SOURCE, &[hop(1)]).unwrap();
+    set_copied_from(&mut public.transact_mut(), SOURCE, &[hop(1)]);
     let proposed = doc_with(&[SOURCE]);
 
     adopt(&mut public.transact_mut(), &proposed, SOURCE);
@@ -140,7 +141,28 @@ fn adopting_a_proposal_without_a_chain_keeps_the_targets_chain() {
 #[test]
 fn an_extract_carries_the_chain() {
     let public = doc_with(&[SOURCE]);
-    set_copied_from(&mut public.transact_mut(), SOURCE, &[hop(1)]).unwrap();
+    set_copied_from(&mut public.transact_mut(), SOURCE, &[hop(1)]);
 
     assert_eq!(chain(&extract(&public, SOURCE), SOURCE), [hop(1)]);
+}
+
+#[test]
+fn restoring_an_older_state_keeps_the_current_chain() {
+    let live = doc_with(&[SOURCE]);
+    let past = Doc::new();
+    past.transact_mut()
+        .apply_update(
+            yrs::Update::decode_v1(
+                &live
+                    .transact()
+                    .encode_state_as_update_v1(&yrs::StateVector::default()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    set_copied_from(&mut live.transact_mut(), SOURCE, &[hop(1)]);
+
+    model::restore(&mut live.transact_mut(), &past, None);
+
+    assert_eq!(chain(&live, SOURCE), [hop(1)]);
 }

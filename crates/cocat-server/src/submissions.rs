@@ -9,7 +9,7 @@ use crate::db::DbError;
 /// The columns every listing reads, emails resolved; the snapshot is read on its own. Only
 /// these constants are spliced into the queries, hence `AssertSqlSafe`.
 const COLUMNS: &str = "submission.id, submission.author, author.email AS author_email,
-    submission.kind, submission.target, submission.base, submission.catalogue,
+    submission.kind, submission.room, submission.target, submission.base, submission.catalogue,
     submission.title, submission.folder, submission.description, submission.note,
     submission.status, reviewer.email AS reviewer_email, submission.review_note,
     submission.created_at, submission.decided_at";
@@ -22,6 +22,8 @@ pub struct Submission {
     pub author: String,
     pub author_email: String,
     pub kind: String,
+    /// The project it was taken from; none once that project is deleted.
+    pub room: Option<String>,
     pub target: Option<String>,
     pub base: Option<i64>,
     pub catalogue: String,

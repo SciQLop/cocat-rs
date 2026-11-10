@@ -925,7 +925,8 @@ impl Fixture {
     }
 }
 
-/// Every root the model keeps, as plain values.
+/// Every root the model keeps, as plain values, without the chains of copies: a copy has
+/// one the original lacks.
 fn contents(doc: &Doc) -> Vec<yrs::Any> {
     let txn = doc.transact();
     [
@@ -938,11 +939,27 @@ fn contents(doc: &Doc) -> Vec<yrs::Any> {
     ]
     .into_iter()
     .map(|root| {
-        txn.get_map(root).map_or(yrs::Any::Null, |map| {
+        let json = txn.get_map(root).map_or(yrs::Any::Null, |map| {
             yrs::types::ToJson::to_json(&map, &txn)
-        })
+        });
+        match (root, json) {
+            (model::CATALOGUES, yrs::Any::Map(entries)) => without_chains(&entries),
+            (_, json) => json,
+        }
     })
     .collect()
+}
+
+fn without_chains(catalogues: &std::collections::HashMap<String, yrs::Any>) -> yrs::Any {
+    let stripped = catalogues.iter().map(|(uuid, entry)| match entry {
+        yrs::Any::Map(fields) => {
+            let mut fields = (**fields).clone();
+            fields.remove("copied_from");
+            (uuid.clone(), yrs::Any::from(fields))
+        }
+        other => (uuid.clone(), other.clone()),
+    });
+    yrs::Any::from(stripped.collect::<std::collections::HashMap<_, _>>())
 }
 
 /// Version 0: Alice adds `a`, a smart catalogue, and `gone` in the trash. Version 1: Bob
@@ -1491,4 +1508,26 @@ async fn naming_and_saving_refuse_a_document_field() {
 
     assert_eq!(named, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(saved, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn a_copied_version_names_its_source_project() {
+    let fixture = a_project_worth_copying().await;
+
+    let (_, body) = fixture.copy(1, fixture.carol, "try").await;
+
+    let copied = fixture
+        .state_of(body["room"].as_str().unwrap(), 0, fixture.carol)
+        .await;
+    let found = model::catalogue(&copied.transact(), "smart").unwrap();
+    let [hop] = found.copied_from.as_slice() else {
+        panic!("{:?}", found.copied_from);
+    };
+    assert_eq!(hop.project, ROOM);
+    assert_eq!(hop.project_name, "History");
+    assert_eq!(hop.catalogue, "smart");
+    assert_eq!(hop.catalogue_name, "smart");
+    assert_eq!(hop.version, Some(1));
+    assert_eq!(hop.by.as_deref(), Some("carol@x.org"));
+    assert!(hop.at >= now_ms() - 60_000, "{}", hop.at);
 }

@@ -21,6 +21,7 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{self, ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::copy_chain::{Source, record_copy};
 use crate::db::{DocumentKind, RoomRow};
 use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
 use crate::history::versions::{Saved, Version, span, spans};
@@ -290,8 +291,11 @@ fn json_until(records: &[Bytes], end: usize) -> Result<serde_json::Value, serde_
 
 /// The room as of the version ending before record `end`, as one update.
 fn state_until(records: &[Bytes], end: usize) -> Vec<u8> {
-    replay_until(&records[..end], u64::MAX)
-        .transact()
+    encoded(&replay_until(&records[..end], u64::MAX))
+}
+
+pub(crate) fn encoded(doc: &Doc) -> Vec<u8> {
+    doc.transact()
         .encode_state_as_update_v1(&StateVector::default())
 }
 
@@ -328,6 +332,10 @@ async fn copy(
 ) -> Result<(StatusCode, Json<Copied>), ApiError> {
     membership(&state, &room_id, user.id).await?;
     let saved = saved(&state, &room_id).await?;
+    let original = db::room_name(&state.pool, &room_id)
+        .await?
+        .unwrap_or_default();
+    let source = (room_id.clone(), original.clone(), user.email.clone());
     let (update, started_ms) = state
         .rooms
         .read_log(&room_id, 1, move |records, slots| {
@@ -337,13 +345,19 @@ async fn copy(
                 .copied()
                 .flatten()
                 .map(|stamp| stamp.at_ms);
-            Some((state_until(records, span.end), started_ms))
+            let doc = replay_until(&records[..span.end], u64::MAX);
+            let (project, project_name, by) = &source;
+            let from = Source {
+                project,
+                project_name,
+                version: Some(version),
+                by,
+            };
+            record_copy(&doc, &from);
+            Some((encoded(&doc), started_ms))
         })
         .await?
         .ok_or_else(no_such_version)?;
-    let original = db::room_name(&state.pool, &room_id)
-        .await?
-        .unwrap_or_default();
     let first = copy_name(&original, started_ms);
     let making = make_copy(state, user.id, body.name.0, update, first);
     let room = tokio::spawn(making).await.map_err(|error| {
@@ -694,7 +708,7 @@ fn rows(span: Range<usize>) -> Option<RangeInclusive<i64>> {
     Some(row(span.start)?..=row(span.end.checked_sub(1)?)?)
 }
 
-async fn saved(state: &AppState, room_id: &str) -> Result<Saved, ApiError> {
+pub(crate) async fn saved(state: &AppState, room_id: &str) -> Result<Saved, ApiError> {
     Ok(marks(&db::version_commits(&state.pool, room_id).await?))
 }
 
