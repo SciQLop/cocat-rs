@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 cocat-core = { path = "../cocat-core" }
 csv = "1"
+base64 = "0.22"
+percent-encoding = "2"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 serde.workspace = true
 strip-ansi-escapes = "0.2"

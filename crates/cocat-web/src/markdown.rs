@@ -11,12 +11,64 @@ const IMAGE_DATA_PREFIXES: [&str; 4] = [
 ];
 
 pub fn markdown_html(text: &str) -> String {
+    markdown_html_with(text, &|_| None)
+}
+
+/// Like [`markdown_html`], with `image` answering where an image that is neither on the web
+/// nor inline lives: a pasted `attachment:` or a path relative to the notebook. What it
+/// answers must still be an allowed image URL; an image it cannot place shows its alt text.
+pub fn markdown_html_with(text: &str, image: &dyn Fn(&str) -> Option<String>) -> String {
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
     let mut refused = Vec::new();
-    let events = Parser::new_ext(text, options).filter_map(|event| sanitize(event, &mut refused));
+    let events = Parser::new_ext(text, options)
+        .map(|event| placed(event, image))
+        .filter_map(|event| sanitize(event, &mut refused));
     let mut out = String::new();
     html::push_html(&mut out, events);
     out
+}
+
+/// An image neither on the web nor inline gets the address `image` gives it; one it cannot
+/// place, or one by an absolute path on this server, is left for `sanitize` to refuse.
+fn placed<'a>(event: Event<'a>, image: &dyn Fn(&str) -> Option<String>) -> Event<'a> {
+    let Event::Start(Tag::Image {
+        link_type,
+        dest_url,
+        title,
+        id,
+    }) = event
+    else {
+        return event;
+    };
+    let dest_url = match located(&dest_url) {
+        Location::Web => dest_url,
+        Location::Elsewhere => image(&dest_url).map_or(CowStr::from(REFUSED), CowStr::from),
+    };
+    Event::Start(Tag::Image {
+        link_type,
+        dest_url,
+        title,
+        id,
+    })
+}
+
+/// Stands for an image that cannot be shown: no allowed URL has this scheme.
+const REFUSED: &str = "refused:";
+
+enum Location {
+    Web,
+    Elsewhere,
+}
+
+fn located(url: &str) -> Location {
+    let lower = url.trim().to_ascii_lowercase();
+    match lower.split_once(':') {
+        Some((scheme, _)) if !scheme.contains(['/', '?', '#']) && scheme != "attachment" => {
+            Location::Web
+        }
+        _ if lower.starts_with('/') => Location::Web,
+        _ => Location::Elsewhere,
+    }
 }
 
 /// `refused` tracks, for each open link or image, whether its tags are being dropped.
@@ -38,7 +90,9 @@ fn sanitize<'a>(event: Event<'a>, refused: &mut Vec<bool>) -> Option<Event<'a>> 
 fn destination_allowed(tag: &Tag) -> bool {
     match tag {
         Tag::Link { dest_url, .. } => url_allowed(dest_url, &[]),
-        Tag::Image { dest_url, .. } => url_allowed(dest_url, &IMAGE_DATA_PREFIXES),
+        Tag::Image { dest_url, .. } => {
+            !dest_url.trim_start().starts_with('/') && url_allowed(dest_url, &IMAGE_DATA_PREFIXES)
+        }
         _ => false,
     }
 }
@@ -66,6 +120,44 @@ fn is_data_url(url: &str, prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolved(text: &str) -> String {
+        markdown_html_with(text, &|dest: &str| match dest {
+            "attachment:p.png" => Some("data:image/png;base64,AAAA".to_owned()),
+            "fig.png" => Some("https://cocat.example.org/api/rooms/w/blobs/abc".to_owned()),
+            "evil.png" => Some("javascript:alert(1)".to_owned()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_pasted_image_comes_from_its_cell() {
+        assert!(resolved("![p](attachment:p.png)").contains(r#"src="data:image/png;base64,AAAA""#));
+    }
+
+    #[test]
+    fn a_relative_image_comes_from_the_workspace_or_shows_its_alt() {
+        assert!(
+            resolved("![f](fig.png)")
+                .contains(r#"src="https://cocat.example.org/api/rooms/w/blobs/abc""#)
+        );
+        let missing = resolved("![lost figure](nowhere.png)");
+        assert!(
+            !missing.contains("<img") && missing.contains("lost figure"),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn an_image_by_absolute_path_on_this_server_shows_its_alt() {
+        let html = markdown_html("![join](/ui/join/abc)");
+        assert!(!html.contains("<img") && html.contains("join"), "{html}");
+    }
+
+    #[test]
+    fn what_the_workspace_answers_must_still_be_an_allowed_image() {
+        assert!(!resolved("![e](evil.png)").contains("<img"));
+    }
 
     #[test]
     fn headings_lists_and_tables_render() {

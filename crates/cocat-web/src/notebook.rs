@@ -1,5 +1,7 @@
 //! A JupyterLab notebook document, read for display.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +38,8 @@ pub struct Cell {
     pub source: String,
     pub count: Option<i64>,
     pub outputs: Vec<Output>,
+    /// Images pasted into the cell, by name, as `data:` URLs (raster images only).
+    pub attachments: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +83,29 @@ fn cell(cell: &Value) -> Cell {
         outputs: cell["outputs"].as_array().map_or_else(Vec::new, |outputs| {
             outputs.iter().filter_map(output).collect()
         }),
+        attachments: attachments(&cell["attachments"]),
     }
+}
+
+const PASTED_IMAGES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+fn attachments(attachments: &Value) -> BTreeMap<String, String> {
+    let Some(attachments) = attachments.as_object() else {
+        return BTreeMap::new();
+    };
+    attachments
+        .iter()
+        .filter_map(|(name, bundle)| {
+            let (mime, data) = PASTED_IMAGES
+                .iter()
+                .find_map(|mime| Some((*mime, bundle.get(*mime)?)))?;
+            let base64: String = text(data, "")
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            Some((name.clone(), format!("data:{mime};base64,{base64}")))
+        })
+        .collect()
 }
 
 fn integer(value: &Value) -> Option<i64> {
@@ -139,6 +165,13 @@ fn rich(data: &Value) -> Option<Output> {
         .or_else(|| get("text/plain").map(Output::Text))
 }
 
+/// A sandboxed HTML output cannot measure itself, so its frame is sized from its table
+/// rows: tall enough for a short table, and a long one scrolls inside its frame.
+pub fn html_height(html: &str) -> u32 {
+    let rows = u32::try_from(html.matches("<tr").count()).unwrap_or(u32::MAX);
+    rows.saturating_mul(28).saturating_add(48).clamp(96, 640)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +181,35 @@ mod tests {
         notebook(&json!({"cells": [
             {"id": "a", "cell_type": "code", "source": "x", "execution_count": null, "outputs": outputs}
         ]}))
+    }
+
+    #[test]
+    fn pasted_images_become_data_urls_and_svg_is_left_out() {
+        let roots = json!({"cells": [{"id": "m", "cell_type": "markdown", "source": "x",
+            "attachments": {"p.png": {"image/png": "QUJD\n"}, "s.svg": {"image/svg+xml": "<svg/>"}}}]});
+        let cell = &notebook(&roots).cells[0];
+        assert_eq!(
+            cell.attachments.get("p.png").map(String::as_str),
+            Some("data:image/png;base64,QUJD")
+        );
+        assert!(!cell.attachments.contains_key("s.svg"));
+    }
+
+    #[test]
+    fn an_html_output_is_sized_by_its_rows() {
+        assert_eq!(
+            html_height("<p>hi</p>"),
+            96,
+            "a small output gets the minimum"
+        );
+        let table = format!("<table>{}</table>", "<tr><td>1</td></tr>".repeat(10));
+        assert_eq!(html_height(&table), 10 * 28 + 48);
+        let long = "<tr>".repeat(1000);
+        assert_eq!(
+            html_height(&long),
+            640,
+            "a long table scrolls inside its frame"
+        );
     }
 
     #[test]

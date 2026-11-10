@@ -194,6 +194,38 @@ fn extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The workspace path a link `relative` in the file at `from` points at, `None` when it
+/// climbs above the workspace. The link's `%XX` escapes are decoded; a `#` or `?` part is
+/// dropped.
+pub fn resolve_path(from: &str, relative: &str) -> Option<String> {
+    let relative = relative.split(['#', '?']).next().unwrap_or_default();
+    let decoded = percent_encoding::percent_decode_str(relative)
+        .decode_utf8()
+        .ok()?;
+    let mut parts: Vec<&str> = from.split('/').collect();
+    parts.pop();
+    for part in decoded.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            name => parts.push(name),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// A size as people read it: "512 B", "4.2 kB", "2.3 MB".
+pub fn size_text(bytes: u64) -> String {
+    let bytes_f = bytes as f64;
+    match bytes {
+        0..1_000 => format!("{bytes} B"),
+        1_000..1_000_000 => format!("{:.1} kB", bytes_f / 1e3),
+        _ => format!("{:.1} MB", bytes_f / 1e6),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +251,35 @@ mod tests {
                 Node::File(entry) => entry.path.clone(),
             })
             .collect()
+    }
+
+    #[test]
+    fn relative_paths_resolve_from_the_notebooks_folder() {
+        let from = "notebooks/analysis.ipynb";
+        assert_eq!(
+            resolve_path(from, "../figures/fig1.png").as_deref(),
+            Some("figures/fig1.png")
+        );
+        assert_eq!(
+            resolve_path(from, "./plots/a%20b.png").as_deref(),
+            Some("notebooks/plots/a b.png")
+        );
+        assert_eq!(
+            resolve_path("a.ipynb", "../x.png"),
+            None,
+            "nothing above the workspace"
+        );
+        assert_eq!(
+            resolve_path("a.ipynb", "x.png#top").as_deref(),
+            Some("x.png")
+        );
+    }
+
+    #[test]
+    fn sizes_read_in_their_unit() {
+        assert_eq!(size_text(512), "512 B");
+        assert_eq!(size_text(4200), "4.2 kB");
+        assert_eq!(size_text(2_345_678), "2.3 MB");
     }
 
     #[test]

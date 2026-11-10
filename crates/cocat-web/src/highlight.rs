@@ -35,6 +35,27 @@ const TONES: &[(&str, Tone)] = &[
     ("storage", Tone::Keyword),
 ];
 
+impl Tone {
+    /// The stylesheet class that colours this tone.
+    pub fn class(self) -> &'static str {
+        match self {
+            Tone::Plain => "tone-plain",
+            Tone::Keyword => "tone-keyword",
+            Tone::String => "tone-string",
+            Tone::Number => "tone-number",
+            Tone::Comment => "tone-comment",
+            Tone::Function => "tone-function",
+            Tone::Type => "tone-type",
+            Tone::Punctuation => "tone-punctuation",
+        }
+    }
+}
+
+/// Colouring runs on the page's only thread: a huge or minified file shows plain instead.
+pub fn worth_colouring(code: &str) -> bool {
+    code.len() <= 200_000 && code.lines().all(|line| line.len() <= 5_000)
+}
+
 type Run = (Tone, String);
 
 fn syntaxes() -> &'static SyntaxSet {
@@ -118,6 +139,19 @@ pub fn highlight(code: &str, language: &str) -> Vec<Vec<Run>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_tone_has_its_class() {
+        assert_eq!(Tone::Keyword.class(), "tone-keyword");
+        assert_eq!(Tone::Plain.class(), "tone-plain");
+    }
+
+    #[test]
+    fn a_huge_or_minified_file_is_not_coloured() {
+        assert!(worth_colouring("x = 1\n"));
+        assert!(!worth_colouring(&"x".repeat(300_000)));
+        assert!(!worth_colouring(&format!("a\n{}\n", "y".repeat(6_000))));
+    }
+
     use super::*;
 
     fn tone_of(lines: &[Vec<(Tone, String)>], text: &str) -> Option<Tone> {

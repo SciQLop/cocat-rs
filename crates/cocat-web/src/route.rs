@@ -27,6 +27,8 @@ pub enum Route {
         catalogue: Option<String>,
         version: Option<u64>,
     },
+    /// A workspace's file, by its path in the workspace.
+    File(String),
 }
 
 impl Route {
@@ -38,6 +40,9 @@ impl Route {
         }
         if let Some(folder) = hash.strip_prefix("public=") {
             return Route::Public(decoded(folder));
+        }
+        if let Some(path) = hash.strip_prefix("file=") {
+            return decoded(path).map_or(Route::Default, Route::File);
         }
         match hash.split_once('=') {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
@@ -143,6 +148,10 @@ impl Route {
                     form_urlencoded::byte_serialize(folder.as_bytes()).collect::<String>()
                 )
             }
+            Route::File(path) => format!(
+                "#file={}",
+                form_urlencoded::byte_serialize(path.as_bytes()).collect::<String>()
+            ),
             Route::Submissions => "#submissions".to_owned(),
             Route::MySubmissions => "#my-submissions".to_owned(),
             Route::Submission(id) => format!("#submission={id}"),
@@ -165,7 +174,7 @@ pub fn opens_share(hash: &str) -> bool {
     hash.strip_prefix('#').unwrap_or(hash) == "share"
 }
 
-/// A folder escaped as a form value; an empty one is no folder.
+/// A folder or path escaped as a form value; an empty one is none.
 fn decoded(folder: &str) -> Option<String> {
     let text: String = form_urlencoded::parse(format!("f={folder}").as_bytes())
         .map(|(_, value)| value.into_owned())
@@ -190,6 +199,20 @@ fn history(hash: &str) -> Option<Route> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_route_round_trips() {
+        for path in [
+            "notebooks/analysis.ipynb",
+            "My notes/a b#c.md",
+            "über/ü.py",
+            "a&b=c.txt",
+        ] {
+            let route = Route::File(path.to_owned());
+            assert_eq!(Route::parse(&route.hash()), route, "{path}");
+        }
+        assert_eq!(Route::parse("file="), Route::Default);
+    }
 
     #[test]
     fn a_catalogue_is_named_by_its_uuid() {

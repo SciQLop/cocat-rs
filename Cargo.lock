@@ -770,12 +770,14 @@ dependencies = [
 name = "cocat-web"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "cocat-core",
  "console_error_panic_hook",
  "csv",
  "gloo-net",
  "js-sys",
  "leptos",
+ "percent-encoding",
  "pulldown-cmark",
  "serde",
  "serde_json",
