@@ -18,6 +18,31 @@ pub struct PublicCatalogue {
     pub changed: Option<String>,
     #[serde(default)]
     pub count: Option<i64>,
+    /// The provider it follows, when the server keeps it in step with one.
+    #[serde(default)]
+    pub relay: Option<Relay>,
+}
+
+/// Where a relayed catalogue comes from, as `GET /api/public` says.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Relay {
+    pub source: String,
+    pub url: Option<String>,
+    pub refreshed_at: Option<String>,
+    pub published: bool,
+}
+
+impl Relay {
+    /// "From DONKI (NASA CCMC), refreshed 2026-11-11", or why it no longer changes.
+    pub fn text(&self) -> String {
+        if !self.published {
+            return format!("No longer published by {}", self.source);
+        }
+        match self.refreshed_at.as_deref().and_then(|at| at.get(..10)) {
+            Some(day) => format!("From {}, refreshed {day}", self.source),
+            None => format!("From {}", self.source),
+        }
+    }
 }
 
 impl PublicCatalogue {
@@ -221,7 +246,40 @@ mod tests {
             role: Role::Viewer,
             changed: Some("2026-11-08T10:00:00Z".into()),
             count: Some(1),
+            relay: None,
         }
+    }
+
+    fn relay(published: bool, refreshed: Option<&str>) -> Relay {
+        Relay {
+            source: "DONKI (NASA CCMC)".into(),
+            url: Some("https://api.nasa.gov/DONKI/FLR".into()),
+            refreshed_at: refreshed.map(str::to_owned),
+            published,
+        }
+    }
+
+    #[test]
+    fn a_relayed_catalogue_says_where_it_comes_from_and_how_fresh_it_is() {
+        let fresh = relay(true, Some("2026-11-11T04:00:12Z"));
+        assert_eq!(fresh.text(), "From DONKI (NASA CCMC), refreshed 2026-11-11");
+        assert_eq!(relay(true, None).text(), "From DONKI (NASA CCMC)");
+        assert_eq!(
+            relay(false, Some("2026-11-11T04:00:12Z")).text(),
+            "No longer published by DONKI (NASA CCMC)"
+        );
+    }
+
+    #[test]
+    fn the_index_reads_where_a_relayed_catalogue_comes_from() {
+        let body = r#"{"id":"public.donki.flr","name":"Solar flares","folder":"DONKI/Solar flares",
+            "source":"DONKI (NASA CCMC)","description":null,"role":"viewer","changed":null,"count":3,
+            "relay":{"source":"DONKI (NASA CCMC)","url":null,"refreshed_at":"2026-11-11T04:00:12Z","published":true}}"#;
+        let read: PublicCatalogue = serde_json::from_str(body).unwrap();
+        assert_eq!(
+            read.relay,
+            Some(relay(true, Some("2026-11-11T04:00:12Z"))).map(|r| Relay { url: None, ..r })
+        );
     }
 
     fn names(shelves: &[Shelf]) -> Vec<(String, Vec<&str>)> {

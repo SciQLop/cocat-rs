@@ -108,11 +108,16 @@ impl PublicAction {
 /// The public catalogue's header buttons, each with whether it is the main one. Everyone
 /// copies; a reader also proposes a change. A curator edits the catalogue directly, finds
 /// Propose in More, and has New event as the main button.
-pub fn public_actions(public: bool, editor: bool) -> &'static [(PublicAction, bool)] {
-    match (public, editor) {
-        (true, false) => &[(PublicAction::Copy, true), (PublicAction::Propose, false)],
-        (true, true) => &[(PublicAction::Copy, false)],
-        (false, _) => &[],
+pub fn public_actions(
+    public: bool,
+    editor: bool,
+    relayed: bool,
+) -> &'static [(PublicAction, bool)] {
+    match (public, editor, relayed) {
+        (false, _, _) => &[],
+        (true, _, true) => &[(PublicAction::Copy, true)],
+        (true, false, false) => &[(PublicAction::Copy, true), (PublicAction::Propose, false)],
+        (true, true, false) => &[(PublicAction::Copy, false)],
     }
 }
 
@@ -209,15 +214,20 @@ mod tests {
     fn everyone_copies_a_public_catalogue_and_its_readers_also_propose_a_change() {
         use PublicAction::{Copy, Propose};
         assert_eq!(
-            public_actions(true, false),
+            public_actions(true, false, false),
             [(Copy, true), (Propose, false)]
         );
         assert_eq!(
-            public_actions(true, true),
+            public_actions(true, true, false),
             [(Copy, false)],
             "a curator edits it directly, New event is their main button"
         );
-        assert_eq!(public_actions(false, true), []);
+        assert_eq!(public_actions(false, true, false), []);
+        assert_eq!(
+            public_actions(true, false, true),
+            [(Copy, true)],
+            "a relayed catalogue changes only at its source: nothing to propose"
+        );
         assert_eq!(Copy.label(), "Copy to a project…");
         assert_eq!(Propose.label(), "Propose a change…");
     }
@@ -306,6 +316,7 @@ mod tests {
             role: Role::Viewer,
             changed: None,
             count: None,
+            relay: None,
         };
         let index = [
             entry(Some("B")),

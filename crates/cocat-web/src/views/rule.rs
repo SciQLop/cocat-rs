@@ -32,6 +32,8 @@ pub fn Heading(
     let room = expect_context::<Room>();
     let reader = room.clone();
     let about = Memo::new(move |_| reader.read(|txn| about(txn, &shown.get())));
+    let relay = cocat_core::room_id::is_public_id(&room.config.room_id)
+        .then(|| crate::views::public::relay_of(room.config.room_id.clone()));
     let picked = move |rows: &[Row]| match shown.get() {
         Route::Catalogue(uuid) => {
             let listed: HashSet<String> = room
@@ -69,6 +71,9 @@ pub fn Heading(
         <div class="heading">
             <h1>{move || about.with(|about| about.title.clone())}</h1>
             <p class="quiet">{counts}</p>
+            {move || relay.and_then(|relay| relay.get()).map(|relay| view! {
+                <p class="quiet">{crate::views::public::relay_line(&relay)}</p>
+            })}
             {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
                 <p class="quiet copied" title=chain>{line}</p>
             })}

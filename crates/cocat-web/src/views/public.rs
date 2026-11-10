@@ -44,6 +44,29 @@ pub fn PublicSpace() -> impl IntoView {
     }
 }
 
+/// Where the public catalogue `id` comes from, once the index is read; `None` for one people
+/// keep.
+pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
+    let projects = expect_context::<Projects>();
+    Memo::new(move |_| {
+        projects.public.with(|listed| {
+            listed
+                .iter()
+                .flatten()
+                .find(|catalogue| catalogue.id == id)
+                .and_then(|catalogue| catalogue.relay.clone())
+        })
+    })
+}
+
+/// "From DONKI (NASA CCMC), refreshed 2026-11-11", with a link to the list at its source.
+pub fn relay_line(relay: &crate::public::Relay) -> impl IntoView + use<> {
+    let link = relay.url.clone().map(|url| {
+        view! { " · " <a href=url target="_blank" rel="noopener">"source"</a> }
+    });
+    view! { <span class="relay-line">{relay.text()}{link}</span> }
+}
+
 /// The folder tree, "All" above it, then the submissions. Inside a public catalogue
 /// (`current`, its id) the tree also lists the catalogues, with that one's folder open.
 #[component]
@@ -315,7 +338,10 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
                 <span class="name">{catalogue.name.clone()}</span>
                 {catalogue.description.clone().map(|text| view! { <span class="description" title=text.clone()>{text.clone()}</span> })}
                 <span class="meta">
-                    {catalogue.source.clone().map(|source| view! { <span class="source">{source}</span> })}
+                    {match catalogue.relay.as_ref() {
+                        Some(relay) => view! { <span class="source">{relay.text()}</span> }.into_any(),
+                        None => catalogue.source.clone().map(|source| view! { <span class="source">{source}</span> }).into_any(),
+                    }}
                     {catalogue.events().map(|events| view! { <span>{events}</span> })}
                     {day.map(|day| view! { <span>{day}</span> })}
                 </span>

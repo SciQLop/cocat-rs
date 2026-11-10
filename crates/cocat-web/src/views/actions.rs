@@ -110,7 +110,10 @@ pub fn Actions(
 #[component]
 pub fn PublicButtons(shown: Memo<Route>, form: RwSignal<Form>, editor: bool) -> impl IntoView {
     let on_catalogue = move || matches!(shown.get(), Route::Catalogue(_));
-    let buttons = public_actions(true, editor).iter().map(|&(action, main)| {
+    let id = expect_context::<Room>().config.room_id.clone();
+    let relay = crate::views::public::relay_of(id);
+    let buttons = move || {
+        public_actions(true, editor, relay.with(Option::is_some)).iter().map(|&(action, main)| {
         let which = match action {
             PublicAction::Copy => Form::Copy,
             PublicAction::Propose => Form::Propose,
@@ -120,8 +123,9 @@ pub fn PublicButtons(shown: Memo<Route>, form: RwSignal<Form>, editor: bool) -> 
             <button type="button" class="button" class:primary=main aria-pressed=move || (form.get() == which).to_string()
                 on:click=toggle>{action.label()}</button>
         }
-    }).collect_view();
-    view! { <Show when=on_catalogue>{buttons.clone()}</Show> }
+    }).collect_view()
+    };
+    view! { <Show when=on_catalogue>{buttons}</Show> }
 }
 
 /// A new event in the catalogue, selected so its panel opens.
