@@ -260,7 +260,8 @@ personal project is always a catalogues project.
 
 A workspace holds several documents. It starts with one, the manifest, a map of the
 project's files: for each path, its kind (`notebook`, `text` or `file`), the document or
-SHA-256 it points to, the size, who changed it and when. A second root map, `rules`, holds one
+SHA-256 it points to, the size, who changed it and when (`at`, an integer: milliseconds since
+the Unix epoch). A second root map, `rules`, holds one
 key, `patterns`: text in `.gitignore` syntax saying which paths the project leaves out. The
 server only stores these documents and never reads their content, except to show history and
 to restore.

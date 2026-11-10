@@ -95,7 +95,8 @@ Server consequences:
 ## What a workspace holds
 
 1. **The manifest document**: one map, path → entry. An entry is
-   `{kind: notebook | text | file, doc: <document id> | hash: <sha256>, size, by, at}`.
+   `{kind: notebook | text | file, doc: <document id> | hash: <sha256>, size, by, at}`,
+   where `at` is an integer, milliseconds since the Unix epoch.
    A path is a key, so each path is last-write-wins for free; a rename is a manifest edit
    (the document id stays, so a renamed notebook keeps its history and live sessions).
    The manifest also holds the workspace's **sharing rules** (below).

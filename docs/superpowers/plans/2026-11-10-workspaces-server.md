@@ -27,7 +27,7 @@ viewer) and part 3 (SciQLop/jupyqt bridge) get their own plans once this one is 
   A personal project is always `catalogues`.
 - The server never reads notebook, text or manifest content except for history and restore.
 - Manifest schema (fixed here, used by parts 2 and 3): root map `files`, path → map
-  `{kind: "notebook"|"text"|"file", doc?: <uuid>, hash?: <sha256>, size, by, at}`; root map
+  `{kind: "notebook"|"text"|"file", doc?: <uuid>, hash?: <sha256>, size, by, at}` (`at`: integer milliseconds since the Unix epoch); root map
   `rules`, key `patterns` → text (`.gitignore` syntax, defaults from the spec).
 - Deliberately later (say so in the README): one project-wide timeline across documents
   (history here is per document); sweeping unreferenced blobs and orphaned documents

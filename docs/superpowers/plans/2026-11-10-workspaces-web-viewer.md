@@ -27,7 +27,7 @@ app: a workspace viewer". Server part: `docs/superpowers/plans/2026-11-10-worksp
 - A workspace never connects to `/room/{project}` (the server answers 404); only to
   `/room/{project}/{doc}`.
 - Manifest schema (from part 1): root map `files`, path → map
-  `{kind: "notebook"|"text"|"file", doc?: <uuid>, hash?: <sha256>, size, by, at}`; root map
+  `{kind: "notebook"|"text"|"file", doc?: <uuid>, hash?: <sha256>, size, by, at}` (`at`: integer milliseconds since the Unix epoch); root map
   `rules`, key `patterns`.
 - Notebook documents use the jupyter_ydoc layout: root map `meta`, root array `cells` (maps
   with `id`, `cell_type`, `source` (text), `metadata`, `execution_count`, `outputs` (array of
