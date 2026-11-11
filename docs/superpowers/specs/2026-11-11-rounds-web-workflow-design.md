@@ -127,6 +127,27 @@ budget.
   decider); the server keeps stamping the `round` attribute.
 - **No new role names**: "voter" shows as "reviewer" in review rounds.
 
+### Built to grow into review cycles (the user, 2026-11-11)
+
+Later workflows reuse rounds: public submissions, and pull-request-like cycles that go back and
+forth — submit → review → reject or ask for changes → submit again → review… This work does not
+build them, but shapes rounds so they need no rewrite:
+
+- **The workflow is data.** Each kind has a table of allowed moves: `(from, to, who)` with `who`
+  one of decider, owner, proposer, deadline. The rules read the table; no state order is coded
+  anywhere else. Today's tables reproduce today's behaviour (forward by a decider, back by an
+  owner, `proposing → voting` by the deadline). A PR-like kind is then a new table, e.g. a
+  decider moving `voting → proposing` with "changes requested", and a proposer moving
+  `proposing → voting` with "submitted again".
+- **A move can carry a note**, stored in the round's log ("Please split the long event", "Fixed
+  the stop times"). The page shows it with the move. This is the review conversation.
+- **Each return to `proposing` starts a new revision** (a counter on the round). Verdicts record
+  the revision they were given in; the page shows verdicts from an earlier revision as "from the
+  previous review", and counts only the current revision's verdicts as progress.
+- **Where the decided catalogue goes is one function** (today: into the round's own project).
+  A public submission later makes it the public project, and a "changes" submission makes it a
+  diff applied there; both are new cases of that one function.
+
 ### Calls made after the builder check (mine — check them)
 
 - **Ids.** Candidates keep the source event uuids (verdicts are keyed by them, so a pipeline
