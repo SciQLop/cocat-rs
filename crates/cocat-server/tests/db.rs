@@ -500,3 +500,35 @@ async fn deleting_a_project_deletes_its_documents() {
 
     assert!(db::documents_of(&pool, "one").await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn existing_votes_become_accepts() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("test.db");
+    let old = before_migration(&path, 26).await;
+    let owner = user(&old, "owner@example.org").await.to_string();
+    python_room(&old, "lab", "Lab", "2026-01-01 00:00:00", &owner).await;
+    sqlx::query(
+        "INSERT INTO round (id, room_id, name, visibility) VALUES ('r1', 'lab', 'R', 'open')",
+    )
+    .execute(&old)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO round_vote (round_id, voter, event) VALUES ('r1', 'alice', 'e1')")
+        .execute(&old)
+        .await
+        .unwrap();
+    old.close().await;
+
+    let pool = db::open(&path).await.unwrap();
+
+    let rows: Vec<(String, String, String, i64)> =
+        sqlx::query_as("SELECT reviewer, event, verdict, revision FROM round_verdict")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [("alice".to_owned(), "e1".to_owned(), "accept".to_owned(), 1)]
+    );
+}

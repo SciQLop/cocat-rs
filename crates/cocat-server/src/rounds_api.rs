@@ -1,6 +1,6 @@
 //! The HTTP side of selection rounds: settings, members, state moves and what each caller sees.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::Json;
 use axum::extract::State;
@@ -22,7 +22,8 @@ use crate::openapi::Detail;
 use crate::room::Author;
 use crate::rounds::rules::{self, Seat};
 use crate::rounds::{
-    self, Kind, RoundPatch, RoundRole, RoundRow, RoundSpec, RoundState, Visibility,
+    self, Kind, RoundPatch, RoundRole, RoundRow, RoundSpec, RoundState, Verdict, VerdictRow,
+    Visibility,
 };
 use crate::{AppState, db, lifecycle, ws};
 
@@ -34,6 +35,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(move_round))
         .routes(routes!(my_proposal))
         .routes(routes!(put_votes, get_votes))
+        .routes(routes!(put_verdicts, get_verdicts))
+        .routes(routes!(put_verdict))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -540,7 +543,7 @@ async fn outcome<'a>(
     responses(
         (status = 200, description = "The moved round, with the move in its log", body = RoundOut),
         (status = 401, description = "No valid session", body = Detail),
-        (status = 403, description = "Deciders move a round forward, only a project owner moves it back", body = Detail),
+        (status = 403, description = "The caller may not make this move in this round", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
         (status = 409, description = "The round changed state since it was read", body = Detail),
         (status = 422, description = "Deciding needs a catalogue of the project", body = Detail),
@@ -555,9 +558,7 @@ async fn move_round(
     let note = checked_note(change.note.as_deref())?;
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     if !rules::may_move(&row, &seat, change.state) {
-        return Err(forbidden(
-            "Deciders move a round forward; only a project owner moves it back",
-        ));
+        return Err(forbidden("You may not make this move in this round."));
     }
     let catalogue = outcome(&state, &room_id, &change).await?;
     if let Some(catalogue) = catalogue {
@@ -704,6 +705,40 @@ struct VotesOut {
     events: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct VerdictsIn {
+    /// Event uuid to its verdict, or `null` to clear it; events not listed are left alone.
+    #[schema(value_type = Object)]
+    verdicts: BTreeMap<String, Option<Verdict>>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct VerdictIn {
+    verdict: Option<Verdict>,
+}
+
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
+struct ReviewerVerdict {
+    reviewer: String,
+    verdict: Verdict,
+    revision: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq, utoipa::ToSchema)]
+struct EventVerdicts {
+    event: String,
+    accept: u32,
+    reject: u32,
+    unsure: u32,
+    by: Vec<ReviewerVerdict>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct VerdictsOut {
+    revision: i64,
+    events: Vec<EventVerdicts>,
+}
+
 fn may_vote(round: &RoundRow, seat: &Seat) -> Result<(), ApiError> {
     let voting = round.state == RoundState::Voting;
     match voting && seat.roles.contains(&RoundRole::Voter) {
@@ -712,6 +747,149 @@ fn may_vote(round: &RoundRow, seat: &Seat) -> Result<(), ApiError> {
             "Only a voter of the round votes, while it is voting",
         )),
     }
+}
+
+fn checked_event(event: &str) -> Result<String, ApiError> {
+    Uuid::parse_str(event)
+        .map(|uuid| uuid.to_string())
+        .map_err(|_| unprocessable(format!("{event} is not an event uuid")))
+}
+
+async fn store_verdicts(
+    state: &AppState,
+    ids: (&str, &str),
+    user: Uuid,
+    changes: Vec<(String, Option<Verdict>)>,
+) -> Result<StatusCode, ApiError> {
+    let (room_id, round) = ids;
+    let (row, seat) = load(state, room_id, round, user).await?;
+    may_vote(&row, &seat)?;
+    rounds::set_verdicts(&state.pool, row.id, user, row.revision, &changes).await?;
+    Ok(StatusCode::OK)
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/rooms/{room_id}/rounds/{round}/verdicts",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("round" = String, Path, description = "Round uuid"),
+    ),
+    request_body = VerdictsIn,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's verdicts were merged in"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
+        (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+        (status = 422, description = "An event id is not a uuid", body = Detail),
+    )
+)]
+async fn put_verdicts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, round)): ApiPath<(String, String)>,
+    JsonBody(body): JsonBody<VerdictsIn>,
+) -> Result<StatusCode, ApiError> {
+    let changes = body
+        .verdicts
+        .into_iter()
+        .map(|(event, verdict)| Ok((checked_event(&event)?, verdict)))
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    store_verdicts(&state, (&room_id, &round), user.id, changes).await
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/rooms/{room_id}/rounds/{round}/verdicts/{event}",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("round" = String, Path, description = "Round uuid"),
+        ("event" = String, Path, description = "Event uuid"),
+    ),
+    request_body = VerdictIn,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's verdict on the event was set"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
+        (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+        (status = 422, description = "The event id is not a uuid", body = Detail),
+    )
+)]
+async fn put_verdict(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, round, event)): ApiPath<(String, String, String)>,
+    JsonBody(body): JsonBody<VerdictIn>,
+) -> Result<StatusCode, ApiError> {
+    let changes = vec![(checked_event(&event)?, body.verdict)];
+    store_verdicts(&state, (&room_id, &round), user.id, changes).await
+}
+
+/// Counts and reviewers per event; only current-revision verdicts are counted.
+fn summarize(rows: Vec<(String, VerdictRow)>, revision: i64) -> Vec<EventVerdicts> {
+    let mut events: BTreeMap<String, EventVerdicts> = BTreeMap::new();
+    for (email, row) in rows {
+        let entry = events
+            .entry(row.event.clone())
+            .or_insert_with(|| EventVerdicts {
+                event: row.event.clone(),
+                accept: 0,
+                reject: 0,
+                unsure: 0,
+                by: Vec::new(),
+            });
+        if row.revision == revision {
+            match row.verdict {
+                Verdict::Accept => entry.accept += 1,
+                Verdict::Reject => entry.reject += 1,
+                Verdict::Unsure => entry.unsure += 1,
+            }
+        }
+        entry.by.push(ReviewerVerdict {
+            reviewer: email,
+            verdict: row.verdict,
+            revision: row.revision,
+        });
+    }
+    events.into_values().collect()
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/rounds/{round}/verdicts",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("round" = String, Path, description = "Round uuid"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The verdicts the caller may read, counted per event", body = VerdictsOut),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+    )
+)]
+async fn get_verdicts(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, round)): ApiPath<(String, String)>,
+) -> Result<Json<VerdictsOut>, ApiError> {
+    let (row, seat) = load(&state, &room_id, &round, user.id).await?;
+    let readable: Vec<_> = rounds::verdicts(&state.pool, row.id)
+        .await?
+        .into_iter()
+        .filter(|verdict| rules::may_read_verdicts(&row, &seat, verdict.reviewer == user.id))
+        .collect();
+    let emails = Emails::load(&state, readable.iter().map(|verdict| verdict.reviewer)).await?;
+    let tagged = readable
+        .into_iter()
+        .map(|verdict| (emails.of(verdict.reviewer), verdict))
+        .collect();
+    Ok(Json(VerdictsOut {
+        revision: row.revision,
+        events: summarize(tagged, row.revision),
+    }))
 }
 
 #[utoipa::path(
@@ -724,7 +902,7 @@ fn may_vote(round: &RoundRow, seat: &Seat) -> Result<(), ApiError> {
     request_body = VotesIn,
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The caller's votes were replaced"),
+        (status = 200, description = "The caller accepts exactly these events; rejects and unsures stay"),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
@@ -738,19 +916,21 @@ async fn put_votes(
 ) -> Result<StatusCode, ApiError> {
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     may_vote(&row, &seat)?;
-    rounds::set_votes(&state.pool, row.id, user.id, &body.events).await?;
+    rounds::set_accepts(&state.pool, &row, user.id, &body.events).await?;
     Ok(StatusCode::OK)
 }
 
-fn grouped(votes: Vec<(Uuid, String)>) -> Vec<(Uuid, Vec<String>)> {
-    let mut by_voter: Vec<(Uuid, Vec<String>)> = Vec::new();
-    for (voter, event) in votes {
-        match by_voter.last_mut() {
-            Some((last, events)) if *last == voter => events.push(event),
-            _ => by_voter.push((voter, vec![event])),
+fn accepts_by_voter(rows: Vec<(String, VerdictRow)>, revision: i64) -> Vec<VotesOut> {
+    let mut by_voter: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (email, row) in rows {
+        if row.verdict == Verdict::Accept && row.revision == revision {
+            by_voter.entry(email).or_default().push(row.event);
         }
     }
     by_voter
+        .into_iter()
+        .map(|(voter, events)| VotesOut { voter, events })
+        .collect()
 }
 
 #[utoipa::path(
@@ -762,7 +942,7 @@ fn grouped(votes: Vec<(Uuid, String)>) -> Vec<(Uuid, Vec<String>)> {
     ),
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The votes the caller may read", body = [VotesOut]),
+        (status = 200, description = "The accepts the caller may read, per voter", body = [VotesOut]),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
     )
@@ -773,18 +953,15 @@ async fn get_votes(
     ApiPath((room_id, round)): ApiPath<(String, String)>,
 ) -> Result<Json<Vec<VotesOut>>, ApiError> {
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
-    let readable: Vec<_> = grouped(rounds::votes(&state.pool, row.id).await?)
+    let readable: Vec<_> = rounds::verdicts(&state.pool, row.id)
+        .await?
         .into_iter()
-        .filter(|(voter, _)| rules::may_read_votes(&row, &seat, *voter == user.id))
+        .filter(|verdict| rules::may_read_verdicts(&row, &seat, verdict.reviewer == user.id))
         .collect();
-    let emails = Emails::load(&state, readable.iter().map(|(voter, _)| *voter)).await?;
-    let mut out: Vec<VotesOut> = readable
+    let emails = Emails::load(&state, readable.iter().map(|verdict| verdict.reviewer)).await?;
+    let tagged = readable
         .into_iter()
-        .map(|(voter, events)| VotesOut {
-            voter: emails.of(voter),
-            events,
-        })
+        .map(|verdict| (emails.of(verdict.reviewer), verdict))
         .collect();
-    out.sort_by(|a, b| a.voter.cmp(&b.voter));
-    Ok(Json(out))
+    Ok(Json(accepts_by_voter(tagged, row.revision)))
 }

@@ -334,6 +334,29 @@ const ROWS: &[Row] = &[
     )
     .room_any(),
     row(
+        "PUT",
+        "/api/rooms/{room}/rounds/{round}/verdicts",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
+    row(
+        "PUT",
+        "/api/rooms/{room}/rounds/{round}/verdicts/{event}",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
+    row(
+        "GET",
+        "/api/rooms/{room}/rounds/{round}/verdicts",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
         "GET",
         "/api/rooms/{room}/blobs/{sha256}",
         Guard::RoomViewer,
@@ -1140,6 +1163,7 @@ impl World {
             .replace("{doc}", "6f0c1b0e-8f56-4a5e-9a39-1c5f2a6d7e10")
             .replace("{public}", &self.public)
             .replace("{round}", &self.round.to_string())
+            .replace("{event}", "6f0c1b0e-8f56-4a5e-9a39-1c5f2a6d7e11")
             .replace("{submission}", &self.submission.to_string())
             .replace("{group_invitation}", &self.group_invitation.to_string())
             .replace("{spare}", &self.spare)
@@ -1239,6 +1263,12 @@ impl World {
                 json,
                 r#"{"proposers":[],"voters":[],"deciders":[]}"#.to_owned(),
             ),
+            ("PUT", "/api/rooms/{room}/rounds/{round}/verdicts") => {
+                (json, r#"{"verdicts":{}}"#.to_owned())
+            }
+            ("PUT", "/api/rooms/{room}/rounds/{round}/verdicts/{event}") => {
+                (json, r#"{"verdict":"accept"}"#.to_owned())
+            }
             ("PUT", "/api/rooms/{room}/rounds/{round}/votes") => {
                 (json, r#"{"events":[]}"#.to_owned())
             }

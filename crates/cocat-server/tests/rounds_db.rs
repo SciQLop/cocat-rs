@@ -1,7 +1,7 @@
 use cocat_core::role::Role;
 use cocat_server::db::{self, ProjectKind};
 use cocat_server::room::RoomManager;
-use cocat_server::rounds::{self, Kind, RoundRole, RoundState, Visibility};
+use cocat_server::rounds::{self, Kind, RoundRole, RoundState, Verdict, Visibility};
 use cocat_server::{AppState, links::Links, ratelimit::LoginLimit};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -455,17 +455,26 @@ async fn deleting_an_account_keeps_its_proposals_and_votes() {
         .unwrap();
     let id = round_with_deadline(&pool, owner, None).await;
     let doc = rounds::add_proposal(&pool, id, alice).await.unwrap();
-    rounds::set_votes(&pool, id, alice, &["e1".to_owned()])
-        .await
-        .unwrap();
+    rounds::set_verdicts(
+        &pool,
+        id,
+        alice,
+        1,
+        &[("e1".to_owned(), Some(Verdict::Accept))],
+    )
+    .await
+    .unwrap();
 
     db::delete_user(&pool, alice).await.unwrap();
 
     assert_eq!(rounds::proposals(&pool, id).await.unwrap(), [(alice, doc)]);
     assert_eq!(rounds::proposal_docs(&pool, "lab").await.unwrap(), [doc]);
+    let kept = rounds::verdicts(&pool, id).await.unwrap();
     assert_eq!(
-        rounds::votes(&pool, id).await.unwrap(),
-        [(alice, "e1".to_owned())]
+        kept.iter()
+            .map(|row| (row.reviewer, row.verdict))
+            .collect::<Vec<_>>(),
+        [(alice, Verdict::Accept)]
     );
 }
 

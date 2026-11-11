@@ -40,6 +40,11 @@ text_enum!(Kind {
     Downlink,
     Labelling
 });
+text_enum!(Verdict {
+    Accept,
+    Reject,
+    Unsure
+});
 text_enum!(RoundRole {
     Proposer,
     Voter,
@@ -176,7 +181,7 @@ pub mod rules {
         }
     }
 
-    pub fn may_read_votes(round: &RoundRow, seat: &Seat, is_voter_self: bool) -> bool {
+    pub fn may_read_verdicts(round: &RoundRow, seat: &Seat, is_voter_self: bool) -> bool {
         match round.visibility {
             Visibility::Open => true,
             Visibility::Blind => {
@@ -608,44 +613,111 @@ pub async fn proposal_by_doc(
         .transpose()?)
 }
 
-/// Replaces the voter's supported events.
-pub async fn set_votes(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerdictRow {
+    pub reviewer: Uuid,
+    pub event: String,
+    pub verdict: Verdict,
+    pub revision: i64,
+}
+
+/// Sets (`Some`) or clears (`None`) the reviewer's verdicts, each tagged with `revision`.
+pub async fn set_verdicts(
     pool: &SqlitePool,
     id: Uuid,
-    voter: Uuid,
-    events: &[String],
+    reviewer: Uuid,
+    revision: i64,
+    changes: &[(String, Option<Verdict>)],
 ) -> Result<(), DbError> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM round_vote WHERE round_id = ? AND voter = ?")
-        .bind(id.to_string())
-        .bind(voter.to_string())
-        .execute(&mut *tx)
-        .await?;
-    for event in events {
-        sqlx::query("INSERT OR IGNORE INTO round_vote (round_id, voter, event) VALUES (?, ?, ?)")
-            .bind(id.to_string())
-            .bind(voter.to_string())
-            .bind(event)
-            .execute(&mut *tx)
-            .await?;
+    for (event, verdict) in changes {
+        match verdict {
+            Some(verdict) => {
+                upsert_verdict(&mut tx, id, reviewer, revision, event, *verdict).await?
+            }
+            None => clear_verdict(&mut tx, id, reviewer, event).await?,
+        }
     }
     tx.commit().await?;
     Ok(())
 }
 
-pub async fn votes(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, String)>, DbError> {
-    let rows =
-        sqlx::query("SELECT voter, event FROM round_vote WHERE round_id = ? ORDER BY voter, event")
-            .bind(id.to_string())
-            .fetch_all(pool)
-            .await?;
+async fn upsert_verdict(
+    tx: &mut sqlx::SqliteConnection,
+    id: Uuid,
+    reviewer: Uuid,
+    revision: i64,
+    event: &str,
+    verdict: Verdict,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO round_verdict (round_id, reviewer, event, verdict, revision) \
+         VALUES (?, ?, ?, ?, ?) \
+         ON CONFLICT (round_id, reviewer, event) DO UPDATE SET \
+           verdict = excluded.verdict, revision = excluded.revision, at = CURRENT_TIMESTAMP",
+    )
+    .bind(id.to_string())
+    .bind(reviewer.to_string())
+    .bind(event)
+    .bind(verdict)
+    .bind(revision)
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
+async fn clear_verdict(
+    tx: &mut sqlx::SqliteConnection,
+    id: Uuid,
+    reviewer: Uuid,
+    event: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM round_verdict WHERE round_id = ? AND reviewer = ? AND event = ?")
+        .bind(id.to_string())
+        .bind(reviewer.to_string())
+        .bind(event)
+        .execute(tx)
+        .await?;
+    Ok(())
+}
+
+/// The old vote call: accepts exactly `events`, and leaves rejects and unsures alone.
+pub async fn set_accepts(
+    pool: &SqlitePool,
+    round: &RoundRow,
+    reviewer: Uuid,
+    events: &[String],
+) -> Result<(), DbError> {
+    let dropped = verdicts(pool, round.id)
+        .await?
+        .into_iter()
+        .filter(|row| row.reviewer == reviewer && row.verdict == Verdict::Accept)
+        .filter(|row| !events.contains(&row.event))
+        .map(|row| (row.event, None));
+    let accepted = events
+        .iter()
+        .map(|event| (event.clone(), Some(Verdict::Accept)));
+    let changes: Vec<_> = dropped.chain(accepted).collect();
+    set_verdicts(pool, round.id, reviewer, round.revision, &changes).await
+}
+
+pub async fn verdicts(pool: &SqlitePool, id: Uuid) -> Result<Vec<VerdictRow>, DbError> {
+    let rows = sqlx::query(
+        "SELECT reviewer, event, verdict, revision FROM round_verdict \
+         WHERE round_id = ? ORDER BY event, reviewer",
+    )
+    .bind(id.to_string())
+    .fetch_all(pool)
+    .await?;
     Ok(rows
         .iter()
         .map(|row| {
-            Ok((
-                parse_uuid(&row.try_get::<String, _>("voter")?)?,
-                row.try_get("event")?,
-            ))
+            Ok(VerdictRow {
+                reviewer: parse_uuid(&row.try_get::<String, _>("reviewer")?)?,
+                event: row.try_get("event")?,
+                verdict: row.try_get("verdict")?,
+                revision: row.try_get("revision")?,
+            })
         })
         .collect::<Result<_, sqlx::Error>>()?)
 }
@@ -811,16 +883,16 @@ mod tests {
     }
 
     #[test]
-    fn blind_votes_are_hidden_until_decided() {
+    fn blind_verdicts_are_hidden_until_decided() {
         let voter = seat(Role::Editor, PROPOSER);
         let decider = seat(Role::Editor, &[RoundRole::Decider]);
         let voting = round_in(RoundState::Voting, Visibility::Blind);
         let decided = round_in(RoundState::Decided, Visibility::Blind);
-        assert!(!may_read_votes(&voting, &voter, false));
-        assert!(may_read_votes(&voting, &voter, true));
-        assert!(may_read_votes(&voting, &decider, false));
-        assert!(may_read_votes(&voting, &seat(Role::Owner, &[]), false));
-        assert!(may_read_votes(&decided, &voter, false));
+        assert!(!may_read_verdicts(&voting, &voter, false));
+        assert!(may_read_verdicts(&voting, &voter, true));
+        assert!(may_read_verdicts(&voting, &decider, false));
+        assert!(may_read_verdicts(&voting, &seat(Role::Owner, &[]), false));
+        assert!(may_read_verdicts(&decided, &voter, false));
     }
 
     #[test]

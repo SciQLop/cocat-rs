@@ -471,16 +471,269 @@ impl Fixture {
         round
     }
 
+    async fn put(&self, token: &str, path: String, body: Value) -> (StatusCode, Value) {
+        self.send(Method::PUT, &path, token, Some(body)).await
+    }
+
     async fn vote(&self, token: &str, room: &str, round: &str, events: &[&str]) -> StatusCode {
         let path = format!("/api/rooms/{room}/rounds/{round}/votes");
-        let body = json!({"events": events});
-        self.send(Method::PUT, &path, token, Some(body)).await.0
+        self.put(token, path, json!({"events": events})).await.0
+    }
+
+    async fn verdicts(&self, token: &str, room: &str, round: &str, set: Value) -> StatusCode {
+        let path = format!("/api/rooms/{room}/rounds/{round}/verdicts");
+        self.put(token, path, json!({"verdicts": set})).await.0
+    }
+
+    async fn verdict(
+        &self,
+        token: &str,
+        room: &str,
+        round: &str,
+        event: &str,
+        v: Value,
+    ) -> StatusCode {
+        let path = format!("/api/rooms/{room}/rounds/{round}/verdicts/{event}");
+        self.put(token, path, json!({"verdict": v})).await.0
+    }
+
+    async fn read_verdicts(&self, token: &str, room: &str, round: &str) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{room}/rounds/{round}/verdicts");
+        self.send(Method::GET, &path, token, None).await
     }
 
     async fn read_votes(&self, token: &str, room: &str, round: &str) -> (StatusCode, Value) {
         let path = format!("/api/rooms/{room}/rounds/{round}/votes");
         self.send(Method::GET, &path, token, None).await
     }
+
+    async fn two_reviewers(
+        &self,
+        owner: &str,
+        room: &str,
+        visibility: &str,
+    ) -> (String, String, String) {
+        let (_, voter) = self.editor(room, "voter@example.org", Role::Editor).await;
+        let (_, other) = self.editor(room, "other@example.org", Role::Editor).await;
+        let round = self.voting_round(owner, room, visibility).await;
+        let members = json!({"proposers": [], "voters": ["voter@example.org", "other@example.org"], "deciders": ["owner@example.org"]});
+        let path = format!("/api/rooms/{room}/rounds/{round}/members");
+        self.send(Method::PUT, &path, owner, Some(members)).await;
+        (round, voter, other)
+    }
+}
+
+fn counts(events: &Value, event: &str) -> Value {
+    let found = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["event"] == event);
+    let found = found.unwrap_or(&Value::Null);
+    json!([found["accept"], found["reject"], found["unsure"]])
+}
+
+#[tokio::test]
+async fn a_reviewer_sets_one_verdict_and_changes_it() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let round = fixture.voting_round(&owner, &room, "open").await;
+
+    let set = |value| fixture.verdict(&owner, &room, &round, EVENT_A, value);
+    assert_eq!(set(json!("reject")).await, StatusCode::OK);
+    assert_eq!(set(json!("accept")).await, StatusCode::OK);
+
+    let (status, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(seen["revision"], 1);
+    assert_eq!(counts(&seen, EVENT_A), json!([1, 0, 0]));
+    let by = &seen["events"][0]["by"];
+    assert_eq!(
+        by,
+        &json!([{"reviewer": "owner@example.org", "verdict": "accept", "revision": 1}])
+    );
+
+    assert_eq!(set(json!(null)).await, StatusCode::OK);
+    let (_, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(seen["events"], json!([]));
+}
+
+#[tokio::test]
+async fn bulk_verdicts_merge() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let round = fixture.voting_round(&owner, &room, "open").await;
+    fixture
+        .verdicts(
+            &owner,
+            &room,
+            &round,
+            json!({EVENT_A: "accept", EVENT_B: "unsure"}),
+        )
+        .await;
+
+    let status = fixture
+        .verdicts(&owner, &room, &round, json!({EVENT_B: "reject"}))
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let (_, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(counts(&seen, EVENT_A), json!([1, 0, 0]));
+    assert_eq!(counts(&seen, EVENT_B), json!([0, 1, 0]));
+}
+
+#[tokio::test]
+async fn the_old_vote_call_sets_accepts_and_keeps_rejects() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let round = fixture.voting_round(&owner, &room, "open").await;
+    let event_c = "bbbbbbbb-0000-4000-8000-00000000000c";
+    fixture
+        .verdicts(
+            &owner,
+            &room,
+            &round,
+            json!({EVENT_A: "accept", EVENT_B: "reject", event_c: "unsure"}),
+        )
+        .await;
+
+    assert_eq!(
+        fixture.vote(&owner, &room, &round, &[event_c]).await,
+        StatusCode::OK
+    );
+
+    let (_, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(counts(&seen, EVENT_A), json!([null, null, null]));
+    assert_eq!(counts(&seen, EVENT_B), json!([0, 1, 0]));
+    assert_eq!(counts(&seen, event_c), json!([1, 0, 0]));
+    let (_, votes) = fixture.read_votes(&owner, &room, &round).await;
+    assert_eq!(
+        votes,
+        json!([{"voter": "owner@example.org", "events": [event_c]}])
+    );
+}
+
+#[tokio::test]
+async fn verdicts_are_refused_outside_voting_and_to_non_voters() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, created) = fixture.round(&owner, &room, new_round()).await;
+    let round = created["id"].as_str().unwrap();
+    let forbidden = StatusCode::FORBIDDEN;
+    assert_eq!(
+        fixture
+            .verdict(&owner, &room, round, EVENT_A, json!("accept"))
+            .await,
+        forbidden
+    );
+
+    fixture
+        .move_to(&owner, &room, round, json!({"state": "voting"}))
+        .await;
+    let (_, editor) = fixture
+        .editor(&room, "editor@example.org", Role::Editor)
+        .await;
+    let members = json!({"proposers": [], "voters": ["owner@example.org"], "deciders": ["owner@example.org"]});
+    let path = format!("/api/rooms/{room}/rounds/{round}/members");
+    fixture
+        .send(Method::PUT, &path, &owner, Some(members))
+        .await;
+    assert_eq!(
+        fixture
+            .verdicts(&editor, &room, round, json!({EVENT_A: "accept"}))
+            .await,
+        forbidden,
+        "not a voter of the round"
+    );
+    assert_eq!(
+        fixture
+            .verdict(&owner, &room, round, "not-a-uuid", json!("accept"))
+            .await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        fixture
+            .verdicts(&owner, &room, round, json!({"nope": "accept"}))
+            .await,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    fixture
+        .move_to(&owner, &room, round, json!({"state": "proposing"}))
+        .await;
+    assert_eq!(
+        fixture
+            .verdict(&owner, &room, round, EVENT_A, json!("accept"))
+            .await,
+        forbidden
+    );
+}
+
+#[tokio::test]
+async fn blind_verdicts_show_only_to_the_reviewer_deciders_and_owners() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (round, voter, other) = fixture.two_reviewers(&owner, &room, "blind").await;
+    fixture
+        .verdict(&voter, &room, &round, EVENT_A, json!("accept"))
+        .await;
+    fixture
+        .verdict(&other, &room, &round, EVENT_A, json!("reject"))
+        .await;
+    let reviewers = |seen: &Value| {
+        seen["events"][0]["by"]
+            .as_array()
+            .map(|by| by.iter().map(|b| b["reviewer"].clone()).collect::<Vec<_>>())
+    };
+
+    let (_, seen) = fixture.read_verdicts(&voter, &room, &round).await;
+    assert_eq!(reviewers(&seen), Some(vec![json!("voter@example.org")]));
+    assert_eq!(
+        counts(&seen, EVENT_A),
+        json!([1, 0, 0]),
+        "counts hide what the reviewer may not read"
+    );
+    let (_, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(reviewers(&seen).map(|by| by.len()), Some(2));
+
+    fixture.seed_catalogue(&room);
+    let decided = json!({"state": "decided", "final_catalogue": CATALOGUE});
+    fixture.move_to(&owner, &room, &round, decided).await;
+    let (_, seen) = fixture.read_verdicts(&voter, &room, &round).await;
+    assert_eq!(reviewers(&seen).map(|by| by.len()), Some(2));
+}
+
+#[tokio::test]
+async fn a_new_revision_restarts_progress() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let round = fixture.voting_round(&owner, &room, "open").await;
+    fixture
+        .verdict(&owner, &room, &round, EVENT_A, json!("accept"))
+        .await;
+
+    fixture
+        .move_to(&owner, &room, &round, json!({"state": "proposing"}))
+        .await;
+    fixture
+        .move_to(&owner, &room, &round, json!({"state": "voting"}))
+        .await;
+
+    let (_, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(seen["revision"], 2);
+    assert_eq!(counts(&seen, EVENT_A), json!([0, 0, 0]));
+    assert_eq!(seen["events"][0]["by"][0]["revision"], 1);
+    fixture
+        .verdict(&owner, &room, &round, EVENT_A, json!("reject"))
+        .await;
+    let (_, seen) = fixture.read_verdicts(&owner, &room, &round).await;
+    assert_eq!(counts(&seen, EVENT_A), json!([0, 1, 0]));
 }
 
 #[tokio::test]
