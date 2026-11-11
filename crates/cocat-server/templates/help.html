@@ -141,7 +141,7 @@ Pick a format:</p>
   catalogue says where it sits in frequency (or in the catalogue's other quantity, such as
   energy), the page asks for the range to draw them over.</li>
   <li><strong>CSV (.csv)</strong>: for a spreadsheet. One row per event: start, stop, tags,
-  status, confidence, author, comment, then one column per attribute. Times are UTC.</li>
+  status, confidence, author, comment, uuid, then one column per attribute. Times are UTC.</li>
 </ul>
 <p>Event shapes and their axis travel in VOTable, tscat JSON and TFCat, and come back
 as they were. TFCat only knows shapes in frequency, wavelength, energy or wavenumber: for
@@ -153,7 +153,7 @@ the page says so.</p>
 makes one file per catalogue.</p>
 <p><strong>To import a file</strong>, use <strong>Import…</strong> in the project menu or
 the <strong>+</strong> above the catalogues, or drop the file on the events. It takes a
-VOTable, a tscat JSON file or a TFCat file. The page reads it first and says what it will do, for example
+VOTable, a tscat JSON file, a TFCat file or a CSV file. The page reads it first and says what it will do, for example
 "Adds 2 catalogues and 300 events, updates 5 events (same ids)". Nothing changes until you
 press <strong>Import</strong>.</p>
 <ul>
@@ -161,6 +161,11 @@ press <strong>Import</strong>.</p>
   <li>A VOTable always makes new catalogues. A tscat JSON file updates a catalogue with the
   same id. A TFCat file makes one new catalogue, named by the file's title, else by the file's
   name.</li>
+  <li>A CSV file makes one new catalogue, named after the file. It needs a start and a stop
+  (or end) column; the separator can be a comma, a semicolon or a tab. The columns tags
+  (separated by ; or ,), status, confidence, author, comment and uuid fill those fields;
+  every other column becomes an attribute: a number when it reads as one, else text. So a
+  CSV exported here, edited in a spreadsheet and imported again updates the same events.</li>
   <li>The whole import is one change, so the history shows one version and you can restore
   the project to the version before it.</li>
 </ul>

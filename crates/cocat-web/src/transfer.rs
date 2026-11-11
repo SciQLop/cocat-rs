@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use cocat_core::csv_table::{self, CsvError, CsvImport};
 use cocat_core::model::{
     self, CatalogueSummary, EventRecord, Member, ShapeAxis, WriteError, Written,
 };
@@ -11,7 +12,6 @@ use cocat_core::tfcat::{self, TfcatError, TfcatImport};
 use cocat_core::time::Timestamp;
 use cocat_core::tscat_json::{self, TscatImport, TscatJsonError};
 use cocat_core::votable::{self, Imported, VotableError};
-use serde_json::Value;
 use thiserror::Error;
 use yrs::{ReadTxn, TransactionMut};
 
@@ -27,10 +27,10 @@ pub enum TransferError {
     Tscat(#[from] TscatJsonError),
     #[error(transparent)]
     Tfcat(#[from] TfcatError),
+    #[error(transparent)]
+    Csv(#[from] CsvError),
     #[error("cannot write the file: {0}")]
     Encoding(String),
-    #[error("This file is not a VOTable (.xml, .vot), tscat JSON or TFCat (.json).")]
-    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +166,7 @@ pub fn export<T: ReadTxn>(
         },
         Format::Csv => {
             let members = exported.iter().flat_map(|(_, members)| members.iter());
-            csv(txn, members)
+            Ok(csv_table::export(txn, members)?)
         }
     }
 }
@@ -179,79 +179,6 @@ fn events_of(members: &[Member]) -> Vec<EventRecord> {
             Member::Derived { .. } => None,
         })
         .collect()
-}
-
-const CSV_FIXED: [&str; 7] = [
-    "start",
-    "stop",
-    "tags",
-    "status",
-    "confidence",
-    "author",
-    "comment",
-];
-
-/// One row per member, in the table's order: a derived interval has only its times.
-fn csv<'m, T: ReadTxn>(
-    txn: &T,
-    members: impl Iterator<Item = &'m Member> + Clone,
-) -> Result<String, TransferError> {
-    let keys: BTreeSet<&String> = members
-        .clone()
-        .filter_map(|member| match member {
-            Member::Event { record, .. } => Some(record.attributes.keys()),
-            Member::Derived { .. } => None,
-        })
-        .flatten()
-        .collect();
-    let mut writer = csv::Writer::from_writer(Vec::new());
-    let header = CSV_FIXED
-        .into_iter()
-        .chain(keys.iter().map(|key| key.as_str()));
-    writer.write_record(header).map_err(encoding)?;
-    for member in members {
-        writer
-            .write_record(csv_row(txn, member, &keys))
-            .map_err(encoding)?;
-    }
-    let bytes = writer.into_inner().map_err(encoding)?;
-    String::from_utf8(bytes).map_err(encoding)
-}
-
-fn csv_row<T: ReadTxn>(txn: &T, member: &Member, keys: &BTreeSet<&String>) -> Vec<String> {
-    let (start, stop) = match member {
-        Member::Event { record, .. } => (record.start, record.stop),
-        Member::Derived { start, stop, .. } => (*start, *stop),
-    };
-    let times = [start.to_string(), stop.to_string()];
-    let Member::Event { record, .. } = member else {
-        let width = CSV_FIXED.len() + keys.len();
-        let mut row: Vec<String> = times.into_iter().collect();
-        row.resize(width, String::new());
-        return row;
-    };
-    let fixed = [
-        record.tags.join(";"),
-        record.status.name().to_owned(),
-        record
-            .confidence
-            .map(|value| value.to_string())
-            .unwrap_or_default(),
-        record.author.clone().unwrap_or_default(),
-        model::comment(txn, &record.uuid).unwrap_or_default(),
-    ];
-    let attributes = keys
-        .iter()
-        .map(|key| record.attributes.get(*key).map(cell).unwrap_or_default());
-    times.into_iter().chain(fixed).chain(attributes).collect()
-}
-
-fn cell(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
 }
 
 fn encoding(error: impl std::fmt::Display) -> TransferError {
@@ -293,10 +220,12 @@ pub enum Incoming {
     Tscat(TscatImport),
     /// A TFCat file, with the name of the catalogue it makes.
     Tfcat(TfcatImport, String),
+    Csv(CsvImport),
 }
 
-/// Reads a file by what it holds, whatever its name says. A TFCat file without a title
-/// names its catalogue after `file_name`.
+/// Reads a file by what it holds, whatever its name says: XML is a VOTable, JSON is TFCat or
+/// tscat, anything else a CSV table. A TFCat file without a title, or a CSV file, names its
+/// catalogue after `file_name`.
 pub fn read(text: &str, file_name: &str) -> Result<Incoming, TransferError> {
     let text = text.trim_start_matches('\u{feff}').trim_start();
     match text.chars().next() {
@@ -307,7 +236,7 @@ pub fn read(text: &str, file_name: &str) -> Result<Incoming, TransferError> {
             Ok(Incoming::Tfcat(import, name))
         }
         Some('{') => Ok(Incoming::Tscat(tscat_json::parse(text)?)),
-        _ => Err(TransferError::Unknown),
+        _ => Ok(Incoming::Csv(csv_table::parse(text, file_name)?)),
     }
 }
 
@@ -350,6 +279,7 @@ pub fn summary<T: ReadTxn>(txn: &T, incoming: &Incoming) -> Summary {
             import.events.iter().collect(),
         ),
         Incoming::Tfcat(import, _) => (vec![None], import.events.iter().collect()),
+        Incoming::Csv(import) => (vec![None], import.events.iter().collect()),
     };
     let uuids: BTreeSet<&str> = events.iter().map(|event| event.uuid.as_str()).collect();
     let updated_events = uuids
@@ -403,6 +333,7 @@ pub fn warnings(incoming: &Incoming) -> &[String] {
         Incoming::Votable(_) => &[],
         Incoming::Tscat(import) => &import.warnings,
         Incoming::Tfcat(import, _) => &import.warnings,
+        Incoming::Csv(import) => &import.warnings,
     }
 }
 
@@ -416,6 +347,7 @@ pub fn write(
         Incoming::Votable(imported) => votable::write(txn, imported, None),
         Incoming::Tscat(import) => tscat_json::write(txn, import, now),
         Incoming::Tfcat(import, name) => tfcat::write(txn, import, name, now),
+        Incoming::Csv(import) => csv_table::write(txn, import, None),
     }
 }
 

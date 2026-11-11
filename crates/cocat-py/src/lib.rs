@@ -22,7 +22,7 @@ use cocat_core::model::{
     Status, Used, Vertex,
 };
 use cocat_core::time::Timestamp;
-use cocat_core::{query, tfcat, tscat_json, votable};
+use cocat_core::{csv_table, query, tfcat, tscat_json, votable};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -656,6 +656,16 @@ impl Catalogue {
     fn set_query(&self, text: &str) -> Result<()> {
         let rule = search_rule(&self.room, text, None)?;
         self.store_rule(Some(&rule))
+    }
+
+    /// The events as a pandas DataFrame, a row each in time order (needs pandas).
+    fn to_pandas(slf: &Bound<'_, Self>) -> Result<Py<PyAny>> {
+        frame(slf, "to_pandas")
+    }
+
+    /// The events as a polars DataFrame, a row each in time order (needs polars).
+    fn to_polars(slf: &Bound<'_, Self>) -> Result<Py<PyAny>> {
+        frame(slf, "to_polars")
     }
 
     /// A new static catalogue named `name` holding this catalogue's current members; each
@@ -1810,6 +1820,32 @@ impl Project {
         Py::new(py, Catalogue::of(&self.room, &self.identity, uuid))
     }
 
+    /// Imports a CSV file as a new catalogue and returns it, named `name`, else after the file.
+    /// It needs a start and a stop column; tags, status, confidence, author, comment and uuid
+    /// are read as the event's fields, other columns as attributes. An event whose uuid the
+    /// project holds is updated. What could not come across is said as warnings.
+    #[pyo3(signature = (path, name=None))]
+    fn import_csv(
+        &self,
+        py: Python<'_>,
+        path: String,
+        name: Option<String>,
+    ) -> Result<Py<Catalogue>> {
+        let text = std::fs::read_to_string(&path).map_err(value_error)?;
+        let import = csv_table::parse(&text, &path).map_err(value_error)?;
+        let written = write(&self.room, |txn| {
+            csv_table::write(txn, &import, name.as_deref())
+        })?
+        .map_err(value_error)?;
+        warn(py, &import.warnings)?;
+        warn(py, &written.warnings)?;
+        let uuid = written
+            .catalogues
+            .first()
+            .ok_or_else(|| unknown("catalogue"))?;
+        Py::new(py, Catalogue::of(&self.room, &self.identity, uuid))
+    }
+
     /// Imports a file in tscat's JSON format and returns the uuids of its catalogues, in the
     /// file's order. What could not come across as it was is said as warnings.
     fn import_tscat_json(&self, py: Python<'_>, text: &str) -> Result<Vec<String>> {
@@ -1821,6 +1857,20 @@ impl Project {
         warn(py, &written.warnings)?;
         Ok(written.catalogues)
     }
+}
+
+/// The catalogues as one CSV table, a row per member: what the web app's export writes.
+#[pyfunction]
+fn export_csv(catalogues: &Bound<'_, PyAny>) -> Result<String> {
+    let (room, uuids) = catalogues_of(catalogues)?;
+    let doc = room.doc();
+    let txn = doc.transact();
+    let mut members = Vec::new();
+    for uuid in &uuids {
+        let listed = model::catalogue_members(&txn, uuid).ok_or_else(|| unknown("catalogue"))?;
+        members.extend(listed.map_err(value_error)?);
+    }
+    csv_table::export(&txn, members.iter()).map_err(value_error)
 }
 
 /// The VOTable a set of catalogues exports to, the file Python cocat's exporter writes.
@@ -1838,6 +1888,13 @@ fn export_votable(catalogues: &Bound<'_, PyAny>) -> Result<String> {
         .map(|(catalogue, events)| (catalogue, events.as_slice()))
         .collect();
     votable::export_many(&pairs).map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+/// The DataFrame `cocat_rs.frames` builds: the table lives on the Python side, where pandas
+/// and polars are.
+fn frame(catalogue: &Bound<'_, Catalogue>, function: &str) -> Result<Py<PyAny>> {
+    let frames = catalogue.py().import("cocat_rs.frames")?;
+    Ok(frames.call_method1(function, (catalogue,))?.unbind())
 }
 
 /// Each catalogue with its member events, for an export.
@@ -2247,6 +2304,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(name_version, module)?)?;
     module.add_function(wrap_pyfunction!(commit, module)?)?;
     module.add_function(wrap_pyfunction!(copy_version, module)?)?;
+    module.add_function(wrap_pyfunction!(export_csv, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     module.add_function(wrap_pyfunction!(tfcat_json, module)?)?;
     module.add_function(wrap_pyfunction!(export_tscat_json, module)?)?;

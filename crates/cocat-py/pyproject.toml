@@ -14,6 +14,9 @@ dependencies = ["numpy", "keyring", "platformdirs"]
 [project.optional-dependencies]
 # Only cocat_rs.tscat.import_database reads a tscat database; its JSON needs no tscat.
 tscat = ["tscat>=0.5,<0.6"]
+# Only Catalogue.to_pandas / to_polars and Project.import_dataframe need these.
+pandas = ["pandas"]
+polars = ["polars"]
 
 [tool.maturin]
 python-source = "python"

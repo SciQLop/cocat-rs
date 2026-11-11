@@ -44,6 +44,7 @@ fn the_csv_has_one_row_per_event_and_a_column_per_attribute() {
             "confidence",
             "author",
             "comment",
+            "uuid",
             "amplitude",
             "region",
             "spacecraft"
@@ -61,6 +62,7 @@ fn the_csv_has_one_row_per_event_and_a_column_per_attribute() {
             "0.82",
             "alexis.jeandet",
             "",
+            "e1",
             "2.4",
             "",
             "MMS1"
@@ -81,7 +83,7 @@ fn the_csv_quotes_what_needs_it_and_keeps_derived_intervals() {
         model::set_event_attributes(&mut txn, "e1", &attributes).unwrap();
     }
     let rows = csv_rows(&exported(&doc, &["c-static"], Format::Csv));
-    assert_eq!(rows[0][8], "a, \"b\"\nc");
+    assert_eq!(rows[0][9], "a, \"b\"\nc");
     let merged = csv_rows(&exported(&doc, &["c-merged"], Format::Csv));
     let members = model::catalogue_members(&doc.transact(), "c-merged")
         .unwrap()
@@ -139,7 +141,11 @@ fn a_file_is_read_by_what_it_holds() {
     ));
     assert!(matches!(
         read("start,stop\n", "f.csv"),
-        Err(TransferError::Unknown)
+        Ok(Incoming::Csv(import)) if import.events.is_empty()
+    ));
+    assert!(matches!(
+        read("when,what\n", "f.csv"),
+        Err(TransferError::Csv(_))
     ));
     assert!(matches!(
         read("{\"events\": []}", "f.json"),
@@ -376,4 +382,20 @@ fn tfcat_warns_about_each_catalogue_on_an_axis_it_does_not_know() {
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].starts_with("Solitary waves: "), "{warnings:?}");
     assert!(warnings[0].contains("not strict TFCat"), "{warnings:?}");
+}
+
+#[test]
+fn a_csv_file_says_what_it_adds_and_writes_one_catalogue() {
+    let doc = room();
+    let incoming = read("start,stop,tags\n2020-01-01,2020-01-02,x\n", "picked.csv").unwrap();
+    assert_eq!(
+        summary(&doc.transact(), &incoming).text(),
+        "Adds 1 catalogue and 1 event."
+    );
+    let written = write(&mut doc.transact_mut(), &incoming, at(DAY0)).unwrap();
+    let txn = doc.transact();
+    assert_eq!(
+        model::catalogue(&txn, &written.catalogues[0]).unwrap().name,
+        "picked"
+    );
 }

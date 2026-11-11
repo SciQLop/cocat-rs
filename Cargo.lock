@@ -687,6 +687,7 @@ name = "cocat-core"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "csv",
  "geojson",
  "hifitime",
  "ignore",

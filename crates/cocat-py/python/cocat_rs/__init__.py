@@ -413,6 +413,15 @@ class Project:
     def transaction(self):
         return _Transaction(self)
 
+    def import_dataframe(self, frame, name):
+        """A new catalogue named `name` from a pandas or polars DataFrame, a row per event.
+        It needs `start` and `stop` columns; `uuid`, `tags`, `status`, `confidence`, `author`
+        and `comment` are the event's fields, other columns its attributes. A row whose uuid
+        the project holds updates that event: the cells it has replace those values."""
+        from . import frames
+
+        return frames.import_frame(self, frame, name)
+
     def merge(self, source):
         """Brings in another project's catalogues, events and registry, as one edit of this
         one; returns how many catalogues and events were new here."""
@@ -493,6 +502,7 @@ from . import api  # noqa: E402
 from .api import (  # noqa: E402
     create_catalogue,
     create_event,
+    export_csv,
     export_tfcat,
     export_votable,
     get_catalogue,
@@ -509,6 +519,7 @@ __all__ += [
     "api",
     "create_catalogue",
     "create_event",
+    "export_csv",
     "export_tfcat",
     "export_votable",
     "get_catalogue",

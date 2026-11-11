@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 cocat-core = { path = "../cocat-core" }
-csv = "1"
 base64 = "0.22"
 percent-encoding = "2"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
@@ -69,3 +68,6 @@ web-sys = { version = "0.3", features = [
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+csv = "1"

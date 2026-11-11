@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 bytes.workspace = true
+csv = "1"
 geojson = { version = "1", default-features = false }
 hifitime = { version = "4", default-features = false }
 ignore = "0.4"

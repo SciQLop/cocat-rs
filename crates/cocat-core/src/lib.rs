@@ -1,5 +1,6 @@
 //! Room storage shared by the cocat server and its tooling.
 
+pub mod csv_table;
 pub mod files;
 pub mod model;
 pub mod person;

@@ -428,7 +428,7 @@ pub fn ImportDialog() -> impl IntoView {
         Stage::Pick => view! {
             <label class="drop-zone" on:dragover=|event: DragEvent| event.prevent_default() on:drop=dropped>
                 <span>"Drop a file here, or"</span>
-                <input type="file" accept=".xml,.vot,.votable,.json,application/json,text/xml"
+                <input type="file" accept=".xml,.vot,.votable,.json,.csv,.tsv,application/json,text/xml,text/csv"
                     on:change=picked/>
             </label>
         }

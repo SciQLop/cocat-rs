@@ -846,6 +846,24 @@ back. The file's spectral axis becomes the catalogue's `shape_axis`, and an expo
 shape axis back into the coordinate system; a catalogue without one exports as frequency in
 Hz. A file without a coordinate system (`crs`) is refused.
 
+**CSV** files import as one catalogue, named after the file (`cocat_core::csv_table`, which
+the web app's import and export share). A `start` and a `stop` (or `end`) column are needed;
+`tags` (`;` or `,`), `status`, `confidence`, `author`, `comment` and `uuid` fill those fields,
+every other column becomes an attribute, typed as a number or a boolean when the cell reads as
+one. The delimiter is the header's most frequent of `,`, `;` and tab. The export writes `uuid`,
+so a file edited in a spreadsheet and imported again updates its events.
+
+```python
+shocks = project.import_csv("shocks.csv", name="Shocks")   # name: else the file's
+cocat_rs.export_csv([shocks], "out.csv")
+```
+
+**DataFrames.** `catalogue.to_pandas()` and `catalogue.to_polars()` give a row per event in
+time order: `uuid`, `start`, `stop`, `tags`, `status`, `confidence`, `author`, `comment`, then
+the attributes. `project.import_dataframe(frame, name)` takes either kind back as a new
+catalogue, with the CSV's column rules; a row whose uuid the project holds updates that event.
+Neither library is a dependency of the package.
+
 ```python
 bursts = project.import_tfcat("bursts.json")            # named by the file's title
 cocat_rs.export_tfcat(bursts, "out.json")
