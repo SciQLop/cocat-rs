@@ -1,7 +1,7 @@
 # Running cocat-server
 
 This guide takes you from nothing to a cocat server behind a reverse proxy, with mail, the
-catalogue web app, metrics and backups. The [README](../README.md) is the reference for every
+catalogue web app, metrics and backups. The [README](https://github.com/SciQLop/cocat-rs/blob/main/README.md) is the reference for every
 option; this page says which ones an operator needs and how they fit together.
 
 ## The image
@@ -52,7 +52,7 @@ it time (`--stop-timeout 30`).
 ## Configuration
 
 Everything is environment variables. The README's
-[Environment](../README.md#environment) table gives the exact rules: defaults, accepted
+[Environment](https://github.com/SciQLop/cocat-rs/blob/main/README.md#environment) table gives the exact rules: defaults, accepted
 values, and which mistakes stop the server at startup. The ones an operator sets:
 
 | Group | Variables | What for |
@@ -64,7 +64,7 @@ values, and which mistakes stop the server at startup. The ones an operator sets
 | Web app | `COCAT_WEB_DIR` | the catalogue web app's bundle; the image sets it to `/usr/share/cocat/web` |
 | Quotas | `COCAT_ROOM_MEMORY_BUDGET`, `COCAT_ROOM_MAX_MB`, `COCAT_OWNER_MAX_MB`, `COCAT_FILE_MAX_MB` | memory ceiling for open projects; largest project file; total per owner; largest whole file in a workspace (20 by default, counted in the owner's total) |
 | Metrics | `COCAT_METRICS_BIND`, `COCAT_METRICS_TOKEN` | see [Metrics](#metrics) |
-| Sign-in providers | `COCAT_OAUTH_PROVIDERS` | OpenID Connect providers such as ORCID; see the README's [Provider sign-in](../README.md#provider-sign-in) |
+| Sign-in providers | `COCAT_OAUTH_PROVIDERS` | OpenID Connect providers such as ORCID; see the README's [Provider sign-in](https://github.com/SciQLop/cocat-rs/blob/main/README.md#provider-sign-in) |
 
 Keep secrets (the SMTP password, the metrics token, provider client secrets) in a file only
 you can read, passed with `--env-file`, rather than on the command line.
@@ -104,7 +104,7 @@ Then check that `https://cocat.example.org/cocat/docs` shows the API documentati
 ### Protecting sign-up from bots
 
 Sign-in, sign-up, password reset and resend are rate-limited per client (README,
-[Login rate limit](../README.md#login-rate-limit)). On a public server you may also put a
+[Login rate limit](https://github.com/SciQLop/cocat-rs/blob/main/README.md#login-rate-limit)). On a public server you may also put a
 bot filter (a proof-of-work page, a captcha) in front of the account pages and their API:
 `/ui/{signup,login,forgot-password,reset-password,request-verify}` and
 `/auth/{register,forgot-password,reset-password,request-verify-token}`, under your prefix.
@@ -126,7 +126,7 @@ with `podman exec cocat set-curator them@example.org` (`--revoke` to take it bac
 the admin pages (Users, Manage).
 
 They run the server's CLI on `/db/cocat-rs.db`. An account created this way is already
-verified. The README's [Seeding](../README.md#seeding) lists the full commands;
+verified. The README's [Seeding](https://github.com/SciQLop/cocat-rs/blob/main/README.md#seeding) lists the full commands;
 `add-user-to-room` and `remove-user-from-room` have wrappers too.
 
 These commands only change the database. A running server reads every open socket's role
@@ -252,12 +252,12 @@ scrape_configs:
 A scraper on another machine needs a route to the endpoint: put a TLS proxy in front of it
 that admits only the scraper's addresses and forwards the `Authorization` header. Labels
 never carry a user, a project, an address or a URL, so the series are safe on a shared
-dashboard. The README's [Metrics](../README.md#metrics) has the details.
+dashboard. The README's [Metrics](https://github.com/SciQLop/cocat-rs/blob/main/README.md#metrics) has the details.
 
 ## Moving from a Python cocat server
 
 The Rust server reads the Python server's project files and imports its user database
-(README, [Moving from the Python server](../README.md#moving-from-the-python-server)).
+(README, [Moving from the Python server](https://github.com/SciQLop/cocat-rs/blob/main/README.md#moving-from-the-python-server)).
 
 1. Try it on a copy first. Copy the Python project directory and its user database (the
    database with SQLite's online backup, as in [Backups](#backups), so the Python server
