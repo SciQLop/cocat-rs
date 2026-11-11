@@ -923,8 +923,8 @@ async fn a_kind_is_set_at_creation_and_changed_by_patch() {
     let (_, plain) = fixture.round(&owner, &room, new_round()).await;
     let with_budget = json!({"name": "R", "visibility": "open", "budget": budget()});
     let (_, budgeted) = fixture.round(&owner, &room, with_budget).await;
-    let review = json!({"name": "R", "visibility": "open", "kind": "review"});
-    let (_, reviewed) = fixture.round(&owner, &room, review).await;
+    let downlink = json!({"name": "R", "visibility": "open", "kind": "downlink"});
+    let (_, downlinked) = fixture.round(&owner, &room, downlink).await;
     let id = plain["id"].as_str().unwrap();
     let path = format!("/api/rooms/{room}/rounds/{id}");
     let (_, patched) = fixture
@@ -936,8 +936,8 @@ async fn a_kind_is_set_at_creation_and_changed_by_patch() {
         )
         .await;
 
-    let kinds = [&plain, &budgeted, &reviewed, &patched].map(|round| round["kind"].clone());
-    assert_eq!(kinds, ["labelling", "downlink", "review", "review"]);
+    let kinds = [&plain, &budgeted, &downlinked, &patched].map(|round| round["kind"].clone());
+    assert_eq!(kinds, ["labelling", "downlink", "downlink", "review"]);
     assert_eq!(plain["revision"], 1);
 }
 
@@ -1257,4 +1257,49 @@ async fn candidates_come_from_a_public_catalogue_too() {
 
     assert_eq!(status, StatusCode::CREATED, "{round}");
     assert_eq!(round["candidates"]["count"], 1);
+}
+
+#[tokio::test]
+async fn a_review_round_without_candidates_is_refused_with_a_sentence() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let body = json!({"name": "Review", "visibility": "open", "kind": "review"});
+
+    let (status, answer) = fixture.round(&owner, &room, body).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert_eq!(
+        answer["detail"],
+        "A review round needs candidates: pick a catalogue."
+    );
+}
+
+#[tokio::test]
+async fn the_document_list_names_candidates_as_candidates() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    fixture
+        .write_room(&room, owner_id, detections(&[(FIRST, false)]))
+        .await;
+    let (_, round) = fixture.review_round(&owner, &room, &room).await;
+    let doc = round["candidates"]["doc"].as_str().unwrap().to_owned();
+
+    let (_, listed) = fixture
+        .send(
+            Method::GET,
+            &format!("/api/rooms/{room}/documents"),
+            &owner,
+            None,
+        )
+        .await;
+
+    let found = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|document| document["id"] == doc)
+        .unwrap();
+    assert_eq!(found["kind"], "candidates");
 }

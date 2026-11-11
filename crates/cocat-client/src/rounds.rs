@@ -33,7 +33,8 @@ pub async fn rounds(url: &str, cookie: &str, project: &str) -> Result<Value, Log
     .await
 }
 
-/// `body` holds `name`, `visibility` and optionally `deadline` and `budget`.
+/// `body` holds `name`, `visibility` and optionally `deadline`, `budget`, `kind` and
+/// `candidates` (`{project, catalogue}`).
 pub async fn create_round(
     url: &str,
     cookie: &str,
@@ -88,9 +89,10 @@ pub async fn move_round(
     round: &str,
     state: &str,
     final_catalogue: Option<&str>,
+    note: Option<&str>,
 ) -> Result<Value, LoginError> {
     let path = ["rooms", project, "rounds", round, "state"];
-    let body = json!({"state": state, "final_catalogue": final_catalogue});
+    let body = json!({"state": state, "final_catalogue": final_catalogue, "note": note});
     call(Method::POST, url, cookie, &path, Some(&body)).await
 }
 
@@ -126,5 +128,46 @@ pub async fn votes(
     round: &str,
 ) -> Result<Value, LoginError> {
     let path = ["rooms", project, "rounds", round, "votes"];
+    call(Method::GET, url, cookie, &path, None).await
+}
+
+/// Sets or, with `None`, clears the caller's verdict (`accept`, `reject` or `unsure`) on one event.
+pub async fn set_verdict(
+    url: &str,
+    cookie: &str,
+    project: &str,
+    round: &str,
+    event: &str,
+    verdict: Option<&str>,
+) -> Result<(), LoginError> {
+    let path = ["rooms", project, "rounds", round, "verdicts", event];
+    let request = api_request(Method::PUT, url, cookie, &path)?.json(&json!({"verdict": verdict}));
+    send(request).await?;
+    Ok(())
+}
+
+/// Merges the caller's verdicts, `{event: "accept" | "reject" | "unsure" | null}`.
+pub async fn set_verdicts(
+    url: &str,
+    cookie: &str,
+    project: &str,
+    round: &str,
+    verdicts: &Value,
+) -> Result<(), LoginError> {
+    let path = ["rooms", project, "rounds", round, "verdicts"];
+    let request =
+        api_request(Method::PUT, url, cookie, &path)?.json(&json!({"verdicts": verdicts}));
+    send(request).await?;
+    Ok(())
+}
+
+/// `{revision, events: [{event, accept, reject, unsure, by?}]}`, as far as the caller may read.
+pub async fn verdicts(
+    url: &str,
+    cookie: &str,
+    project: &str,
+    round: &str,
+) -> Result<Value, LoginError> {
+    let path = ["rooms", project, "rounds", round, "verdicts"];
     call(Method::GET, url, cookie, &path, None).await
 }

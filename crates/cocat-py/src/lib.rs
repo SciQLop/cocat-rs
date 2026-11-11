@@ -546,6 +546,12 @@ impl Catalogue {
         Ok(self.summary()?.deleted)
     }
 
+    /// The id of the project holding the catalogue.
+    #[getter]
+    fn project(&self) -> String {
+        self.room.room_id().to_owned()
+    }
+
     /// The attribute keys shown as columns, in order.
     #[getter]
     fn columns(&self) -> Result<Vec<String>> {

@@ -25,7 +25,7 @@ import keyring.errors
 import platformdirs
 
 from . import Project, _native
-from ._native import Forbidden, ProjectInfo, Unauthorized
+from ._native import Catalogue, Forbidden, ProjectInfo, Unauthorized
 
 DEFAULT_SERVER = "https://sciqlop.lpp.polytechnique.fr/cocat-dev"
 KEYRING_SERVICE = "cocat_rs"
@@ -86,6 +86,13 @@ class SignIn:
 
     def cancel(self) -> None:
         self._cancelled.set()
+
+
+def _candidates(source: Any) -> dict[str, str] | None:
+    if source is None:
+        return None
+    project, catalogue = (source.project, source.uuid) if hasattr(source, "uuid") else source
+    return {"project": project, "catalogue": catalogue}
 
 
 class Client:
@@ -268,9 +275,22 @@ class Client:
         visibility: str = "open",
         deadline: str | datetime | None = None,
         budget: dict[str, Any] | None = None,
+        kind: str | None = None,
+        candidates: Catalogue | tuple[str, str] | None = None,
     ) -> dict[str, Any]:
-        """A selection round of the project; `budget` is JSON-LD, see `round_cost`."""
-        body = {"name": name, "visibility": visibility, "deadline": _iso(deadline), "budget": budget}
+        """A selection round of the project; `budget` is JSON-LD, see `round_cost`.
+
+        `kind` is `review`, `downlink` or `labelling`. `candidates` is a catalogue (or its
+        `(project id, catalogue uuid)`) you can read: its events are copied into the round,
+        keeping their uuids, for the reviewers. A review round needs it."""
+        body = {
+            "name": name,
+            "visibility": visibility,
+            "deadline": _iso(deadline),
+            "budget": budget,
+            "kind": kind,
+            "candidates": _candidates(candidates),
+        }
         return self._call(_native.create_round, project_id, body)
 
     def round(self, project_id: str, round_id: str) -> dict[str, Any]:
@@ -295,9 +315,15 @@ class Client:
         )
 
     def move_round(
-        self, project_id: str, round_id: str, state: str, final_catalogue: str | None = None
+        self,
+        project_id: str,
+        round_id: str,
+        state: str,
+        final_catalogue: str | None = None,
+        note: str | None = None,
     ) -> dict[str, Any]:
-        return self._call(_native.move_round, project_id, round_id, state, final_catalogue)
+        """Moves the round to `state`, with a `note` the log shows next to the move."""
+        return self._call(_native.move_round, project_id, round_id, state, final_catalogue, note)
 
     def my_proposal(
         self, project_id: str, round_id: str, cache: str | Path | None = None
@@ -312,6 +338,20 @@ class Client:
 
     def votes(self, project_id: str, round_id: str) -> list[dict[str, Any]]:
         return self._call(_native.votes, project_id, round_id)
+
+    def verdict(self, project_id: str, round_id: str, event: str, value: str | None) -> None:
+        """Your verdict on an event: `accept`, `reject`, `unsure`, or `None` to clear it."""
+        return self._call(_native.set_verdict, project_id, round_id, getattr(event, "uuid", event), value)
+
+    def set_verdicts(
+        self, project_id: str, round_id: str, verdicts: dict[str, str | None]
+    ) -> None:
+        """Merges your verdicts, `{event uuid: verdict or None}`; other events keep theirs."""
+        return self._call(_native.set_verdicts, project_id, round_id, verdicts)
+
+    def verdicts(self, project_id: str, round_id: str) -> dict[str, Any]:
+        """`{revision, events: [{event, accept, reject, unsure, by?}]}`, as far as you may read."""
+        return self._call(_native.verdicts, project_id, round_id)
 
     def members(self, project_id: str) -> list[dict[str, str]]:
         return self._call(_native.members, project_id)

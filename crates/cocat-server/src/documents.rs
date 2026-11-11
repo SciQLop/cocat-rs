@@ -45,6 +45,7 @@ enum ListedKind {
     Notebook,
     Text,
     Proposal,
+    Candidates,
 }
 
 impl From<DocumentKind> for ListedKind {
@@ -80,7 +81,11 @@ impl From<ProjectProposal> for DocumentOut {
     fn from(proposal: ProjectProposal) -> Self {
         Self {
             id: proposal.doc,
-            kind: ListedKind::Proposal,
+            kind: if proposal.candidates {
+                ListedKind::Candidates
+            } else {
+                ListedKind::Proposal
+            },
             created_by: Some(proposal.author),
             created_at: proposal.created_at,
         }

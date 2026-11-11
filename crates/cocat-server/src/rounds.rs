@@ -396,6 +396,17 @@ pub async fn create_round_with(
     Ok(id)
 }
 
+/// Removes a round with its seats, proposals and log, as when its creation failed half way.
+// simplify: leaves a half-written candidates document in its room, which the quota still
+// counts; upgrade = delete the document with the round.
+pub async fn delete_round(pool: &SqlitePool, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM round WHERE id = ?")
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 async fn insert_candidates(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     round_id: Uuid,
@@ -664,6 +675,7 @@ pub async fn proposals(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, Uuid)>,
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectProposal {
     pub doc: Uuid,
+    pub candidates: bool,
     pub author: Uuid,
     pub created_at: String,
 }
@@ -674,7 +686,7 @@ pub async fn project_proposals(
     room_id: &str,
 ) -> Result<Vec<ProjectProposal>, DbError> {
     let rows = sqlx::query(
-        "SELECT round_proposal.doc_id, round_proposal.author,
+        "SELECT round_proposal.doc_id, round_proposal.author, round_proposal.candidates,
                 CAST(round_proposal.created_at AS TEXT) AS created_at
          FROM round_proposal JOIN round ON round.id = round_proposal.round_id
          WHERE round.room_id = ? ORDER BY round_proposal.created_at, round_proposal.doc_id",
@@ -687,6 +699,7 @@ pub async fn project_proposals(
         .map(|row| {
             Ok(ProjectProposal {
                 doc: parse_uuid(&row.try_get::<String, _>("doc_id")?)?,
+                candidates: row.try_get("candidates")?,
                 author: parse_uuid(&row.try_get::<String, _>("author")?)?,
                 created_at: row.try_get("created_at")?,
             })

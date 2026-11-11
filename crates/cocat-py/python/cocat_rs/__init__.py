@@ -4,7 +4,7 @@ import asyncio
 import logging
 import threading
 
-from . import _native
+from . import _native, round_review
 from ._native import (
     Catalogue,
     Conflict,
@@ -82,6 +82,7 @@ __all__ = [
     "review_submission",
     "revoke_invitation",
     "round_cost",
+    "round_review",
     "rule_from_tscat",
     "set_editors_can_share",
     "set_role",
@@ -261,9 +262,15 @@ class Project:
         """The selection rounds of this project."""
         return self._server_call("rounds")
 
-    def create_round(self, name, visibility="open", deadline=None, budget=None):
-        """A selection round; `visibility` is `open` or `blind`. Returns it as a dict."""
-        return self._server_call("create_round", name, visibility, deadline, budget)
+    def create_round(
+        self, name, visibility="open", deadline=None, budget=None, kind=None, candidates=None
+    ):
+        """A selection round; `visibility` is `open` or `blind`, `kind` `review`, `downlink`
+        or `labelling`. `candidates` is a catalogue you can read (or its `(project id,
+        catalogue uuid)`), copied into the round for review. Returns the round as a dict."""
+        return self._server_call(
+            "create_round", name, visibility, deadline, budget, kind, candidates
+        )
 
     def round(self, round_id):
         return self._server_call("round", round_id)
@@ -276,9 +283,40 @@ class Project:
         """Replaces who proposes, votes and decides, by email."""
         return self._server_call("set_round_members", round_id, proposers, voters, deciders)
 
-    def move_round(self, round_id, state, final_catalogue=None):
-        """Moves the round to `state`; deciding needs the final catalogue's uuid."""
-        return self._server_call("move_round", round_id, state, final_catalogue)
+    def move_round(self, round_id, state, final_catalogue=None, note=None):
+        """Moves the round to `state`, with a `note` shown in its log; deciding needs the
+        final catalogue's uuid, see `decide`."""
+        return self._server_call("move_round", round_id, state, final_catalogue, note)
+
+    def decide(self, round_id, events, note=None):
+        """Writes `events` (dicts, as `round_review.final_events` returns them) as the
+        round's final catalogue, replacing the events it holds when the round was decided
+        before, then moves the round to decided. This project must be the round's."""
+        uuid = round_review.final_catalogue_uuid(round_id)
+        name = self.round(round_id)["name"]
+        catalogue = self._final_catalogue(uuid, name)
+        self._replace_events(catalogue, events)
+        self.save(15)
+        if self.round(round_id)["state"] == "decided":
+            return self.round(round_id)
+        return self.move_round(round_id, "decided", uuid, note)
+
+    def _final_catalogue(self, uuid, name):
+        try:
+            return self.catalogue(uuid)
+        except LookupError:
+            return self.create_catalogue(name, uuid=uuid)
+
+    def _replace_events(self, catalogue, events):
+        for old in catalogue.events:
+            old.purge()
+        created = [
+            self.create_event(
+                event["start"], event["stop"], uuid=event["uuid"], attributes=event["attributes"]
+            )
+            for event in events
+        ]
+        catalogue.add_events(created)
 
     def my_proposal(self, round_id, cache=None):
         """Your proposal document of the round, a project of its own; close it when done."""
@@ -291,6 +329,18 @@ class Project:
 
     def votes(self, round_id):
         return self._server_call("votes", round_id)
+
+    def verdict(self, round_id, event, value):
+        """Your verdict on an event (or its uuid): `accept`, `reject`, `unsure`, or `None`."""
+        return self._server_call("verdict", round_id, event, value)
+
+    def set_verdicts(self, round_id, verdicts):
+        """Merges your verdicts, `{event uuid: verdict or None}`."""
+        return self._server_call("set_verdicts", round_id, verdicts)
+
+    def verdicts(self, round_id):
+        """`{revision, events: [{event, accept, reject, unsure, by?}]}`, as far as you may read."""
+        return self._server_call("verdicts", round_id)
 
     @classmethod
     def open(cls, cache_dir, project_id):

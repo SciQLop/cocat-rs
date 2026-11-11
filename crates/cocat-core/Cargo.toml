@@ -21,7 +21,7 @@ thiserror.workspace = true
 time.workspace = true
 tracing.workspace = true
 utoipa = { version = "6", default-features = false, features = ["macros"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 winnow = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 yrs.workspace = true
@@ -30,7 +30,7 @@ yrs.workspace = true
 # std::time::Instant panics in the browser; the diff deadline reads web time there.
 similar = { version = "3.2.1", features = ["wasm32_web_time"] }
 time = { workspace = true, features = ["wasm-bindgen"] }
-uuid = { version = "1", features = ["v4", "js"] }
+uuid = { version = "1", features = ["v4", "v5", "js"] }
 
 [dev-dependencies]
 tempfile = "3"

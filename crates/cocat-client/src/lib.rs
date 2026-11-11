@@ -29,8 +29,8 @@ pub use projects::{
 };
 pub use room::{Room, RoomError, Status};
 pub use rounds::{
-    create_round, move_round, my_proposal, round, rounds, set_round_members, set_votes,
-    update_round, votes,
+    create_round, move_round, my_proposal, round, rounds, set_round_members, set_verdict,
+    set_verdicts, set_votes, update_round, verdicts, votes,
 };
 pub use sign_in::{SignInRequest, SignInStatus, poll_sign_in, sign_out, start_sign_in};
 pub use submissions::{

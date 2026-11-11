@@ -339,7 +339,7 @@ async fn list_rounds(
         (status = 403, description = "The caller is a viewer", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member; or no candidates catalogue the caller can read", body = Detail),
         (status = 409, description = "A public or personal project has no rounds, or the candidates do not fit its storage", body = Detail),
-        (status = 422, description = "The name, deadline or budget is invalid", body = Detail),
+        (status = 422, description = "The name, deadline or budget is invalid, or a review round has no candidates", body = Detail),
     )
 )]
 async fn create_round(
@@ -358,6 +358,11 @@ async fn create_round(
         Some(_) => Kind::Downlink,
         None => Kind::Labelling,
     });
+    if kind == Kind::Review && body.candidates.is_none() {
+        return Err(unprocessable(
+            "A review round needs candidates: pick a catalogue.",
+        ));
+    }
     let copied = match &body.candidates {
         Some(source) => Some(round_candidates::copy(&state, &room_id, source, &user).await?),
         None => None,
@@ -371,8 +376,11 @@ async fn create_round(
     };
     let candidates = copied.as_ref().map(|copied| &copied.candidates);
     let id = rounds::create_round_with(&state.pool, &room_id, spec, user.id, candidates).await?;
-    if let Some(copied) = copied {
-        round_candidates::write(&state, &room_id, user.id, copied).await?;
+    if let Some(copied) = copied
+        && let Err(error) = round_candidates::write(&state, &room_id, user.id, copied).await
+    {
+        rounds::delete_round(&state.pool, id).await?;
+        return Err(error);
     }
     rounds::start_without_proposers(&state.pool, id, user.id).await?;
     let row = rounds::round(&state.pool, id)

@@ -25,6 +25,7 @@ class Catalogue:
     author: str | None
     created: datetime | None
     deleted: bool
+    project: str
     tags: set[str]
     columns: list[str]
     attributes: dict[str, Any]
