@@ -141,6 +141,13 @@ pub fn progress(rows: &[ReviewRow]) -> (usize, usize, usize) {
     (done, rows.len() - set_aside, set_aside)
 }
 
+/// How many current rows any reviewer gave a verdict on, as far as the caller may read.
+pub fn reviewed(rows: &[ReviewRow]) -> usize {
+    rows.iter()
+        .filter(|row| !row.set_aside && row.accepts + row.rejects + row.unsure > 0)
+        .count()
+}
+
 /// Which rows more reviewers accepted than rejected; a tie keeps nothing.
 pub fn majority(rows: &[ReviewRow]) -> Vec<bool> {
     rows.iter()
@@ -247,6 +254,28 @@ mod tests {
         assert_eq!(next_unreviewed(&rows, 2), Some(2));
         assert_eq!(next_unreviewed(&rows, 3), Some(1));
         assert_eq!(next_unreviewed(&rows[..1], 0), None);
+    }
+
+    #[test]
+    fn reviewed_counts_current_rows_anyone_gave_a_verdict_on() {
+        assert_eq!(reviewed(&sample()), 2);
+        let mut rows = sample();
+        rows[2].unsure = 1;
+        assert_eq!(reviewed(&rows), 3);
+    }
+
+    #[test]
+    fn a_final_event_keeps_every_field_of_its_candidate() {
+        let mut rows = sample();
+        rows[0].event.tags = vec!["t".to_owned()];
+        rows[0].event.status = crate::model::Status::Reviewed;
+        rows[0].event.confidence = Some(0.5);
+
+        let kept = &final_events(&rows, &[true, false, false, false])[0];
+
+        assert_eq!(kept.tags, ["t"]);
+        assert_eq!(kept.status, crate::model::Status::Reviewed);
+        assert_eq!(kept.confidence, Some(0.5));
     }
 
     #[test]

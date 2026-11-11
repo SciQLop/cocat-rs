@@ -310,13 +310,23 @@ class Project:
     def _replace_events(self, catalogue, events):
         for old in catalogue.events:
             old.purge()
-        created = [
-            self.create_event(
-                event["start"], event["stop"], uuid=event["uuid"], attributes=event["attributes"]
+        catalogue.add_events([self._create_final_event(event) for event in events])
+
+    def _create_final_event(self, event):
+        shape = event.get("shape")
+        fields = {
+            key: event.get(key)
+            for key in (
+                "uuid", "author", "created", "origin", "confidence", "start_err", "stop_err",
+                "source_id", "tags", "products", "attributes", "status",
             )
-            for event in events
-        ]
-        catalogue.add_events(created)
+        }
+        return self.create_event(
+            event["start"],
+            event["stop"],
+            shape=None if shape is None else [(v["time"], v["value"]) for v in shape],
+            **{key: value for key, value in fields.items() if value is not None},
+        )
 
     def my_proposal(self, round_id, cache=None):
         """Your proposal document of the round, a project of its own; close it when done."""

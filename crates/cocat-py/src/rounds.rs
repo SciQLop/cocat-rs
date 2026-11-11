@@ -10,10 +10,7 @@ use pyo3::types::PyDict;
 use serde_json::{Value, json};
 
 use crate::sharing::{answer, done};
-use crate::{
-    Result, to_json, to_json_map, to_python, to_python_datetime, to_python_map, to_timestamp,
-    value_error,
-};
+use crate::{Result, to_json, to_python, value_error};
 
 #[pyfunction]
 fn rounds(py: Python<'_>, url: String, cookie: String, project: String) -> Result<Py<PyAny>> {
@@ -197,21 +194,10 @@ fn verdicts(
     answer(py, cocat_client::verdicts(&url, &cookie, &project, &round))
 }
 
+/// An event dict holding at least `uuid`, `start` and `stop`; any other field of an event
+/// (`tags`, `status`, `confidence`, `shape`, `attributes`…) is kept.
 fn record_of(item: &Bound<'_, PyAny>) -> Result<EventRecord> {
-    let dict = item.cast::<PyDict>()?;
-    let required = |key: &str| {
-        dict.get_item(key)?
-            .ok_or_else(|| value_error(format!("an event needs a {key}")))
-    };
-    let mut record = EventRecord::new(
-        required("uuid")?.extract::<String>()?,
-        to_timestamp(&required("start")?)?,
-        to_timestamp(&required("stop")?)?,
-    );
-    if let Some(attributes) = dict.get_item("attributes")? {
-        record.attributes = to_json_map(attributes.cast::<PyDict>()?)?;
-    }
-    Ok(record)
+    serde_json::from_value(to_json(item)?).map_err(value_error)
 }
 
 /// What the events (dicts with `uuid`, `start`, `stop` and `attributes`) cost under the
@@ -237,13 +223,8 @@ fn round_cost(
     )
 }
 
-fn event_dict<'py>(py: Python<'py>, record: &EventRecord) -> Result<Bound<'py, PyDict>> {
-    let dict = PyDict::new(py);
-    dict.set_item("uuid", &record.uuid)?;
-    dict.set_item("start", to_python_datetime(py, record.start)?)?;
-    dict.set_item("stop", to_python_datetime(py, record.stop)?)?;
-    dict.set_item("attributes", to_python_map(py, &record.attributes)?)?;
-    Ok(dict)
+fn event_dict(py: Python<'_>, record: &EventRecord) -> Result<Py<PyAny>> {
+    to_python(py, &serde_json::to_value(record).map_err(value_error)?)
 }
 
 fn verdict_name(verdict: Verdict) -> &'static str {
@@ -321,6 +302,12 @@ fn review_progress(rows: Vec<Bound<'_, PyAny>>) -> Result<(usize, usize, usize)>
     Ok(review::progress(&rows_of(&rows)?))
 }
 
+/// How many current rows any reviewer gave a verdict on.
+#[pyfunction]
+fn review_reviewed(rows: Vec<Bound<'_, PyAny>>) -> Result<usize> {
+    Ok(review::reviewed(&rows_of(&rows)?))
+}
+
 /// The first row from `start` on, wrapping round, you have not reviewed.
 #[pyfunction]
 fn review_next_unreviewed(rows: Vec<Bound<'_, PyAny>>, start: usize) -> Result<Option<usize>> {
@@ -339,7 +326,7 @@ fn review_final_events<'py>(
     py: Python<'py>,
     rows: Vec<Bound<'py, PyAny>>,
     picked: Vec<bool>,
-) -> Result<Vec<Bound<'py, PyDict>>> {
+) -> Result<Vec<Py<PyAny>>> {
     review::final_events(&rows_of(&rows)?, &picked)
         .iter()
         .map(|record| event_dict(py, record))
@@ -368,6 +355,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(verdicts, module)?)?;
     module.add_function(wrap_pyfunction!(review_rows, module)?)?;
     module.add_function(wrap_pyfunction!(review_progress, module)?)?;
+    module.add_function(wrap_pyfunction!(review_reviewed, module)?)?;
     module.add_function(wrap_pyfunction!(review_next_unreviewed, module)?)?;
     module.add_function(wrap_pyfunction!(review_majority, module)?)?;
     module.add_function(wrap_pyfunction!(review_final_events, module)?)?;

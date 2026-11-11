@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use time::UtcOffset;
 use time::error::Format;
 use time::format_description::BorrowedFormatItem;
@@ -155,6 +155,13 @@ impl fmt::Display for Timestamp {
 impl Serialize for Timestamp {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Timestamp {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).ok_or_else(|| de::Error::custom(format!("not a timestamp: {text}")))
     }
 }
 

@@ -143,7 +143,12 @@ def detections(owner, tmp_path, count=5):
     project = owner.open(owner.create_project("pipeline").id, cache=tmp_path / "pipeline")
     events = [
         project.create_event(
-            f"2020-01-0{day}T00:00:00", f"2020-01-0{day}T01:00:00", attributes={"snr": day}
+            f"2020-01-0{day}T00:00:00",
+            f"2020-01-0{day}T01:00:00",
+            attributes={"snr": day},
+            tags=["detected"],
+            status="reviewed",
+            confidence=0.5 + day / 10,
         )
         for day in range(1, count + 1)
     ]
@@ -208,7 +213,7 @@ def candidate_events(owner, server, made, tmp_path):
     doc = made["candidates"]["doc"]
     candidates = owner.open(f"{server.project_id}/{doc}", cache=tmp_path / "candidates")
     found = [
-        {"uuid": e.uuid, "start": e.start, "stop": e.stop, "attributes": e.attributes}
+        cc.round_review.event_row(e)
         for e in sorted(candidates.catalogues()[0].events, key=lambda e: e.start)
     ]
     candidates.close()
@@ -227,6 +232,7 @@ def test_the_review_rules_agree_with_the_verdicts(server, tmp_path):
     )
 
     assert cc.round_review.progress(rows) == (2, 5, 0)
+    assert cc.round_review.reviewed(rows) == 2
     assert cc.round_review.next_unreviewed(rows, 0) == 2
     assert cc.round_review.majority(rows) == [True, False, False, False, False]
     final = cc.round_review.final_events(rows, [True, False, False, False, False])
@@ -260,4 +266,26 @@ def test_deciding_twice_from_python_keeps_one_catalogue(server, tmp_path):
     assert first["final_catalogue"] == final_uuid
     assert len(named) == 1
     assert len(named[0].events) == 2
+    team.close()
+
+
+def test_a_decided_event_keeps_the_fields_of_its_candidate(server, tmp_path):
+    owner = owner_client(server)
+    made, events = review_of(owner, server, tmp_path)
+    project, round_id = server.project_id, made["id"]
+    owner.set_verdicts(project, round_id, {events[0].uuid: "accept"})
+    team = owner.open(project, cache=tmp_path / "team")
+    rows = cc.round_review.rows(
+        [(None, candidate_events(owner, server, made, tmp_path))],
+        owner.verdicts(project, round_id),
+        server.email,
+    )
+
+    team.decide(round_id, cc.round_review.final_events(rows, cc.round_review.majority(rows)))
+
+    [kept] = team.catalogue(cc.round_review.final_catalogue_uuid(round_id)).events
+    assert kept.tags == {"detected"}
+    assert kept.status == "reviewed"
+    assert kept.confidence == pytest.approx(0.6)
+    assert kept.attributes["candidate"] == events[0].uuid
     team.close()

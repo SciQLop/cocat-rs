@@ -14,6 +14,7 @@ __all__ = [
     "majority",
     "next_unreviewed",
     "progress",
+    "reviewed",
     "rows",
 ]
 
@@ -27,6 +28,19 @@ def event_row(event):
         "start": event.start,
         "stop": event.stop,
         "attributes": event.attributes,
+        "author": event.author,
+        "created": event.created,
+        "origin": event.origin,
+        "status": event.status,
+        "confidence": event.confidence,
+        "start_err": event.start_err,
+        "stop_err": event.stop_err,
+        "shape": None if event.shape is None else [
+            {"time": time, "value": value} for time, value in event.shape
+        ],
+        "source_id": event.source_id,
+        "tags": sorted(event.tags),
+        "products": sorted(event.products),
     }
 
 
@@ -42,6 +56,11 @@ def progress(rows):
     """`(done, total, set_aside)`: the current events you reviewed, all current events, and
     the verdicts on events that are no longer current."""
     return _native.review_progress(rows)
+
+
+def reviewed(rows):
+    """How many current events any reviewer gave a verdict on, as far as you may read."""
+    return _native.review_reviewed(rows)
 
 
 def next_unreviewed(rows, start=0):

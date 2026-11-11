@@ -67,7 +67,7 @@ pub const ATTRIBUTE_PREFIX: char = '#';
 
 /// QuakeML's evaluation status, plus `deleted` for the trash. A room stores only the
 /// statuses other than `confirmed`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     Preliminary,
@@ -107,7 +107,7 @@ impl Status {
 
 /// One corner of a shape: a time, and a value on the catalogue's shape axis (a frequency, an
 /// energy, a pitch angle…).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Vertex {
     #[schema(value_type = String)]
     pub time: Timestamp,
@@ -121,7 +121,7 @@ pub struct ShapeAxis {
     pub unit: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EventRecord {
     pub uuid: String,
     #[schema(value_type = String)]
@@ -132,15 +132,19 @@ pub struct EventRecord {
     #[schema(value_type = Option<String>)]
     pub created: Option<Timestamp>,
     pub origin: Option<String>,
+    #[serde(default)]
     pub status: Status,
     pub confidence: Option<f64>,
     pub start_err: Option<f64>,
     pub stop_err: Option<f64>,
     pub shape: Option<Vec<Vertex>>,
     pub source_id: Option<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub products: Vec<String>,
     #[schema(value_type = Object)]
+    #[serde(default)]
     pub attributes: Map<String, Value>,
 }
 
