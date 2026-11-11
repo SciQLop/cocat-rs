@@ -180,7 +180,7 @@ fn timestamp(text: &str) -> Option<Timestamp> {
 }
 
 /// The catalogues leave a value empty, or write `-`.
-fn missing(text: &str) -> bool {
+pub fn missing(text: &str) -> bool {
     matches!(text.trim(), "" | "-")
 }
 
@@ -205,9 +205,14 @@ fn attribute_value(column: &str, text: &str) -> Result<Option<Value>, String> {
         let at = timestamp(text).ok_or_else(bad)?;
         return Ok(Some(Value::String(at.rfc3339().map_err(|_| bad())?)));
     }
+    Ok(number_or_text(text))
+}
+
+/// A number, or the text itself when it is not one. `None` for a number that is not finite.
+pub fn number_or_text(text: &str) -> Option<Value> {
     match text.parse::<f64>() {
-        Ok(number) => Ok(serde_json::Number::from_f64(number).map(Value::Number)),
-        Err(_) => Ok(Some(Value::String(text.to_owned()))),
+        Ok(number) => serde_json::Number::from_f64(number).map(Value::Number),
+        Err(_) => Some(Value::String(text.to_owned())),
     }
 }
 

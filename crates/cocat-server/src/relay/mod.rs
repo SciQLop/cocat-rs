@@ -13,6 +13,7 @@ pub mod grmb;
 pub mod helio4cast;
 pub mod icmecat;
 pub mod patient;
+pub mod pmod;
 pub mod rolling;
 pub mod schedule;
 pub mod stix;
@@ -98,6 +99,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(cactus::Cactus),
         Arc::new(grmb::Grmb),
         Arc::new(helio4cast::Helio4cast),
+        Arc::new(pmod::Pmod),
     ]
 }
 
