@@ -82,8 +82,8 @@ const NAMESPACE: Uuid = Uuid::from_u128(0x6ef18c5f_f0a8_49d6_8d92_7b8c37272eaf);
 /// CCMC serves DONKI itself since 2026-09-30; the api.nasa.gov proxy answers 404 since then.
 const ENDPOINT: &str = "https://ccmc.gsfc.nasa.gov/DONKI-API/get";
 const FIRST_DAY: Date = date!(2010 - 01 - 01);
-/// A year per request, ends included.
-const REQUEST_SPAN: Duration = Duration::days(364);
+/// CCMC refuses a request over 60 days ("Date range cannot exceed 60 days"); a day of margin.
+const REQUEST_SPAN: Duration = Duration::days(59);
 /// The fields that end an event, first to be found wins; an event with none is a point.
 const STOP_FIELDS: [&str; 2] = ["endTime", "peakTime"];
 /// Lists of objects joined into one text attribute: field, and the member field to read.
@@ -430,16 +430,32 @@ mod tests {
         );
     }
 
+    fn spans(windows: &[(Date, Date)]) -> Vec<i64> {
+        windows
+            .iter()
+            .map(|(start, end)| (*end - *start).whole_days())
+            .collect()
+    }
+
     #[test]
-    fn the_first_run_asks_year_by_year_from_2010() {
+    fn the_first_run_reads_everything_from_2010_in_windows_ccmc_accepts() {
         let now = at("2026-11-10T12:00:00Z");
 
         let windows = windows(None, now).unwrap();
 
-        assert_eq!(windows.len(), 17);
         assert_eq!(windows[0].0.to_string(), "2010-01-01");
-        assert_eq!(windows[1].0.to_string(), "2011-01-01");
-        assert_eq!(windows[16].1.to_string(), "2026-11-10");
+        assert_eq!(windows.last().unwrap().1.to_string(), "2026-11-10");
+        assert!(
+            spans(&windows).iter().all(|days| *days <= 60),
+            "CCMC refuses more than 60 days"
+        );
+        let next_starts_after_previous_end = windows
+            .windows(2)
+            .all(|pair| (pair[1].0 - pair[0].1).whole_days() == 1);
+        assert!(
+            next_starts_after_previous_end,
+            "no day skipped or read twice"
+        );
     }
 
     #[test]
@@ -448,9 +464,9 @@ mod tests {
 
         let windows = windows(Some(at("2026-11-09T03:30:00Z")), now).unwrap();
 
-        assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].0.to_string(), "2026-08-12");
-        assert_eq!(windows[0].1.to_string(), "2026-11-10");
+        assert_eq!(windows.last().unwrap().1.to_string(), "2026-11-10");
+        assert!(spans(&windows).iter().all(|days| *days <= 60));
     }
 
     #[test]

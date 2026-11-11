@@ -146,7 +146,7 @@ follows.
 
 - **DONKI** is read from CCMC (`https://ccmc.gsfc.nasa.gov/DONKI-API/get/`), which needs no
   key; the api.nasa.gov address used before 30 September 2026 now answers 404. The first run
-  reads every type from 2010 in yearly windows (136 requests); later runs read the last 90 days,
+  reads every type from 2010 in 60-day windows (CCMC's limit, about 830 requests); later runs read the last 90 days,
   except for a type whose catalogue is new or was deleted, which is read whole again.
   Daily at 03:30 UTC by default.
 - **CDAW** needs nothing; weekly, Monday 05:30 UTC (the LASCO list is updated weekly).
