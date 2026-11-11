@@ -2,11 +2,19 @@
 //!
 //! Proposals are documents of the project; this module stores the round around them.
 
+use std::time::Duration;
+
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::db::{self, DbError};
+use crate::{AppState, ws};
+
+const DEADLINES_EVERY: Duration = Duration::from_secs(60);
 
 macro_rules! text_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident),+ }) => {
@@ -534,10 +542,11 @@ pub async fn log(pool: &SqlitePool, id: Uuid) -> Result<Vec<LogLine>, DbError> {
         .collect::<Result<_, sqlx::Error>>()?)
 }
 
-/// Rounds still proposing whose deadline has passed.
+/// Rounds still proposing whose deadline has passed. Compared as instants, not as text:
+/// as text "...:00.5Z" sorts before "...:00Z".
 pub async fn due_rounds(pool: &SqlitePool, now: &str) -> Result<Vec<Uuid>, DbError> {
     let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM round WHERE state = 'proposing' AND deadline IS NOT NULL AND deadline <= ?",
+        "SELECT id FROM round WHERE state = 'proposing' AND deadline IS NOT NULL AND julianday(deadline) <= julianday(?)",
     )
     .bind(now)
     .fetch_all(pool)
@@ -546,6 +555,39 @@ pub async fn due_rounds(pool: &SqlitePool, now: &str) -> Result<Vec<Uuid>, DbErr
         .iter()
         .map(|id| parse_uuid(id))
         .collect::<Result<_, _>>()?)
+}
+
+/// Moves every round whose deadline has passed to voting, as the server and not a person.
+pub async fn close_due(state: &AppState, now: OffsetDateTime) -> Result<usize, DbError> {
+    let now = now
+        .format(&Rfc3339)
+        .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
+    let due = due_rounds(&state.pool, &now).await?;
+    for id in &due {
+        close(state, *id).await?;
+    }
+    Ok(due.len())
+}
+
+async fn close(state: &AppState, id: Uuid) -> Result<(), DbError> {
+    set_state(&state.pool, id, RoundState::Voting, None, None).await?;
+    if let Some(row) = round(&state.pool, id).await? {
+        ws::check_room_roles(state, &row.room_id).await;
+    }
+    Ok(())
+}
+
+/// Wakes every minute, like the relay scheduler.
+pub fn spawn_deadlines(state: AppState) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(DEADLINES_EVERY);
+        loop {
+            ticker.tick().await;
+            if let Err(error) = close_due(&state, OffsetDateTime::now_utc()).await {
+                tracing::warn!(%error, "closing the rounds past their deadline failed");
+            }
+        }
+    })
 }
 
 #[cfg(test)]

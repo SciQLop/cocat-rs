@@ -1,8 +1,12 @@
 use cocat_core::role::Role;
 use cocat_server::db::{self, ProjectKind};
+use cocat_server::room::RoomManager;
 use cocat_server::rounds::{self, RoundRole, RoundState, Visibility};
+use cocat_server::{AppState, links::Links, ratelimit::LoginLimit};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 async fn pool() -> (SqlitePool, TempDir) {
@@ -117,4 +121,108 @@ async fn due_rounds_are_the_proposing_ones_past_their_deadline() {
 
     assert_eq!(due, vec![past]);
     let _ = (future, none);
+}
+
+fn app_state(pool: SqlitePool, dir: &TempDir) -> AppState {
+    AppState {
+        pool,
+        secret: "test-secret".to_owned(),
+        rooms: RoomManager::new(dir.path().join("rooms"), None),
+        before_attach: None,
+        login_limit: LoginLimit::default(),
+        mailer: None,
+        links: Links::default(),
+        oidc: Vec::new(),
+        web_dir: None,
+        providers: Default::default(),
+        http: Default::default(),
+    }
+}
+
+fn instant(text: &str) -> OffsetDateTime {
+    OffsetDateTime::parse(text, &Rfc3339).unwrap()
+}
+
+async fn round_with_deadline(pool: &SqlitePool, owner: Uuid, deadline: Option<&str>) -> Uuid {
+    rounds::create_round(
+        pool,
+        "lab",
+        "R",
+        Visibility::Open,
+        deadline.map(str::to_owned),
+        None,
+        owner,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_past_deadline_moves_the_round_to_voting_by_itself() {
+    let (pool, dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, Some("2026-01-01T00:00:00Z")).await;
+    let state = app_state(pool.clone(), &dir);
+
+    let moved = rounds::close_due(&state, instant("2026-06-01T00:00:00Z"))
+        .await
+        .unwrap();
+
+    assert_eq!(moved, 1);
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!(row.state, RoundState::Voting);
+    let last = rounds::log(&pool, id).await.unwrap().pop().unwrap();
+    assert_eq!((last.what.as_str(), last.actor), ("state: voting", None));
+}
+
+#[tokio::test]
+async fn a_future_deadline_does_nothing() {
+    let (pool, dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, Some("2027-01-01T00:00:00Z")).await;
+    let state = app_state(pool.clone(), &dir);
+
+    let moved = rounds::close_due(&state, instant("2026-06-01T00:00:00Z"))
+        .await
+        .unwrap();
+
+    assert_eq!(moved, 0);
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!(row.state, RoundState::Proposing);
+}
+
+#[tokio::test]
+async fn a_round_without_deadline_is_never_moved() {
+    let (pool, dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, None).await;
+    let state = app_state(pool.clone(), &dir);
+
+    let moved = rounds::close_due(&state, instant("2099-01-01T00:00:00Z"))
+        .await
+        .unwrap();
+
+    assert_eq!(moved, 0);
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!(row.state, RoundState::Proposing);
+}
+
+#[tokio::test]
+async fn a_deadline_with_fractions_is_due_only_once_it_has_passed() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, Some("2026-06-01T12:00:00.5Z")).await;
+
+    let before = rounds::due_rounds(&pool, "2026-06-01T12:00:00Z")
+        .await
+        .unwrap();
+    let after = rounds::due_rounds(&pool, "2026-06-01T12:00:01Z")
+        .await
+        .unwrap();
+
+    assert_eq!((before, after), (vec![], vec![id]));
 }
