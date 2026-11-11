@@ -224,6 +224,29 @@ pub const PRESETS: [Preset; 3] = [
     },
 ];
 
+/// What creating a round still has to do: a retry after a failed members call must not make
+/// a second round.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Next {
+    Create,
+    SetPeople(String),
+}
+
+pub fn next_step(created: Option<String>) -> Next {
+    created.map_or(Next::Create, Next::SetPeople)
+}
+
+// simplify: guesses the import race from the words "not found" in the server's 404; give
+// the API an error code for a missing candidates catalogue to match on instead.
+/// A failed creation in words; the server's 404 on the candidates right after an import means
+/// the file's catalogue has not reached it yet.
+pub fn creation_failure(message: &str, with_candidates: bool) -> String {
+    if with_candidates && message.contains("not found") {
+        return "The import has not reached the server yet; try again in a moment.".to_owned();
+    }
+    message.to_owned()
+}
+
 /// What the voter role is called: reviewers judge detections, voters pick among proposals.
 pub fn voter_title(kind: &str) -> &'static str {
     if kind == "review" {
@@ -275,7 +298,7 @@ impl Default for BudgetForm {
         Self {
             attribute: String::new(),
             cap: String::new(),
-            cap_unit: "Gbit".into(),
+            cap_unit: "Gibyte".into(),
             rates: Vec::new(),
         }
     }
@@ -325,6 +348,7 @@ pub fn budget_json(form: &BudgetForm) -> Result<Value, String> {
 pub struct NewRound {
     pub name: String,
     pub preset: Preset,
+    pub visibility: &'static str,
     pub deadline: String,
     pub budget: Option<BudgetForm>,
     pub candidates: Option<Source>,
@@ -347,6 +371,7 @@ impl NewRound {
         Self {
             name: String::new(),
             preset,
+            visibility: preset.visibility,
             deadline: String::new(),
             budget: preset.budget_form.then(BudgetForm::default),
             candidates: None,
@@ -371,7 +396,7 @@ impl NewRound {
     }
 
     pub fn visibility(&self) -> &'static str {
-        self.preset.visibility
+        self.visibility
     }
 
     /// The body of `POST /api/rooms/{room}/rounds`, or what is missing.
@@ -727,6 +752,46 @@ mod tests {
         assert_eq!(changed.candidates, Some(source));
         assert_eq!(changed.kind(), "labelling");
         assert!(changed.budget.is_none());
+    }
+
+    #[test]
+    fn the_default_cap_unit_is_one_of_the_listed_units() {
+        assert!(DATA_UNITS.contains(&BudgetForm::default().cap_unit.as_str()));
+        assert!(
+            budget_json(&BudgetForm {
+                attribute: "m".into(),
+                cap: "1".into(),
+                ..BudgetForm::default()
+            })
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_retry_after_a_failed_members_call_does_not_make_a_second_round() {
+        assert_eq!(next_step(None), Next::Create);
+        assert_eq!(next_step(Some("r1".into())), Next::SetPeople("r1".into()));
+    }
+
+    #[test]
+    fn a_missing_catalogue_after_an_import_says_to_wait() {
+        let not_found = "Catalogue c not found";
+        assert!(creation_failure(not_found, true).contains("try again"));
+        assert_eq!(creation_failure(not_found, false), not_found);
+        assert_eq!(creation_failure("boom", true), "boom");
+    }
+
+    #[test]
+    fn the_visitor_may_flip_the_visibility_and_a_preset_resets_it() {
+        let mut round = form(2);
+        round.visibility = "open";
+        assert_eq!(round.request().unwrap_err(), "Give the round a name.");
+        round.name = "x".into();
+        assert_eq!(round.request().unwrap()["visibility"], "open");
+        let changed = round.with_preset(PRESETS[0], &members(), "me@x.org");
+        assert_eq!(changed.visibility(), "open");
+        let blind = changed.with_preset(PRESETS[2], &members(), "me@x.org");
+        assert_eq!(blind.visibility(), "blind");
     }
 
     #[test]

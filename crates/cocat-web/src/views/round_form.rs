@@ -10,7 +10,8 @@ use crate::catalogues::catalogue_list;
 use crate::links::{Listed, sources};
 use crate::public::PublicCatalogue;
 use crate::rounds::{
-    BudgetForm, DATA_UNITS, Need, NewRound, PRESETS, RateRow, Round, Source, TIMES, voter_title,
+    BudgetForm, DATA_UNITS, Need, NewRound, Next, PRESETS, RateRow, Round, Source, TIMES,
+    creation_failure, next_step, voter_title,
 };
 use crate::route::Route;
 use crate::sharing::Member;
@@ -85,6 +86,8 @@ fn elsewhere(api: &str, others: Vec<crate::projects::Project>) -> RwSignal<Vec<C
     found
 }
 
+// simplify: takes the first live catalogue of the public project, which holds one; ask the
+// index for the catalogue uuid if public projects ever hold several.
 /// The one catalogue a public project holds.
 async fn public_catalogue(api: &str, source: Source) -> Result<Source, String> {
     if !is_public_id(&source.project) || !source.catalogue.is_empty() {
@@ -102,7 +105,7 @@ async fn public_catalogue(api: &str, source: Source) -> Result<Source, String> {
         .ok_or_else(|| "That public catalogue has nothing to copy.".to_owned())
 }
 
-async fn start(
+async fn create(
     api: &str,
     room: &str,
     form: &NewRound,
@@ -113,15 +116,41 @@ async fn start(
         Some(source) => Some(public_catalogue(api, source).await?),
         None => None,
     };
+    let with_candidates = form.candidates.is_some();
     let body = form.request()?;
     let made: Round = api::create(api, &["rooms", room, "rounds"], body)
         .await
-        .map_err(|error| error.to_string())?;
-    let members = ["rooms", room, "rounds", &made.id, "members"];
+        .map_err(|error| creation_failure(&error.to_string(), with_candidates))?;
+    Ok(made.id)
+}
+
+// simplify: creating then setting the people are two calls, so a failure between them leaves
+// a round with the default people; `created` makes a retry redo only the second. Add the
+// members to the create request if that ever matters.
+async fn start(
+    api: &str,
+    room: &str,
+    form: &NewRound,
+    source: Option<Source>,
+    created: RwSignal<Option<String>>,
+) -> Result<String, String> {
+    let id = match next_step(created.get_untracked()) {
+        Next::SetPeople(id) => id,
+        Next::Create => {
+            let id = create(api, room, form, source).await?;
+            created.try_set(Some(id.clone()));
+            id
+        }
+    };
+    let members = ["rooms", room, "rounds", &id, "members"];
     api::put(api, &members, form.members_request())
         .await
-        .map_err(|error| format!("The round was made, but its people were not set: {error}"))?;
-    Ok(made.id)
+        .map_err(|error| {
+            format!(
+                "The round was made, but its people were not set: {error}. Start again to retry."
+            )
+        })?;
+    Ok(id)
 }
 
 #[component]
@@ -133,6 +162,7 @@ pub fn NewRoundForm() -> impl IntoView {
     let form = RwSignal::new(NewRound::new(PRESETS[0], &[], &me));
     let error: Error = RwSignal::new(None);
     let busy = RwSignal::new(false);
+    let created = RwSignal::new(None::<String>);
     let api = projects.api();
     let here = room.config.room_id.clone();
     let others = elsewhere(
@@ -191,7 +221,7 @@ pub fn NewRoundForm() -> impl IntoView {
             busy.set(true);
             error.set(None);
             spawn_local(async move {
-                match start(&api, &here, &current, source).await {
+                match start(&api, &here, &current, source, created).await {
                     Ok(id) => go_to(&Route::Round(id).hash()),
                     Err(why) => {
                         error.try_set(Some(why));
@@ -220,6 +250,7 @@ pub fn NewRoundForm() -> impl IntoView {
                 <input type="date" prop:value=move || form.with(|f| f.deadline.clone())
                     on:input=move |event| form.update(|f| f.deadline = event_target_value(&event))/>
             </label>
+            <Visibility form/>
             <BudgetSection form/>
             <Candidates form choices importer/>
             <People form/>
@@ -248,6 +279,27 @@ fn PresetPicker(form: RwSignal<NewRound>, choose: Callback<usize>) -> impl IntoV
         <fieldset class="round-presets">
             <legend class="field-label">"What kind of round?"</legend>
             {options.collect_view()}
+        </fieldset>
+    }
+}
+
+#[component]
+fn Visibility(form: RwSignal<NewRound>) -> impl IntoView {
+    let option = move |value: &'static str, label: &'static str| {
+        view! {
+            <label class="inline-choice">
+                <input type="radio" name="visibility"
+                    prop:checked=move || form.with(|f| f.visibility == value)
+                    on:change=move |_| form.update(|f| f.visibility = value)/>
+                {label}
+            </label>
+        }
+    };
+    view! {
+        <fieldset class="round-presets">
+            <legend class="field-label">"Who sees the verdicts?"</legend>
+            {option("open", "Everyone in the round (open)")}
+            {option("blind", "Each person only their own (blind)")}
         </fieldset>
     }
 }
@@ -299,8 +351,8 @@ fn UnitSelect(
     on_pick: impl Fn(String) + 'static,
 ) -> impl IntoView {
     view! {
-        <select prop:value=move || value.get() on:change=move |event| on_pick(event_target_value(&event))>
-            {units.iter().map(|unit| view! { <option value=*unit>{*unit}</option> }).collect_view()}
+        <select on:change=move |event| on_pick(event_target_value(&event))>
+            {units.iter().map(|unit| view! { <option value=*unit selected=move || value.get() == *unit>{*unit}</option> }).collect_view()}
         </select>
     }
 }
