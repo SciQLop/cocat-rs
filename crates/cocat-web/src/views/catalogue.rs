@@ -7,7 +7,7 @@ use crate::views::proposal::InProposal;
 
 use crate::help::{Shown, empty_text};
 use crate::period::Period;
-use crate::preview::{PreviewState, TableState, preview_due, switch_state};
+use crate::preview::{PreviewState, Stage, TableState, stage, switch_state};
 use crate::route::Route;
 use crate::rows::{
     Row, SortKey, all_rows, attribute_keys, filter, matching, preview_rows, rows, sort, trash_rows,
@@ -18,7 +18,7 @@ use crate::submissions::{Proposal, proposal_for};
 use crate::sync::Loading;
 use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
-use crate::views::rule::Heading;
+use crate::views::rule::{Heading, live_about, live_counts};
 use crate::views::rule_editor::RuleEditor;
 use crate::views::search::{Boxed, SearchBox, SearchBuilder, SearchLine, own_search};
 use crate::views::submissions::{CopyForm, ProposeForm, SubmitForm, UpdateForm};
@@ -70,13 +70,6 @@ impl OnScreen {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Stage {
-    Waiting,
-    Preview,
-    Live,
-}
-
 /// The catalogue on screen, once the project is loaded; until then its first pages from the
 /// server, else how far loading got.
 #[component]
@@ -89,26 +82,31 @@ pub fn CataloguePage(
     let loading = room.loading;
     let preview = RwSignal::new(None::<PreviewState>);
     let preview_scroll = RwSignal::new(0.0);
-    load_preview(&room, shown, preview);
+    let preview_period = RwSignal::new(None::<Period>);
+    load_preview(
+        &room,
+        shown,
+        preview,
+        (preview_scroll, selected, preview_period),
+    );
     let stage = Memo::new(move |_| {
         let first_page = preview.with(Option::is_some);
-        loading.with(|loading| match loading {
-            None => Stage::Live,
-            Some(_) if preview_due(loading.as_ref(), first_page) => Stage::Preview,
-            Some(_) => Stage::Waiting,
-        })
+        loading.with(|loading| stage(loading.as_ref(), first_page))
     });
-    move || match stage.get() {
+    move || {
+        match stage.get() {
         Stage::Waiting => view! { <LoadingNote loading/> }.into_any(),
         Stage::Preview => {
-            view! { <PreviewView state=preview selected scroll_top=preview_scroll/> }.into_any()
+            view! { <PreviewView state=preview selected scroll_top=preview_scroll period=preview_period/> }.into_any()
         }
         Stage::Live => {
             let kept = selected.with_untracked(|selected| {
-                switch_state(preview_scroll.get_untracked(), selected.as_ref())
+                let (scroll, period) = (preview_scroll.get_untracked(), preview_period.get_untracked());
+                switch_state(scroll, selected.as_ref(), period)
             });
             view! { <CatalogueView shown selected screen kept/> }.into_any()
         }
+    }
     }
 }
 
@@ -179,7 +177,7 @@ fn CatalogueView(
         Listing::Members => own.with(|own| matches!(own, Some(Some(_)))),
         Listing::Preview => query.with(|text| !text.trim().is_empty()),
     });
-    let period = RwSignal::new(None::<Period>);
+    let period = RwSignal::new(kept.period);
     let sorting = RwSignal::new((SortKey::Start, false));
     let reader = room.clone();
     let matching = Memo::new(move |_| {
@@ -270,6 +268,8 @@ fn CatalogueView(
     });
     let can_write = room.can_write();
     let reader = room.clone();
+    let about = live_about(&room, shown);
+    let counts = live_counts(&room, shown, about, members, order, with_search);
     let empty = Signal::derive(move || {
         let filtered = members.with(|members| members.is_ok_and(|rows| !rows.is_empty()));
         empty_text(showing(&reader, &shown.get()), filtered, can_write)
@@ -278,7 +278,7 @@ fn CatalogueView(
         Memo::new(move |_| members.with(|members| members.map(attribute_keys).unwrap_or_default()));
     view! {
         <div class="page-head">
-            <Heading shown members order with_search/>
+            <Heading about counts members/>
             <div class="tools">
                 <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
                     <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>

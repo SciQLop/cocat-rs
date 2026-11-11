@@ -659,3 +659,41 @@ async fn the_state_is_refused_to_a_stranger() {
 
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn a_page_names_the_origins_of_its_events() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    fixture.room(owner).await;
+    let doc = library();
+    {
+        let mut txn = doc.transact_mut();
+        let finder = model::Origin {
+            id: "o1".to_owned(),
+            kind: model::OriginKind::Import,
+            name: "sw-finder".to_owned(),
+            version: None,
+            author: None,
+            created: None,
+            used: Vec::new(),
+            parameters: None,
+            derived_from: None,
+        };
+        model::create_origin(&mut txn, &finder).unwrap();
+        let mut found = event(E1, "2025-01-31 10:00:00", None, &[], json!({}));
+        found.author = None;
+        found.origin = Some("o1".to_owned());
+        model::create_event(&mut txn, &found).unwrap();
+    }
+    fixture.seed(ROOM, &doc);
+
+    let (status, body) = fixture
+        .get(
+            &format!("/api/rooms/room-read/catalogues/{ALPHA}/events"),
+            Some(&fixture.token(owner).await),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["origins"], json!({"o1": "sw-finder"}));
+}

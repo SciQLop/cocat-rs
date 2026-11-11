@@ -213,7 +213,9 @@ async fn me(api: &str) -> Result<String, ApiError> {
 }
 
 /// The project's catalogues, as the server reads them.
-pub async fn catalogues(config: &RoomConfig) -> Result<Vec<crate::preview::About>, ApiError> {
+pub async fn catalogues(
+    config: &RoomConfig,
+) -> Result<Vec<cocat_core::model::CatalogueSummary>, ApiError> {
     let listed: Catalogues =
         read(&config.api_url, &["rooms", &config.room_id, "catalogues"]).await?;
     Ok(listed.catalogues)

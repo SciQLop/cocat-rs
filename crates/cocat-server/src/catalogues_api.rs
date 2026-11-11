@@ -3,6 +3,8 @@
 //! They answer from a room's document without opening it as a live room, so a script
 //! paging through a 100k-event catalogue never costs a client's worth of memory.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderValue, header};
@@ -42,6 +44,8 @@ struct CatalogueList {
 struct EventsPage {
     events: Vec<EventRecord>,
     next: Option<String>,
+    /// The names of the origins this page's events name, by origin id.
+    origins: BTreeMap<String, String>,
 }
 
 /// The query strings stay strings: a value that does not parse must be the 422 the plan
@@ -146,16 +150,21 @@ async fn events(
     membership(&state, &room_id, user.id).await?;
     let range = Range::parse(&query)?;
     let id = catalogue.clone();
-    let found = state
+    let page = state
         .rooms
         .read(&room_id, move |doc| {
             let txn = doc.transact();
-            model::catalogue_events(&txn, &id)
+            let events = model::catalogue_events(&txn, &id)?;
+            Some(events.map(|events| {
+                let mut page = range.page(events);
+                page.origins = origin_names(&txn, &page.events);
+                page
+            }))
         })
         .await?
         .ok_or_else(|| unknown(&catalogue))?
         .map_err(|error| ApiError::Unprocessable(error.to_string()))?;
-    Ok(Json(range.page(found)))
+    Ok(Json(page))
 }
 
 async fn votable(state: &AppState, room_id: &str, uuid: &str) -> Result<Response, ApiError> {
@@ -251,8 +260,20 @@ impl Range {
         EventsPage {
             events: selected,
             next,
+            origins: BTreeMap::new(),
         }
     }
+}
+
+/// A browser previewing the page shows an origin's name where an event has no author.
+fn origin_names<T: yrs::ReadTxn>(txn: &T, events: &[EventRecord]) -> BTreeMap<String, String> {
+    let ids: BTreeSet<&str> = events
+        .iter()
+        .filter_map(|event| event.origin.as_deref())
+        .collect();
+    ids.into_iter()
+        .filter_map(|id| Some((id.to_owned(), model::origin(txn, id)?.name)))
+        .collect()
 }
 
 fn instant(text: &str) -> Result<Timestamp, ApiError> {

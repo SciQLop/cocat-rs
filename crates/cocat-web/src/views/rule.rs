@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use cocat_core::model::CatalogueSummary;
 use cocat_core::{model, query};
 use leptos::prelude::*;
 
@@ -14,7 +15,7 @@ use crate::state::Room;
 use crate::views::catalogue::Members;
 
 #[derive(Clone, PartialEq)]
-struct About {
+pub struct About {
     title: String,
     smart: bool,
     /// A smart catalogue's rule in words, when it reads.
@@ -25,22 +26,39 @@ struct About {
     decided_in: Option<(String, String)>,
 }
 
+impl About {
+    /// A heading that is only a title.
+    pub fn titled(title: &str) -> Self {
+        Self {
+            title: title.to_owned(),
+            smart: false,
+            rule: None,
+            copied: None,
+            decided_in: None,
+        }
+    }
+}
+
 fn page() -> String {
     window().location().pathname().unwrap_or_default()
 }
 
-#[component]
-pub fn Heading(
+/// What the heading says of the catalogue `shown`, from the project.
+pub fn live_about(room: &Room, shown: Memo<Route>) -> Memo<About> {
+    let reader = room.clone();
+    Memo::new(move |_| reader.read(|txn| about(txn, &shown.get())))
+}
+
+/// The line under the title: what is on screen, and how many events.
+pub fn live_counts(
+    room: &Room,
     shown: Memo<Route>,
+    about: Memo<About>,
     members: Members,
     order: Memo<Vec<usize>>,
     with_search: Signal<bool>,
-) -> impl IntoView {
-    let room = expect_context::<Room>();
-    let reader = room.clone();
-    let about = Memo::new(move |_| reader.read(|txn| about(txn, &shown.get())));
-    let relay = cocat_core::room_id::is_public_id(&room.config.room_id)
-        .then(|| crate::views::public::relay_of(room.config.room_id.clone()));
+) -> Signal<Option<String>> {
+    let room = room.clone();
     let picked = move |rows: &[Row]| match shown.get() {
         Route::Catalogue(uuid) => {
             let listed: HashSet<String> = room
@@ -53,7 +71,7 @@ pub fn Heading(
         }
         _ => 0,
     };
-    let counts = move || {
+    Signal::derive(move || {
         let (total, picked) = members.with(|members| {
             let rows = members.ok()?;
             Some((rows.len(), with_search.get().then(|| picked(rows))))
@@ -73,7 +91,20 @@ pub fn Heading(
             _ => ("Catalogue", "event"),
         };
         Some(counts_text(kind, unit, total, picked, visible))
-    };
+    })
+}
+
+/// The heading of the live page and of the preview: `about` and `counts` come from the
+/// project or from the server's answers.
+#[component]
+pub fn Heading(
+    about: Memo<About>,
+    counts: Signal<Option<String>>,
+    members: Members,
+) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let relay = cocat_core::room_id::is_public_id(&room.config.room_id)
+        .then(|| crate::views::public::relay_of(room.config.room_id.clone()));
     view! {
         <div class="heading">
             <h1>{move || about.with(|about| about.title.clone())}</h1>
@@ -97,27 +128,31 @@ pub fn Heading(
     }
 }
 
+/// What the heading says of one catalogue; `names` are the project's catalogues, and `name`
+/// finds any catalogue's name, trashed or not.
+pub fn catalogue_about(
+    catalogue: CatalogueSummary,
+    names: &[(String, String)],
+    name: &dyn Fn(&str) -> Option<String>,
+) -> About {
+    About {
+        title: catalogue.name,
+        smart: catalogue.rule.is_some(),
+        rule: catalogue
+            .rule
+            .filter(|rule| query::rule_search(rule, names).is_none())
+            .and_then(|rule| describe(&rule, name).ok()),
+        copied: copied_text(&catalogue.copied_from),
+        decided_in: decided_in(&catalogue.attributes),
+    }
+}
+
 fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
     let name = |uuid: &str| model::catalogue(txn, uuid).map(|catalogue| catalogue.name);
-    let titled = |title: &str| About {
-        title: title.to_owned(),
-        smart: false,
-        rule: None,
-        copied: None,
-        decided_in: None,
-    };
+    let titled = About::titled;
     match shown {
         Route::Catalogue(uuid) => match model::catalogue(txn, uuid) {
-            Some(catalogue) => About {
-                title: catalogue.name,
-                smart: catalogue.rule.is_some(),
-                rule: catalogue
-                    .rule
-                    .filter(|rule| query::rule_search(rule, &model::catalogue_names(txn)).is_none())
-                    .and_then(|rule| describe(&rule, &name).ok()),
-                copied: copied_text(&catalogue.copied_from),
-                decided_in: decided_in(&catalogue.attributes),
-            },
+            Some(catalogue) => catalogue_about(catalogue, &model::catalogue_names(txn), &name),
             None => titled("No such catalogue"),
         },
         Route::Trash => titled("Trash"),

@@ -189,7 +189,7 @@ pub enum EventField {
     Products(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CatalogueSummary {
     pub uuid: String,
     pub name: String,

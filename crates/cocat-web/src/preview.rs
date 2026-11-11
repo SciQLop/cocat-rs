@@ -2,9 +2,12 @@
 //! downloads, so a big catalogue shows its first rows at once. The preview is read-only; once
 //! the project has arrived the live table takes its place, at the same spot.
 
-use cocat_core::model::EventRecord;
+use std::collections::HashMap;
+
+use cocat_core::model::{CatalogueSummary, EventRecord};
 use serde::Deserialize;
 
+use crate::period::Period;
 use crate::rows::{Row, record_row};
 use crate::sync::Loading;
 
@@ -20,30 +23,27 @@ pub const SORT_HINT: &str = "sorting once loaded";
 pub struct EventsPage {
     pub events: Vec<EventRecord>,
     pub next: Option<String>,
-}
-
-/// What the preview needs of a catalogue's summary.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct About {
-    pub uuid: String,
-    pub name: String,
+    /// The names of the origins the events name, by id.
     #[serde(default)]
-    pub columns: Vec<String>,
-    pub event_count: usize,
+    pub origins: HashMap<String, String>,
 }
 
 /// The catalogues route's answer.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Catalogues {
-    pub catalogues: Vec<About>,
+    pub catalogues: Vec<CatalogueSummary>,
 }
 
 /// The preview's rows so far, and the cursor of the page still to come.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreviewState {
-    pub about: About,
+    pub catalogue: CatalogueSummary,
+    /// Every catalogue's (uuid, name), as the heading and the search line need them.
+    pub names: Vec<(String, String)>,
     pub rows: Vec<Row>,
     pub next: Option<String>,
+    /// A page did not come: the rest waits for the project.
+    pub stalled: bool,
 }
 
 /// Where the visitor is in the table, carried from the preview to the live table.
@@ -52,14 +52,32 @@ pub struct TableState {
     pub scroll_top: f64,
     /// The selected event's uuid: the live table reads it again from the project.
     pub selected: Option<String>,
+    pub period: Option<Period>,
+}
+
+/// What the catalogue page shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    Waiting,
+    Preview,
+    Live,
 }
 
 impl PreviewState {
-    pub fn first(about: About, page: EventsPage) -> Self {
+    pub fn first(
+        listed: &[CatalogueSummary],
+        catalogue: CatalogueSummary,
+        page: EventsPage,
+    ) -> Self {
         Self {
-            about,
-            rows: page.events.into_iter().map(record_row).collect(),
+            catalogue,
+            names: listed
+                .iter()
+                .map(|listed| (listed.uuid.clone(), listed.name.clone()))
+                .collect(),
+            rows: page_rows(page.events, &page.origins),
             next: page.next,
+            stalled: false,
         }
     }
 
@@ -68,14 +86,41 @@ impl PreviewState {
         if self.next.as_deref() != Some(cursor) {
             return;
         }
-        self.rows.extend(page.events.into_iter().map(record_row));
+        self.rows.extend(page_rows(page.events, &page.origins));
         self.next = page.next;
     }
 
-    pub fn header(&self) -> String {
-        let (shown, total) = (self.rows.len(), self.about.event_count);
-        format!("Showing {shown} of {total} events; the rest is loading…")
+    pub fn stall(&mut self) {
+        self.stalled = true;
     }
+
+    pub fn header(&self) -> String {
+        let (shown, total) = (self.rows.len(), self.catalogue.event_count);
+        let rest = match self.stalled {
+            false => "; the rest is loading…",
+            true => ". Could not load more; the rest arrives with the project.",
+        };
+        format!("Showing {shown} of {total} events{rest}")
+    }
+}
+
+/// An event without an author shows what made it, as the live table does.
+fn page_rows(events: Vec<EventRecord>, origins: &HashMap<String, String>) -> Vec<Row> {
+    events
+        .into_iter()
+        .map(|record| {
+            let made_by = record
+                .origin
+                .as_ref()
+                .and_then(|id| origins.get(id))
+                .cloned();
+            let row = record_row(record);
+            Row {
+                author: row.author.or(made_by),
+                ..row
+            }
+        })
+        .collect()
 }
 
 /// The preview shows while the project is still loading, once its first page is in: a
@@ -84,10 +129,25 @@ pub fn preview_due(loading: Option<&Loading>, first_page_arrived: bool) -> bool 
     loading.is_some() && first_page_arrived
 }
 
-pub fn switch_state(scroll_top: f64, selected: Option<&Row>) -> TableState {
+pub fn stage(loading: Option<&Loading>, first_page_arrived: bool) -> Stage {
+    match loading {
+        None => Stage::Live,
+        Some(_) if preview_due(loading, first_page_arrived) => Stage::Preview,
+        Some(_) => Stage::Waiting,
+    }
+}
+
+/// A route change keeps the preview only when it names the catalogue already shown: the
+/// default route resolving to it, say. Any other drops the rows, the scroll and the selection.
+pub fn keeps_preview(asked: Option<&str>, previewed: Option<&str>) -> bool {
+    asked.is_some() && asked == previewed
+}
+
+pub fn switch_state(scroll_top: f64, selected: Option<&Row>, period: Option<Period>) -> TableState {
     TableState {
         scroll_top,
         selected: selected.and_then(|row| row.uuid.clone()),
+        period,
     }
 }
 
@@ -97,7 +157,10 @@ pub fn sort_hint(sortable: bool) -> Option<&'static str> {
 }
 
 /// The catalogue the page will show: the one asked for, else the project's first one.
-pub fn wanted<'a>(asked: Option<&str>, listed: &'a [About]) -> Option<&'a About> {
+pub fn wanted<'a>(
+    asked: Option<&str>,
+    listed: &'a [CatalogueSummary],
+) -> Option<&'a CatalogueSummary> {
     match asked {
         Some(uuid) => listed.iter().find(|about| about.uuid == uuid),
         None => listed.first(),
@@ -117,13 +180,12 @@ mod tests {
         .unwrap()
     }
 
-    fn about(uuid: &str, count: usize) -> About {
-        About {
-            uuid: uuid.into(),
-            name: format!("catalogue {uuid}"),
-            columns: Vec::new(),
-            event_count: count,
-        }
+    fn about(uuid: &str, count: usize) -> CatalogueSummary {
+        serde_json::from_value(json!({
+            "uuid": uuid, "name": format!("catalogue {uuid}"), "deleted": false, "tags": [],
+            "columns": [], "attributes": {}, "copied_from": [], "event_count": count
+        }))
+        .unwrap()
     }
 
     fn page(events: &[(&str, &str)], next: Option<&str>) -> EventsPage {
@@ -133,7 +195,13 @@ mod tests {
                 .map(|(uuid, start)| record(uuid, start))
                 .collect(),
             next: next.map(str::to_owned),
+            origins: HashMap::new(),
         }
+    }
+
+    fn preview(count: usize, first: EventsPage) -> PreviewState {
+        let catalogue = about("c", count);
+        PreviewState::first(&[catalogue.clone(), about("d", 0)], catalogue, first)
     }
 
     fn uuids(state: &PreviewState) -> Vec<&str> {
@@ -144,26 +212,51 @@ mod tests {
             .collect()
     }
 
+    const DOWNLOADING: Loading = Loading::Downloading {
+        received: 0,
+        total: None,
+    };
+
     #[test]
     fn no_preview_when_the_project_arrives_first() {
         assert!(!preview_due(None, true), "the project is in: live table");
         assert!(!preview_due(None, false));
-        let downloading = Loading::Downloading {
-            received: 0,
-            total: None,
-        };
-        assert!(!preview_due(Some(&downloading), false), "loading note");
-        assert!(preview_due(Some(&downloading), true));
+        assert!(!preview_due(Some(&DOWNLOADING), false), "loading note");
+        assert!(preview_due(Some(&DOWNLOADING), true));
         assert!(preview_due(Some(&Loading::Opening), true));
     }
 
     #[test]
+    fn the_page_goes_from_note_to_preview_to_live() {
+        assert_eq!(stage(Some(&DOWNLOADING), false), Stage::Waiting);
+        assert_eq!(stage(Some(&DOWNLOADING), true), Stage::Preview);
+        assert_eq!(stage(Some(&Loading::Opening), true), Stage::Preview);
+        assert_eq!(stage(None, true), Stage::Live, "preview to live");
+        assert_eq!(stage(None, false), Stage::Live, "straight to live");
+    }
+
+    #[test]
+    fn a_route_change_restarts_the_preview_unless_it_names_the_same_catalogue() {
+        assert!(
+            keeps_preview(Some("c"), Some("c")),
+            "the default route resolved"
+        );
+        assert!(!keeps_preview(Some("d"), Some("c")));
+        assert!(!keeps_preview(None, Some("c")));
+        assert!(!keeps_preview(Some("c"), None), "nothing shown yet: start");
+    }
+
+    #[test]
     fn the_header_says_how_much_is_shown() {
-        let first = page(&[("a", "2020-01-01T00:00:00Z")], Some("c1"));
-        let state = PreviewState::first(about("c", 107_000), first);
+        let mut state = preview(107_000, page(&[("a", "2020-01-01T00:00:00Z")], Some("c1")));
         assert_eq!(
             state.header(),
             "Showing 1 of 107000 events; the rest is loading…"
+        );
+        state.stall();
+        assert_eq!(
+            state.header(),
+            "Showing 1 of 107000 events. Could not load more; the rest arrives with the project."
         );
     }
 
@@ -173,7 +266,7 @@ mod tests {
             &[("a", "2020-01-01T00:00:00Z"), ("b", "2020-01-02T00:00:00Z")],
             Some("c1"),
         );
-        let mut state = PreviewState::first(about("c", 4), first);
+        let mut state = preview(4, first);
         let second = page(
             &[("c", "2020-01-03T00:00:00Z"), ("d", "2020-01-04T00:00:00Z")],
             None,
@@ -188,21 +281,33 @@ mod tests {
             "a repeated page is ignored"
         );
         assert_eq!(state.rows[0].author.as_deref(), Some("alexis"));
+        assert_eq!(state.names[1], ("d".to_owned(), "catalogue d".to_owned()));
     }
 
     #[test]
-    fn the_selection_survives_the_switch() {
-        let first = page(&[("a", "2020-01-01T00:00:00Z")], None);
-        let state = PreviewState::first(about("c", 1), first);
-        let kept = switch_state(4000.0, state.rows.first());
+    fn an_event_without_an_author_shows_its_origins_name() {
+        let mut first = page(&[("a", "2020-01-01T00:00:00Z")], None);
+        first.events[0].author = None;
+        first.events[0].origin = Some("o1".into());
+        first.origins.insert("o1".into(), "sw-finder".into());
+        let state = preview(1, first);
+        assert_eq!(state.rows[0].author.as_deref(), Some("sw-finder"));
+    }
+
+    #[test]
+    fn the_selection_and_the_period_survive_the_switch() {
+        let state = preview(1, page(&[("a", "2020-01-01T00:00:00Z")], None));
+        let period = Some(Period::between(1, 2));
+        let kept = switch_state(4000.0, state.rows.first(), period);
         assert_eq!(
             kept,
             TableState {
                 scroll_top: 4000.0,
-                selected: Some("a".into())
+                selected: Some("a".into()),
+                period,
             }
         );
-        assert_eq!(switch_state(0.0, None).selected, None);
+        assert_eq!(switch_state(0.0, None, None).selected, None);
     }
 
     #[test]

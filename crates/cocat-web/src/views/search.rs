@@ -4,6 +4,7 @@
 use cocat_core::model;
 use cocat_core::query::{self, FIELDS, Kind};
 use leptos::prelude::*;
+use serde_json::Value;
 
 use crate::edit;
 use crate::route::Route;
@@ -20,10 +21,18 @@ pub fn own_search(room: &Room, shown: &Route) -> Option<Option<String>> {
     let Route::Catalogue(uuid) = shown else {
         return None;
     };
-    room.read(|txn| match model::catalogue(txn, uuid)?.rule {
-        None => Some(None),
-        Some(rule) => query::rule_search(&rule, &model::catalogue_names(txn)).map(Some),
+    room.read(|txn| {
+        let rule = model::catalogue(txn, uuid)?.rule;
+        own_of(rule.as_ref(), &model::catalogue_names(txn))
     })
+}
+
+/// A catalogue's own search: `Some(None)` when it has none, `None` when its rule is no search.
+pub fn own_of(rule: Option<&Value>, names: &[(String, String)]) -> Option<Option<String>> {
+    match rule {
+        None => Some(None),
+        Some(rule) => query::rule_search(rule, names).map(Some),
+    }
 }
 
 /// The box of a page: its text, the side it is on, and the text the other side keeps.
@@ -78,14 +87,19 @@ pub fn SearchLine(
     boxed: Boxed,
     parsed: Memo<Query>,
     own: Memo<Option<Option<String>>>,
+    /// In the preview: the catalogue's name, and every control disabled.
+    #[prop(optional)]
+    frozen: Option<Signal<String>>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let can_write = room.can_write();
+    let disabled = frozen.is_some();
     let saving = RwSignal::new(false);
     let error: Error = RwSignal::new(None);
     let query = boxed.query;
     let reader = room.clone();
     let name = Memo::new(move |_| match shown.get() {
+        _ if frozen.is_some() => frozen.map(|name| name.get()).unwrap_or_default(),
         Route::Catalogue(uuid) => reader
             .read(|txn| model::catalogue(txn, &uuid))
             .map(|catalogue| catalogue.name)
@@ -138,24 +152,24 @@ pub fn SearchLine(
         })}
         <div class="search-line">
             <Show when=move || own.with(Option::is_some)>
-                <SideSwitch boxed/>
+                <SideSwitch boxed disabled/>
             </Show>
             <Show when=move || boxed.searching()>
                 <span class="quiet">{hint}</span>
             </Show>
             <Show when=move || edited()>
                 <Show when=savable>
-                    <button type="button" class="button primary" on:click=move |_| save_into.with_value(|save| save(()))>
+                    <button type="button" class="button primary" disabled=disabled on:click=move |_| save_into.with_value(|save| save(()))>
                         {move || match saved() {
                             Some(_) => "Save changes".to_owned(),
                             None => format!("Save to “{}”", name.get()),
                         }}
                     </button>
                 </Show>
-                <button type="button" class="button" on:click=revert>"Revert"</button>
+                <button type="button" class="button" disabled=disabled on:click=revert>"Revert"</button>
             </Show>
             <Show when=move || offer_new() && !saving.get()>
-                <button type="button" class="button" on:click=move |_| saving.set(true)>"Save as new smart catalogue…"</button>
+                <button type="button" class="button" disabled=disabled on:click=move |_| saving.set(true)>"Save as new smart catalogue…"</button>
             </Show>
         </div>
         <Show when=move || saving.get()>
@@ -229,14 +243,14 @@ fn SaveSearch(
 
 /// Filter what the catalogue holds, or edit the search that brings events into it.
 #[component]
-fn SideSwitch(boxed: Boxed) -> impl IntoView {
+fn SideSwitch(boxed: Boxed, disabled: bool) -> impl IntoView {
     let on = move |side: Side| move || (boxed.side.get() == side).to_string();
     view! {
         <div class="scope" role="group" aria-label="Search in">
             <span class="quiet">"Search in"</span>
-            <button type="button" class="scope-option" aria-pressed=on(Side::Filter)
+            <button type="button" class="scope-option" aria-pressed=on(Side::Filter) disabled=disabled
                 on:click=move |_| boxed.turn(Side::Filter)>"This catalogue"</button>
-            <button type="button" class="scope-option" aria-pressed=on(Side::Search)
+            <button type="button" class="scope-option" aria-pressed=on(Side::Search) disabled=disabled
                 on:click=move |_| boxed.turn(Side::Search)>"All events"</button>
         </div>
     }
@@ -465,6 +479,9 @@ pub fn SearchBox(
     /// The box edits a catalogue's own search, not a passing filter.
     #[prop(into)]
     own: Signal<bool>,
+    /// In the preview: the box shows its text but takes none.
+    #[prop(optional)]
+    frozen: bool,
     children: Children,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
@@ -555,6 +572,7 @@ pub fn SearchBox(
                 aria-controls="search-completions"
                 aria-expanded=move || completion.with(|found| (open.get() && found.is_some()).to_string())
                 placeholder=move || placeholder.get()
+                disabled=frozen
                 aria-label="Search events"
                 autocomplete="off"
                 spellcheck="false"
@@ -578,7 +596,7 @@ pub fn SearchBox(
                 on:keydown=keys
             />
             </span>
-            <button type="button" class="build-search" aria-label="Build a search"
+            <button type="button" class="build-search" aria-label="Build a search" disabled=frozen
                 title="Build a search" aria-pressed=move || building.get().to_string()
                 on:click=move |_| building.update(|open| *open = !*open)>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
