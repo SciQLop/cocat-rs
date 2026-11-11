@@ -33,7 +33,8 @@ pub type Place = (
     RwSignal<Option<Period>>,
 );
 
-/// Reads the pages of the catalogue `shown` into `state` while the project downloads. A route
+/// Reads the first page of the catalogue `shown` into `state` while the project downloads; the
+/// view asks for the next ones as the visitor scrolls. A route
 /// to another catalogue starts over from the top with nothing selected; the project's arrival
 /// stops the reading and drops the pages.
 pub fn load_preview(
@@ -74,7 +75,7 @@ pub fn load_preview(
                 && !state.is_disposed()
                 && loading.try_with_untracked(Option::is_some) == Some(true)
         };
-        spawn_local(read_pages(config.clone(), asked, state, wanted_still));
+        spawn_local(read_first_page(config.clone(), asked, state, wanted_still));
     });
     Effect::new(move |_| {
         if loading.with(Option::is_none) {
@@ -83,9 +84,7 @@ pub fn load_preview(
     });
 }
 
-// simplify: each page makes the server read the whole catalogue again (about a dozen times
-// for STIX); a per-room sorted cache on the server is the upgrade if that ever shows.
-async fn read_pages(
+async fn read_first_page(
     config: Arc<RoomConfig>,
     asked: Option<String>,
     state: RwSignal<Option<PreviewState>>,
@@ -114,23 +113,46 @@ async fn read_pages(
     if !wanted_still() {
         return;
     }
-    let uuid = catalogue.uuid.clone();
-    let mut next = first.next.clone();
     state.try_set(Some(PreviewState::first(&listed, catalogue, first)));
-    while let Some(cursor) = next.take() {
-        let answer = api::catalogue_events(&config, &uuid, NEXT_PAGE, Some(&cursor)).await;
-        if !wanted_still() {
-            return;
-        }
-        state.try_update(|state| match (state, answer) {
-            (Some(state), Ok(page)) => {
-                next = page.next.clone();
-                state.append(&cursor, page);
-            }
-            (Some(state), Err(_)) => state.stall(),
-            (None, _) => {}
+}
+
+/// Asks for the next page as the table's view nears the end of the rows shown, one page at a
+/// time. Asking eagerly queued every page ahead of the project's download on the server.
+// simplify: each page makes the server read the whole catalogue again; a per-room sorted
+// cache on the server is the upgrade if that ever shows.
+fn read_on_demand(
+    config: Arc<RoomConfig>,
+    state: RwSignal<Option<PreviewState>>,
+    order: Memo<Vec<usize>>,
+    view_end: RwSignal<usize>,
+) {
+    let loading = expect_context::<Room>().loading;
+    let fetching = RwSignal::new(false);
+    Effect::new(move |_| {
+        let (end, shown) = (view_end.get(), order.with(Vec::len));
+        let asked = state.with(|state| {
+            let state = state.as_ref()?;
+            let cursor = state.next_due(end, shown)?;
+            Some((state.catalogue.uuid.clone(), cursor.to_owned()))
         });
-    }
+        let Some((uuid, cursor)) = asked.filter(|_| !fetching.get()) else {
+            return;
+        };
+        fetching.set(true);
+        let config = config.clone();
+        spawn_local(async move {
+            let answer = api::catalogue_events(&config, &uuid, NEXT_PAGE, Some(&cursor)).await;
+            fetching.try_set(false);
+            if loading.try_with_untracked(Option::is_some) != Some(true) {
+                return;
+            }
+            state.try_update(|state| match (state, answer) {
+                (Some(state), Ok(page)) => state.append(&cursor, page),
+                (Some(state), Err(_)) => state.stall(),
+                (None, _) => {}
+            });
+        });
+    });
 }
 
 #[component]
@@ -140,7 +162,8 @@ pub fn PreviewView(
     scroll_top: RwSignal<f64>,
     period: RwSignal<Option<Period>>,
 ) -> impl IntoView {
-    let loading = expect_context::<Room>().loading;
+    let room = expect_context::<Room>();
+    let loading = room.loading;
     let members = Members::Preview(state);
     let all = Memo::new(move |_| {
         members.with(|rows| (0..rows.map_or(0, <[Row]>::len)).collect::<Vec<_>>())
@@ -155,6 +178,8 @@ pub fn PreviewView(
             order
         })
     });
+    let view_end = RwSignal::new(0);
+    read_on_demand(room.config.clone(), state, order, view_end);
     let sorting = RwSignal::new((SortKey::Start, false));
     let about = Memo::new(move |_| {
         state.with(|state| {
@@ -238,7 +263,7 @@ pub fn PreviewView(
         <SearchLine shown boxed parsed own frozen=name/>
         <Timeline members matching=all period selected/>
         <PeriodLine period order members/>
-        <Table members order sorting columns selected empty=Signal::stored("") scroll_top sortable=false/>
+        <Table members order sorting columns selected empty=Signal::stored("") scroll_top sortable=false view_end/>
     }
 }
 

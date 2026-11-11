@@ -15,6 +15,9 @@ use crate::sync::Loading;
 pub const FIRST_PAGE: usize = 1000;
 /// Events asked for in each page after the first: the server's largest page.
 pub const NEXT_PAGE: usize = 10_000;
+/// Rows left below the view when the next page is asked for: a page takes about a second,
+/// and half the first page is more than a visitor scrolls in that time.
+const AHEAD: usize = FIRST_PAGE / 2;
 /// What a column header says while the preview cannot sort.
 pub const SORT_HINT: &str = "sorting once loaded";
 
@@ -88,6 +91,13 @@ impl PreviewState {
         }
         self.rows.extend(page_rows(page.events, &page.origins));
         self.next = page.next;
+    }
+
+    /// The cursor of the page to ask for now: only as the view nears the end of the `shown`
+    /// rows, so the pages do not hold up the project's download on the server.
+    pub fn next_due(&self, view_end: usize, shown: usize) -> Option<&str> {
+        let near = view_end + AHEAD >= shown;
+        self.next.as_deref().filter(|_| near && !self.stalled)
     }
 
     pub fn stall(&mut self) {
@@ -282,6 +292,28 @@ mod tests {
         );
         assert_eq!(state.rows[0].author.as_deref(), Some("alexis"));
         assert_eq!(state.names[1], ("d".to_owned(), "catalogue d".to_owned()));
+    }
+
+    #[test]
+    fn the_next_page_is_asked_only_near_the_end() {
+        let mut state = preview(20_000, page(&[("a", "2020-01-01T00:00:00Z")], Some("c1")));
+        assert_eq!(state.next_due(0, 5000), None, "far from the end");
+        assert_eq!(state.next_due(4600, 5000), Some("c1"));
+        assert_eq!(
+            state.next_due(20, 1000),
+            None,
+            "the first screen asks nothing more"
+        );
+        assert_eq!(state.next_due(600, 1000), Some("c1"));
+        state.stall();
+        assert_eq!(
+            state.next_due(4600, 5000),
+            None,
+            "a failed page stops the reading"
+        );
+        state.stalled = false;
+        state.next = None;
+        assert_eq!(state.next_due(4600, 5000), None, "every page is in");
     }
 
     #[test]

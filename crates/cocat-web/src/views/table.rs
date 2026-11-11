@@ -45,6 +45,9 @@ pub fn Table(
     /// The preview cannot sort yet.
     #[prop(default = true)]
     sortable: bool,
+    /// Told where the view ends, as a position in `order`.
+    #[prop(optional)]
+    view_end: Option<RwSignal<usize>>,
 ) -> impl IntoView {
     let peers = expect_context::<Room>().peers;
     let editors = Memo::new(move |_| peers.with(|peers| editing(peers)));
@@ -65,6 +68,9 @@ pub fn Table(
     });
     let range =
         Memo::new(move |_| window(scroll_top.get(), viewport.get(), ROW, order.with(Vec::len)));
+    if let Some(view_end) = view_end {
+        Effect::new(move |_| view_end.set(range.get().end));
+    }
     let body = move || {
         let range = range.get();
         let total = order.with(Vec::len);
