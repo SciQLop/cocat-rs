@@ -285,6 +285,12 @@ pub fn wants_next(view_end: usize, loaded: usize, next: Option<&str>, everything
     next.is_some() && (everything || view_end + NEAR_THE_END >= loaded)
 }
 
+/// Events asked for in a page: few while the view scrolls through them, many when they all
+/// load, since each request has a fixed cost.
+pub fn page_size(everything: bool) -> usize {
+    if everything { 10_000 } else { 200 }
+}
+
 impl Changes {
     pub fn first(page: ChangesPage) -> Self {
         Self {
@@ -1073,6 +1079,12 @@ mod tests {
         assert!(!wants_next(20, 200, Some("c"), false));
         assert!(!wants_next(200, 200, None, false));
         assert!(wants_next(0, 200, Some("c"), true));
+    }
+
+    #[test]
+    fn loading_everything_asks_for_bigger_pages() {
+        assert_eq!(page_size(false), 200);
+        assert!(page_size(true) >= 10_000);
     }
 
     #[test]

@@ -40,9 +40,6 @@ pub async fn history(
     Ok(history.versions)
 }
 
-/// Events asked for at once when the changes load a page at a time.
-const CHANGES_PAGE: &str = "200";
-
 /// One page of what the version changed, for a catalogue or the room: the first without a
 /// cursor, else the one the previous page named.
 pub async fn changes_page(
@@ -50,9 +47,11 @@ pub async fn changes_page(
     version: u64,
     catalogue: Option<&str>,
     cursor: Option<&str>,
+    limit: usize,
 ) -> Result<ChangesPage, ApiError> {
+    let limit = limit.to_string();
     let query: Vec<(&str, &str)> = [
-        Some(("limit", CHANGES_PAGE)),
+        Some(("limit", limit.as_str())),
         catalogue.map(|uuid| ("catalogue", uuid)),
         cursor.map(|cursor| ("cursor", cursor)),
     ]

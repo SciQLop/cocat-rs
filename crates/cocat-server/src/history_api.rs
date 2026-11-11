@@ -1,6 +1,7 @@
 //! A room's version history under `/api`: the versions, what each changed, the room as it
 //! was, and the names people give versions.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::{Range, RangeInclusive};
 
@@ -58,10 +59,11 @@ struct ChangesQuery {
 /// What the version changed: the counts, every catalogue change, and the event changes, all
 /// of them or one page.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-struct Changes {
-    counts: Counts,
-    catalogues: Vec<CatalogueChange>,
-    events: Vec<EventChange>,
+struct Changes<'a> {
+    counts: &'a Counts,
+    catalogues: &'a [CatalogueChange],
+    #[schema(value_type = Vec<EventChange>)]
+    events: Cow<'a, [EventChange]>,
     /// With a `limit`, the cursor of the next page; none on the last.
     next: Option<String>,
 }
@@ -255,7 +257,7 @@ async fn changes(
     CurrentUser(user): CurrentUser,
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
     Query(query): Query<ChangesQuery>,
-) -> Result<Json<Changes>, ApiError> {
+) -> Result<Response, ApiError> {
     membership(&state, &room_id, user.id).await?;
     if query.document.is_some() {
         return Err(ApiError::Conflict(
@@ -282,17 +284,20 @@ async fn changes(
         })
         .await?
         .ok_or_else(no_such_version)?;
-    Ok(Json(answer(&analysis, paging)))
+    Ok(Json(answer(&analysis, paging)).into_response())
 }
 
-fn answer(analysis: &Analysis, paging: Option<Paging>) -> Changes {
+fn answer(analysis: &Analysis, paging: Option<Paging>) -> Changes<'_> {
     let (events, next) = match paging {
-        Some(Paging { limit, after }) => page(&analysis.diff, after, limit),
-        None => (analysis.diff.events.clone(), None),
+        Some(Paging { limit, after }) => {
+            let (page, next) = page(&analysis.diff, after, limit);
+            (Cow::Owned(page), next)
+        }
+        None => (Cow::Borrowed(analysis.diff.events.as_slice()), None),
     };
     Changes {
-        counts: analysis.counts.clone(),
-        catalogues: analysis.diff.catalogues.clone(),
+        counts: &analysis.counts,
+        catalogues: &analysis.diff.catalogues,
         events,
         next,
     }

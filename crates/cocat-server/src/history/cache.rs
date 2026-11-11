@@ -74,7 +74,7 @@ impl VersionCache {
     }
 }
 
-const DIFF_ENTRIES: usize = 16;
+const DIFF_CHANGES: usize = 300_000;
 const DIFF_LIFETIME: Duration = Duration::from_secs(5 * 60);
 
 /// The room, the records the diff starts and ends at, and the catalogue it is narrowed to.
@@ -87,28 +87,29 @@ type CachedDiff = (DiffKey, Instant, Arc<Analysis>);
 /// The last few diffs the history computed, so the next pages of a version and a reopened
 /// version do not replay the room again.
 ///
-/// simplify: 16 entries, 5 minutes, the oldest entry out first and no hit refreshes an
-/// entry; a diff of thousands of events weighs megabytes. Upgrade path: an LRU weighed in
-/// bytes (the `lru` crate) when memory shows it.
+/// simplify: at most 300 000 event changes held (about 300 MB as JSON, a STIX version is
+/// 107 000) for 5 minutes, the oldest entry out first, no hit refreshes an entry, and a diff
+/// over the budget is never kept. The room memory budget does not see this cache. Upgrade
+/// path: an LRU weighed in bytes (the `lru` crate), counted in the room budget.
 #[derive(Debug, Clone)]
 pub struct DiffCache {
     entries: Arc<Mutex<Vec<CachedDiff>>>,
-    capacity: usize,
+    change_budget: usize,
     lifetime: Duration,
     computations: Arc<AtomicUsize>,
 }
 
 impl Default for DiffCache {
     fn default() -> Self {
-        Self::new(DIFF_ENTRIES, DIFF_LIFETIME)
+        Self::new(DIFF_CHANGES, DIFF_LIFETIME)
     }
 }
 
 impl DiffCache {
-    pub fn new(capacity: usize, lifetime: Duration) -> Self {
+    pub fn new(change_budget: usize, lifetime: Duration) -> Self {
         Self {
             entries: Arc::default(),
-            capacity,
+            change_budget,
             lifetime,
             computations: Arc::default(),
         }
@@ -126,12 +127,23 @@ impl DiffCache {
         }
         self.computations.fetch_add(1, Ordering::Relaxed);
         let fresh = Arc::new(compute());
+        if changes(&fresh) > self.change_budget {
+            return fresh;
+        }
         let mut entries = self.lock();
-        entries.retain(|(held, _, _)| *held != key);
+        let lifetime = self.lifetime;
+        entries.retain(|(held, born, _)| *held != key && born.elapsed() < lifetime);
         entries.push((key, Instant::now(), Arc::clone(&fresh)));
-        let excess = entries.len().saturating_sub(self.capacity);
-        entries.drain(..excess);
+        while held_changes(&entries) > self.change_budget {
+            entries.remove(0);
+        }
         fresh
+    }
+
+    /// How many event changes the held diffs hold, for tests.
+    #[cfg(test)]
+    fn held_changes(&self) -> usize {
+        held_changes(&self.lock())
     }
 
     /// How many diffs were computed, for tests to see a hit.
@@ -156,6 +168,14 @@ impl DiffCache {
     }
 }
 
+fn changes(analysis: &Analysis) -> usize {
+    analysis.diff.events.len()
+}
+
+fn held_changes(entries: &[CachedDiff]) -> usize {
+    entries.iter().map(|(_, _, held)| changes(held)).sum()
+}
+
 #[cfg(test)]
 mod tests {
     use cocat_core::model::{self, EventRecord};
@@ -163,6 +183,7 @@ mod tests {
     use uuid::Uuid;
     use yrs::{Doc, ReadTxn, StateVector, Transact};
 
+    use super::super::diff::{Change, EventChange};
     use super::super::stamps::stamp_for;
     use super::*;
 
@@ -240,15 +261,47 @@ mod tests {
         assert_eq!(cache.computations(), 1);
     }
 
+    fn analysis_of(changes: usize) -> Analysis {
+        let event = || EventChange {
+            uuid: String::new(),
+            change: Change::Added,
+            fields: Vec::new(),
+            before: None,
+            after: None,
+        };
+        let mut analysis = Analysis::default();
+        analysis.diff.events = (0..changes).map(|_| event()).collect();
+        analysis
+    }
+
     #[test]
-    fn the_oldest_diff_leaves_when_the_cache_is_full() {
-        let cache = DiffCache::new(2, Duration::from_secs(60));
+    fn the_cache_drops_old_diffs_to_stay_under_its_change_budget() {
+        let cache = DiffCache::new(250, Duration::from_secs(60));
         for end in 1..=3 {
-            cache.get_or_compute(key(end), Analysis::default);
+            cache.get_or_compute(key(end), || analysis_of(100));
         }
-        cache.get_or_compute(key(3), Analysis::default);
-        cache.get_or_compute(key(1), Analysis::default);
+        cache.get_or_compute(key(3), || unreachable!("the newest diff is held"));
+        cache.get_or_compute(key(2), || unreachable!("the second newest diff is held"));
+        cache.get_or_compute(key(1), || analysis_of(100));
         assert_eq!(cache.computations(), 4);
+    }
+
+    #[test]
+    fn a_diff_bigger_than_the_budget_is_not_kept() {
+        let cache = DiffCache::new(250, Duration::from_secs(60));
+        cache.get_or_compute(key(1), || analysis_of(100));
+        cache.get_or_compute(key(2), || analysis_of(251));
+        cache.get_or_compute(key(1), || unreachable!("the small diff stays"));
+        cache.get_or_compute(key(2), || analysis_of(251));
+        assert_eq!(cache.computations(), 3);
+    }
+
+    #[test]
+    fn an_expired_diff_leaves_when_another_is_stored() {
+        let cache = DiffCache::new(250, Duration::ZERO);
+        cache.get_or_compute(key(1), || analysis_of(100));
+        cache.get_or_compute(key(2), || analysis_of(100));
+        assert_eq!(cache.held_changes(), 100);
     }
 
     #[test]

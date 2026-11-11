@@ -100,8 +100,10 @@ impl PreviewState {
         self.next.as_deref().filter(|_| near && !self.stalled)
     }
 
-    pub fn stall(&mut self) {
-        self.stalled = true;
+    /// Stops the reading after the page that followed `cursor` failed; an answer for a
+    /// catalogue since left changes nothing.
+    pub fn stall(&mut self, cursor: &str) {
+        self.stalled |= self.next.as_deref() == Some(cursor);
     }
 
     pub fn header(&self) -> String {
@@ -263,7 +265,7 @@ mod tests {
             state.header(),
             "Showing 1 of 107000 events; the rest is loading…"
         );
-        state.stall();
+        state.stall("c1");
         assert_eq!(
             state.header(),
             "Showing 1 of 107000 events. Could not load more; the rest arrives with the project."
@@ -295,6 +297,13 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_page_of_another_catalogue_does_not_stall_this_one() {
+        let mut state = preview(20_000, page(&[("a", "2020-01-01T00:00:00Z")], Some("c1")));
+        state.stall("cursor of the catalogue left");
+        assert_eq!(state.next_due(4600, 5000), Some("c1"));
+    }
+
+    #[test]
     fn the_next_page_is_asked_only_near_the_end() {
         let mut state = preview(20_000, page(&[("a", "2020-01-01T00:00:00Z")], Some("c1")));
         assert_eq!(state.next_due(0, 5000), None, "far from the end");
@@ -305,7 +314,7 @@ mod tests {
             "the first screen asks nothing more"
         );
         assert_eq!(state.next_due(600, 1000), Some("c1"));
-        state.stall();
+        state.stall("c1");
         assert_eq!(
             state.next_due(4600, 5000),
             None,

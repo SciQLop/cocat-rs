@@ -61,3 +61,10 @@ changes themselves now come in pages (counts and the first 200 at once, cached d
 Give it the same treatment as the live catalogue page: a progressive preview of the past
 catalogue from a paged route at that version (reusing the diff cache's rebuilt documents),
 with the full past state loaded only when the visitor needs it (copy, restore, search).
+
+## The browser freezes while applying a big project
+
+On fast links the page freezes for about 5 s applying STIX's full state after the download,
+and the catalogue preview cannot cover it (the freeze is the main thread applying the
+update). Ideas: keep a copy of each project in the browser (IndexedDB) so later visits fetch
+only the diff since the stored state, or apply the update in a worker.

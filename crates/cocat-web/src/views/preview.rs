@@ -148,7 +148,7 @@ fn read_on_demand(
             }
             state.try_update(|state| match (state, answer) {
                 (Some(state), Ok(page)) => state.append(&cursor, page),
-                (Some(state), Err(_)) => state.stall(),
+                (Some(state), Err(_)) => state.stall(&cursor),
                 (None, _) => {}
             });
         });

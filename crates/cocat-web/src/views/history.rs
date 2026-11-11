@@ -12,8 +12,8 @@ use wasm_bindgen::JsValue;
 use crate::api;
 use crate::history::{
     Cell, Change, Changes, ChangesPage, Day, DiffRow, Reloads, Version, author, browse_href,
-    by_day, catalogue_line, clock, copy_suggestion, counts_text, past_rows, summary, tally_text,
-    unchanged_rows, wants_next, when_text,
+    by_day, catalogue_line, clock, copy_suggestion, counts_text, page_size, past_rows, summary,
+    tally_text, unchanged_rows, wants_next, when_text,
 };
 use crate::layout::window as visible_rows;
 use crate::route::Route;
@@ -382,7 +382,7 @@ fn ChangesPanel(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
         LocalResource::new(move || {
             let (config, catalogue) = (config.clone(), scope.get());
             async move {
-                api::changes_page(&config, id, catalogue.as_deref(), None)
+                api::changes_page(&config, id, catalogue.as_deref(), None, page_size(false))
                     .await
                     .map_err(|error| error.to_string())
             }
@@ -505,7 +505,9 @@ fn ChangesTable(
         fetching.set(true);
         let (config, catalogue) = (config.clone(), catalogue.clone());
         spawn_local(async move {
-            let answer = api::changes_page(&config, id, catalogue.as_deref(), Some(&cursor)).await;
+            let limit = page_size(everything);
+            let answer =
+                api::changes_page(&config, id, catalogue.as_deref(), Some(&cursor), limit).await;
             fetching.set(false);
             match answer {
                 Ok(page) => changes.update(|changes| changes.append(&cursor, page)),
