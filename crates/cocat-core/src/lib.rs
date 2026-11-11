@@ -7,6 +7,7 @@ pub mod query;
 pub mod restore;
 pub mod role;
 pub mod room_id;
+pub mod round;
 pub mod rules;
 pub mod shape_json;
 pub mod store;
