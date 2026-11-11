@@ -159,6 +159,15 @@ fn require_administrator(seat: &Seat) -> Result<(), ApiError> {
     }
 }
 
+fn refuse_decided(round: &RoundRow) -> Result<(), ApiError> {
+    match round.state {
+        RoundState::Decided => Err(ApiError::Conflict(
+            "A decided round cannot be changed".to_owned(),
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn stored_budget(budget: &Value) -> Result<String, ApiError> {
     let parsed = parse_budget(budget).map_err(|error| unprocessable(error.to_string()))?;
     Ok(budget_json(&parsed).to_string())
@@ -166,7 +175,7 @@ fn stored_budget(budget: &Value) -> Result<String, ApiError> {
 
 fn checked_deadline(deadline: &str) -> Result<String, ApiError> {
     Timestamp::parse(deadline)
-        .map(|_| deadline.to_owned())
+        .and_then(|instant| instant.rfc3339().ok())
         .ok_or_else(|| unprocessable("the deadline must be an ISO 8601 instant"))
 }
 
@@ -387,11 +396,7 @@ async fn patch_round(
 ) -> Result<Json<RoundOut>, ApiError> {
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     require_administrator(&seat)?;
-    if row.state == RoundState::Decided {
-        return Err(ApiError::Conflict(
-            "A decided round cannot be changed".to_owned(),
-        ));
-    }
+    refuse_decided(&row)?;
     rounds::update_round(&state.pool, row.id, patch_of(change)?).await?;
     ws::check_room_roles(&state, &room_id).await;
     Ok(Json(reload(&state, row.id, user.id).await?))
@@ -411,7 +416,8 @@ async fn resolve(
     role: RoundRole,
 ) -> Result<Vec<(Uuid, RoundRole)>, ApiError> {
     let mut out = Vec::new();
-    for email in emails {
+    let unique: std::collections::BTreeSet<_> = emails.iter().collect();
+    for email in unique {
         let member = db::user_by_email(&state.pool, email).await?;
         let project_role = match &member {
             Some(user) => db::role_in(&state.pool, room_id, user.id).await?,
@@ -457,6 +463,7 @@ async fn put_members(
 ) -> Result<Json<RoundOut>, ApiError> {
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     require_administrator(&seat)?;
+    refuse_decided(&row)?;
     let mut members = resolve(&state, &room_id, &body.proposers, RoundRole::Proposer).await?;
     members.extend(resolve(&state, &room_id, &body.voters, RoundRole::Voter).await?);
     members.extend(resolve(&state, &room_id, &body.deciders, RoundRole::Decider).await?);

@@ -360,3 +360,64 @@ async fn an_editor_decider_cannot_move_back() {
 
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn a_decided_round_refuses_member_changes_too() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    fixture.seed_catalogue(&room);
+    let (_, body) = fixture.round(&owner, &room, new_round()).await;
+    let round = body["id"].as_str().unwrap();
+    let good = json!({"state": "decided", "final_catalogue": CATALOGUE});
+    fixture.move_to(&owner, &room, round, good).await;
+    let members = json!({"proposers": [], "voters": [], "deciders": ["owner@example.org"]});
+
+    let path = format!("/api/rooms/{room}/rounds/{round}/members");
+    let (status, _) = fixture
+        .send(Method::PUT, &path, &owner, Some(members))
+        .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn a_deadline_is_stored_in_utc() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+
+    let body = json!({"name": "R", "visibility": "open", "deadline": "2026-11-12T12:00:00+02:00"});
+    let (status, created) = fixture.round(&owner, &room, body).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["deadline"], "2026-11-12T10:00:00Z");
+    let id = created["id"].as_str().unwrap();
+    let path = format!("/api/rooms/{room}/rounds/{id}");
+    let change = json!({"deadline": "2026-11-13T00:30:00+01:00"});
+    let (_, patched) = fixture
+        .send(Method::PATCH, &path, &owner, Some(change))
+        .await;
+    assert_eq!(patched["deadline"], "2026-11-12T23:30:00Z");
+}
+
+#[tokio::test]
+async fn a_repeated_member_address_is_kept_once() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, body) = fixture.round(&owner, &room, new_round()).await;
+    let path = format!(
+        "/api/rooms/{room}/rounds/{}/members",
+        body["id"].as_str().unwrap()
+    );
+    let twice = json!(["owner@example.org", "owner@example.org"]);
+
+    let members = json!({"proposers": twice, "voters": twice, "deciders": twice});
+    let (status, body) = fixture
+        .send(Method::PUT, &path, &owner, Some(members))
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["deciders"], json!(["owner@example.org"]));
+}
