@@ -29,6 +29,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(put_members))
         .routes(routes!(move_round))
         .routes(routes!(my_proposal))
+        .routes(routes!(put_votes, get_votes))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -575,4 +576,100 @@ async fn my_proposal(
     may_start_proposal(&row, &seat)?;
     let doc = rounds::add_proposal(&state.pool, row.id, user.id).await?;
     Ok((StatusCode::CREATED, Json(MyProposal { doc })))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct VotesIn {
+    events: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct VotesOut {
+    voter: String,
+    events: Vec<String>,
+}
+
+fn may_vote(round: &RoundRow, seat: &Seat) -> Result<(), ApiError> {
+    let voting = round.state == RoundState::Voting;
+    match voting && seat.roles.contains(&RoundRole::Voter) {
+        true => Ok(()),
+        false => Err(forbidden(
+            "Only a voter of the round votes, while it is voting",
+        )),
+    }
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/rooms/{room_id}/rounds/{round}/votes",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("round" = String, Path, description = "Round uuid"),
+    ),
+    request_body = VotesIn,
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The caller's votes were replaced"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
+        (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+    )
+)]
+async fn put_votes(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, round)): ApiPath<(String, String)>,
+    JsonBody(body): JsonBody<VotesIn>,
+) -> Result<StatusCode, ApiError> {
+    let (row, seat) = load(&state, &room_id, &round, user.id).await?;
+    may_vote(&row, &seat)?;
+    rounds::set_votes(&state.pool, row.id, user.id, &body.events).await?;
+    Ok(StatusCode::OK)
+}
+
+fn grouped(votes: Vec<(Uuid, String)>) -> Vec<(Uuid, Vec<String>)> {
+    let mut by_voter: Vec<(Uuid, Vec<String>)> = Vec::new();
+    for (voter, event) in votes {
+        match by_voter.last_mut() {
+            Some((last, events)) if *last == voter => events.push(event),
+            _ => by_voter.push((voter, vec![event])),
+        }
+    }
+    by_voter
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/rounds/{round}/votes",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("round" = String, Path, description = "Round uuid"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The votes the caller may read", body = [VotesOut]),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+    )
+)]
+async fn get_votes(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, round)): ApiPath<(String, String)>,
+) -> Result<Json<Vec<VotesOut>>, ApiError> {
+    let (row, seat) = load(&state, &room_id, &round, user.id).await?;
+    let readable: Vec<_> = grouped(rounds::votes(&state.pool, row.id).await?)
+        .into_iter()
+        .filter(|(voter, _)| rules::may_read_votes(&row, &seat, *voter == user.id))
+        .collect();
+    let emails = Emails::load(&state, readable.iter().map(|(voter, _)| *voter)).await?;
+    let mut out: Vec<VotesOut> = readable
+        .into_iter()
+        .map(|(voter, events)| VotesOut {
+            voter: emails.of(voter),
+            events,
+        })
+        .collect();
+    out.sort_by(|a, b| a.voter.cmp(&b.voter));
+    Ok(Json(out))
 }

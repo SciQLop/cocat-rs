@@ -319,6 +319,21 @@ const ROWS: &[Row] = &[
     .room_any()
     .refined(),
     row(
+        "PUT",
+        "/api/rooms/{room}/rounds/{round}/votes",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
+    row(
+        "GET",
+        "/api/rooms/{room}/rounds/{round}/votes",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
         "GET",
         "/api/rooms/{room}/blobs/{sha256}",
         Guard::RoomViewer,
@@ -1221,6 +1236,9 @@ impl World {
                 json,
                 r#"{"proposers":[],"voters":[],"deciders":[]}"#.to_owned(),
             ),
+            ("PUT", "/api/rooms/{room}/rounds/{round}/votes") => {
+                (json, r#"{"events":[]}"#.to_owned())
+            }
             ("POST", "/api/rooms/{room}/rounds/{round}/state") => {
                 (json, r#"{"state":"voting"}"#.to_owned())
             }

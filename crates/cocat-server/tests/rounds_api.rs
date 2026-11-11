@@ -421,3 +421,145 @@ async fn a_repeated_member_address_is_kept_once() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["deciders"], json!(["owner@example.org"]));
 }
+
+const EVENT_A: &str = "bbbbbbbb-0000-4000-8000-00000000000a";
+const EVENT_B: &str = "bbbbbbbb-0000-4000-8000-00000000000b";
+
+impl Fixture {
+    async fn voting_round(&self, owner: &str, room: &str, visibility: &str) -> String {
+        let body = json!({"name": "Round 1", "visibility": visibility});
+        let (_, created) = self.round(owner, room, body).await;
+        let round = created["id"].as_str().unwrap().to_owned();
+        self.move_to(owner, room, &round, json!({"state": "voting"}))
+            .await;
+        round
+    }
+
+    async fn vote(&self, token: &str, room: &str, round: &str, events: &[&str]) -> StatusCode {
+        let path = format!("/api/rooms/{room}/rounds/{round}/votes");
+        let body = json!({"events": events});
+        self.send(Method::PUT, &path, token, Some(body)).await.0
+    }
+
+    async fn read_votes(&self, token: &str, room: &str, round: &str) -> (StatusCode, Value) {
+        let path = format!("/api/rooms/{room}/rounds/{round}/votes");
+        self.send(Method::GET, &path, token, None).await
+    }
+}
+
+#[tokio::test]
+async fn a_voter_replaces_their_votes() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let round = fixture.voting_round(&owner, &room, "open").await;
+
+    assert_eq!(
+        fixture
+            .vote(&owner, &room, &round, &[EVENT_A, EVENT_B])
+            .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fixture.vote(&owner, &room, &round, &[EVENT_B]).await,
+        StatusCode::OK
+    );
+
+    let (status, votes) = fixture.read_votes(&owner, &room, &round).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        votes,
+        json!([{"voter": "owner@example.org", "events": [EVENT_B]}])
+    );
+}
+
+#[tokio::test]
+async fn votes_are_refused_outside_voting() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, created) = fixture.round(&owner, &room, new_round()).await;
+    let round = created["id"].as_str().unwrap();
+    assert_eq!(
+        fixture.vote(&owner, &room, round, &[EVENT_A]).await,
+        StatusCode::FORBIDDEN
+    );
+
+    fixture
+        .move_to(&owner, &room, round, json!({"state": "voting"}))
+        .await;
+    let (_, editor) = fixture
+        .editor(&room, "editor@example.org", Role::Editor)
+        .await;
+    let members = json!({"proposers": [], "voters": ["owner@example.org"], "deciders": ["owner@example.org"]});
+    let path = format!("/api/rooms/{room}/rounds/{round}/members");
+    fixture
+        .send(Method::PUT, &path, &owner, Some(members))
+        .await;
+    assert_eq!(
+        fixture.vote(&editor, &room, round, &[EVENT_A]).await,
+        StatusCode::FORBIDDEN,
+        "not a voter of the round"
+    );
+
+    fixture
+        .move_to(&owner, &room, round, json!({"state": "proposing"}))
+        .await;
+    assert_eq!(
+        fixture.vote(&owner, &room, round, &[EVENT_A]).await,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn blind_votes_show_only_to_the_voter_and_deciders() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, voter) = fixture
+        .editor(&room, "voter@example.org", Role::Editor)
+        .await;
+    let (_, other) = fixture
+        .editor(&room, "other@example.org", Role::Editor)
+        .await;
+    let round = fixture.voting_round(&owner, &room, "blind").await;
+    let members = json!({"proposers": [], "voters": ["voter@example.org", "other@example.org"], "deciders": ["owner@example.org"]});
+    let path = format!("/api/rooms/{room}/rounds/{round}/members");
+    fixture
+        .send(Method::PUT, &path, &owner, Some(members))
+        .await;
+    fixture.vote(&voter, &room, &round, &[EVENT_A]).await;
+    fixture.vote(&other, &room, &round, &[EVENT_B]).await;
+    let only = |email: &str, event: &str| json!([{"voter": email, "events": [event]}]);
+
+    let (_, seen) = fixture.read_votes(&voter, &room, &round).await;
+    assert_eq!(seen, only("voter@example.org", EVENT_A));
+    let (_, seen) = fixture.read_votes(&owner, &room, &round).await;
+    assert_eq!(seen.as_array().map(Vec::len), Some(2));
+
+    fixture.seed_catalogue(&room);
+    let decided = json!({"state": "decided", "final_catalogue": CATALOGUE});
+    fixture.move_to(&owner, &room, &round, decided).await;
+    let (_, seen) = fixture.read_votes(&voter, &room, &round).await;
+    assert_eq!(seen.as_array().map(Vec::len), Some(2));
+}
+
+#[tokio::test]
+async fn open_votes_show_to_every_member() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, viewer) = fixture
+        .editor(&room, "viewer@example.org", Role::Viewer)
+        .await;
+    let round = fixture.voting_round(&owner, &room, "open").await;
+    fixture.vote(&owner, &room, &round, &[EVENT_A]).await;
+
+    let (status, seen) = fixture.read_votes(&viewer, &room, &round).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        seen,
+        json!([{"voter": "owner@example.org", "events": [EVENT_A]}])
+    );
+}
