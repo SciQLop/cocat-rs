@@ -17,6 +17,7 @@ pub mod markdown;
 pub mod notebook;
 pub mod period;
 pub mod presence;
+pub mod preview;
 pub mod projects;
 pub mod public;
 pub mod review;

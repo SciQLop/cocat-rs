@@ -796,6 +796,7 @@ dependencies = [
  "cocat-core",
  "console_error_panic_hook",
  "csv",
+ "futures-util",
  "gloo-net",
  "js-sys",
  "leptos",

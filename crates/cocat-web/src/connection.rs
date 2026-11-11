@@ -96,7 +96,7 @@ pub fn connect_project(room: Room) -> Result<Connection, TransactionAcqError> {
             next_frame().await;
             next_frame().await;
             if apply_state(&loader.room.doc, &state) {
-                loader.room.loading.set(None);
+                loaded(&loader.room);
             }
         }
         loader.release_handshake();
@@ -135,6 +135,13 @@ async fn download(room: &Room) -> Option<Vec<u8>> {
             total,
         }));
     }
+}
+
+/// The project is in. The views read it before they learn loading ended: a page leaving the
+/// preview must find the catalogue, not wait a frame for the queued render.
+fn loaded(room: &Room) {
+    room.changed();
+    room.loading.set(None);
 }
 
 async fn next_frame() {
@@ -265,7 +272,9 @@ impl Link {
             }
             self.backoff.borrow_mut().reset();
             self.room.status.set(Status::Live);
-            self.room.loading.set(None);
+            if self.room.loading.with_untracked(Option::is_some) {
+                loaded(&self.room);
+            }
         }
     }
 

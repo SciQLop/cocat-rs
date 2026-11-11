@@ -492,6 +492,8 @@ fn ChangesTable(
     let range = Memo::new(move |_| visible_rows(scroll_top.get(), viewport.get(), ROW, total()));
     Effect::new(move |_| {
         let view_end = range.get().end;
+        // simplify: showing the unchanged events loads every page, which is inherent: merging
+        // them in needs every changed id.
         let everything = !only_changed.get();
         let busy = fetching.get() || failure.with(Option::is_some);
         let (loaded, cursor) = changes.with(|c| (c.rows.len(), c.next.clone()));
@@ -559,7 +561,12 @@ fn ChangesTable(
                 <tbody>{body}</tbody>
             </table>
         </div>
-        {move || failure.get().map(|error| view! { <p class="field-error" role="alert">{error}</p> })}
+        {move || failure.get().map(|error| view! {
+            <p class="field-error" role="alert">
+                {error} " "
+                <button type="button" class="link-button" on:click=move |_| failure.set(None)>"Try again"</button>
+            </p>
+        })}
         <Show when=move || fetching.get()>
             <p class="quiet">"Loading more changes…"</p>
         </Show>

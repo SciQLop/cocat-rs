@@ -9,6 +9,7 @@ use leptos::prelude::*;
 use crate::format::{duration_text, person_text, time_text, value_text};
 use crate::layout::{tags_that_fit, window};
 use crate::presence::{Peer, editing};
+use crate::preview::sort_hint;
 use crate::rows::{Row, SortKey};
 use crate::state::Room;
 use crate::views::catalogue::Members;
@@ -39,11 +40,15 @@ pub fn Table(
     columns: Memo<Vec<String>>,
     selected: RwSignal<Option<Row>>,
     empty: Signal<&'static str>,
+    /// Where the table is scrolled to; the table opens there.
+    scroll_top: RwSignal<f64>,
+    /// The preview cannot sort yet.
+    #[prop(default = true)]
+    sortable: bool,
 ) -> impl IntoView {
     let peers = expect_context::<Room>().peers;
     let editors = Memo::new(move |_| peers.with(|peers| editing(peers)));
     let scroller = NodeRef::<Div>::new();
-    let scroll_top = RwSignal::new(0.0);
     let viewport = RwSignal::new(ROW * 16.0);
     let measure = move || {
         if let Some(scroller) = scroller.get() {
@@ -51,7 +56,13 @@ pub fn Table(
             viewport.set(f64::from(scroller.client_height()));
         }
     };
-    Effect::new(move |_| measure());
+    let opening_at = scroll_top.get_untracked();
+    Effect::new(move |_| {
+        if let Some(scroller) = scroller.get() {
+            scroller.set_scroll_top(opening_at as i32);
+        }
+        measure();
+    });
     let range =
         Memo::new(move |_| window(scroll_top.get(), viewport.get(), ROW, order.with(Vec::len)));
     let body = move || {
@@ -93,9 +104,9 @@ pub fn Table(
                 </colgroup>
                 <thead>
                     <tr>
-                        {FIXED.into_iter().map(|(label, key)| header(label, key, sorting)).collect_view()}
+                        {FIXED.into_iter().map(|(label, key)| header(label, key, sorting, sortable)).collect_view()}
                         {move || columns.get().into_iter().map(|key| {
-                            header_owned(key.clone(), SortKey::Attribute(key), sorting)
+                            header_owned(key.clone(), SortKey::Attribute(key), sorting, sortable)
                         }).collect_view()}
                     </tr>
                 </thead>
@@ -108,11 +119,21 @@ pub fn Table(
     }
 }
 
-fn header(label: &'static str, key: SortKey, sorting: RwSignal<(SortKey, bool)>) -> impl IntoView {
-    header_owned(label.to_owned(), key, sorting)
+fn header(
+    label: &'static str,
+    key: SortKey,
+    sorting: RwSignal<(SortKey, bool)>,
+    sortable: bool,
+) -> impl IntoView {
+    header_owned(label.to_owned(), key, sorting, sortable)
 }
 
-fn header_owned(label: String, key: SortKey, sorting: RwSignal<(SortKey, bool)>) -> impl IntoView {
+fn header_owned(
+    label: String,
+    key: SortKey,
+    sorting: RwSignal<(SortKey, bool)>,
+    sortable: bool,
+) -> impl IntoView {
     let sorted_by = {
         let key = key.clone();
         move || {
@@ -132,8 +153,8 @@ fn header_owned(label: String, key: SortKey, sorting: RwSignal<(SortKey, bool)>)
         });
     };
     view! {
-        <th scope="col" aria-sort=sorted_by>
-            <button type="button" on:click=pick>{label}</button>
+        <th scope="col" aria-sort=sorted_by title=sort_hint(sortable)>
+            <button type="button" on:click=pick disabled=!sortable>{label}</button>
         </th>
     }
 }

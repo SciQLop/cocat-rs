@@ -17,6 +17,7 @@ pub mod live_room;
 pub mod menus;
 pub mod notebook;
 pub mod notice;
+pub mod preview;
 pub mod project_dialogs;
 pub mod projects;
 pub mod proposal;

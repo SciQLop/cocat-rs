@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::history::{ChangesPage, History, Version, endpoint, refusal_text, save_body};
+use crate::preview::{Catalogues, EventsPage};
 use crate::projects::{Project, api_url};
 use crate::session::RoomConfig;
 use crate::sharing::Created;
@@ -209,6 +210,29 @@ async fn me(api: &str) -> Result<String, ApiError> {
     }
     let me: Me = json(Request::get(&at(api, &["me"])?)).await?;
     Ok(me.id)
+}
+
+/// The project's catalogues, as the server reads them.
+pub async fn catalogues(config: &RoomConfig) -> Result<Vec<crate::preview::About>, ApiError> {
+    let listed: Catalogues =
+        read(&config.api_url, &["rooms", &config.room_id, "catalogues"]).await?;
+    Ok(listed.catalogues)
+}
+
+/// A page of a catalogue's events in start order: the first, or the one after `cursor`.
+pub async fn catalogue_events(
+    config: &RoomConfig,
+    catalogue: &str,
+    limit: usize,
+    cursor: Option<&str>,
+) -> Result<EventsPage, ApiError> {
+    let path = ["rooms", &config.room_id, "catalogues", catalogue, "events"];
+    let limit = limit.to_string();
+    let query = [
+        Some(("limit", limit.as_str())),
+        cursor.map(|cursor| ("cursor", cursor)),
+    ];
+    json(Request::get(&at(&config.api_url, &path)?).query(query.into_iter().flatten())).await
 }
 
 /// A GET of `<api>/<segments…>`.

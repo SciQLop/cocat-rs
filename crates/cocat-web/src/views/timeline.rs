@@ -165,7 +165,7 @@ pub fn PeriodLine(
     order: Memo<Vec<usize>>,
     members: Members,
 ) -> impl IntoView {
-    let all = move || members.with(|members| members.as_ref().map_or(0, Vec::len));
+    let all = move || members.with(|members| members.map_or(0, <[Row]>::len));
     let text = move || {
         period
             .get()

@@ -232,10 +232,19 @@ fn sort_value(row: &Row, key: &SortKey) -> Option<SortValue> {
     }
 }
 
-fn event_row<T: ReadTxn>(record: EventRecord, origins: &mut OriginNames<'_, T>) -> Row {
+fn event_row<T: ReadTxn>(mut record: EventRecord, origins: &mut OriginNames<'_, T>) -> Row {
     let author = record
         .author
+        .take()
         .or_else(|| origins.name(record.origin.as_deref()?));
+    Row {
+        author,
+        ..record_row(record)
+    }
+}
+
+/// An event read from the server rather than the project: its origin's name is unknown.
+pub fn record_row(record: EventRecord) -> Row {
     Row {
         uuid: Some(record.uuid),
         start: nanos(record.start),
@@ -243,7 +252,7 @@ fn event_row<T: ReadTxn>(record: EventRecord, origins: &mut OriginNames<'_, T>) 
         tags: record.tags,
         confidence: record.confidence,
         status: record.status,
-        author,
+        author: record.author,
         attributes: record.attributes,
         sources: Vec::new(),
     }

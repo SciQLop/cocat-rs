@@ -85,6 +85,7 @@ enum Mode {
 fn Event(uuid: String, selected: RwSignal<Option<Row>>) -> impl IntoView {
     let room = expect_context::<Room>();
     let can_write = room.can_write();
+    let loading = room.loading;
     let detail = {
         let uuid = uuid.clone();
         Memo::new(move |_| room.read(|txn| event_detail(txn, &uuid)))
@@ -98,6 +99,9 @@ fn Event(uuid: String, selected: RwSignal<Option<Row>>) -> impl IntoView {
         })
     });
     move || match mode.get() {
+        Mode::Gone if loading.with(Option::is_some) => {
+            view! { <p class="quiet">"The event opens once the project has loaded."</p> }.into_any()
+        }
         Mode::Gone => {
             view! { <p class="quiet">"This event is no longer in the project."</p> }.into_any()
         }

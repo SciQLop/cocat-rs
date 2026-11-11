@@ -2,10 +2,12 @@
 
 use leptos::prelude::*;
 
+use crate::views::preview::{PreviewView, load_preview};
 use crate::views::proposal::InProposal;
 
 use crate::help::{Shown, empty_text};
 use crate::period::Period;
+use crate::preview::{PreviewState, TableState, preview_due, switch_state};
 use crate::route::Route;
 use crate::rows::{
     Row, SortKey, all_rows, attribute_keys, filter, matching, preview_rows, rows, sort, trash_rows,
@@ -27,8 +29,26 @@ use crate::views::trash::TrashedCatalogues;
 use cocat_core::room_id::is_public_id;
 use leptos::task::spawn_local;
 
-/// The rows of what is on screen, or the rule's error.
-pub type Members = Memo<Result<Vec<Row>, String>>;
+/// The rows of what is on screen, or the rule's error: from the project, or from the
+/// server's pages while the project downloads.
+#[derive(Clone, Copy)]
+pub enum Members {
+    Live(Memo<Result<Vec<Row>, String>>),
+    Preview(RwSignal<Option<PreviewState>>),
+}
+
+impl Members {
+    pub fn with<T>(&self, read: impl FnOnce(Result<&[Row], &str>) -> T) -> T {
+        match self {
+            Members::Live(members) => {
+                members.with(|members| read(members.as_deref().map_err(String::as_str)))
+            }
+            Members::Preview(state) => {
+                state.with(|state| read(Ok(state.as_ref().map_or(&[], |state| &state.rows))))
+            }
+        }
+    }
+}
 
 /// The events the table shows, before sorting, for the panel's statistics.
 #[derive(Clone, Copy)]
@@ -41,7 +61,7 @@ impl OnScreen {
     /// `of` the rows on screen, and how many the page holds in all.
     pub fn with<T>(&self, of: impl FnOnce(&[&Row], usize) -> T) -> T {
         self.members.with(|members| {
-            let all = members.as_deref().unwrap_or_default();
+            let all = members.unwrap_or_default();
             self.visible.with(|visible| {
                 let rows: Vec<&Row> = visible.iter().map(|&index| &all[index]).collect();
                 of(&rows, all.len())
@@ -50,20 +70,44 @@ impl OnScreen {
     }
 }
 
-/// The catalogue on screen, once the project is loaded; until then, how far loading got.
+#[derive(Clone, Copy, PartialEq)]
+enum Stage {
+    Waiting,
+    Preview,
+    Live,
+}
+
+/// The catalogue on screen, once the project is loaded; until then its first pages from the
+/// server, else how far loading got.
 #[component]
 pub fn CataloguePage(
     shown: Memo<Route>,
     selected: RwSignal<Option<Row>>,
     screen: RwSignal<Option<OnScreen>>,
 ) -> impl IntoView {
-    let loading = expect_context::<Room>().loading;
-    let waiting = Memo::new(move |_| loading.with(Option::is_some));
-    move || {
-        if waiting.get() {
-            view! { <LoadingNote loading/> }.into_any()
-        } else {
-            view! { <CatalogueView shown selected screen/> }.into_any()
+    let room = expect_context::<Room>();
+    let loading = room.loading;
+    let preview = RwSignal::new(None::<PreviewState>);
+    let preview_scroll = RwSignal::new(0.0);
+    load_preview(&room, shown, preview);
+    let stage = Memo::new(move |_| {
+        let first_page = preview.with(Option::is_some);
+        loading.with(|loading| match loading {
+            None => Stage::Live,
+            Some(_) if preview_due(loading.as_ref(), first_page) => Stage::Preview,
+            Some(_) => Stage::Waiting,
+        })
+    });
+    move || match stage.get() {
+        Stage::Waiting => view! { <LoadingNote loading/> }.into_any(),
+        Stage::Preview => {
+            view! { <PreviewView state=preview selected scroll_top=preview_scroll/> }.into_any()
+        }
+        Stage::Live => {
+            let kept = selected.with_untracked(|selected| {
+                switch_state(preview_scroll.get_untracked(), selected.as_ref())
+            });
+            view! { <CatalogueView shown selected screen kept/> }.into_any()
         }
     }
 }
@@ -78,13 +122,19 @@ fn LoadingNote(loading: RwSignal<Option<Loading>>) -> impl IntoView {
     }
 }
 
+/// `kept` is where the preview left the visitor, if one showed.
 #[component]
 fn CatalogueView(
     shown: Memo<Route>,
     selected: RwSignal<Option<Row>>,
     screen: RwSignal<Option<OnScreen>>,
+    kept: TableState,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
+    if let Some(uuid) = kept.selected {
+        selected.set(room.read_untracked(|txn| crate::rows::event(txn, &uuid)));
+    }
+    let scroll_top = RwSignal::new(kept.scroll_top);
     let boxed = Boxed::new();
     let query = boxed.query;
     let building = RwSignal::new(false);
@@ -100,7 +150,7 @@ fn CatalogueView(
         query.with(|text| listing(boxed.side.get(), saved.as_deref(), text))
     });
     let reader = room.clone();
-    let members: Members = Memo::new(move |_| match shown.get() {
+    let members = Members::Live(Memo::new(move |_| match shown.get() {
         Route::Catalogue(uuid) => reader.read(|txn| {
             let previewed = match (how.get(), parsed.get()) {
                 (Listing::Preview, Query::Empty) => Some(None),
@@ -124,7 +174,7 @@ fn CatalogueView(
             .read(|txn| all_rows(txn))
             .map_err(|error| error.to_string()),
         _ => Ok(Vec::new()),
-    });
+    }));
     let with_search = Signal::derive(move || match how.get() {
         Listing::Members => own.with(|own| matches!(own, Some(Some(_)))),
         Listing::Preview => query.with(|text| !text.trim().is_empty()),
@@ -186,14 +236,18 @@ fn CatalogueView(
     let public = is_public_id(&room.config.room_id);
     let public_id = room.config.room_id.clone();
     let proposals = copies_of(&room, public);
-    Effect::new(move |_| {
-        shown.track();
-        form.set(Form::Closed);
-        picked.set(None);
-        building.set(false);
-        period.set(None);
-        selected.set(None);
-    });
+    // Not on the first run: the selection the preview handed over stays.
+    Effect::watch(
+        move || shown.track(),
+        move |_, _, _| {
+            form.set(Form::Closed);
+            picked.set(None);
+            building.set(false);
+            period.set(None);
+            selected.set(None);
+        },
+        false,
+    );
     // A page opens on the catalogue's own search; the filter's text stays when it is saved.
     Effect::new(move |_| {
         shown.track();
@@ -208,7 +262,7 @@ fn CatalogueView(
     let placeholder = Signal::derive(move || match (shown.get(), boxed.side.get()) {
         (Route::Catalogue(_), Side::Search) => "Search all events for this catalogue".to_owned(),
         (Route::Catalogue(_), Side::Filter) => {
-            let held = members.with(|members| members.as_ref().map_or(0, Vec::len));
+            let held = members.with(|members| members.map_or(0, <[Row]>::len));
             format!("Filter these {held} events")
         }
         (Route::Trash, _) => "Filter the trash".to_owned(),
@@ -217,17 +271,11 @@ fn CatalogueView(
     let can_write = room.can_write();
     let reader = room.clone();
     let empty = Signal::derive(move || {
-        let filtered = members.with(|members| members.as_ref().is_ok_and(|rows| !rows.is_empty()));
+        let filtered = members.with(|members| members.is_ok_and(|rows| !rows.is_empty()));
         empty_text(showing(&reader, &shown.get()), filtered, can_write)
     });
-    let keys = Memo::new(move |_| {
-        members.with(|members| {
-            members
-                .as_ref()
-                .map(|rows| attribute_keys(rows))
-                .unwrap_or_default()
-        })
-    });
+    let keys =
+        Memo::new(move |_| members.with(|members| members.map(attribute_keys).unwrap_or_default()));
     view! {
         <div class="page-head">
             <Heading shown members order with_search/>
@@ -266,11 +314,11 @@ fn CatalogueView(
                 text="Deleted events and catalogues wait here. Restore puts one back; Delete for good cannot be undone."/>
             <TrashedCatalogues/>
         })}
-        <Show when=move || members.with(|members| members.as_ref().is_ok_and(|rows| !rows.is_empty()))>
+        <Show when=move || members.with(|members| members.is_ok_and(|rows| !rows.is_empty()))>
             <Timeline members matching period selected/>
         </Show>
         <PeriodLine period order members/>
-        <Table members order sorting columns selected empty/>
+        <Table members order sorting columns selected empty scroll_top/>
     }
 }
 
@@ -360,7 +408,7 @@ fn ColumnPicker(
 }
 
 #[component]
-fn SearchIcon() -> impl IntoView {
+pub fn SearchIcon() -> impl IntoView {
     view! {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" aria-hidden="true">

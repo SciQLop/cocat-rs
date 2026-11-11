@@ -55,7 +55,7 @@ pub fn Heading(
     };
     let counts = move || {
         let (total, picked) = members.with(|members| {
-            let rows = members.as_ref().ok()?;
+            let rows = members.ok()?;
             Some((rows.len(), with_search.get().then(|| picked(rows))))
         })?;
         let visible = order.with(Vec::len);
@@ -90,7 +90,7 @@ pub fn Heading(
             {move || about.with(|about| about.rule.clone()).map(|words| view! {
                 <p class="rule">"Rule: " {words}</p>
             })}
-            {move || members.with(|members| members.as_ref().err().cloned()).map(|error| view! {
+            {move || members.with(|members| members.err().map(str::to_owned)).map(|error| view! {
                 <p class="rule-error" role="alert">"The rule does not evaluate: " {error}</p>
             })}
         </div>
