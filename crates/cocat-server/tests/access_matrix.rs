@@ -300,6 +300,13 @@ const ROWS: &[Row] = &[
     .room_any(),
     row(
         "GET",
+        "/api/rooms/{room}/state",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "GET",
         "/api/rooms/{room}/catalogues/{catalogue}",
         Guard::RoomViewer,
         Style::Api,

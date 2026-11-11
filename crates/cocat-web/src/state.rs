@@ -8,13 +8,15 @@ use yrs::{Doc, Transact, Transaction, TransactionMut};
 use crate::edit::EditError;
 use crate::presence::Peer;
 use crate::session::RoomConfig;
-use crate::sync::Status;
+use crate::sync::{Loading, Status};
 
 #[derive(Clone)]
 pub struct Room {
     pub config: Arc<RoomConfig>,
     pub doc: Doc,
     pub status: RwSignal<Status>,
+    /// Set while the page first loads the project, until it has the server's state.
+    pub loading: RwSignal<Option<Loading>>,
     /// The others in the room now.
     pub peers: RwSignal<Vec<Peer>>,
     /// The event this page has open for editing, which the others see.
@@ -28,6 +30,7 @@ impl Room {
             config: Arc::new(config),
             doc: Doc::new(),
             status: RwSignal::new(Status::Connecting),
+            loading: RwSignal::new(None),
             peers: RwSignal::new(Vec::new()),
             editing: RwSignal::new(None),
             revision: RwSignal::new(0),

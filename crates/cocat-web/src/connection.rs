@@ -3,19 +3,22 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use cocat_core::SUBPROTOCOL;
-use js_sys::{ArrayBuffer, Uint8Array};
+use cocat_core::{STATE_BYTES_HEADER, SUBPROTOCOL};
+use js_sys::{ArrayBuffer, Promise, Reflect, Uint8Array};
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
-use web_sys::{BinaryType, CloseEvent, MessageEvent, WebSocket};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{BinaryType, CloseEvent, MessageEvent, ReadableStreamDefaultReader, WebSocket};
 use yrs::TransactionAcqError;
 
 use crate::presence::Presence;
+use crate::projects::api_url;
 use crate::session::login_url;
 use crate::state::Room;
 use crate::sync::{
-    AfterClose, Backoff, Status, after_close, hello, is_remote, receive, update_frame,
+    AfterClose, Backoff, Loading, Status, after_close, apply_state, hello, is_remote, receive,
+    update_frame,
 };
 
 struct Handlers {
@@ -29,6 +32,9 @@ struct Link {
     socket: RefCell<Option<WebSocket>>,
     /// Whether the current socket got as far as the server's state.
     synced: Cell<bool>,
+    /// While the page downloads the project's state, the socket does not say hello yet:
+    /// an empty replica's hello would ask for the whole state again.
+    handshake_held: Cell<bool>,
     backoff: RefCell<Backoff>,
     presence: RefCell<Presence>,
     render_queued: Rc<Cell<bool>>,
@@ -65,10 +71,85 @@ impl Connection {
 /// Keeps the room's replica in step with the server until the connection closes: the
 /// document's observer owns the link.
 pub fn connect(room: Room) -> Result<Connection, TransactionAcqError> {
+    let link = linked(room)?;
+    link.open();
+    Ok(Connection(link))
+}
+
+/// Like [`connect`], for a project's catalogues: the page downloads the project's state over
+/// HTTP, compressed and with its progress shown, while the socket opens; the socket's
+/// handshake waits for the download, so it brings only what changed since. A failed
+/// download leaves it all to the socket.
+pub fn connect_project(room: Room) -> Result<Connection, TransactionAcqError> {
+    let link = linked(room)?;
+    link.handshake_held.set(true);
+    link.open();
+    link.room.loading.set(Some(Loading::Downloading {
+        received: 0,
+        total: None,
+    }));
+    let loader = link.clone();
+    leptos::task::spawn_local(async move {
+        if let Some(state) = download(&loader.room).await {
+            loader.room.loading.set(Some(Loading::Opening));
+            // The note says "Opening…" before reading the state holds the page.
+            next_frame().await;
+            next_frame().await;
+            if apply_state(&loader.room.doc, &state) {
+                loader.room.loading.set(None);
+            }
+        }
+        loader.release_handshake();
+    });
+    Ok(Connection(link))
+}
+
+/// The project's state, or `None` when the server cannot give it (an older server, a
+/// proxy's error): the socket's handshake brings it then.
+async fn download(room: &Room) -> Option<Vec<u8>> {
+    let url = api_url(
+        &room.config.api_url,
+        &["rooms", &room.config.room_id, "state"],
+    )?;
+    let response = gloo_net::http::Request::get(&url).send().await.ok()?;
+    if !response.ok() {
+        return None;
+    }
+    let total = response
+        .headers()
+        .get(STATE_BYTES_HEADER)
+        .and_then(|size| size.parse::<u64>().ok());
+    let reader: ReadableStreamDefaultReader = response.body()?.get_reader().unchecked_into();
+    let mut state = Vec::with_capacity(total.unwrap_or(0).try_into().ok()?);
+    loop {
+        let chunk = JsFuture::from(reader.read()).await.ok()?;
+        if Reflect::get(&chunk, &"done".into()).ok()?.is_truthy() {
+            return Some(state);
+        }
+        let bytes: Uint8Array = Reflect::get(&chunk, &"value".into()).ok()?.unchecked_into();
+        let start = state.len();
+        state.resize(start + bytes.length() as usize, 0);
+        bytes.copy_to(&mut state[start..]);
+        room.loading.set(Some(Loading::Downloading {
+            received: state.len() as u64,
+            total,
+        }));
+    }
+}
+
+async fn next_frame() {
+    let frame = Promise::new(&mut |resolve, _| {
+        let _ = window().request_animation_frame(&resolve);
+    });
+    let _ = JsFuture::from(frame).await;
+}
+
+fn linked(room: Room) -> Result<Rc<Link>, TransactionAcqError> {
     let link = Rc::new_cyclic(|link: &Weak<Link>| Link {
         room: room.clone(),
         socket: RefCell::new(None),
         synced: Cell::new(false),
+        handshake_held: Cell::new(false),
         backoff: RefCell::new(Backoff::default()),
         presence: RefCell::new(Presence::for_room(room.doc.clone(), &room.config.room_id)),
         render_queued: Rc::default(),
@@ -85,8 +166,7 @@ pub fn connect(room: Room) -> Result<Connection, TransactionAcqError> {
     })?;
     let announcer = link.clone();
     Effect::new(move |_| announcer.announce(room.editing.get()));
-    link.open();
-    Ok(Connection(link))
+    Ok(link)
 }
 
 fn handlers(link: &Weak<Link>) -> Handlers {
@@ -94,7 +174,7 @@ fn handlers(link: &Weak<Link>) -> Handlers {
     Handlers {
         open: Closure::new(move || {
             if let Some(link) = open.upgrade() {
-                link.send(&hello(&link.room.doc));
+                link.say_hello();
                 link.announce(link.room.editing.get_untracked());
             }
         }),
@@ -131,6 +211,19 @@ impl Link {
         socket.set_onmessage(Some(self.handlers.message.as_ref().unchecked_ref()));
         socket.set_onclose(Some(self.handlers.close.as_ref().unchecked_ref()));
         self.socket.replace(Some(socket));
+    }
+
+    fn say_hello(&self) {
+        if !self.handshake_held.get() {
+            self.send(&hello(&self.room.doc));
+        }
+    }
+
+    /// The downloaded state is in (or the download failed): the handshake can ask for
+    /// the rest.
+    fn release_handshake(&self) {
+        self.handshake_held.set(false);
+        self.say_hello();
     }
 
     /// Sends a frame when the socket is open. Otherwise the next handshake carries the
@@ -172,6 +265,7 @@ impl Link {
             }
             self.backoff.borrow_mut().reset();
             self.room.status.set(Status::Live);
+            self.room.loading.set(None);
         }
     }
 
@@ -193,10 +287,9 @@ impl Link {
         self.stopped.set(true);
         let _ = self.room.doc.unobserve_update_v1("browser");
         if let Some(socket) = self.socket.take() {
-            socket.set_onopen(None);
             socket.set_onclose(None);
             socket.set_onmessage(None);
-            let _ = socket.close();
+            close_when_open(socket);
         }
     }
 
@@ -211,6 +304,21 @@ impl Link {
             room.changed();
         });
     }
+}
+
+/// A socket closed while it is still connecting makes the browser log an error, and the
+/// page leaves that early now that the state comes over HTTP: such a socket closes once open.
+fn close_when_open(socket: WebSocket) {
+    if socket.ready_state() != WebSocket::CONNECTING {
+        socket.set_onopen(None);
+        let _ = socket.close();
+        return;
+    }
+    let opened = socket.clone();
+    let close = Closure::once_into_js(move || {
+        let _ = opened.close();
+    });
+    socket.set_onopen(Some(close.unchecked_ref()));
 }
 
 /// A browser hides why a websocket handshake failed. When the session has expired, the

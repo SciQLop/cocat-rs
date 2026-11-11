@@ -104,7 +104,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     provide_context(files);
     // An upload into a project without files makes its file list; the page syncs it then.
     let files_on = Uploads::provide(config_has_files).files_on;
-    let connection = match connection::connect(room.clone()) {
+    let connection = match connection::connect_project(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => return failure(format!("The project cannot sync: {error}")).into_any(),
     };

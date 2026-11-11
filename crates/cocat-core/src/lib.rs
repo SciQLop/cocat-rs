@@ -24,6 +24,10 @@ pub const SUBPROTOCOL: &str = "cocat.v2";
 /// ignore it.
 pub const ROLE_HEADER: &str = "cocat-role";
 
+/// The header of a project's state answer giving its size before compression, so a page can
+/// show how far the download got.
+pub const STATE_BYTES_HEADER: &str = "cocat-state-bytes";
+
 /// The websocket close code for "this account's access to the project changed": its role
 /// changed, it left the project, or the project went away. The session is still good, so a
 /// client reconnects at once and the handshake tells it what it may do now. `1008` stays the

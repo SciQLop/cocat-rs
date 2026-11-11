@@ -19,6 +19,7 @@ use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::timeout;
+use tower_http::compression::CompressionLayer;
 use uuid::Uuid;
 
 use crate::db::User;
@@ -71,6 +72,7 @@ pub fn router(state: AppState) -> Router {
         .route("/room/{room_id}", get(catalogues_socket))
         .route("/room/{room_id}/{doc_id}", get(document_socket))
         .merge(crate::openapi::router(&state.links, document))
+        .layer(CompressionLayer::new())
         .layer(middleware::from_fn(ui::same_site))
         .layer(middleware::from_fn(crate::telemetry::track_http))
         .with_state(state)

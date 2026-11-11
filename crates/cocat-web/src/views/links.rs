@@ -398,7 +398,7 @@ fn Original(project: Project, uuid: String, id: String) -> impl IntoView {
     let room = Room::new(config);
     provide_context(room.clone());
     provide_context(LinkedFrom(project.clone()));
-    let connection = match connection::connect(room.clone()) {
+    let connection = match connection::connect_project(room.clone()) {
         Ok(connection) => StoredValue::new_local(connection),
         Err(error) => {
             return view! { <main class="content"><p role="alert">{format!("The linked catalogue cannot sync: {error}")}</p></main> }

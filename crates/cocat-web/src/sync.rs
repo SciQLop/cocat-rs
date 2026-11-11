@@ -112,24 +112,49 @@ pub fn receive(doc: &Doc, bytes: &[u8]) -> Reception {
             }
         }
         SyncMessage::SyncStep2(update) => {
-            apply(doc, &update);
+            let _ = apply_state(doc, &update);
             Reception {
                 replies: Vec::new(),
                 synced: true,
             }
         }
         SyncMessage::Update(update) => {
-            apply(doc, &update);
+            let _ = apply_state(doc, &update);
             Reception::default()
         }
     }
 }
 
-/// A frame the codec or the document refuses is dropped: the next handshake repairs
-/// whatever it was missing.
-fn apply(doc: &Doc, bytes: &[u8]) {
-    if let Ok(update) = Update::decode_v1(bytes) {
-        let _ = doc.transact_mut_with(REMOTE).apply_update(update);
+/// Applies an update from the server: a frame's, or the project's state downloaded before
+/// the socket opens. What the codec or the document refuses (a proxy's error page) is
+/// dropped: the next handshake repairs whatever it was missing.
+pub fn apply_state(doc: &Doc, bytes: &[u8]) -> bool {
+    Update::decode_v1(bytes)
+        .is_ok_and(|update| doc.transact_mut_with(REMOTE).apply_update(update).is_ok())
+}
+
+/// How far the first load of a project got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Loading {
+    Downloading {
+        received: u64,
+        total: Option<u64>,
+    },
+    /// The download is in; the page reads it.
+    Opening,
+}
+
+impl Loading {
+    pub fn text(self) -> String {
+        const MB: u64 = 1024 * 1024;
+        match self {
+            Loading::Downloading { received, total } if received >= MB => match total {
+                Some(total) => format!("Loading… {} of {} MB", received / MB, total / MB),
+                None => format!("Loading… {} MB", received / MB),
+            },
+            Loading::Downloading { .. } => "Loading…".to_owned(),
+            Loading::Opening => "Opening…".to_owned(),
+        }
     }
 }
 
@@ -263,5 +288,42 @@ mod tests {
         let reception = receive(&Doc::new(), &[1, 0]);
         assert!(reception.replies.is_empty());
         assert!(!reception.synced);
+    }
+
+    #[test]
+    fn a_downloaded_state_fills_the_replica_as_remote_and_the_hello_then_asks_for_nothing() {
+        let server = server_with_a_catalogue();
+        let state = server
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        let client = Doc::new();
+        let origins = Rc::new(RefCell::new(Vec::new()));
+        let seen = origins.clone();
+        client
+            .observe_update_v1("test", move |txn, _| seen.borrow_mut().push(is_remote(txn)))
+            .unwrap();
+        assert!(apply_state(&client, &state));
+        assert_eq!(*origins.borrow(), [true]);
+        let (step2, _) = deliver(&server, vec![hello(&client)]);
+        let Ok(Message::Sync(SyncMessage::SyncStep2(diff))) = Message::decode_v1(&step2[0]) else {
+            panic!("the server did not answer with its state");
+        };
+        assert_eq!(diff, [0, 0], "an empty update");
+    }
+
+    #[test]
+    fn a_download_that_is_not_an_update_is_refused() {
+        assert!(!apply_state(&Doc::new(), b"<html>proxy error</html>"));
+    }
+
+    #[test]
+    fn the_page_says_how_far_the_download_got() {
+        const MB: u64 = 1024 * 1024;
+        let text = |received, total| Loading::Downloading { received, total }.text();
+        assert_eq!(text(0, None), "Loading…");
+        assert_eq!(text(3 * MB, None), "Loading… 3 MB");
+        assert_eq!(text(12 * MB, Some(105 * MB)), "Loading… 12 of 105 MB");
+        assert_eq!(text(MB / 2, Some(MB / 2)), "Loading…");
+        assert_eq!(Loading::Opening.text(), "Opening…");
     }
 }

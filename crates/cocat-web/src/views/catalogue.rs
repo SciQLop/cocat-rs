@@ -11,6 +11,7 @@ use crate::rows::{
 use crate::search::{self, Listing, Query, Side, listing};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
+use crate::sync::Loading;
 use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
 use crate::views::rule::Heading;
@@ -47,8 +48,36 @@ impl OnScreen {
     }
 }
 
+/// The catalogue on screen, once the project is loaded; until then, how far loading got.
 #[component]
 pub fn CataloguePage(
+    shown: Memo<Route>,
+    selected: RwSignal<Option<Row>>,
+    screen: RwSignal<Option<OnScreen>>,
+) -> impl IntoView {
+    let loading = expect_context::<Room>().loading;
+    let waiting = Memo::new(move |_| loading.with(Option::is_some));
+    move || {
+        if waiting.get() {
+            view! { <LoadingNote loading/> }.into_any()
+        } else {
+            view! { <CatalogueView shown selected screen/> }.into_any()
+        }
+    }
+}
+
+#[component]
+fn LoadingNote(loading: RwSignal<Option<Loading>>) -> impl IntoView {
+    view! {
+        <div class="loading" role="status">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>{move || loading.get().map(Loading::text)}</span>
+        </div>
+    }
+}
+
+#[component]
+fn CatalogueView(
     shown: Memo<Route>,
     selected: RwSignal<Option<Row>>,
     screen: RwSignal<Option<OnScreen>>,

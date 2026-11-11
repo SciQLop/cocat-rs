@@ -3,6 +3,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::response::Response;
 use bytes::Bytes;
+use cocat_core::STATE_BYTES_HEADER;
 use cocat_core::model::{self, EventRecord, NewCatalogue};
 use cocat_core::role::Role;
 use cocat_core::store::FileRoomStore;
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
+use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, TransactionMut};
 
 const ROOM: &str = "room-read";
@@ -594,4 +596,66 @@ async fn over_budget_is_503() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body, json!({"detail": "Server memory budget reached"}));
     assert_eq!(fixture.open_rooms(), 0);
+}
+
+async fn state_response(fixture: &Fixture, token: &str, encoding: Option<&str>) -> Response {
+    let mut request = fixture.request("/api/rooms/room-read/state", Some(token));
+    if let Some(encoding) = encoding {
+        request
+            .headers_mut()
+            .insert(header::ACCEPT_ENCODING, encoding.parse().unwrap());
+    }
+    fixture.router().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn the_state_is_the_whole_project_as_one_update() {
+    let (fixture, owner) = fixture_with_library().await;
+    let response = state_response(&fixture, &fixture.token(owner).await, None).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let size: usize = response.headers()[STATE_BYTES_HEADER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(bytes.len(), size);
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(yrs::Update::decode_v1(&bytes).unwrap())
+        .unwrap();
+    let names: Vec<String> = model::catalogues(&doc.transact())
+        .into_iter()
+        .map(|catalogue| catalogue.name)
+        .collect();
+    assert_eq!(names, ["alpha", "beta", "mixed"]);
+}
+
+#[tokio::test]
+async fn the_state_travels_compressed_when_the_browser_accepts_it() {
+    let (fixture, owner) = fixture_with_library().await;
+    let token = fixture.token(owner).await;
+    let plain = state_response(&fixture, &token, None).await;
+    let size = plain.headers()[STATE_BYTES_HEADER].clone();
+
+    let response = state_response(&fixture, &token, Some("gzip")).await;
+
+    assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+    assert_eq!(response.headers()[STATE_BYTES_HEADER], size);
+}
+
+#[tokio::test]
+async fn the_state_is_refused_to_a_stranger() {
+    let (fixture, _) = fixture_with_library().await;
+    let stranger = fixture.user("stranger@example.org").await;
+
+    let (status, _) = fixture
+        .get(
+            "/api/rooms/room-read/state",
+            Some(&fixture.token(stranger).await),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

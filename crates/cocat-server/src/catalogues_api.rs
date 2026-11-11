@@ -11,7 +11,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use cocat_core::model::{self, CatalogueSummary, EventRecord};
 use cocat_core::time::Timestamp;
-use cocat_core::votable;
+use cocat_core::{STATE_BYTES_HEADER, votable};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -30,6 +30,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list))
         .routes(routes!(one))
         .routes(routes!(events))
+        .routes(routes!(project_state))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -278,4 +279,46 @@ fn cursor(text: &str) -> Result<(i128, String), ApiError> {
         .parse()
         .map_err(|_| invalid("the cursor is not valid"))?;
     Ok((micros, uuid.to_owned()))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/rooms/{room_id}/state",
+    params(("room_id" = String, Path, description = "Project id (a room in the API)")),
+    security(("cookie" = [])),
+    responses(
+        (status = 200, description = "The whole project as one Yjs update (v1), compressed when \
+            the client accepts it; the cocat-state-bytes header gives its size before compression",
+            content_type = "application/octet-stream"),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
+    )
+)]
+/// A page loads a project here before it opens the socket: HTTP compresses the state, which
+/// a websocket here cannot, and the page can show the download's progress. The socket then
+/// sends only what changed since.
+///
+/// simplify: encodes the whole room per request; share the socket's cached full state if
+/// many cold opens of one big room arrive at once.
+async fn project_state(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath(room_id): ApiPath<String>,
+) -> Result<Response, ApiError> {
+    membership(&state, &room_id, user.id).await?;
+    let update = state
+        .rooms
+        .read(&room_id, crate::history_api::encoded)
+        .await?;
+    let headers = [
+        (
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        ),
+        (
+            header::HeaderName::from_static(STATE_BYTES_HEADER),
+            HeaderValue::from(update.len()),
+        ),
+    ];
+    Ok((headers, update).into_response())
 }

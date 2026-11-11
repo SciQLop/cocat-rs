@@ -56,6 +56,8 @@ web-sys = { version = "0.3", features = [
     "Node",
     "NodeList",
     "PointerEvent",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
     "Storage",
     "Url",
     "WebSocket",
