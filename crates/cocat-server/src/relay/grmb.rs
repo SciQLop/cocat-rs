@@ -44,8 +44,8 @@ const VARIABLES: [(&str, &str); 6] = [
     ("quality_location_code", "quality_code"),
     ("quality_location_label", "quality_products"),
 ];
-/// The labels, with the names the CEF header gives them. The first is the region a record
-/// with no data carries, which is no event.
+/// The labels, with the names the CEF header gives them. `NO_DATA` is the label of a record
+/// with no data, which is no event.
 const NO_DATA: &str = "N/A";
 const REGIONS: [(&str, &str); 15] = [
     ("IN/UKN", "Inside the magnetosphere"),
@@ -82,6 +82,8 @@ fn request_url(spacecraft: u8, until: Timestamp) -> Result<String, String> {
 }
 
 /// The CEF file inside the archive the CSA answers with.
+// simplify: read_to_string has no size cap; the source is ESA and the archive under 1 MB.
+// Upgrade: cap the entry with `take`.
 fn cef_text(archive: &[u8]) -> Result<String, String> {
     let mut archive = tar::Archive::new(GzDecoder::new(archive));
     for entry in archive.entries().map_err(|error| error.to_string())? {
@@ -184,10 +186,8 @@ fn attributes(region: &str, values: &[(&str, &str)]) -> Result<Map<String, Value
     let mut map = Map::new();
     for (attribute, text) in values {
         map.insert((*attribute).to_owned(), attribute_value(attribute, text)?);
-        if *attribute == "region" {
-            map.insert("region_name".to_owned(), json!(name));
-        }
     }
+    map.insert("region_name".to_owned(), json!(name));
     Ok(map)
 }
 
@@ -246,6 +246,7 @@ impl Provider for Grmb {
         _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         let until = Timestamp::now();
+        // simplify: one spacecraft at a time on purpose, to be polite to the CSA.
         let mut lists = Vec::new();
         for spacecraft in SPACECRAFT {
             lists.push(fetch_spacecraft(http, spacecraft, until).await);
