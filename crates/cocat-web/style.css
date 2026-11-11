@@ -1637,5 +1637,9 @@ a.home-project:hover { color: var(--accent); }
   .spinner { animation-duration: 2.4s; }
 }
 
-.round-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.round-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.round-row .your-part { color: var(--muted); margin-left: auto; }
+.your-part-box { padding: 12px 16px; border-left: 3px solid var(--accent); background: var(--surface); }
+.your-part-box p { margin: 0; font-weight: 500; }
+.round-note { margin: 4px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted); }
 .budget.over-cap { color: var(--danger); font-weight: 600; }

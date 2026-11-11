@@ -346,6 +346,7 @@ async fn deciding_stamps_the_round_on_the_final_catalogue() {
         serde_json::from_str(catalogue["attributes"]["round"].as_str().unwrap()).unwrap();
     assert_eq!(stamp["@type"], "cocat:Round");
     assert_eq!(stamp["cocat:name"], "Round 1");
+    assert_eq!(stamp["cocat:round"], round);
     assert_eq!(stamp["cocat:decidedBy"], "owner@example.org");
     assert_eq!(stamp["cocat:proposers"], json!(["ada@example.org"]));
     assert_eq!(

@@ -624,6 +624,7 @@ fn round_stamp(round: &RoundRow, decider: &str, proposers: Vec<String>, at: Stri
     let mut stamp = json!({
         "@context": {"cocat": "https://cocat.sciqlop.fr/ns/round#"},
         "@type": "cocat:Round",
+        "cocat:round": round.id,
         "cocat:name": round.name,
         "cocat:decidedBy": decider,
         "cocat:decidedAt": at,

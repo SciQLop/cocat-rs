@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use cocat_core::{model, query};
 use leptos::prelude::*;
 
+use crate::rounds::decided_in;
 use crate::route::Route;
 use crate::rows::Row;
 use crate::rule_text::{copied_text, counts_text, describe};
@@ -20,6 +21,12 @@ struct About {
     rule: Option<String>,
     /// Where a copied catalogue came from: its direct source, and the whole chain.
     copied: Option<(String, String)>,
+    /// The round (id, name) that decided this catalogue.
+    decided_in: Option<(String, String)>,
+}
+
+fn page() -> String {
+    window().location().pathname().unwrap_or_default()
 }
 
 #[component]
@@ -77,6 +84,9 @@ pub fn Heading(
             {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
                 <p class="quiet copied" title=chain>{line}</p>
             })}
+            {move || about.with(|about| about.decided_in.clone()).map(|(id, name)| view! {
+                <p class="quiet">"Decided in round "<a href=Route::Round(id).href(&page())>{name}</a></p>
+            })}
             {move || about.with(|about| about.rule.clone()).map(|words| view! {
                 <p class="rule">"Rule: " {words}</p>
             })}
@@ -94,6 +104,7 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
         smart: false,
         rule: None,
         copied: None,
+        decided_in: None,
     };
     match shown {
         Route::Catalogue(uuid) => match model::catalogue(txn, uuid) {
@@ -105,6 +116,7 @@ fn about<T: yrs::ReadTxn>(txn: &T, shown: &Route) -> About {
                     .filter(|rule| query::rule_search(rule, &model::catalogue_names(txn)).is_none())
                     .and_then(|rule| describe(&rule, &name).ok()),
                 copied: copied_text(&catalogue.copied_from),
+                decided_in: decided_in(&catalogue.attributes),
             },
             None => titled("No such catalogue"),
         },

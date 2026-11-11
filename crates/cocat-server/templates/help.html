@@ -18,6 +18,7 @@ together, in the browser, in SciQLop and from Python.</p>
     <li><a href="#sharing">Sharing</a></li>
     <li><a href="#groups">Groups</a></li>
     <li><a href="#public">Public catalogues</a></li>
+    <li><a href="#rounds">Selection rounds</a></li>
     <li><a href="#roles">Roles</a></li>
     <li><a href="#presence">Who is here</a></li>
     <li><a href="#sciqlop-python">SciQLop and Python</a></li>
@@ -358,6 +359,35 @@ with your note.</p>
 <p>SciQLop and Python list them too: in Python, <code>public_catalogues</code>,
 <code>copy_public_catalogue</code> to copy one, and <code>submit_catalogue</code> or <code>propose_change</code> and <code>submit_update</code> to
 submit.</p>
+</section>
+
+<section>
+<h2 id="rounds">Selection rounds</h2>
+<p>In a round, several people propose or review time intervals, then a decider keeps one
+final catalogue. Open <strong>Rounds</strong> in a project to see yours. The list puts first
+the rounds that need you, and each says what your part is.</p>
+<p>There are three kinds of round:</p>
+<ul>
+  <li><strong>Review</strong>: someone made a catalogue of detections, for example a
+  pipeline. The round copies it, and reviewers give a verdict on each event. A review round
+  says <em>reviewing</em> where the others say <em>voting</em>.</li>
+  <li><strong>Downlink</strong>: proposers each propose intervals, within a budget. Reviewers
+  look at the proposals, and the decider keeps the ones that fit.</li>
+  <li><strong>Labelling</strong>: proposers each label intervals. Reviewers and the decider
+  work as in a downlink round, with no budget needed.</li>
+</ul>
+<p>A round is <em>blind</em> or <em>open</em>. In a blind round, a reviewer sees only their own
+verdicts. The deciders and the owners of the project see everyone's, until the round is
+decided. In an open round, everyone in the round sees them all.</p>
+<p>A round may have a <strong>budget</strong>: a cap on what the chosen intervals cost, for
+example the data volume to download. The page shows the cost of the final catalogue and turns
+red when it is over the cap.</p>
+<p>A verdict is <strong>accept</strong>, <strong>reject</strong> or <strong>unsure</strong>.
+An event with no verdict is not reviewed yet. When a round goes back to proposing, it starts a
+new revision and the earlier verdicts no longer count.</p>
+<p>The decider moves the round to decided and gives the final catalogue. The catalogue then
+says which round decided it. Everything a round does on this page, SciQLop and Python do
+too.</p>
 </section>
 
 <section>

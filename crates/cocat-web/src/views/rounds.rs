@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
-use crate::rounds::{Round, over_cap};
+use crate::rounds::{Round, group, over_cap, state_words, your_part};
 use crate::route::Route;
 use crate::state::Room;
 use cocat_core::model;
@@ -41,27 +41,53 @@ pub fn RoundsPage(shown: Memo<Route>) -> impl IntoView {
     }
 }
 
+const INTRO: &str = "In a round, several people propose or review time intervals, then a decider keeps one final catalogue.";
+
+fn me() -> String {
+    expect_context::<Room>().config.user_email.clone()
+}
+
 fn round_list(rounds: Vec<Round>) -> impl IntoView {
     let page = page();
     let back = Route::Default.href(&page);
-    let rows = rounds
-        .into_iter()
-        .map(|round| {
-            let href = Route::Round(round.id.clone()).href(&page);
-            view! {
-                <li class="round-row">
-                    <a href=href>{round.name}</a>
-                    <span class="badge">{round.state}</span>
-                </li>
-            }
-        })
-        .collect_view();
+    let me = me();
+    let (needs_you, in_progress, finished) = group(&rounds, &me);
+    let groups = [
+        ("Needs you", needs_you),
+        ("In progress", in_progress),
+        ("Finished", finished),
+    ]
+    .into_iter()
+    .filter(|(_, rounds)| !rounds.is_empty())
+    .map(|(title, rounds)| {
+        let rows = rounds
+            .into_iter()
+            .map(|round| round_row(round, &me, &page))
+            .collect_view();
+        view! { <section><h2 class="eyebrow">{title}</h2><ul class="plain-list">{rows}</ul></section> }
+    })
+    .collect_view();
     view! {
         <div class="groups-head">
             <h1>"Rounds"</h1>
             <a class="button" href=back>"Back to catalogues"</a>
         </div>
-        <ul class="plain-list">{rows}</ul>
+        <p class="quiet">{INTRO}</p>
+        {groups}
+    }
+}
+
+fn round_row(round: &Round, me: &str, page: &str) -> impl IntoView + use<> {
+    let href = Route::Round(round.id.clone()).href(page);
+    let state = state_words(&round.kind, &round.state).to_owned();
+    let part = your_part(round, me, None);
+    view! {
+        <li class="round-row">
+            <a href=href>{round.name.clone()}</a>
+            <span class="badge">{round.kind.clone()}</span>
+            <span class="badge">{state}</span>
+            {part.map(|part| view! { <span class="your-part">{part}</span> })}
+        </li>
     }
 }
 
@@ -76,6 +102,19 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         .into_any();
     };
     let settings = settings_line(&round);
+    let part = your_part(&round, &me(), None).map(|part| {
+        view! { <section class="your-part-box"><h2 class="eyebrow">"Your part"</h2><p>{part}</p></section> }
+    });
+    let voter_title = if round.kind == "review" {
+        "Reviewers"
+    } else {
+        "Voters"
+    };
+    let voters = round
+        .voters
+        .iter()
+        .map(|email| view! { <li>{email.clone()}</li> })
+        .collect_view();
     let proposers = round
         .proposers
         .iter()
@@ -91,7 +130,8 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         .iter()
         .map(|entry| {
             let actor = entry.actor.clone().unwrap_or_else(|| "the server".to_owned());
-            view! { <li><span class="quiet">{entry.at.clone()}</span>" "{actor}": "{entry.what.clone()}</li> }
+            let note = entry.note.clone().map(|note| view! { <blockquote class="round-note">{note}</blockquote> });
+            view! { <li><span class="quiet">{entry.at.clone()}</span>" "{actor}": "{entry.what.clone()}{note}</li> }
         })
         .collect_view();
     view! {
@@ -100,7 +140,9 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
             <a class="button" href=back>"Back to rounds"</a>
         </div>
         <p class="quiet">{settings}</p>
+        {part}
         <section><h2 class="eyebrow">"Proposers"</h2><ul class="plain-list">{proposers}</ul></section>
+        <section><h2 class="eyebrow">{voter_title}</h2><ul class="plain-list">{voters}</ul></section>
         <section><h2 class="eyebrow">"Deciders"</h2><ul class="plain-list">{deciders}</ul></section>
         {final_section(&round, &page)}
         <section><h2 class="eyebrow">"Log"</h2><ul class="plain-list">{log}</ul></section>
@@ -114,7 +156,11 @@ fn settings_line(round: &Round) -> String {
         .as_deref()
         .map(|at| format!(", deadline {at}"))
         .unwrap_or_default();
-    format!("{}, {}{deadline}", round.state, round.visibility)
+    let state = state_words(&round.kind, &round.state);
+    format!(
+        "{} round, {state}, {}{deadline}",
+        round.kind, round.visibility
+    )
 }
 
 fn final_section(round: &Round, page: &str) -> Option<impl IntoView + use<>> {
