@@ -1,0 +1,33 @@
+<svg viewBox="0 0 720 240" role="img" aria-label="to_pandas gives a frame with a uuid column; import_dataframe makes a new catalogue that lists the same events, updated" style="width:100%;max-width:720px;height:auto" font-size="13" fill="currentColor">
+<defs><marker id="arr-df" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker></defs>
+<rect x="20" y="30" width="150" height="44" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="95" y="52" text-anchor="middle" dominant-baseline="middle">Shocks</text>
+<rect x="270" y="20" width="180" height="66" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<rect x="405" y="20" width="45" height="66" style="fill:none;stroke:var(--md-accent-fg-color);stroke-width:2"/>
+<line x1="270" y1="42" x2="450" y2="42" style="stroke:currentColor"/>
+<line x1="270" y1="64" x2="450" y2="64" style="stroke:currentColor;opacity:0.4"/>
+<line x1="315" y1="20" x2="315" y2="86" style="stroke:currentColor;opacity:0.4"/>
+<line x1="360" y1="20" x2="360" y2="86" style="stroke:currentColor;opacity:0.4"/>
+<g font-size="11" text-anchor="middle" dominant-baseline="middle">
+<text x="292" y="31">uuid</text><text x="337" y="31">start</text><text x="382" y="31">stop</text><text x="427" y="31">mach</text>
+<text x="292" y="53">e1</text><text x="337" y="53">…</text><text x="382" y="53">…</text><text x="427" y="53">3.2</text>
+<text x="292" y="75">e2</text><text x="337" y="75">…</text><text x="382" y="75">…</text><text x="427" y="75">2.5</text>
+</g>
+<text x="427" y="100" text-anchor="middle" font-size="11" opacity="0.8">new column</text>
+<rect x="585" y="30" width="125" height="44" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="647" y="52" text-anchor="middle" dominant-baseline="middle">Shocks + Mach</text>
+<line x1="170" y1="52" x2="268" y2="52" style="stroke:currentColor" marker-end="url(#arr-df)"/>
+<text x="219" y="44" text-anchor="middle" font-size="11" font-family="monospace">to_pandas()</text>
+<line x1="450" y1="52" x2="583" y2="52" style="stroke:currentColor" marker-end="url(#arr-df)"/>
+<text x="516" y="44" text-anchor="middle" font-size="11" font-family="monospace">import_dataframe()</text>
+<circle cx="300" cy="190" r="22" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="300" y="190" text-anchor="middle" dominant-baseline="middle">e1</text>
+<circle cx="420" cy="190" r="22" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="420" y="190" text-anchor="middle" dominant-baseline="middle">e2</text>
+<line x1="95" y1="74" x2="280" y2="176" style="stroke:currentColor" marker-end="url(#arr-df)"/>
+<line x1="95" y1="74" x2="399" y2="182" style="stroke:currentColor" marker-end="url(#arr-df)"/>
+<line x1="647" y1="74" x2="321" y2="182" style="stroke:var(--md-accent-fg-color);stroke-width:2" marker-end="url(#arr-df)"/>
+<line x1="647" y1="74" x2="440" y2="176" style="stroke:var(--md-accent-fg-color);stroke-width:2" marker-end="url(#arr-df)"/>
+<text x="560" y="200" text-anchor="middle" font-size="11">same uuids: the same events,</text>
+<text x="560" y="214" text-anchor="middle" font-size="11">updated, not copied</text>
+</svg>

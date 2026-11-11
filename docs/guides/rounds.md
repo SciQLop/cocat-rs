@@ -18,6 +18,16 @@ verdict and every step.
 | **Downlink** | each proposer, within a budget | vote for proposals | choosing burst data to download |
 | **Labelling** | each proposer labels intervals | vote, like in a downlink | annotation campaigns, classes |
 
+## How a round moves
+
+<figure>
+--8<-- "rounds.svg"
+<figcaption>The steps of a round. Dashed arrows go back a step.</figcaption>
+</figure>
+
+A review round has its candidates already, so it starts at voting. The decider can also decide
+straight from proposing, and the owner can reopen a decided round at either step.
+
 ## Open or blind
 
 - In an **open** round, everyone in the round sees all verdicts.

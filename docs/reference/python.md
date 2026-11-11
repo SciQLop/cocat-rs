@@ -43,6 +43,7 @@ import cocat_rs as cc
 | `catalogue.name = "..."` | rename |
 | `catalogue.delete()`, `catalogue.restore()` | to the trash and back |
 | `catalogue.event_arrays()` | `uuid`, `start`, `stop` as arrays, fast for big catalogues |
+| `catalogue.to_pandas()`, `catalogue.to_polars()` | the events as a DataFrame |
 
 ## Events
 
@@ -50,7 +51,9 @@ import cocat_rs as cc
 |---|---|
 | `project.create_event(start=..., stop=..., tags=..., attributes=..., confidence=..., status=...)` | a new event (not yet in a catalogue) |
 | `project.event(uuid)` | one event |
-| `event.start`, `event.stop`, `event.tags`, `event.status`, `event.confidence`, `event.comment` | read or set |
+| `event.start`, `event.stop` | read |
+| `event.range = (start, stop)` | move the event |
+| `event.tags`, `event.status`, `event.confidence`, `event.comment` | read or set |
 | `event.attributes`, `event.set_attributes(key=value)`, `event.remove_attributes("key")` | your own values |
 | `event.catalogues` | uuids of the catalogues listing it |
 | `event.delete()`, `event.restore()`, `event.purge()` | trash, back, gone for good |
@@ -86,6 +89,10 @@ import cocat_rs as cc
 | `project.import_tfcat(path)` | TFCat in |
 | `cc.export_votable([catalogue, ...], path)` | VOTable out |
 | `cc.export_tfcat(catalogue, path)` | TFCat out |
+| `project.import_csv(path, name=None)` | CSV in |
+| `cc.export_csv([catalogue, ...], path)` | CSV out |
+| `catalogue.to_pandas()`, `catalogue.to_polars()` | a DataFrame, one row per event |
+| `project.import_dataframe(df, name)` | a DataFrame in, as a new catalogue |
 | `cocat_rs.tscat.import_database(project)` | your local tscat database in |
 | `cocat_rs.tscat.import_json(project, path)` / `export_json(project, catalogues, path)` | tscat JSON |
 

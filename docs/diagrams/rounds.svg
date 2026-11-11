@@ -1,0 +1,24 @@
+<svg viewBox="0 0 760 210" role="img" aria-label="A round moves from proposing to voting to decided; the owner can send it back a step" style="width:100%;max-width:760px;height:auto" font-size="13" fill="currentColor">
+<defs><marker id="arr-rd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker></defs>
+<circle cx="40" cy="100" r="7" style="fill:currentColor"/>
+<rect x="155" y="80" width="130" height="40" rx="20" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="220" y="100" text-anchor="middle" dominant-baseline="middle">proposing</text>
+<rect x="365" y="80" width="130" height="40" rx="20" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="430" y="100" text-anchor="middle" dominant-baseline="middle">voting</text>
+<rect x="575" y="80" width="130" height="40" rx="20" style="fill:var(--md-code-bg-color);stroke:var(--md-accent-fg-color);stroke-width:2"/>
+<text x="640" y="100" text-anchor="middle" dominant-baseline="middle">decided</text>
+<line x1="47" y1="100" x2="153" y2="100" style="stroke:currentColor" marker-end="url(#arr-rd)"/>
+<text x="100" y="80" text-anchor="middle" font-size="11">downlink,</text>
+<text x="100" y="93" text-anchor="middle" font-size="11">labelling</text>
+<path d="M40,93 C40,25 430,20 430,78" style="fill:none;stroke:currentColor" marker-end="url(#arr-rd)"/>
+<text x="235" y="38" text-anchor="middle" font-size="11">review: candidates are given</text>
+<line x1="285" y1="100" x2="363" y2="100" style="stroke:currentColor" marker-end="url(#arr-rd)"/>
+<text x="325" y="80" text-anchor="middle" font-size="11">decider</text>
+<text x="325" y="93" text-anchor="middle" font-size="11">or deadline</text>
+<line x1="495" y1="100" x2="573" y2="100" style="stroke:currentColor" marker-end="url(#arr-rd)"/>
+<text x="535" y="93" text-anchor="middle" font-size="11">decider</text>
+<path d="M410,120 C410,168 240,168 240,122" style="fill:none;stroke:currentColor;stroke-dasharray:5 4" marker-end="url(#arr-rd)"/>
+<text x="325" y="185" text-anchor="middle" font-size="11">owner asks for changes</text>
+<path d="M620,120 C620,168 450,168 450,122" style="fill:none;stroke:currentColor;stroke-dasharray:5 4" marker-end="url(#arr-rd)"/>
+<text x="535" y="185" text-anchor="middle" font-size="11">owner reopens it</text>
+</svg>

@@ -28,6 +28,11 @@ Such a catalogue says where it comes from under its name, for instance "From DON
 CCMC), refreshed 2026-11-11", with a link to the source. When the source corrects an event,
 the catalogue follows, and the change shows in its **History**.
 
+<figure>
+--8<-- "public.svg"
+<figcaption>Where public catalogues come from, and how your copy and your submissions relate to them.</figcaption>
+</figure>
+
 ## Use one
 
 You read a public catalogue like any other: table, timeline, statistics, history, search,

@@ -1,0 +1,22 @@
+<svg viewBox="0 0 760 200" role="img" aria-label="A source or the curators fill a public catalogue; you copy it into your project, and submit changes back to the curators" style="width:100%;max-width:760px;height:auto" font-size="13" fill="currentColor">
+<defs><marker id="arr-pub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker></defs>
+<rect x="20" y="130" width="150" height="48" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="95" y="147" text-anchor="middle" dominant-baseline="middle">A source</text>
+<text x="95" y="165" text-anchor="middle" dominant-baseline="middle" font-size="11" opacity="0.75">DONKI, CDAW, STIX…</text>
+<rect x="300" y="130" width="160" height="48" rx="6" style="fill:var(--md-code-bg-color);stroke:var(--md-accent-fg-color);stroke-width:2"/>
+<text x="380" y="154" text-anchor="middle" dominant-baseline="middle">Public catalogue</text>
+<rect x="590" y="130" width="150" height="48" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="665" y="147" text-anchor="middle" dominant-baseline="middle">Your copy</text>
+<text x="665" y="165" text-anchor="middle" dominant-baseline="middle" font-size="11" opacity="0.75">in your project</text>
+<rect x="300" y="20" width="160" height="40" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="380" y="40" text-anchor="middle" dominant-baseline="middle">Curators</text>
+<line x1="170" y1="154" x2="298" y2="154" style="stroke:currentColor" marker-end="url(#arr-pub)"/>
+<text x="235" y="140" text-anchor="middle" font-size="11">read again</text>
+<text x="235" y="172" text-anchor="middle" font-size="11">on a schedule</text>
+<line x1="460" y1="154" x2="588" y2="154" style="stroke:currentColor" marker-end="url(#arr-pub)"/>
+<text x="525" y="146" text-anchor="middle" font-size="11">Copy to a project…</text>
+<line x1="380" y1="60" x2="380" y2="128" style="stroke:currentColor" marker-end="url(#arr-pub)"/>
+<text x="388" y="98" font-size="11">accept</text>
+<polyline points="665,130 665,40 462,40" style="fill:none;stroke:currentColor;stroke-dasharray:5 4" marker-end="url(#arr-pub)"/>
+<text x="563" y="32" text-anchor="middle" font-size="11">Submit (curated catalogues)</text>
+</svg>

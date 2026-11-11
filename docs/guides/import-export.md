@@ -11,7 +11,8 @@ supplementary material. cocat reads the common formats and writes them back.
 | **tscat JSON** (`.json`) | yes | yes | moving from tscat / older SciQLop |
 | **tscat database** | yes, from Python | – | your local tscat catalogues, all at once |
 | **TFCat** (`.json`) | yes | yes | radio events with time–frequency shapes |
-| **CSV** (`.csv`) | – | yes | spreadsheets, supplementary material |
+| **CSV** (`.csv`, `.tsv`) | yes | yes | spreadsheets, tables from papers |
+| **pandas / polars DataFrame** | yes, from Python | yes, from Python | analysis in notebooks |
 
 ## Import in the browser
 
@@ -32,6 +33,7 @@ Some details:
 - A **VOTable** always makes new catalogues.
 - A **tscat JSON** file updates the catalogue with the same id.
 - A **TFCat** file makes one new catalogue, named after the file's title.
+- A **CSV** file makes one new catalogue, named after the file. See [CSV files](#csv-files).
 
 Only editors can import.
 
@@ -95,31 +97,74 @@ project.import_votable("my_amda_catalogue.xml")
 AMDA's shared catalogues may already be on your server, under **Public catalogues → AMDA**.
 See [Community catalogues](public-catalogues.md).
 
-## From a spreadsheet or a paper's table
+## CSV files
 
-There is no CSV import. A few lines of Python do it, and let you decide what each column
-means:
+A CSV file is a table: one row per event, one column per field. Spreadsheets save it, papers
+publish it, and most tools read it.
+
+The only columns cocat needs are **start** and **stop** (or **end**). Some columns have a
+meaning of their own:
+
+| Column | Becomes | Example |
+|---|---|---|
+| `start`, `stop` (or `end`) | the time interval, in UTC | `2020-01-01 10:00:00`, `2020-01-01T10:00:00Z` |
+| `tags` | tags, separated by `;` or `,` | `shock; foot` |
+| `status` | the status | `reviewed` |
+| `confidence` | the confidence, 0 to 1 | `0.8` |
+| `author` | the author | `ana@lab.org` |
+| `comment` | the comment | `data gap at 12:03` |
+| `uuid` | the event's id: an event with that id is updated | (written by the export) |
+
+Every other column becomes an **attribute**. A cell that reads as a number becomes a number,
+`true` and `false` become yes/no values, and the rest stays text. Empty cells are left out.
+
+The separator can be a comma, a semicolon (as European spreadsheets save) or a tab: cocat
+picks the one the header uses. Column names don't care about capitals.
+
+A row with a time cocat can't read stops the import, and the message names the row. A status
+or a confidence it can't read is left out, with a warning.
+
+```python
+catalogue = project.import_csv("shocks_table2.csv")          # named after the file
+catalogue = project.import_csv("export.csv", name="Shocks")  # or named as you like
+cc.export_csv([catalogue], "shocks.csv")
+```
+
+!!! tip "Edit in a spreadsheet, then import back"
+    The CSV export writes each event's `uuid`. Open the file in a spreadsheet, fix a few
+    values, save it as CSV and import it: the events with those ids are updated, not copied.
+
+## DataFrames: pandas and polars
+
+In a notebook, a catalogue becomes a DataFrame in one call, and a DataFrame becomes a
+catalogue in one call:
+
+```python
+frame = catalogue.to_pandas()      # or catalogue.to_polars()
+```
+
+You get one row per event, in time order. The columns are `uuid`, `start`, `stop`, `tags`,
+`status`, `confidence`, `author`, `comment`, then one column per attribute.
+
+To go the other way, give the DataFrame and a name:
 
 ```python
 import pandas as pd
-import cocat_rs as cc
 
-table = pd.read_csv("shocks_table2.csv", parse_dates=["start", "stop"])
-
-project = cc.open("Shocks at L1")
-catalogue = project.create_catalogue(name="Smith et al. 2021, table 2")
-with project.transaction():
-    catalogue.add_events([
-        project.create_event(
-            start=row.start.isoformat() + "Z",
-            stop=row.stop.isoformat() + "Z",
-            tags=["shock"],
-            attributes={"theta_bn": row.theta_bn, "mach": row.mach},
-        )
-        for row in table.itertuples()
-    ])
-project.save()
+table = pd.read_csv("smith2021_table2.csv", parse_dates=["start", "stop"])
+catalogue = project.import_dataframe(table, name="Smith et al. 2021, table 2")
 ```
+
+It reads the same columns as a CSV file: `start` and `stop` are needed; the known columns
+become fields, the others attributes; empty cells (`NaN`, `None`) are left out.
+
+<figure>
+--8<-- "dataframe.svg"
+<figcaption>A round trip through pandas: the uuid column makes the new catalogue list the same events, now updated.</figcaption>
+</figure>
+
+The `uuid` column makes a round trip work: compute a new column in pandas, import the frame,
+and the same events get the new attribute.
 
 ## From Python, in general
 
@@ -127,6 +172,11 @@ project.save()
 project.import_votable("catalogue.xml")
 project.import_tfcat("bursts.json")
 
+project.import_csv("table.csv")
+project.import_dataframe(frame, name="From pandas")
+
 cc.export_votable([catalogue], "catalogue.xml")
 cc.export_tfcat(catalogue, "bursts.json")
+cc.export_csv([catalogue], "catalogue.csv")
+frame = catalogue.to_pandas()
 ```

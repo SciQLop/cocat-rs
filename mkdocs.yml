@@ -32,6 +32,9 @@ theme:
     - search.highlight
     - content.code.copy
 
+extra_css:
+  - stylesheets/extra.css
+
 nav:
   - Home: index.md
   - Getting started: getting-started.md
@@ -60,5 +63,8 @@ markdown_extensions:
       permalink: true
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: [docs/diagrams]
+      check_paths: true
   - pymdownx.highlight
   - pymdownx.inlinehilite

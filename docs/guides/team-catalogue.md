@@ -48,6 +48,11 @@ A common choice:
 | final | goes into the paper |
 | rejected | looked like one, isn't |
 
+<figure>
+--8<-- "status.svg"
+<figcaption>A common way to use the status field in a team study.</figcaption>
+</figure>
+
 Keep rejected events instead of deleting them. They make good negative examples, and they
 stop the next person from adding the same false detection again.
 

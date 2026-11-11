@@ -29,6 +29,11 @@ A **catalogue** is a named list of events: "Bow shock crossings", "Type III burs
 One event can belong to **several catalogues** of the same project. Put a shock in "All shocks"
 and in "Shocks for the paper": it is the same event, so a correction shows in both.
 
+<figure>
+--8<-- "catalogues.svg"
+<figcaption>Shock B is listed by both catalogues. It is one event: fix it once and both show the fix.</figcaption>
+</figure>
+
 ## Smart catalogues
 
 A **smart catalogue** has a rule instead of a fixed list. "Every shock with confidence above
@@ -106,6 +111,11 @@ data as a class. See [Review rounds](guides/rounds.md).
 The Python package and SciQLop keep a copy of each project on your computer. You can keep
 working on a plane or when the server is down. Your changes are sent when the connection comes
 back, and they merge with what others did meanwhile. Nobody's work overwrites anybody else's.
+
+<figure>
+--8<-- "offline.svg"
+<figcaption>Changes made offline are sent on reconnection. Both sides end with the same project.</figcaption>
+</figure>
 
 !!! info "How can edits never conflict?"
     cocat stores projects as a CRDT, a data structure built so that edits made apart always

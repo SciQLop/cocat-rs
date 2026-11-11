@@ -26,6 +26,11 @@ fact: pick it and use **Name this version**.
 
 Do this again at each step: `paper v2 (after review)`, `paper accepted`.
 
+<figure>
+--8<-- "paper.svg"
+<figcaption>The project keeps changing. The named version stays as it was, and a copy of it can be exported.</figcaption>
+</figure>
+
 ## 2. Keep working
 
 Naming a version freezes nothing. The team goes on editing the project as before. The named
@@ -58,7 +63,8 @@ Export…**:
 
 - **VOTable** (`.xml`): the astronomy table standard. TOPCAT and AMDA read it. Good for a data
   repository like Zenodo.
-- **CSV** (`.csv`): opens in any spreadsheet. Good as supplementary material.
+- **CSV** (`.csv`): opens in any spreadsheet. Good as supplementary material, and it reads
+  back into cocat.
 - **TFCat** (`.json`): for radio events with time–frequency shapes.
 
 Export from a copy of the named version (step 3), so the file is exactly that version.

@@ -1,0 +1,22 @@
+<svg viewBox="0 0 620 290" role="img" aria-label="Edits made offline are sent when the laptop reconnects, and both sides end with the same project" style="width:100%;max-width:620px;height:auto" font-size="13" fill="currentColor">
+<defs><marker id="arr-off" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker></defs>
+<rect x="30" y="10" width="140" height="36" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="100" y="28" text-anchor="middle" dominant-baseline="middle">Your laptop</text>
+<rect x="240" y="10" width="140" height="36" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="310" y="28" text-anchor="middle" dominant-baseline="middle">Server</text>
+<rect x="450" y="10" width="140" height="36" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="520" y="28" text-anchor="middle" dominant-baseline="middle">A colleague</text>
+<line x1="100" y1="46" x2="100" y2="280" style="stroke:currentColor;stroke-dasharray:4 4;opacity:0.5"/>
+<line x1="310" y1="46" x2="310" y2="280" style="stroke:currentColor;stroke-dasharray:4 4;opacity:0.5"/>
+<line x1="520" y1="46" x2="520" y2="280" style="stroke:currentColor;stroke-dasharray:4 4;opacity:0.5"/>
+<rect x="20" y="66" width="160" height="30" rx="4" style="fill:var(--md-code-bg-color);stroke:currentColor;opacity:0.9"/>
+<text x="100" y="81" text-anchor="middle" dominant-baseline="middle" font-size="12">offline: edits events</text>
+<line x1="520" y1="125" x2="312" y2="125" style="stroke:currentColor" marker-end="url(#arr-off)"/>
+<text x="415" y="117" text-anchor="middle" font-size="12">edits other events</text>
+<line x1="100" y1="170" x2="308" y2="170" style="stroke:var(--md-accent-fg-color);stroke-width:2" marker-end="url(#arr-off)"/>
+<text x="205" y="162" text-anchor="middle" font-size="12">back online: your changes</text>
+<line x1="310" y1="215" x2="102" y2="215" style="stroke:currentColor" marker-end="url(#arr-off)"/>
+<text x="205" y="207" text-anchor="middle" font-size="12">your colleague's changes</text>
+<line x1="310" y1="255" x2="518" y2="255" style="stroke:currentColor" marker-end="url(#arr-off)"/>
+<text x="415" y="247" text-anchor="middle" font-size="12">your changes</text>
+</svg>

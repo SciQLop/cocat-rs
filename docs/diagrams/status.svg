@@ -1,0 +1,22 @@
+<svg viewBox="0 0 680 170" role="img" aria-label="An event goes from preliminary to confirmed, reviewed and final, or to rejected when a check fails" style="width:100%;max-width:680px;height:auto" font-size="13" fill="currentColor">
+<defs><marker id="arr-st" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker></defs>
+<rect x="20" y="30" width="120" height="36" rx="18" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="80" y="48" text-anchor="middle" dominant-baseline="middle">preliminary</text>
+<rect x="190" y="30" width="120" height="36" rx="18" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="250" y="48" text-anchor="middle" dominant-baseline="middle">confirmed</text>
+<rect x="360" y="30" width="120" height="36" rx="18" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="420" y="48" text-anchor="middle" dominant-baseline="middle">reviewed</text>
+<rect x="530" y="30" width="120" height="36" rx="18" style="fill:var(--md-code-bg-color);stroke:var(--md-accent-fg-color);stroke-width:2"/>
+<text x="590" y="48" text-anchor="middle" dominant-baseline="middle">final</text>
+<rect x="105" y="122" width="120" height="36" rx="18" style="fill:var(--md-code-bg-color);stroke:currentColor;stroke-dasharray:4 3"/>
+<text x="165" y="140" text-anchor="middle" dominant-baseline="middle">rejected</text>
+<line x1="140" y1="48" x2="188" y2="48" style="stroke:currentColor" marker-end="url(#arr-st)"/>
+<line x1="310" y1="48" x2="358" y2="48" style="stroke:currentColor" marker-end="url(#arr-st)"/>
+<line x1="480" y1="48" x2="528" y2="48" style="stroke:currentColor" marker-end="url(#arr-st)"/>
+<text x="164" y="22" text-anchor="middle" font-size="11" opacity="0.8">1st check</text>
+<text x="334" y="22" text-anchor="middle" font-size="11" opacity="0.8">2nd check</text>
+<text x="504" y="22" text-anchor="middle" font-size="11" opacity="0.8">in the paper</text>
+<line x1="90" y1="66" x2="140" y2="120" style="stroke:currentColor" marker-end="url(#arr-st)"/>
+<line x1="240" y1="66" x2="190" y2="120" style="stroke:currentColor" marker-end="url(#arr-st)"/>
+<text x="245" y="105" font-size="11" opacity="0.8">doesn't hold up</text>
+</svg>

@@ -1,0 +1,4 @@
+/* Material sizes a figure to its content; let the diagrams use the text column. */
+.md-typeset figure {
+  width: 100%;
+}

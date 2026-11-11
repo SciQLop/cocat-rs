@@ -13,6 +13,9 @@ in the browser. Typical uses:
 pip install cocat-rs
 ```
 
+For DataFrames, add the library you use: `pip install 'cocat-rs[pandas]'` or
+`pip install 'cocat-rs[polars]'`.
+
 It works with Python 3.10 and newer, on Linux, macOS and Windows. Inside Python the package is
 called `cocat_rs`. Everyone imports it as `cc`:
 
@@ -68,19 +71,29 @@ for event in sorted(shocks.events, key=lambda e: e.start):
 Each event has `start`, `stop` (Python `datetime`, UTC), `tags`, `status`, `confidence`,
 `attributes`, `comment`, `author` and `uuid`.
 
-### Into pandas
+### Into pandas or polars
 
 ```python
-import pandas as pd
-
-df = pd.DataFrame(
-    {"start": e.start, "stop": e.stop, "confidence": e.confidence, **e.attributes}
-    for e in shocks.events
-).sort_values("start")
-
+df = shocks.to_pandas()            # or shocks.to_polars()
 df["duration"] = df["stop"] - df["start"]
 df.describe()
 ```
+
+One row per event, in time order. The columns are `uuid`, `start`, `stop`, `tags`, `status`,
+`confidence`, `author`, `comment`, then your attributes.
+
+The way back is `project.import_dataframe(df, name="...")`. Rows with a known `uuid` update
+their event, so you can compute a column in pandas and send it back:
+
+```python
+df["mach"] = df["speed"] / df["sound_speed"]
+project.import_dataframe(df[["uuid", "start", "stop", "mach"]], name="Shocks with Mach")
+```
+
+!!! note "Whole numbers"
+    An attribute written as `3.0` reads back as `3`: like JavaScript, the sync format keeps
+    one kind of number. A column of whole values then comes out as integers in pandas. Use
+    `df["mach"].astype(float)` before putting fractions in it.
 
 ### Fetch the data around each event
 
@@ -183,8 +196,10 @@ project.import_votable("amda_catalogue.xml")
 project.import_tfcat("type_iii.json")
 tscat.import_json(project, "export_from_tscat.json")
 tscat.import_database(project)      # your local tscat database (pip install 'cocat-rs[tscat]')
+project.import_csv("table.csv")     # start and stop columns; others become attributes
 
 cc.export_votable([shocks], "shocks.xml")
+cc.export_csv([shocks], "shocks.csv")
 ```
 
 More in [Bring your catalogues in](import-export.md).

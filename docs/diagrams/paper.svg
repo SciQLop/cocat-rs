@@ -1,0 +1,23 @@
+<svg viewBox="0 0 700 180" role="img" aria-label="The project keeps changing, but the named version paper v1 stays fixed and can be copied and exported" style="width:100%;max-width:700px;height:auto" font-size="13" fill="currentColor">
+<defs><marker id="arr-pp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:currentColor"/></marker></defs>
+<line x1="20" y1="50" x2="676" y2="50" style="stroke:currentColor" marker-end="url(#arr-pp)"/>
+<text x="680" y="70" text-anchor="end" font-size="11" opacity="0.75">history</text>
+<circle cx="60" cy="50" r="5" style="fill:currentColor"/>
+<circle cx="140" cy="50" r="5" style="fill:currentColor"/>
+<circle cx="240" cy="50" r="9" style="fill:var(--md-accent-fg-color)"/>
+<text x="240" y="28" text-anchor="middle" font-weight="bold">paper v1</text>
+<circle cx="340" cy="50" r="5" style="fill:currentColor"/>
+<circle cx="420" cy="50" r="5" style="fill:currentColor"/>
+<circle cx="520" cy="50" r="9" style="fill:none;stroke:currentColor;stroke-width:2"/>
+<text x="520" y="28" text-anchor="middle">paper v2</text>
+<circle cx="620" cy="50" r="5" style="fill:currentColor"/>
+<text x="620" y="28" text-anchor="middle" font-size="11" opacity="0.75">now</text>
+<line x1="240" y1="60" x2="240" y2="118" style="stroke:currentColor;stroke-dasharray:5 4" marker-end="url(#arr-pp)"/>
+<text x="250" y="92" font-size="11">Make a copy from this version</text>
+<rect x="165" y="120" width="150" height="40" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="240" y="140" text-anchor="middle" dominant-baseline="middle">your copy = paper v1</text>
+<line x1="315" y1="140" x2="398" y2="140" style="stroke:currentColor" marker-end="url(#arr-pp)"/>
+<text x="356" y="132" text-anchor="middle" font-size="11">Export…</text>
+<rect x="400" y="120" width="150" height="40" rx="6" style="fill:var(--md-code-bg-color);stroke:currentColor"/>
+<text x="475" y="140" text-anchor="middle" dominant-baseline="middle">VOTable → DOI</text>
+</svg>
