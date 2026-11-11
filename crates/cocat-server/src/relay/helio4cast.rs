@@ -90,6 +90,7 @@ fn stream(row: &Row) -> Result<Entry, String> {
     })
 }
 
+// simplify: a renumbered catalog_id replaces its event, there is no stabler id in the file.
 /// Several rows of one lineup can share a spacecraft: the row's own id in the other
 /// catalogues tells them apart.
 fn lineup(row: &Row) -> Result<Entry, String> {
@@ -176,6 +177,9 @@ impl Provider for Helio4cast {
         _settings: &Value,
         _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
+        // simplify: one failing catalogue fails the run on purpose. List keys are only known from
+        // the data, so returning the healthy ones would let the engine unpublish the failed
+        // catalogue's lists. Upgrade path: fixed keys for a catalogue that has them.
         let mut all = Vec::new();
         for catalogue in &CATALOGUES {
             all.extend(fetch_catalogue(http, catalogue).await?);

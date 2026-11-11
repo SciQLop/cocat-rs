@@ -14,8 +14,6 @@ use uuid::Uuid;
 
 const SITE: &str = "helioforecast.space";
 const BUSY_PAUSE: Duration = Duration::from_secs(30);
-/// The columns whose values are words, not numbers.
-const TEXTS: [&str; 5] = ["sc", "spacecraft", "source", "catalog_id", "lineupcat_id"];
 /// How the files name the bodies whose name they shorten or shout.
 const OBSERVERS: [(&str, &str); 5] = [
     ("SolarOrbiter", "Solar Orbiter"),
@@ -24,26 +22,53 @@ const OBSERVERS: [(&str, &str); 5] = [
     ("JUNO", "Juno"),
     ("Earth_L1", "Earth L1"),
 ];
+/// Where in a column's name a rule looks.
+enum At {
+    Prefix,
+    Suffix,
+    /// A `_`-separated word of the name.
+    Word,
+    /// A word that is the quantity with a statistic: `bzmin`, `vtmean`.
+    Statistic,
+}
+
+const STATISTICS: [&str; 4] = ["max", "min", "mean", "std"];
+
 /// What a column's name holds, and the unit it is in, from the catalogues' header files. The
-/// first match wins.
-const UNITS: [(&str, &str); 16] = [
-    ("heliodistance", "au"),
-    ("_distance", "au"),
-    ("_long_", "deg"),
-    ("_lat_", "deg"),
-    ("heeq_lon", "deg"),
-    ("heeq_lat", "deg"),
-    ("delta", "deg"),
-    ("pa_", "deg"),
-    ("duration", "h"),
-    ("_time_err", "h"),
-    ("_b", "nt"),
-    ("speed", "km_s"),
-    ("_vt", "km_s"),
-    ("pdyn", "npa"),
-    ("density", "cm3"),
-    ("temperature", "k"),
+/// first match wins. Anchored so that a future column that merely contains `b` gets no unit.
+const UNITS: [(At, &str, &str); 19] = [
+    (At::Suffix, "heliodistance", "au"),
+    (At::Suffix, "_distance", "au"),
+    (At::Suffix, "_long_heeq", "deg"),
+    (At::Suffix, "_lat_heeq", "deg"),
+    (At::Suffix, "_heeq_lon", "deg"),
+    (At::Suffix, "_heeq_lat", "deg"),
+    (At::Suffix, "_delta", "deg"),
+    (At::Prefix, "pa_", "deg"),
+    (At::Suffix, "_duration", "h"),
+    (At::Suffix, "_time_err", "h"),
+    (At::Statistic, "b", "nt"),
+    (At::Statistic, "bt", "nt"),
+    (At::Statistic, "by", "nt"),
+    (At::Statistic, "bz", "nt"),
+    (At::Word, "speed", "km_s"),
+    (At::Statistic, "vt", "km_s"),
+    (At::Word, "pdyn", "npa"),
+    (At::Word, "density", "cm3"),
+    (At::Word, "temperature", "k"),
 ];
+
+fn matches(at: &At, part: &str, column: &str) -> bool {
+    match at {
+        At::Prefix => column.starts_with(part),
+        At::Suffix => column.ends_with(part),
+        At::Word => column.split('_').any(|word| word == part),
+        At::Statistic => column.split('_').any(|word| {
+            let statistic = word.strip_prefix(part);
+            statistic.is_some_and(|rest| STATISTICS.contains(&rest))
+        }),
+    }
+}
 
 /// A table row by column name.
 pub type Row = HashMap<String, String>;
@@ -171,24 +196,25 @@ fn attributes(row: &Row, structure: &[&str]) -> Result<Map<String, Value>, Strin
         .collect()
 }
 
-/// `None` for a number that is not finite (`nan`, `inf`): the catalogue has none there.
+/// A time must parse. Anything else is a number, or text when it is not one: a column the
+/// catalogue adds later is kept, not refused. `None` for a number that is not finite (`nan`,
+/// `inf`): the catalogue has none there.
 fn attribute_value(column: &str, text: &str) -> Result<Option<Value>, String> {
     let bad = || format!("{column} is {text}");
     if column.ends_with("_time") {
         let at = timestamp(text).ok_or_else(bad)?;
         return Ok(Some(Value::String(at.rfc3339().map_err(|_| bad())?)));
     }
-    if TEXTS.contains(&column) {
-        return Ok(Some(Value::String(text.to_owned())));
+    match text.parse::<f64>() {
+        Ok(number) => Ok(serde_json::Number::from_f64(number).map(Value::Number)),
+        Err(_) => Ok(Some(Value::String(text.to_owned()))),
     }
-    let number: f64 = text.parse().map_err(|_| bad())?;
-    Ok(serde_json::Number::from_f64(number).map(Value::Number))
 }
 
 fn attribute_name(column: &str) -> String {
-    let unit = UNITS.iter().find(|(part, _)| column.contains(part));
+    let unit = UNITS.iter().find(|(at, part, _)| matches(at, part, column));
     match unit {
-        Some((_, unit)) if !column.ends_with("_time") => format!("{column}_{unit}"),
+        Some((_, _, unit)) if !column.ends_with("_time") => format!("{column}_{unit}"),
         _ => column.to_owned(),
     }
 }
@@ -248,5 +274,40 @@ mod tests {
     fn empty_dash_and_blank_are_missing() {
         assert!(["", "-", " "].into_iter().all(missing));
         assert!(!missing("0"));
+    }
+
+    #[test]
+    fn a_column_that_only_contains_a_unit_word_gets_no_unit() {
+        for column in [
+            "abstract",
+            "mo_xb_flag",
+            "spa_n",
+            "beta_delta_x",
+            "speedy",
+            "vtx",
+        ] {
+            assert_eq!(attribute_name(column), column);
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_no_number_is_kept_as_text_but_a_bad_time_fails() {
+        assert_eq!(
+            attribute_value("flag", "N15E20").unwrap(),
+            Some(Value::String("N15E20".to_owned()))
+        );
+        assert!(attribute_value("some_time", "later").is_err());
+    }
+
+    #[test]
+    fn a_column_the_catalogue_adds_later_is_read() {
+        let row: Row = [("new_note", "halo"), ("speed", "400")]
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .into();
+
+        let attributes = attributes(&row, &[]).unwrap();
+
+        assert_eq!(attributes["new_note"], "halo");
+        assert_eq!(attributes["speed_km_s"], 400.0);
     }
 }
