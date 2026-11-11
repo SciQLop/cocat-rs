@@ -34,6 +34,8 @@ pub struct Round {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Proposal {
     pub author: String,
+    /// Absent while the visitor may not read it.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -47,6 +49,8 @@ pub struct LogEntry {
 /// The events under review, copied from a catalogue when the round was made.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Candidates {
+    /// Absent while the visitor may not read them.
+    pub doc: Option<String>,
     pub count: usize,
     pub source: Source,
 }
@@ -86,6 +90,31 @@ impl Round {
             .any(|proposal| proposal.author == email);
         let status = if started { "started" } else { "not yet" };
         format!("{email}: {status}")
+    }
+
+    /// The documents the visitor may review: the candidates (no author), then each readable
+    /// proposal with its author's email.
+    pub fn review_docs(&self) -> Vec<(Option<String>, String)> {
+        let candidates = self.candidates.iter().flat_map(|c| c.doc.clone());
+        let proposals = self
+            .proposals
+            .iter()
+            .filter_map(|p| Some((Some(p.author.clone()), p.doc.clone()?)));
+        candidates.map(|doc| (None, doc)).chain(proposals).collect()
+    }
+
+    /// The event attribute the budget prices, when the round has a readable budget.
+    pub fn budget_attribute(&self) -> Option<String> {
+        Some(parse_budget(self.budget.as_ref()?).ok()?.attribute)
+    }
+
+    /// Whether `me` gives verdicts in this round now, or decides it.
+    pub fn reviews_now(&self, me: &str) -> bool {
+        self.state == "voting" && self.voters.iter().any(|email| email == me)
+    }
+
+    pub fn decides_now(&self, me: &str) -> bool {
+        self.state == "voting" && self.deciders.iter().any(|email| email == me)
     }
 
     /// What the events cost against the round's budget; none when the round has no readable one.
@@ -550,6 +579,40 @@ mod tests {
     }
 
     #[test]
+    fn the_review_covers_the_candidates_and_the_readable_proposals() {
+        let mut round = in_state("review", "voting");
+        round.candidates = Some(Candidates {
+            doc: Some("d0".into()),
+            count: 2,
+            source: Source {
+                project: "p".into(),
+                catalogue: "c".into(),
+            },
+        });
+        round.proposals = vec![
+            Proposal {
+                author: "a@x.org".into(),
+                doc: Some("d1".into()),
+            },
+            Proposal {
+                author: "b@x.org".into(),
+                doc: None,
+            },
+        ];
+        assert_eq!(
+            round.review_docs(),
+            [
+                (None, "d0".to_owned()),
+                (Some("a@x.org".to_owned()), "d1".to_owned())
+            ]
+        );
+        assert!(round.reviews_now("v@x.org"));
+        assert!(!round.reviews_now("c@x.org"));
+        assert!(round.decides_now("c@x.org"));
+        assert!(!in_state("review", "decided").decides_now("c@x.org"));
+    }
+
+    #[test]
     fn a_proposer_line_says_whether_they_started() {
         assert_eq!(round().proposer_line("a@x.org"), "a@x.org: started");
         assert_eq!(round().proposer_line("b@x.org"), "b@x.org: not yet");
@@ -591,6 +654,7 @@ mod tests {
         };
         let mut detections = in_state("review", "voting");
         detections.candidates = Some(Candidates {
+            doc: None,
             count: 12,
             source: Source {
                 project: "p".into(),

@@ -9,19 +9,31 @@ use crate::route::Route;
 use crate::rows::Row;
 use crate::session::RoomConfig;
 use crate::state::Room;
+use crate::sync::Status;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
 
 /// Opens `config`'s room for the subtree under construction: it becomes the subtree's
 /// `Room`, synced until the subtree goes.
 pub fn open_room(config: RoomConfig) -> Result<Room, TransactionAcqError> {
-    let room = Room::new(config);
+    let room = connect_room(config)?;
     provide_context(room.clone());
+    Ok(room)
+}
+
+/// `config`'s room, synced until the subtree under construction goes, beside its own room.
+pub fn connect_room(config: RoomConfig) -> Result<Room, TransactionAcqError> {
+    let room = Room::new(config);
     let connection = StoredValue::new_local(connection::connect_project(room.clone())?);
     on_cleanup(move || {
         connection.try_with_value(|connection| connection.close());
     });
     Ok(room)
+}
+
+/// The room holds the server's state and follows it.
+pub fn synced(room: &Room) -> bool {
+    room.status.get() == Status::Live && room.loading.with(Option::is_none)
 }
 
 /// The catalogue `shown` of the subtree's room, with its event panel beside it, and

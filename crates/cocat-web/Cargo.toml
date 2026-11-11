@@ -58,6 +58,8 @@ web-sys = { version = "0.3", features = [
     "PointerEvent",
     "ReadableStream",
     "ReadableStreamDefaultReader",
+    "ScrollIntoViewOptions",
+    "ScrollLogicalPosition",
     "Storage",
     "Url",
     "WebSocket",

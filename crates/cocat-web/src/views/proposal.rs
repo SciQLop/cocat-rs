@@ -11,8 +11,7 @@ use crate::edit;
 use crate::rounds::{Round, first_catalogue_due, proposal_catalogue_name, proposal_role};
 use crate::route::Route;
 use crate::state::Room;
-use crate::sync::Status;
-use crate::views::live_room::{RoomBrowser, open_room};
+use crate::views::live_room::{RoomBrowser, open_room, synced};
 use crate::views::transfer::{ImportDialog, Importer};
 use cocat_core::model;
 
@@ -123,8 +122,7 @@ pub struct InProposal;
 fn start_catalogue(room: &Room, name: String) {
     let room = room.clone();
     Effect::new(move |_| {
-        let synced = room.status.get() == Status::Live && room.loading.with(Option::is_none);
-        if synced && room.can_write() && room.read(|txn| first_catalogue_due(txn)) {
+        if synced(&room) && room.can_write() && room.read(|txn| first_catalogue_due(txn)) {
             let author = room.config.user_email.clone();
             _ = room.write(|txn| edit::new_catalogue(txn, &name, &author));
         }

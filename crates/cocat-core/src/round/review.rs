@@ -2,13 +2,15 @@
 //! event with what reviewers said, how far the caller got, the majority default, and the
 //! events of the final catalogue.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::model::EventRecord;
+use yrs::ReadTxn;
+
+use crate::model::{self, EventRecord, Status};
 use crate::time::Timestamp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,6 +185,22 @@ pub fn final_events(rows: &[ReviewRow], picked: &[bool]) -> Vec<EventRecord> {
         .collect()
 }
 
+/// The events a proposal document puts forward: those its catalogues list, outside the trash,
+/// each once, in time order.
+pub fn proposal_events<T: ReadTxn>(txn: &T) -> Vec<EventRecord> {
+    let listed: BTreeSet<String> = model::catalogues(txn)
+        .iter()
+        .flat_map(|catalogue| model::listed_events(txn, &catalogue.uuid))
+        .collect();
+    let mut events: Vec<EventRecord> = listed
+        .iter()
+        .filter_map(|uuid| model::event(txn, uuid))
+        .filter(|event| event.status != Status::Deleted)
+        .collect();
+    events.sort_by(|left, right| (left.start, &left.uuid).cmp(&(right.start, &right.uuid)));
+    events
+}
+
 /// The same uuid for a round on every client, so deciding again rewrites one catalogue.
 pub fn final_catalogue_uuid(round_id: &str) -> String {
     let name = format!("cocat:round:{round_id}");
@@ -299,6 +317,47 @@ mod tests {
         assert_eq!(events[0].attributes["accepts"], json!(2));
         assert_eq!(events[0].attributes["unsure"], json!(1));
         assert_eq!(events[1].attributes["proposed_by"], json!(["ada@x.org"]));
+    }
+
+    #[test]
+    fn a_proposal_puts_forward_the_live_events_its_catalogues_list() {
+        use crate::model::{self, NewCatalogue};
+        use yrs::{Doc, Transact};
+
+        let doc = Doc::new();
+        {
+            let mut txn = doc.transact_mut();
+            let at = |text: &str| Timestamp::parse(text).unwrap();
+            for (uuid, start) in [
+                ("late", "2020-03-01T00:00:00Z"),
+                ("early", "2020-01-01T00:00:00Z"),
+                ("trashed", "2020-02-01T00:00:00Z"),
+                ("loose", "2020-02-01T00:00:00Z"),
+                ("hidden", "2020-02-01T00:00:00Z"),
+            ] {
+                model::create_event(&mut txn, &EventRecord::new(uuid, at(start), at(start)))
+                    .unwrap();
+            }
+            model::delete_event(&mut txn, "trashed");
+            for uuid in ["one", "two", "gone"] {
+                let catalogue = NewCatalogue {
+                    uuid: uuid.into(),
+                    name: uuid.into(),
+                    ..NewCatalogue::default()
+                };
+                model::create_catalogue(&mut txn, &catalogue).unwrap();
+            }
+            let list = |uuids: &[&str]| uuids.iter().map(|u| (*u).to_owned()).collect::<Vec<_>>();
+            model::add_catalogue_events(&mut txn, "one", &list(&["late", "trashed"]));
+            model::add_catalogue_events(&mut txn, "two", &list(&["early", "late"]));
+            model::add_catalogue_events(&mut txn, "gone", &list(&["hidden"]));
+            model::delete_catalogue(&mut txn, "gone");
+        }
+
+        let events = proposal_events(&doc.transact());
+
+        let uuids: Vec<&str> = events.iter().map(|event| event.uuid.as_str()).collect();
+        assert_eq!(uuids, ["early", "late"]);
     }
 
     #[test]

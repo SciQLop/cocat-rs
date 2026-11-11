@@ -33,6 +33,13 @@ pub enum Route {
     Round(String),
     /// The visitor's own proposal in a round, by the round's id.
     Proposal(String),
+    /// A round's review table, with the event of the row picked.
+    Review {
+        id: String,
+        row: Option<String>,
+    },
+    /// The decider's page that builds a round's final catalogue.
+    Decide(String),
     /// A project's file, by its path in the file list.
     File(String),
     /// A catalogue of another project this one links to, by the link's id.
@@ -53,11 +60,8 @@ impl Route {
             return decoded(path).map_or(Route::Default, Route::File);
         }
         if let Some(id) = hash.strip_prefix("/rounds/") {
-            if let Some(round) = id
-                .strip_suffix("/proposal")
-                .filter(|round| !round.is_empty())
-            {
-                return Route::Proposal(round.to_owned());
+            if let Some(route) = round_page(id) {
+                return route;
             }
             return if id.is_empty() {
                 Route::Rounds
@@ -119,12 +123,34 @@ impl Route {
             Route::Home => Some("Home"),
             Route::History { .. } => Some("History"),
             Route::Groups | Route::Group(_) => Some("Groups"),
-            Route::Rounds | Route::NewRound | Route::Round(_) | Route::Proposal(_) => {
-                Some("Rounds")
-            }
+            route if route.in_rounds() => Some("Rounds"),
             Route::Submissions | Route::Submission(_) => Some("Submissions"),
             Route::MySubmissions => Some("My submissions"),
             _ => None,
+        }
+    }
+
+    /// The pages about selection rounds.
+    pub fn in_rounds(&self) -> bool {
+        matches!(
+            self,
+            Route::Rounds
+                | Route::NewRound
+                | Route::Round(_)
+                | Route::Proposal(_)
+                | Route::Review { .. }
+                | Route::Decide(_)
+        )
+    }
+
+    /// The page this view is on, whichever row it picked.
+    pub fn page(&self) -> Self {
+        match self {
+            Route::Review { id, .. } => Route::Review {
+                id: id.clone(),
+                row: None,
+            },
+            other => other.clone(),
         }
     }
 
@@ -173,6 +199,9 @@ impl Route {
             Route::NewRound => "#/rounds/new".to_owned(),
             Route::Round(id) => format!("#/rounds/{id}"),
             Route::Proposal(id) => format!("#/rounds/{id}/proposal"),
+            Route::Review { id, row: None } => format!("#/rounds/{id}/review"),
+            Route::Review { id, row: Some(row) } => format!("#/rounds/{id}/review?row={row}"),
+            Route::Decide(id) => format!("#/rounds/{id}/decide"),
             Route::Public(None) => "#public".to_owned(),
             Route::Public(Some(folder)) => {
                 format!(
@@ -213,6 +242,24 @@ fn decoded(folder: &str) -> Option<String> {
         .map(|(_, value)| value.into_owned())
         .collect();
     (!text.is_empty()).then_some(text)
+}
+
+/// `<round>/proposal`, `<round>/review[?row=<event>]` and `<round>/decide`.
+fn round_page(path: &str) -> Option<Route> {
+    let (id, page) = path.split_once('/').filter(|(id, _)| !id.is_empty())?;
+    let id = id.to_owned();
+    match page.split_once("?row=") {
+        Some(("review", row)) => Some(Route::Review {
+            id,
+            row: (!row.is_empty()).then(|| row.to_owned()),
+        }),
+        _ => match page {
+            "proposal" => Some(Route::Proposal(id)),
+            "review" => Some(Route::Review { id, row: None }),
+            "decide" => Some(Route::Decide(id)),
+            _ => None,
+        },
+    }
 }
 
 /// `h`, `h=<version>`, each with an optional `&c=<catalogue>`.
@@ -420,8 +467,40 @@ mod tests {
     }
 
     #[test]
+    fn the_review_and_decide_routes_round_trip() {
+        let review = |row: Option<&str>| Route::Review {
+            id: "r1".into(),
+            row: row.map(str::to_owned),
+        };
+        assert_eq!(Route::parse("#/rounds/r1/review"), review(None));
+        assert_eq!(
+            Route::parse("#/rounds/r1/review?row=e7"),
+            review(Some("e7"))
+        );
+        assert_eq!(review(Some("e7")).hash(), "#/rounds/r1/review?row=e7");
+        assert_eq!(Route::parse("#/rounds/r1/review?row="), review(None));
+        assert_eq!(review(Some("e7")).page(), review(None));
+        assert_eq!(Route::Trash.page(), Route::Trash);
+        assert_eq!(
+            Route::parse("#/rounds/r1/decide"),
+            Route::Decide("r1".into())
+        );
+        assert_eq!(Route::Decide("r1".into()).hash(), "#/rounds/r1/decide");
+        for route in [review(None), Route::Decide("r1".into())] {
+            assert_eq!(route.crumb(), Some("Rounds"));
+            assert!(route.in_rounds());
+        }
+        assert!(!Route::Trash.in_rounds());
+    }
+
+    #[test]
     fn a_route_writes_the_hash_it_reads() {
         for route in [
+            Route::Review {
+                id: "r1".into(),
+                row: Some("e1".into()),
+            },
+            Route::Decide("r1".into()),
             Route::Home,
             Route::AllEvents,
             Route::Catalogue("abc".into()),

@@ -6,13 +6,16 @@ use leptos::task::spawn_local;
 
 use crate::api;
 use crate::rounds::{
-    Round, can_start, group, over_cap, proposal_action, state_words, voter_title, your_part,
+    Progress, Round, can_start, group, over_cap, proposal_action, state_words, voter_title,
+    your_part,
 };
 use crate::route::Route;
 use crate::state::Room;
+use crate::views::decide::DecidePage;
 use crate::views::links::is_personal;
 use crate::views::projects::Projects;
 use crate::views::proposal::ProposalPage;
+use crate::views::review::{Review, ReviewPage};
 use crate::views::round_form::NewRoundForm;
 use cocat_core::model;
 use cocat_core::room_id::is_public_id;
@@ -38,12 +41,23 @@ pub fn project_rounds() -> RwSignal<Vec<Round>> {
 #[component]
 pub fn RoundsPage(shown: Memo<Route>) -> impl IntoView {
     let rounds = project_rounds();
-    move || match shown.get() {
+    let on = Memo::new(move |_| shown.with(Route::page));
+    move || {
+        match on.get() {
         Route::Proposal(id) => view! { <ProposalPage id rounds/> }.into_any(),
+        Route::Review { id, .. } => view! {
+            <main class="content groups-page rounds-page review-page"><ReviewPage id rounds shown/></main>
+        }
+        .into_any(),
+        Route::Decide(id) => view! {
+            <main class="content groups-page rounds-page review-page"><DecidePage id rounds/></main>
+        }
+        .into_any(),
         route => view! {
             <main class="content groups-page rounds-page">{rounds_view(route, rounds.get())}</main>
         }
         .into_any(),
+    }
     }
 }
 
@@ -131,12 +145,7 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         .into_any();
     };
     let settings = settings_line(&round);
-    let proposal = proposal_action(&round, &me()).map(|action| {
-        view! { <p><a class="button primary" href=Route::Proposal(round.id.clone()).href(&page)>{action}</a></p> }
-    });
-    let part = your_part(&round, &me(), None).map(|part| {
-        view! { <section class="your-part-box"><h2 class="eyebrow">"Your part"</h2><p>{part}</p>{proposal}</section> }
-    });
+    let part = view! { <YourPart round=round.clone()/> };
     let people = |title, emails: Vec<String>| role_section(title, emails);
     let proposers = people(
         "Proposers",
@@ -171,6 +180,45 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         <section><h2 class="eyebrow">"Log"</h2><ul class="plain-list">{log}</ul></section>
     }
     .into_any()
+}
+
+/// What the round asks of the visitor, with the counts once the events and verdicts are in,
+/// and the buttons to do it.
+#[component]
+fn YourPart(round: Round) -> impl IntoView {
+    let (me, page) = (me(), page());
+    let part = your_part(&round, &me, None)?;
+    let link = |label: &'static str, route: Route| {
+        view! { <a class="button primary" href=route.href(&page)>{label}</a> }
+    };
+    let id = round.id.clone();
+    let proposal =
+        proposal_action(&round, &me).map(|action| link(action, Route::Proposal(id.clone())));
+    let review = round.reviews_now(&me).then(|| {
+        link(
+            "Review the events",
+            Route::Review {
+                id: id.clone(),
+                row: None,
+            },
+        )
+    });
+    let decide = round
+        .decides_now(&me)
+        .then(|| link("Build the final catalogue", Route::Decide(id.clone())));
+    let rows =
+        (round.reviews_now(&me) || round.decides_now(&me)).then(|| Review::load(&round).rows);
+    let text = move || {
+        let progress = rows.and_then(|rows| rows.with(|rows| rows.as_deref().map(Progress::of)));
+        your_part(&round, &me, progress).unwrap_or_else(|| part.clone())
+    };
+    Some(view! {
+        <section class="your-part-box">
+            <h2 class="eyebrow">"Your part"</h2>
+            <p>{text}</p>
+            <p class="row-buttons">{proposal}{review}{decide}</p>
+        </section>
+    })
 }
 
 /// A role's people under its title; nothing when nobody has the role.

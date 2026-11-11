@@ -227,6 +227,30 @@ pub fn new_catalogue(
     Ok(catalogue.uuid)
 }
 
+/// The final catalogue `uuid` holding `events` and nothing else: made when missing, its old
+/// events purged and itself out of the trash when deciding again.
+pub fn write_final_catalogue(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    name: &str,
+    author: &str,
+    events: &[EventRecord],
+) -> Result<(), EditError> {
+    if model::catalogue(txn, uuid).is_none() {
+        model::create_catalogue(txn, &final_catalogue(uuid, name, author))?;
+    }
+    for old in model::listed_events(txn, uuid) {
+        model::purge_event(txn, &old);
+    }
+    model::restore_catalogue(txn, uuid);
+    for event in events {
+        model::create_event(txn, event)?;
+    }
+    let uuids: Vec<String> = events.iter().map(|event| event.uuid.clone()).collect();
+    model::add_catalogue_events(txn, uuid, &uuids);
+    Ok(())
+}
+
 /// The rule a text holds, when it is JSON and a rule.
 pub fn check_rule(text: &str) -> Result<Value, EditError> {
     let rule: Value = serde_json::from_str(text)?;
@@ -418,6 +442,15 @@ fn named(name: &str, author: &str) -> Result<NewCatalogue, EditError> {
     })
 }
 
+fn final_catalogue(uuid: &str, name: &str, author: &str) -> NewCatalogue {
+    NewCatalogue {
+        uuid: uuid.to_owned(),
+        name: name.to_owned(),
+        author: Some(author.to_owned()),
+        ..NewCatalogue::default()
+    }
+}
+
 fn new_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -436,6 +469,39 @@ mod tests {
 
     fn edited<R>(doc: &Doc, edit: impl FnOnce(&mut TransactionMut<'_>) -> R) -> R {
         edit(&mut doc.transact_mut())
+    }
+
+    #[test]
+    fn deciding_again_rewrites_the_same_catalogue() {
+        let doc = room();
+        let final_event = |uuid: &str| {
+            let mut record = event(&doc, "e1");
+            record.uuid = uuid.to_owned();
+            record
+        };
+        let first = [final_event("f1"), final_event("f2")];
+        edited(&doc, |txn| {
+            write_final_catalogue(txn, "c-final", "Spring", "ann@x.org", &first)
+        })
+        .unwrap();
+        edited(&doc, |txn| model::delete_catalogue(txn, "c-final"));
+        let again = [final_event("f3")];
+        edited(&doc, |txn| {
+            write_final_catalogue(txn, "c-final", "Spring", "ann@x.org", &again)
+        })
+        .unwrap();
+
+        let txn = doc.transact();
+        let finals: Vec<_> = model::all_catalogues(&txn)
+            .into_iter()
+            .filter(|catalogue| catalogue.name == "Spring")
+            .collect();
+        assert_eq!(finals.len(), 1);
+        assert!(!finals[0].deleted);
+        assert_eq!(finals[0].uuid, "c-final");
+        assert_eq!(model::listed_events(&txn, "c-final"), ["f3"]);
+        assert!(model::event(&txn, "f1").is_none());
+        assert!(model::event(&txn, "e1").is_some());
     }
 
     fn project() -> RoomConfig {

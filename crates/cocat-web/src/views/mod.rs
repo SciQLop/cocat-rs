@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod catalogue;
 pub mod controls;
+pub mod decide;
 pub mod event_editor;
 pub mod event_panel;
 pub mod files;
@@ -20,6 +21,7 @@ pub mod project_dialogs;
 pub mod projects;
 pub mod proposal;
 pub mod public;
+pub mod review;
 pub mod round_form;
 pub mod rounds;
 pub mod rule;
