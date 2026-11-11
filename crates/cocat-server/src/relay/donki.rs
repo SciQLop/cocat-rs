@@ -84,6 +84,8 @@ const ENDPOINT: &str = "https://ccmc.gsfc.nasa.gov/DONKI-API/get";
 const FIRST_DAY: Date = date!(2010 - 01 - 01);
 /// CCMC refuses a request over 60 days ("Date range cannot exceed 60 days"); a day of margin.
 const REQUEST_SPAN: Duration = Duration::days(59);
+/// The first wait when CCMC answers 429 to a run of ~830 requests (doubled each time).
+const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_secs(30);
 /// The fields that end an event, first to be found wins; an event with none is a point.
 const STOP_FIELDS: [&str; 2] = ["endTime", "peakTime"];
 /// Lists of objects joined into one text attribute: field, and the member field to read.
@@ -217,17 +219,6 @@ fn request_url(kind: &Kind, (start, end): (Date, Date)) -> Result<String, String
         .map_err(|error| error.to_string())
 }
 
-async fn fetch_window(http: &reqwest::Client, url: String) -> Result<Vec<u8>, String> {
-    let response = http.get(url).send().await.map_err(super::fetch_error)?;
-    let body = response
-        .error_for_status()
-        .map_err(super::fetch_error)?
-        .bytes()
-        .await
-        .map_err(super::fetch_error)?;
-    Ok(body.to_vec())
-}
-
 async fn fetch_kind(
     http: &reqwest::Client,
     windows: &[(Date, Date)],
@@ -236,7 +227,7 @@ async fn fetch_kind(
     let mut events = Vec::new();
     for window in windows {
         let url = request_url(kind, *window)?;
-        let body = fetch_window(http, url)
+        let body = super::patient::fetch(http, &url, BUSY_PAUSE)
             .await
             .map_err(|error| format!("{} {}: {error}", kind.code, window.0))?;
         events.extend(parse(kind, &body)?);

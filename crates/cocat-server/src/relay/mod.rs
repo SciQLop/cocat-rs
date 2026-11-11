@@ -9,6 +9,7 @@ pub mod cactus;
 pub mod cdaw;
 pub mod donki;
 pub mod icmecat;
+pub mod patient;
 pub mod rolling;
 pub mod schedule;
 pub mod stix;
