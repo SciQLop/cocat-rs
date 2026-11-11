@@ -114,6 +114,7 @@ pub mod rules {
                 round.state == RoundState::Decided
                     || is_voter_self
                     || seat.holds(RoundRole::Decider)
+                    || seat.owns_project()
             }
         }
     }
@@ -364,7 +365,9 @@ pub async fn add_proposal(pool: &SqlitePool, id: Uuid, author: Uuid) -> Result<U
         .bind(Uuid::new_v4().to_string())
         .execute(pool)
         .await?;
-    Ok(proposal_of(pool, id, author).await?.expect("just inserted"))
+    proposal_of(pool, id, author)
+        .await?
+        .ok_or(DbError::Sqlx(sqlx::Error::RowNotFound))
 }
 
 pub async fn proposals(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, Uuid)>, DbError> {
@@ -572,6 +575,7 @@ mod tests {
         assert!(!may_read_votes(&voting, &voter, false));
         assert!(may_read_votes(&voting, &voter, true));
         assert!(may_read_votes(&voting, &decider, false));
+        assert!(may_read_votes(&voting, &seat(Role::Owner, &[]), false));
         assert!(may_read_votes(&decided, &voter, false));
     }
 
