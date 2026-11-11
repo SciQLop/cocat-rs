@@ -12,7 +12,7 @@ use cocat_core::role::Role;
 use cocat_server::room::{Author, RoomManager};
 use cocat_server::{
     AppState, auth, db, groups, invitations, lifecycle, links::Links, oidc, ratelimit::LoginLimit,
-    submissions, ws,
+    rounds, submissions, ws,
 };
 use futures_util::StreamExt;
 use std::fs;
@@ -120,6 +120,8 @@ struct Row {
     loose: bool,
     /// The route can answer 404 for an admitted caller too (an unknown catalogue).
     tolerant: bool,
+    /// The route's own rules (a round's deciders) may refuse an admitted caller with 403.
+    refined: bool,
 }
 
 const ROWS: &[Row] = &[
@@ -263,6 +265,51 @@ const ROWS: &[Row] = &[
         Style::Api,
     )
     .room_any(),
+    row(
+        "GET",
+        "/api/rooms/{room}/rounds",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "POST",
+        "/api/rooms/{room}/rounds",
+        Guard::RoomEditor,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "GET",
+        "/api/rooms/{room}/rounds/{round}",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any(),
+    row(
+        "PATCH",
+        "/api/rooms/{room}/rounds/{round}",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
+    row(
+        "PUT",
+        "/api/rooms/{room}/rounds/{round}/members",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
+    row(
+        "POST",
+        "/api/rooms/{room}/rounds/{round}/state",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
     row(
         "GET",
         "/api/rooms/{room}/blobs/{sha256}",
@@ -818,6 +865,7 @@ const fn row(method: &'static str, path: &'static str, guard: Guard, style: Styl
         scope: Scope::None,
         loose: false,
         tolerant: false,
+        refined: false,
     }
 }
 
@@ -849,6 +897,11 @@ impl Row {
 
     const fn tolerant(mut self) -> Self {
         self.tolerant = true;
+        self
+    }
+
+    const fn refined(mut self) -> Self {
+        self.refined = true;
         self
     }
 }
@@ -925,6 +978,7 @@ struct World {
     group_invitation_token: String,
     invitation: i64,
     submission: i64,
+    round: Uuid,
     tokens: Vec<(Kind, String)>,
     _dir: TempDir,
 }
@@ -963,6 +1017,17 @@ impl World {
         let room = lifecycle::create_room(&state, owner, "lab").await.unwrap();
         let public = public_catalogue(&state, admin).await;
         let submission = submission(&state, &room.id, owner, &public).await;
+        let round = rounds::create_round(
+            &state.pool,
+            &room.id,
+            "R1",
+            rounds::Visibility::Open,
+            None,
+            None,
+            owner,
+        )
+        .await
+        .unwrap();
         db::add_member(&state.pool, &room.id, target, Role::Viewer)
             .await
             .unwrap();
@@ -1030,6 +1095,7 @@ impl World {
             group_invitation_token,
             invitation,
             submission,
+            round,
             tokens,
             _dir: dir,
         }
@@ -1047,6 +1113,7 @@ impl World {
             .replace("{room}", &self.room)
             .replace("{doc}", "6f0c1b0e-8f56-4a5e-9a39-1c5f2a6d7e10")
             .replace("{public}", &self.public)
+            .replace("{round}", &self.round.to_string())
             .replace("{submission}", &self.submission.to_string())
             .replace("{group_invitation}", &self.group_invitation.to_string())
             .replace("{spare}", &self.spare)
@@ -1139,6 +1206,19 @@ impl World {
                 (json, r#"{"name":"renamed"}"#.to_owned())
             }
             ("POST", "/api/rooms/{room}/documents") => (json, r#"{"kind":"text"}"#.to_owned()),
+            ("PATCH", "/api/rooms/{room}/rounds/{round}") => {
+                (json, r#"{"name":"renamed"}"#.to_owned())
+            }
+            ("PUT", "/api/rooms/{room}/rounds/{round}/members") => (
+                json,
+                r#"{"proposers":[],"voters":[],"deciders":[]}"#.to_owned(),
+            ),
+            ("POST", "/api/rooms/{room}/rounds/{round}/state") => {
+                (json, r#"{"state":"voting"}"#.to_owned())
+            }
+            ("POST", "/api/rooms/{room}/rounds") => {
+                (json, r#"{"name":"R2","visibility":"open"}"#.to_owned())
+            }
             ("PATCH", "/api/rooms/{room}/members/{member}") => {
                 (json, r#"{"role":"viewer"}"#.to_owned())
             }
@@ -1511,6 +1591,10 @@ fn check(
         };
     }
     match row.style {
+        Style::Api if row.refined => expect(
+            !matches!(status, StatusCode::UNAUTHORIZED | StatusCode::NOT_FOUND),
+            "not 401/404",
+        ),
         Style::Api if row.tolerant => expect(
             !matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
             "not 401/403",

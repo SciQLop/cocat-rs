@@ -32,6 +32,7 @@ pub mod ratelimit;
 pub mod relay;
 pub mod room;
 pub mod rounds;
+pub mod rounds_api;
 pub mod sign_in;
 pub mod sign_in_api;
 pub mod submissions;
