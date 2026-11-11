@@ -21,9 +21,13 @@ use uuid::Uuid;
 use yrs::{Doc, ReadTxn, StateVector, Transact};
 
 use crate::api::{self, ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::catalogues_api::{cursor, page_limit};
 use crate::copy_chain::{Source, record_copy};
 use crate::db::{DocumentKind, RoomRow};
-use crate::history::diff::{Diff, before_and_after, diff, members, replay_until};
+use crate::history::diff::{
+    Analysis, CatalogueChange, Counts, EventChange, analyse, before_and_after, members, page,
+    replay_until,
+};
 use crate::history::versions::{Saved, Version, span, spans};
 use crate::openapi::Detail;
 use crate::relay::store;
@@ -46,6 +50,39 @@ struct ChangesQuery {
     catalogue: Option<String>,
     since: Option<u64>,
     document: Option<Uuid>,
+    /// Strings, so that a value that does not parse is the 422, not axum's 400.
+    limit: Option<String>,
+    cursor: Option<String>,
+}
+
+/// What the version changed: the counts, every catalogue change, and the event changes, all
+/// of them or one page.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Changes {
+    counts: Counts,
+    catalogues: Vec<CatalogueChange>,
+    events: Vec<EventChange>,
+    /// With a `limit`, the cursor of the next page; none on the last.
+    next: Option<String>,
+}
+
+/// The page asked for: its size and where the previous one stopped.
+struct Paging {
+    limit: usize,
+    after: Option<(i128, String)>,
+}
+
+/// A cursor without a size is refused.
+fn paging(query: &ChangesQuery) -> Result<Option<Paging>, ApiError> {
+    let after = query.cursor.as_deref().map(cursor).transpose()?;
+    match query.limit.as_deref() {
+        Some(text) => Ok(Some(Paging {
+            limit: page_limit(text)?,
+            after,
+        })),
+        None if after.is_some() => Err(unprocessable("A cursor needs a limit")),
+        None => Ok(None),
+    }
 }
 
 /// The records a diff replays: the version's own, or, with `since`, those from the end of the
@@ -201,10 +238,13 @@ async fn list(
         ("catalogue" = Option<String>, Query, description = "Only this catalogue and its members"),
         ("since" = Option<u64>, Query, description = "Another version: what changed from the end of the older of the two to the end of the newer"),
         ("document" = Option<String>, Query, description = "A workspace document: refused, changes are listed for catalogues only"),
+        ("limit" = Option<String>, Query, description = "Page size, 1 to 10000: answer only this many event changes, in order of start then uuid; without it, every change"),
+        ("cursor" = Option<String>, Query, min_length = 1, description = "The `next` of the previous page; needs a limit"),
     ),
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "What the version changed, or what changed between two versions", body = Diff),
+        (status = 200, description = "What the version changed, or what changed between two versions", body = Changes),
+        (status = 422, description = "A limit out of range, or a cursor that is not valid or has no limit", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, version or membership", body = Detail),
         (status = 409, description = "A document was named: changes are listed for catalogues only", body = Detail),
@@ -215,26 +255,45 @@ async fn changes(
     CurrentUser(user): CurrentUser,
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
     Query(query): Query<ChangesQuery>,
-) -> Result<Json<Diff>, ApiError> {
+) -> Result<Json<Changes>, ApiError> {
     membership(&state, &room_id, user.id).await?;
     if query.document.is_some() {
         return Err(ApiError::Conflict(
             "Changes are listed for catalogues only".to_owned(),
         ));
     }
+    let paging = paging(&query)?;
     let saved = saved(&state, &room_id).await?;
-    let changes = state
+    let cache = state.rooms.diff_cache().clone();
+    let key_room = room_id.clone();
+    let analysis = state
         .rooms
         .read_log(&room_id, 2, move |records, slots| {
             let (start, end) = compared(span(slots, &saved, version)?, query.since, |since| {
                 span(slots, &saved, since)
             })?;
-            let (before, after) = before_and_after(records, start, end);
-            Some(diff(&before, &after, query.catalogue.as_deref()))
+            let key = (key_room, start, end, query.catalogue.clone());
+            Some(cache.get_or_compute(key, || {
+                let (before, after) = before_and_after(records, start, end);
+                analyse(&before, &after, query.catalogue.as_deref())
+            }))
         })
         .await?
         .ok_or_else(no_such_version)?;
-    Ok(Json(changes))
+    Ok(Json(answer(&analysis, paging)))
+}
+
+fn answer(analysis: &Analysis, paging: Option<Paging>) -> Changes {
+    let (events, next) = match paging {
+        Some(Paging { limit, after }) => page(&analysis.diff, after, limit),
+        None => (analysis.diff.events.clone(), None),
+    };
+    Changes {
+        counts: analysis.counts.clone(),
+        catalogues: analysis.diff.catalogues.clone(),
+        events,
+        next,
+    }
 }
 
 #[utoipa::path(

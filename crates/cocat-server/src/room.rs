@@ -25,7 +25,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, ReadTxn, StateVector, Transact, Update};
 
-use crate::history::cache::VersionCache;
+use crate::history::cache::{DiffCache, VersionCache};
 use crate::history::stamps::{
     ENTRY, Stamp, StampFile, read_stamps, stamp_for, stamps_file, valid_stamps,
 };
@@ -219,6 +219,7 @@ pub struct RoomManager {
     /// The hashes of revoked tokens, for the sockets they opened to close themselves.
     ended_sessions: broadcast::Sender<String>,
     versions: VersionCache,
+    diffs: DiffCache,
 }
 
 impl RoomManager {
@@ -236,6 +237,7 @@ impl RoomManager {
             storage: StorageLimits::default(),
             ended_sessions: broadcast::channel(ENDED_SESSIONS_BACKLOG).0,
             versions: VersionCache::default(),
+            diffs: DiffCache::default(),
         }
     }
 
@@ -253,6 +255,11 @@ impl RoomManager {
     /// The rooms' versions as last grouped, dropped with the room.
     pub fn version_cache(&self) -> &VersionCache {
         &self.versions
+    }
+
+    /// The diffs the history computed last, dropped with the room.
+    pub fn diff_cache(&self) -> &DiffCache {
+        &self.diffs
     }
 
     pub fn with_storage(mut self, storage: StorageLimits) -> Self {
@@ -431,6 +438,7 @@ impl RoomManager {
     /// same way a last detach does, except that it writes nothing more.
     pub async fn delete(&self, room_id: &str) {
         self.versions.forget(room_id);
+        self.diffs.forget(room_id);
         // The room can unload between the lookup and the command, so the handle reports
         // that and the next turn finds either the room that replaced it or the bare file.
         loop {

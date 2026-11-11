@@ -210,13 +210,10 @@ impl Range {
         {
             return Err(invalid("the start must not be after the stop"));
         }
-        let limit = match query.limit.as_deref() {
-            None => DEFAULT_LIMIT,
-            Some(text) => match text.parse::<usize>() {
-                Ok(limit) if (1..=MAX_LIMIT).contains(&limit) => limit,
-                _ => return Err(invalid("the limit must be between 1 and 10000")),
-            },
-        };
+        let limit = query
+            .limit
+            .as_deref()
+            .map_or(Ok(DEFAULT_LIMIT), page_limit)?;
         let after = query.cursor.as_deref().map(cursor).transpose()?;
         Ok(Self {
             start,
@@ -262,12 +259,24 @@ fn instant(text: &str) -> Result<Timestamp, ApiError> {
     Timestamp::parse(text).ok_or_else(|| invalid("the times must be ISO 8601 instants"))
 }
 
-/// A cursor names the last event of a page, so the next page starts strictly after it.
-fn position(event: &EventRecord) -> String {
-    URL_SAFE_NO_PAD.encode(format!("{}|{}", event.start.unix_micros(), event.uuid))
+/// A page size is 1 to 10000.
+pub(crate) fn page_limit(text: &str) -> Result<usize, ApiError> {
+    match text.parse::<usize>() {
+        Ok(limit) if (1..=MAX_LIMIT).contains(&limit) => Ok(limit),
+        _ => Err(invalid("the limit must be between 1 and 10000")),
+    }
 }
 
-fn cursor(text: &str) -> Result<(i128, String), ApiError> {
+/// A cursor names the last event of a page, so the next page starts strictly after it.
+fn position(event: &EventRecord) -> String {
+    position_of(event.start.unix_micros(), &event.uuid)
+}
+
+pub(crate) fn position_of(start_micros: i128, uuid: &str) -> String {
+    URL_SAFE_NO_PAD.encode(format!("{start_micros}|{uuid}"))
+}
+
+pub(crate) fn cursor(text: &str) -> Result<(i128, String), ApiError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(text)
         .map_err(|_| invalid("the cursor is not valid"))?;

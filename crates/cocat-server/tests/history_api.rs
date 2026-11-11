@@ -1551,3 +1551,181 @@ async fn a_copied_version_names_its_source_for_trashed_catalogues_too() {
     assert!(found.deleted);
     assert_eq!(found.copied_from.len(), 1);
 }
+
+fn event_at(uuid: &str, start_seconds: i64) -> EventRecord {
+    let at = |seconds| Timestamp::from_unix_nanos(seconds * 1_000_000_000).unwrap();
+    EventRecord::new(uuid, at(start_seconds), at(start_seconds + 1))
+}
+
+fn uuids(changes: &Value) -> Vec<String> {
+    changes["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|change| change["uuid"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn tally(row: &Value) -> (u64, u64, u64) {
+    let count = |key: &str| row[key].as_u64().unwrap();
+    (count("added"), count("changed"), count("removed"))
+}
+
+/// Five events, `e` the earliest and `a` the latest, so the start order is not the uuid order.
+async fn five_events() -> Fixture {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, |txn| {
+        for (index, uuid) in ["a", "b", "c", "d", "e"].into_iter().enumerate() {
+            let start = 100 - i64::try_from(index).unwrap();
+            model::create_event(txn, &event_at(uuid, start)).unwrap();
+        }
+        model::create_catalogue(txn, &catalogue("cat")).unwrap();
+        model::add_catalogue_events(txn, "cat", &["a".to_owned(), "b".to_owned()]);
+    });
+    fixture
+}
+
+async fn changes(fixture: &Fixture, query: &str) -> (StatusCode, Value) {
+    let path = format!("/api/rooms/{ROOM}/history/0{query}");
+    fixture.get(&path, fixture.carol).await
+}
+
+#[tokio::test]
+async fn a_limited_answer_has_counts_catalogue_changes_and_a_first_page() {
+    let fixture = five_events().await;
+
+    let (status, answer) = changes(&fixture, "?limit=2").await;
+
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(uuids(&answer), ["e", "d"]);
+    assert!(answer["next"].is_string());
+    assert_eq!(tally(&answer["counts"]["total"]), (5, 0, 0));
+    let rows = answer["counts"]["catalogues"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["catalogue"], "cat");
+    assert_eq!(rows[0]["name"], "cat");
+    assert_eq!(tally(&rows[0]), (2, 0, 0));
+    assert_eq!(answer["catalogues"][0]["uuid"], "cat");
+}
+
+#[tokio::test]
+async fn the_next_page_continues_where_the_first_stopped() {
+    let fixture = five_events().await;
+    let (_, first) = changes(&fixture, "?limit=3").await;
+    let cursor = first["next"].as_str().unwrap();
+
+    let (status, second) = changes(&fixture, &format!("?limit=3&cursor={cursor}")).await;
+
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(uuids(&first), ["e", "d", "c"]);
+    assert_eq!(uuids(&second), ["b", "a"]);
+    assert!(second["next"].is_null());
+}
+
+#[tokio::test]
+async fn pages_neither_repeat_nor_skip_events_with_the_same_start() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, |txn| {
+        for uuid in ["a", "b", "c", "d", "e"] {
+            model::create_event(txn, &event_at(uuid, 7)).unwrap();
+        }
+    });
+    let mut seen = Vec::new();
+    let mut query = "?limit=2".to_owned();
+
+    loop {
+        let (status, page) = changes(&fixture, &query).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        seen.extend(uuids(&page));
+        match page["next"].as_str() {
+            Some(cursor) => query = format!("?limit=2&cursor={cursor}"),
+            None => break,
+        }
+    }
+
+    assert_eq!(seen, ["a", "b", "c", "d", "e"]);
+}
+
+#[tokio::test]
+async fn an_event_in_two_catalogues_counts_in_each_and_once_in_total() {
+    let fixture = Fixture::start().await;
+    fixture.write(fixture.alice, 0, |txn| {
+        for uuid in ["a", "b"] {
+            model::create_event(txn, &event_at(uuid, 1)).unwrap();
+        }
+        for uuid in ["one", "two"] {
+            model::create_catalogue(txn, &catalogue(uuid)).unwrap();
+        }
+        model::add_catalogue_events(txn, "one", &["a".to_owned(), "b".to_owned()]);
+        model::add_catalogue_events(txn, "two", &["a".to_owned()]);
+    });
+
+    let (_, answer) = changes(&fixture, "?limit=10").await;
+
+    assert_eq!(tally(&answer["counts"]["total"]), (2, 0, 0));
+    let rows = answer["counts"]["catalogues"].as_array().unwrap();
+    let row = |uuid: &str| rows.iter().find(|row| row["catalogue"] == uuid).unwrap();
+    assert_eq!(tally(row("one")), (2, 0, 0));
+    assert_eq!(tally(row("two")), (1, 0, 0));
+
+    let (_, only) = changes(&fixture, "?limit=10&catalogue=two").await;
+    assert_eq!(tally(&only["counts"]["total"]), (1, 0, 0));
+    assert_eq!(only["counts"]["catalogues"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn without_a_limit_every_change_comes_as_before() {
+    let fixture = five_events().await;
+
+    let (status, answer) = changes(&fixture, "").await;
+
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(uuids(&answer), ["a", "b", "c", "d", "e"]);
+    assert_eq!(answer["catalogues"].as_array().unwrap().len(), 1);
+    assert_eq!(tally(&answer["counts"]["total"]), (5, 0, 0));
+    assert!(answer.get("next").is_none_or(Value::is_null));
+}
+
+#[tokio::test]
+async fn a_second_page_does_not_rebuild_the_project() {
+    let fixture = five_events().await;
+    let (_, first) = changes(&fixture, "?limit=2").await;
+    let cursor = first["next"].as_str().unwrap();
+    let computed = || fixture.state.rooms.diff_cache().computations();
+    assert_eq!(computed(), 1);
+
+    changes(&fixture, &format!("?limit=2&cursor={cursor}")).await;
+    changes(&fixture, "?limit=2").await;
+
+    assert_eq!(computed(), 1);
+}
+
+#[tokio::test]
+async fn the_open_version_is_not_served_from_the_cache_after_new_edits() {
+    let fixture = five_events().await;
+    let (_, before) = changes(&fixture, "?limit=2").await;
+    assert_eq!(tally(&before["counts"]["total"]), (5, 0, 0));
+
+    fixture.write(fixture.alice, 1000, |txn| {
+        model::create_event(txn, &event_at("f", 50)).unwrap();
+    });
+    let (_, after) = changes(&fixture, "?limit=2").await;
+
+    assert_eq!(tally(&after["counts"]["total"]), (6, 0, 0));
+}
+
+#[tokio::test]
+async fn a_bad_limit_or_cursor_is_refused() {
+    let fixture = five_events().await;
+
+    for query in [
+        "?limit=0",
+        "?limit=10001",
+        "?limit=many",
+        "?limit=2&cursor=%21%21",
+        "?cursor=ZXxh",
+    ] {
+        let (status, body) = changes(&fixture, query).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}: {body}");
+    }
+}

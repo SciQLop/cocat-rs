@@ -9,6 +9,7 @@ use serde_json::Value;
 use yrs::{Doc, Map, Out, ReadTxn, StateVector, Transact};
 
 use super::versions::apply;
+use crate::catalogues_api::position_of;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -39,6 +40,125 @@ pub struct CatalogueChange {
 pub struct Diff {
     pub events: Vec<EventChange>,
     pub catalogues: Vec<CatalogueChange>,
+}
+
+/// How many events were added, changed and removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+pub struct Tally {
+    pub added: usize,
+    pub changed: usize,
+    pub removed: usize,
+}
+
+impl Tally {
+    fn of<'a>(changes: impl Iterator<Item = &'a EventChange>) -> Self {
+        changes.fold(Self::default(), |mut tally, event| {
+            match event.change {
+                Change::Added => tally.added += 1,
+                Change::Changed => tally.changed += 1,
+                Change::Removed => tally.removed += 1,
+            }
+            tally
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+pub struct CatalogueTally {
+    pub catalogue: String,
+    pub name: String,
+    #[serde(flatten)]
+    pub tally: Tally,
+}
+
+/// Event changes in all, and in each catalogue that holds some: an event in several
+/// catalogues counts in each, and once in the total.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+pub struct Counts {
+    pub total: Tally,
+    pub catalogues: Vec<CatalogueTally>,
+}
+
+/// A diff with its counts: what the history pages are served from.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Analysis {
+    pub diff: Diff,
+    pub counts: Counts,
+}
+
+pub fn analyse(before: &Doc, after: &Doc, catalogue: Option<&str>) -> Analysis {
+    let diff = diff(before, after, catalogue);
+    let counts = counts(&diff, before, after, catalogue);
+    Analysis { diff, counts }
+}
+
+/// With a catalogue, only its row; otherwise a row for each catalogue with event changes.
+pub fn counts(diff: &Diff, before: &Doc, after: &Doc, catalogue: Option<&str>) -> Counts {
+    let (before, after) = (before.transact(), after.transact());
+    let candidates = match catalogue {
+        Some(uuid) => BTreeSet::from([uuid.to_owned()]),
+        None => &keys(&before, CATALOGUES) | &keys(&after, CATALOGUES),
+    };
+    let row = |uuid: String| {
+        let held = &members(&before, &uuid) | &members(&after, &uuid);
+        let tally = Tally::of(
+            diff.events
+                .iter()
+                .filter(|event| held.contains(&event.uuid)),
+        );
+        let name = catalogue_state(&after, &uuid)
+            .or_else(|| catalogue_state(&before, &uuid))?
+            .summary
+            .name;
+        Some(CatalogueTally {
+            catalogue: uuid,
+            name,
+            tally,
+        })
+    };
+    Counts {
+        total: Tally::of(diff.events.iter()),
+        catalogues: candidates
+            .into_iter()
+            .filter_map(row)
+            .filter(|row| catalogue.is_some() || row.tally != Tally::default())
+            .collect(),
+    }
+}
+
+/// Where an event sits in the paged order: its start after the change, else before.
+fn position(event: &EventChange) -> (i128, &str) {
+    let record = event.after.as_ref().or(event.before.as_ref());
+    let start = record.map_or(0, |record| record.start.unix_micros());
+    (start, &event.uuid)
+}
+
+/// The next `limit` event changes after the cursor, in order of start then uuid, and the
+/// cursor of the page's last one when more follow.
+// simplify: each page sorts every change; cache the sorted order if a version of hundreds of
+// thousands of events shows up in the page timings.
+pub fn page(
+    diff: &Diff,
+    after: Option<(i128, String)>,
+    limit: usize,
+) -> (Vec<EventChange>, Option<String>) {
+    let mut ordered: Vec<&EventChange> = diff.events.iter().collect();
+    ordered.sort_by_key(|event| position(event));
+    let mut rest: Vec<&EventChange> = match &after {
+        Some((micros, uuid)) => ordered
+            .into_iter()
+            .filter(|event| position(event) > (*micros, uuid.as_str()))
+            .collect(),
+        None => ordered,
+    };
+    let more = rest.len() > limit;
+    rest.truncate(limit);
+    let next = rest
+        .last()
+        .filter(|_| more)
+        .map(|event| position(event))
+        .map(|(start, uuid)| position_of(start, uuid));
+    (rest.into_iter().cloned().collect(), next)
 }
 
 /// The room after records `0..=end`; `u64::MAX` replays them all.

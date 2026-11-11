@@ -2,10 +2,13 @@
 //! whole log on every request.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
+use super::diff::Analysis;
 use super::stamps::Stamp;
 use super::versions::{Saved, Version, versions};
 
@@ -68,6 +71,88 @@ impl VersionCache {
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Entry>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+const DIFF_ENTRIES: usize = 16;
+const DIFF_LIFETIME: Duration = Duration::from_secs(5 * 60);
+
+/// The room, the records the diff starts and ends at, and the catalogue it is narrowed to.
+/// The log only grows, so the same records give the same diff; the version still open ends
+/// at a later record after new edits and so finds no entry.
+pub type DiffKey = (String, usize, usize, Option<String>);
+
+type CachedDiff = (DiffKey, Instant, Arc<Analysis>);
+
+/// The last few diffs the history computed, so the next pages of a version and a reopened
+/// version do not replay the room again.
+///
+/// simplify: 16 entries, 5 minutes, the oldest entry out first and no hit refreshes an
+/// entry; a diff of thousands of events weighs megabytes. Upgrade path: an LRU weighed in
+/// bytes (the `lru` crate) when memory shows it.
+#[derive(Debug, Clone)]
+pub struct DiffCache {
+    entries: Arc<Mutex<Vec<CachedDiff>>>,
+    capacity: usize,
+    lifetime: Duration,
+    computations: Arc<AtomicUsize>,
+}
+
+impl Default for DiffCache {
+    fn default() -> Self {
+        Self::new(DIFF_ENTRIES, DIFF_LIFETIME)
+    }
+}
+
+impl DiffCache {
+    pub fn new(capacity: usize, lifetime: Duration) -> Self {
+        Self {
+            entries: Arc::default(),
+            capacity,
+            lifetime,
+            computations: Arc::default(),
+        }
+    }
+
+    /// The diff under `key`, computed by `compute` only when none is held. Two requests
+    /// missing together both compute: the lock is not held meanwhile.
+    pub fn get_or_compute(
+        &self,
+        key: DiffKey,
+        compute: impl FnOnce() -> Analysis,
+    ) -> Arc<Analysis> {
+        if let Some(hit) = self.hit(&key) {
+            return hit;
+        }
+        self.computations.fetch_add(1, Ordering::Relaxed);
+        let fresh = Arc::new(compute());
+        let mut entries = self.lock();
+        entries.retain(|(held, _, _)| *held != key);
+        entries.push((key, Instant::now(), Arc::clone(&fresh)));
+        let excess = entries.len().saturating_sub(self.capacity);
+        entries.drain(..excess);
+        fresh
+    }
+
+    /// How many diffs were computed, for tests to see a hit.
+    pub fn computations(&self) -> usize {
+        self.computations.load(Ordering::Relaxed)
+    }
+
+    pub fn forget(&self, room_id: &str) {
+        self.lock().retain(|(key, _, _)| key.0 != room_id);
+    }
+
+    fn hit(&self, key: &DiffKey) -> Option<Arc<Analysis>> {
+        let mut entries = self.lock();
+        let lifetime = self.lifetime;
+        entries.retain(|(_, born, _)| born.elapsed() < lifetime);
+        let (_, _, analysis) = entries.iter().find(|(held, _, _)| held == key)?;
+        Some(Arc::clone(analysis))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Vec<CachedDiff>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -141,5 +226,45 @@ mod tests {
         let split = cache.versions("r", &records, &slots, &Saved::from([0]));
 
         assert_eq!(split.len(), 2);
+    }
+
+    fn key(end: usize) -> DiffKey {
+        ("r".to_owned(), 0, end, None)
+    }
+
+    #[test]
+    fn a_held_diff_is_not_computed_again() {
+        let cache = DiffCache::default();
+        cache.get_or_compute(key(1), Analysis::default);
+        cache.get_or_compute(key(1), || unreachable!("the diff is held"));
+        assert_eq!(cache.computations(), 1);
+    }
+
+    #[test]
+    fn the_oldest_diff_leaves_when_the_cache_is_full() {
+        let cache = DiffCache::new(2, Duration::from_secs(60));
+        for end in 1..=3 {
+            cache.get_or_compute(key(end), Analysis::default);
+        }
+        cache.get_or_compute(key(3), Analysis::default);
+        cache.get_or_compute(key(1), Analysis::default);
+        assert_eq!(cache.computations(), 4);
+    }
+
+    #[test]
+    fn an_expired_diff_is_computed_again() {
+        let cache = DiffCache::new(2, Duration::ZERO);
+        cache.get_or_compute(key(1), Analysis::default);
+        cache.get_or_compute(key(1), Analysis::default);
+        assert_eq!(cache.computations(), 2);
+    }
+
+    #[test]
+    fn a_forgotten_room_loses_its_diffs() {
+        let cache = DiffCache::default();
+        cache.get_or_compute(key(1), Analysis::default);
+        cache.forget("r");
+        cache.get_or_compute(key(1), Analysis::default);
+        assert_eq!(cache.computations(), 2);
     }
 }
