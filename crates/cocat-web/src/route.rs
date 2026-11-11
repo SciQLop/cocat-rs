@@ -27,6 +27,9 @@ pub enum Route {
         catalogue: Option<String>,
         version: Option<u64>,
     },
+    /// The selection rounds of the open project, and one of them by id.
+    Rounds,
+    Round(String),
     /// A project's file, by its path in the file list.
     File(String),
     /// A catalogue of another project this one links to, by the link's id.
@@ -46,11 +49,19 @@ impl Route {
         if let Some(path) = hash.strip_prefix("file=") {
             return decoded(path).map_or(Route::Default, Route::File);
         }
+        if let Some(id) = hash.strip_prefix("/rounds/") {
+            return if id.is_empty() {
+                Route::Rounds
+            } else {
+                Route::Round(id.to_owned())
+            };
+        }
         match hash.split_once('=') {
             Some(("c", uuid)) if !uuid.is_empty() => Route::Catalogue(uuid.to_owned()),
             Some(("group", id)) if !id.is_empty() => Route::Group(id.to_owned()),
             Some(("link", id)) if !id.is_empty() => Route::Link(id.to_owned()),
             Some(("submission", id)) => id.parse().map_or(Route::Default, Route::Submission),
+            None if hash == "/rounds" => Route::Rounds,
             None if hash == "home" => Route::Home,
             None if hash == "all" => Route::AllEvents,
             None if hash == "trash" => Route::Trash,
@@ -97,6 +108,7 @@ impl Route {
             Route::Home => Some("Home"),
             Route::History { .. } => Some("History"),
             Route::Groups | Route::Group(_) => Some("Groups"),
+            Route::Rounds | Route::Round(_) => Some("Rounds"),
             Route::Submissions | Route::Submission(_) => Some("Submissions"),
             Route::MySubmissions => Some("My submissions"),
             _ => None,
@@ -144,6 +156,8 @@ impl Route {
             Route::AllEvents => "#all".to_owned(),
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
+            Route::Rounds => "#/rounds".to_owned(),
+            Route::Round(id) => format!("#/rounds/{id}"),
             Route::Public(None) => "#public".to_owned(),
             Route::Public(Some(folder)) => {
                 format!(
@@ -243,6 +257,15 @@ mod tests {
         assert_eq!(Route::parse("#group=g1"), Route::Group("g1".into()));
         assert_eq!(Route::parse("#group="), Route::Default);
         assert_eq!(Route::Groups.history(), history(None, None));
+    }
+
+    #[test]
+    fn the_route_round_trips_through_the_hash() {
+        assert_eq!(Route::parse("#/rounds"), Route::Rounds);
+        assert_eq!(Route::parse("#/rounds/r1"), Route::Round("r1".into()));
+        assert_eq!(Route::parse("#/rounds/"), Route::Rounds);
+        assert_eq!(Route::Round("r1".into()).hash(), "#/rounds/r1");
+        assert_eq!(Route::Round("r1".into()).crumb(), Some("Rounds"));
     }
 
     #[test]
@@ -375,6 +398,8 @@ mod tests {
             Route::Trash,
             Route::Groups,
             Route::Group("g1".into()),
+            Route::Rounds,
+            Route::Round("r1".into()),
             Route::Public(None),
             Route::Public(Some("AMDA/EARTH".into())),
             Route::Submissions,

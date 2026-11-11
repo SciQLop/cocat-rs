@@ -1636,3 +1636,6 @@ a.home-project:hover { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation-duration: 2.4s; }
 }
+
+.round-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.budget.over-cap { color: var(--danger); font-weight: 600; }

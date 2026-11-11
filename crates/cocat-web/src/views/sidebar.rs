@@ -8,6 +8,7 @@ use crate::state::Room;
 use crate::views::controls::{NameForm, go_to};
 use crate::views::files::{FilesSection, ProjectFiles};
 use crate::views::links::{LinkPicker, LinkedSection};
+use crate::views::rounds::project_rounds;
 use crate::views::submissions::waiting_submissions;
 use crate::views::transfer::Importer;
 use crate::views::upload::UploadPanel;
@@ -25,6 +26,8 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let everything =
         Memo::new(move |_| reader.read(|txn| cocat_core::model::live_event_count(txn)));
     let public = page.clone();
+    let rounds = project_rounds();
+    let rounds_href = Route::Rounds.href(&page);
     let linked = page.clone();
     let entries = NodeRef::<leptos::html::Nav>::new();
     keep_current_in_view(entries, move || shown.track());
@@ -64,6 +67,13 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 </span>
                 <span class="count">{move || list.get().trash}</span>
             </a>
+            <Show when=move || rounds.with(|rounds| !rounds.is_empty())>
+                <a class="catalogue" href=rounds_href.clone()
+                    aria-current=move || current(matches!(shown.get(), Route::Rounds | Route::Round(_)))>
+                    <span class="name">"Rounds"</span>
+                    <span class="count">{move || rounds.with(Vec::len)}</span>
+                </a>
+            </Show>
             <PublicEntry page=public/>
         </aside>
     }
