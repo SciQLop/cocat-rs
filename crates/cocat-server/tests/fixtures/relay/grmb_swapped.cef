@@ -1,0 +1,17 @@
+START_VARIABLE  =  time_tags__C1_CT_AUX_GRMB
+END_VARIABLE    =  time_tags__C1_CT_AUX_GRMB
+START_VARIABLE = location_code__C1_CT_AUX_GRMB
+END_VARIABLE   = location_code__C1_CT_AUX_GRMB
+START_VARIABLE = location_label__C1_CT_AUX_GRMB
+END_VARIABLE   = location_label__C1_CT_AUX_GRMB
+START_VARIABLE = inbound_vs_outbound__C1_CT_AUX_GRMB
+END_VARIABLE   = inbound_vs_outbound__C1_CT_AUX_GRMB
+START_VARIABLE = crossing_complexity__C1_CT_AUX_GRMB
+END_VARIABLE   = crossing_complexity__C1_CT_AUX_GRMB
+START_VARIABLE = quality_location_code__C1_CT_AUX_GRMB
+END_VARIABLE   = quality_location_code__C1_CT_AUX_GRMB
+START_VARIABLE = quality_location_label__C1_CT_AUX_GRMB
+END_VARIABLE   = quality_location_label__C1_CT_AUX_GRMB
+DATA_UNTIL = END_DATA
+2001-01-01T00:02:56Z/2001-01-01T00:19:16Z, 11, "OUT/BSTR", 3, 0, 4, "41515352187100000276753153200000"
+END_DATA

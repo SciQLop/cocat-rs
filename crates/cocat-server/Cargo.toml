@@ -55,6 +55,8 @@ chrono = { version = "0.4", default-features = false }
 quick-xml = "0.42"
 scraper = "0.29.0"
 csv = "1"
+flate2 = "1"
+tar = "0.4"
 
 [dev-dependencies]
 palette = "0.7"
