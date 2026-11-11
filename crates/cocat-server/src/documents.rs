@@ -10,11 +10,12 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
-use crate::AppState;
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody};
 use crate::db::{self, DocumentKind, DocumentRow};
 use crate::lifecycle;
 use crate::openapi::Detail;
+use crate::rounds::{self, ProjectProposal};
+use crate::{AppState, access};
 
 /// The socket and storage key of one document: `/room/{project}` stays the catalogues
 /// document, a workspace document is `{project}/{document}`.
@@ -34,10 +35,32 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list_documents, add_document))
 }
 
+/// What the list shows: the kinds stored as documents, and round proposals, which are
+/// registered with their round instead.
+#[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+#[schema(rename_all = "lowercase")]
+enum ListedKind {
+    Manifest,
+    Notebook,
+    Text,
+    Proposal,
+}
+
+impl From<DocumentKind> for ListedKind {
+    fn from(kind: DocumentKind) -> Self {
+        match kind {
+            DocumentKind::Manifest => Self::Manifest,
+            DocumentKind::Notebook => Self::Notebook,
+            DocumentKind::Text => Self::Text,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 struct DocumentOut {
     id: Uuid,
-    kind: DocumentKind,
+    kind: ListedKind,
     created_by: Option<Uuid>,
     created_at: String,
 }
@@ -46,9 +69,20 @@ impl From<DocumentRow> for DocumentOut {
     fn from(row: DocumentRow) -> Self {
         Self {
             id: row.id,
-            kind: row.kind,
+            kind: row.kind.into(),
             created_by: row.created_by,
             created_at: row.created_at,
+        }
+    }
+}
+
+impl From<ProjectProposal> for DocumentOut {
+    fn from(proposal: ProjectProposal) -> Self {
+        Self {
+            id: proposal.doc,
+            kind: ListedKind::Proposal,
+            created_by: Some(proposal.author),
+            created_at: proposal.created_at,
         }
     }
 }
@@ -71,7 +105,7 @@ struct DocumentCreated {
     params(("room_id" = String, Path, description = "Project id (a room in the API)")),
     security(("cookie" = [])),
     responses(
-        (status = 200, description = "The project's documents, oldest first; none until it has its file list", body = [DocumentOut]),
+        (status = 200, description = "The project's documents, oldest first, then the round proposals the caller may read, oldest first", body = [DocumentOut]),
         (status = 401, description = "No valid session", body = Detail),
         (status = 404, description = "No such room, or the caller is not a member", body = Detail),
     )
@@ -83,7 +117,31 @@ async fn list_documents(
 ) -> Result<Json<Vec<DocumentOut>>, ApiError> {
     lifecycle::require_role(&state, &room_id, user.id, Role::Viewer).await?;
     let documents = db::document_rows(&state.pool, &room_id).await?;
-    Ok(Json(documents.into_iter().map(DocumentOut::from).collect()))
+    let proposals = readable_proposals(&state, &room_id, user.id).await?;
+    Ok(Json(
+        documents
+            .into_iter()
+            .map(DocumentOut::from)
+            .chain(proposals.into_iter().map(DocumentOut::from))
+            .collect(),
+    ))
+}
+
+// simplify: asks the access rule once per proposal, reading its round and members each time;
+// ceiling = a few hundred proposals per project; upgrade = load each round and its members once.
+async fn readable_proposals(
+    state: &AppState,
+    room_id: &str,
+    user: Uuid,
+) -> Result<Vec<ProjectProposal>, ApiError> {
+    let mut readable = Vec::new();
+    for proposal in rounds::project_proposals(&state.pool, room_id).await? {
+        let role = access::key_role(state, &key(room_id, proposal.doc), user).await?;
+        if role.is_some() {
+            readable.push(proposal);
+        }
+    }
+    Ok(readable)
 }
 
 #[utoipa::path(

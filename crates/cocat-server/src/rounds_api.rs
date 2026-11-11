@@ -28,6 +28,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_round, patch_round))
         .routes(routes!(put_members))
         .routes(routes!(move_round))
+        .routes(routes!(my_proposal))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -130,7 +131,7 @@ async fn load(
         .await?
         .filter(|row| row.room_id == room_id)
         .ok_or_else(|| unknown_round(round))?;
-    let roles = seat_roles(&rounds::members(&state.pool, id).await?, user);
+    let roles = rounds::roles_of(&rounds::members(&state.pool, id).await?, user);
     Ok((
         row,
         Seat {
@@ -138,14 +139,6 @@ async fn load(
             roles,
         },
     ))
-}
-
-fn seat_roles(members: &[(Uuid, RoundRole)], user: Uuid) -> Vec<RoundRole> {
-    members
-        .iter()
-        .filter(|(member, _)| *member == user)
-        .map(|(_, role)| *role)
-        .collect()
 }
 
 fn may_administer(seat: &Seat) -> bool {
@@ -227,7 +220,7 @@ async fn present(state: &AppState, round: RoundRow, viewer: Uuid) -> Result<Roun
     let emails = Emails::load(state, ids).await?;
     let seat = Seat {
         project_role: membership(state, &round.room_id, viewer).await?,
-        roles: seat_roles(&members, viewer),
+        roles: rounds::roles_of(&members, viewer),
     };
     Ok(RoundOut {
         proposers: emails.with_role(&members, RoundRole::Proposer),
@@ -536,4 +529,50 @@ async fn move_round(
     rounds::set_state(&state.pool, row.id, change.state, catalogue, Some(user.id)).await?;
     ws::check_room_roles(&state, &room_id).await;
     Ok(Json(reload(&state, row.id, user.id).await?))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct MyProposal {
+    /// The proposal's document: its socket is `/room/{room_id}/{doc}`.
+    doc: Uuid,
+}
+
+fn may_start_proposal(round: &RoundRow, seat: &Seat) -> Result<(), ApiError> {
+    let proposing = round.state == RoundState::Proposing;
+    match proposing && seat.roles.contains(&RoundRole::Proposer) {
+        true => Ok(()),
+        false => Err(forbidden(
+            "Only a proposer of the round gets a proposal, while it is proposing",
+        )),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/rooms/{room_id}/rounds/{round}/proposal",
+    params(
+        ("room_id" = String, Path, description = "Project id (a room in the API)"),
+        ("round" = String, Path, description = "Round uuid"),
+    ),
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "The caller's new, empty proposal", body = MyProposal),
+        (status = 200, description = "The caller's proposal, made earlier", body = MyProposal),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 403, description = "The caller has no proposal and either is no proposer or the round is past proposing", body = Detail),
+        (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+    )
+)]
+async fn my_proposal(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    ApiPath((room_id, round)): ApiPath<(String, String)>,
+) -> Result<(StatusCode, Json<MyProposal>), ApiError> {
+    let (row, seat) = load(&state, &room_id, &round, user.id).await?;
+    if let Some(doc) = rounds::proposal_of(&state.pool, row.id, user.id).await? {
+        return Ok((StatusCode::OK, Json(MyProposal { doc })));
+    }
+    may_start_proposal(&row, &seat)?;
+    let doc = rounds::add_proposal(&state.pool, row.id, user.id).await?;
+    Ok((StatusCode::CREATED, Json(MyProposal { doc })))
 }

@@ -28,7 +28,7 @@ use crate::history::versions::{Saved, Version, span, spans};
 use crate::openapi::Detail;
 use crate::relay::store;
 use crate::room::{Author, RoomError};
-use crate::{AppState, db, documents, lifecycle, presence};
+use crate::{AppState, access, db, documents, lifecycle, presence};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -74,20 +74,25 @@ struct DocumentQuery {
     document: Option<Uuid>,
 }
 
-/// The key whose log the history reads, the project's catalogues or one of its documents,
-/// with that document's kind.
+/// The key whose log the history reads, the project's catalogues or one of its documents
+/// or proposals, with a document's kind and the caller's role on it. A proposal the caller
+/// may not read is missing, as an unknown document is.
 async fn history_key(
     state: &AppState,
     room_id: &str,
     document: Option<Uuid>,
-) -> Result<(String, Option<DocumentKind>), ApiError> {
-    let Some(document) = document else {
-        return Ok((room_id.to_owned(), None));
-    };
-    match db::document_kind(&state.pool, room_id, document).await? {
-        Some(kind) => Ok((documents::key(room_id, document), Some(kind))),
-        None => Err(ApiError::NotFound("No such document".to_owned())),
-    }
+    user: Uuid,
+) -> Result<(String, Option<DocumentKind>, Role), ApiError> {
+    let missing = || ApiError::NotFound("No such document".to_owned());
+    let project_role = membership(state, room_id, user).await?;
+    let content = access::content(&state.pool, room_id, document)
+        .await?
+        .ok_or_else(missing)?;
+    let role = access::role_on(&state.pool, &content, project_role, user)
+        .await?
+        .ok_or_else(missing)?;
+    let key = document.map_or_else(|| room_id.to_owned(), |doc| documents::key(room_id, doc));
+    Ok((key, content.kind(), role))
 }
 
 fn unprocessable(detail: &str) -> ApiError {
@@ -168,7 +173,7 @@ async fn list(
             "Catalogue and event filters apply to catalogues only",
         ));
     }
-    let (key, _) = history_key(&state, &room_id, query.document).await?;
+    let (key, _, _) = history_key(&state, &room_id, query.document, user.id).await?;
     let filter = match query.catalogue {
         Some(uuid) => Some(Filter::new(&state, &room_id, uuid).await?),
         None => None,
@@ -253,8 +258,7 @@ async fn state_at(
     ApiPath((room_id, version)): ApiPath<(String, u64)>,
     Query(query): Query<DocumentQuery>,
 ) -> Result<Response, ApiError> {
-    membership(&state, &room_id, user.id).await?;
-    let (key, _) = history_key(&state, &room_id, query.document).await?;
+    let (key, _, _) = history_key(&state, &room_id, query.document, user.id).await?;
     if query.document.is_none() {
         let update = past(&state, &key, version, state_until).await?;
         let binary = [(header::CONTENT_TYPE, "application/octet-stream")];
@@ -653,7 +657,12 @@ async fn restore(
     if body.catalogue.is_some() && body.document.is_some() {
         return Err(unprocessable("Name a catalogue or a document, not both"));
     }
-    let (key, kind) = history_key(&state, &room_id, body.document).await?;
+    let (key, kind, role) = history_key(&state, &room_id, body.document, user.id).await?;
+    if !role.can_write() {
+        return Err(ApiError::Forbidden(
+            "This proposal is not yours, or its round no longer takes proposals".to_owned(),
+        ));
+    }
     if body.path.is_some() && kind != Some(DocumentKind::Manifest) {
         return Err(unprocessable("A path is restored from the manifest only"));
     }

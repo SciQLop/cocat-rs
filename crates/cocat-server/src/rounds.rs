@@ -326,6 +326,15 @@ pub async fn members(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, RoundRole
         .collect::<Result<_, sqlx::Error>>()?)
 }
 
+/// The round roles `user` holds among the round's members.
+pub fn roles_of(members: &[(Uuid, RoundRole)], user: Uuid) -> Vec<RoundRole> {
+    members
+        .iter()
+        .filter(|(member, _)| *member == user)
+        .map(|(_, role)| *role)
+        .collect()
+}
+
 pub async fn set_members(
     pool: &SqlitePool,
     id: Uuid,
@@ -384,6 +393,40 @@ pub async fn proposals(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, Uuid)>,
                 parse_uuid(&row.try_get::<String, _>("author")?)?,
                 parse_uuid(&row.try_get::<String, _>("doc_id")?)?,
             ))
+        })
+        .collect::<Result<_, sqlx::Error>>()?)
+}
+
+/// A proposal document of a project, as the document list shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectProposal {
+    pub doc: Uuid,
+    pub author: Uuid,
+    pub created_at: String,
+}
+
+/// Every proposal of every round of the project, oldest first.
+pub async fn project_proposals(
+    pool: &SqlitePool,
+    room_id: &str,
+) -> Result<Vec<ProjectProposal>, DbError> {
+    let rows = sqlx::query(
+        "SELECT round_proposal.doc_id, round_proposal.author,
+                CAST(round_proposal.created_at AS TEXT) AS created_at
+         FROM round_proposal JOIN round ON round.id = round_proposal.round_id
+         WHERE round.room_id = ? ORDER BY round_proposal.created_at, round_proposal.doc_id",
+    )
+    .bind(room_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            Ok(ProjectProposal {
+                doc: parse_uuid(&row.try_get::<String, _>("doc_id")?)?,
+                author: parse_uuid(&row.try_get::<String, _>("author")?)?,
+                created_at: row.try_get("created_at")?,
+            })
         })
         .collect::<Result<_, sqlx::Error>>()?)
 }

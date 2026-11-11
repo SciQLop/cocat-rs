@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::db::User;
 use crate::room::{self, ClientId, CloseReason, Inbox, RoomError, RoomGone, RoomHandle, outbox};
-use crate::{AppState, auth, db, documents, ui};
+use crate::{AppState, access, auth, db, documents, ui};
 
 pub const INTERNAL_ERROR: u16 = 1011;
 
@@ -116,12 +116,12 @@ async fn open_socket(
     if upgrade.selected_protocol().is_none() {
         return old_client();
     }
-    let (user, role) = match lobby_role(&state, &project, &headers).await {
+    let (user, project_role) = match lobby_role(&state, &project, &headers).await {
         Ok(admitted) => admitted,
         Err(refusal) => return refusal.into_response(),
     };
-    let room_id = match room_to_relay(&state, &project, doc).await {
-        Ok(room_id) => room_id,
+    let (room_id, role) = match room_to_relay(&state, &project, doc, user.id, project_role).await {
+        Ok(relayed) => relayed,
         Err(refusal) => return refusal.into_response(),
     };
     let Some(session) = auth::request_token_hash(&headers) else {
@@ -139,20 +139,26 @@ async fn open_socket(
     response
 }
 
-/// The room a socket relays: the project's catalogues, or the key of the project's document, which must exist.
+/// The room a socket relays, the project's catalogues or the key of one of its documents or
+/// proposals, which must exist, and the role the member holds on it: 403 for a proposal they
+/// may not read.
 async fn room_to_relay(
     state: &AppState,
     project: &str,
     doc: Option<Uuid>,
-) -> Result<String, StatusCode> {
-    match doc {
-        Some(doc) => match db::document_kind(&state.pool, project, doc).await {
-            Ok(Some(_)) => Ok(documents::key(project, doc)),
-            Ok(None) => Err(StatusCode::NOT_FOUND),
-            Err(error) => Err(server_failed(&error)),
-        },
-        None => Ok(project.to_owned()),
-    }
+    user: Uuid,
+    project_role: Role,
+) -> Result<(String, Role), StatusCode> {
+    let content = access::content(&state.pool, project, doc)
+        .await
+        .map_err(|error| server_failed(&error))?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let role = access::role_on(&state.pool, &content, project_role, user)
+        .await
+        .map_err(|error| server_failed(&error))?
+        .ok_or(StatusCode::FORBIDDEN)?;
+    let key = doc.map_or_else(|| project.to_owned(), |doc| documents::key(project, doc));
+    Ok((key, role))
 }
 
 /// Python cocat and the old SciQLop plugin offer no subprotocol and would write the first
@@ -166,8 +172,8 @@ fn old_client() -> Response {
         .into_response()
 }
 
-/// The account and its role, or the refusal a client can act on: 401 means the session is
-/// gone (sign in again), 403 that the account has no place in this project.
+/// The account and its project role, or the refusal a client can act on: 401 means the
+/// session is gone (sign in again), 403 that the account has no place in this project.
 async fn lobby_role(
     state: &AppState,
     room_id: &str,
@@ -248,7 +254,7 @@ async fn bridge(
         }
     };
 
-    let close_now = recheck_after_attach(&state, &project, user.id, role, &session).await;
+    let close_now = recheck_after_attach(&state, &room_id, user.id, role, &session).await;
 
     crate::telemetry::ws_connected(1);
     let (mut sink, mut stream) = socket.split();
@@ -320,7 +326,7 @@ async fn recheck_after_attach(
     if !session_alive(state, session).await {
         return Some(CloseReason::SessionEnded);
     }
-    match db::role_in(&state.pool, room_id, user).await {
+    match access::key_role(state, room_id, user).await {
         Ok(current) if current == Some(role) => None,
         Ok(_) => Some(CloseReason::AccessChanged),
         Err(error) => {
@@ -484,7 +490,7 @@ async fn recheck(state: &AppState, checked: impl Fn(&str) -> bool) {
         .into_iter()
         .filter(|(room_id, _, _)| checked(room_id))
     {
-        match db::role_in(&state.pool, documents::project_of(&room_id), user).await {
+        match access::key_role(state, &room_id, user).await {
             Ok(current) if current == Some(role) => {}
             Ok(_) => {
                 state

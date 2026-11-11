@@ -311,6 +311,14 @@ const ROWS: &[Row] = &[
     .room_any()
     .refined(),
     row(
+        "POST",
+        "/api/rooms/{room}/rounds/{round}/proposal",
+        Guard::RoomViewer,
+        Style::Api,
+    )
+    .room_any()
+    .refined(),
+    row(
         "GET",
         "/api/rooms/{room}/blobs/{sha256}",
         Guard::RoomViewer,
