@@ -594,7 +594,7 @@ fn extracted(doc: &Doc, catalogue: &str) -> Option<(String, Vec<u8>)> {
     Some((name, encoded(&alone)))
 }
 
-fn extract_alone(doc: &Doc, catalogue: &str) -> Option<(String, Doc)> {
+pub(crate) fn extract_alone(doc: &Doc, catalogue: &str) -> Option<(String, Doc)> {
     let found = model::catalogue(&doc.transact(), catalogue).filter(|found| !found.deleted)?;
     Some((found.name, model::extract(doc, catalogue)))
 }
@@ -849,7 +849,7 @@ async fn new_public(
 }
 
 /// The snapshot recording that `by` copied it out of project `room_id` at its newest version.
-async fn recorded_copy(
+pub(crate) async fn recorded_copy(
     state: &AppState,
     room_id: &str,
     by: &str,

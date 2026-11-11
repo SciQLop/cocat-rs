@@ -2,6 +2,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
+use cocat_core::model;
 use cocat_core::role::Role;
 use cocat_server::room::{Author, RoomManager};
 use cocat_server::{AppState, auth, db, documents, links::Links, ratelimit::LoginLimit, ws};
@@ -644,4 +645,140 @@ async fn turning_an_open_round_blind_closes_other_members_sockets_on_a_proposal(
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(close_code(&mut watcher).await, Some(4403));
     assert_eq!(handshake(addr, &path, &bob).await.err(), Some(403));
+}
+
+const DETECTIONS: &str = "cccccccc-0000-4000-8000-000000000003";
+const EVENT: &str = "eeeeeeee-0000-4000-8000-000000000001";
+
+fn detections() -> Vec<u8> {
+    let at = |text| cocat_core::time::Timestamp::parse(text).unwrap();
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        let catalogue = model::NewCatalogue {
+            uuid: DETECTIONS.to_owned(),
+            name: "detections".to_owned(),
+            ..model::NewCatalogue::default()
+        };
+        model::create_catalogue(&mut txn, &catalogue).unwrap();
+        let record = model::EventRecord::new(
+            EVENT,
+            at("2020-01-01T00:00:00Z"),
+            at("2020-01-01T01:00:00Z"),
+        );
+        model::create_event(&mut txn, &record).unwrap();
+        model::add_catalogue_events(&mut txn, DETECTIONS, &[EVENT.to_owned()]);
+    }
+    doc.transact()
+        .encode_state_as_update_v1(&StateVector::default())
+}
+
+impl Fixture {
+    async fn seed_detections(&self, room: &str, author: Uuid) {
+        let allowance = self
+            .state
+            .rooms
+            .allowance(&self.state.pool, room)
+            .await
+            .unwrap();
+        self.state
+            .rooms
+            .write_as(room, allowance, Author::Client(author), detections())
+            .await
+            .unwrap();
+    }
+
+    /// A round of `kind` taking its candidates from the detections of `source`; its id and
+    /// the candidates document.
+    async fn round_on(&self, token: &str, room: &str, source: &str, kind: &str) -> (String, Uuid) {
+        let body = json!({
+            "name": "R",
+            "visibility": "blind",
+            "kind": kind,
+            "candidates": {"project": source, "catalogue": DETECTIONS},
+        });
+        let path = format!("/api/rooms/{room}/rounds");
+        let (status, round) = self.send(Method::POST, &path, token, Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{round}");
+        let doc = round["candidates"]["doc"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        (round["id"].as_str().unwrap().to_owned(), doc)
+    }
+}
+
+#[tokio::test]
+async fn nobody_writes_the_candidates() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner).await;
+    fixture.seed_detections(&room, owner_id).await;
+    let (round, candidates) = fixture.round_on(&owner, &room, &room, "labelling").await;
+    let own = fixture.proposal(&owner, &room, &round).await;
+    let addr = fixture.serve().await;
+
+    let (_, while_proposing) = connect(addr, &format!("{room}/{candidates}"), &owner).await;
+    let (_, own_role) = connect(addr, &format!("{room}/{own}"), &owner).await;
+    fixture.move_to(&owner, &room, &round, "voting").await;
+    let (_, while_voting) = connect(addr, &format!("{room}/{candidates}"), &owner).await;
+
+    assert_ne!(own, candidates);
+    assert_eq!(own_role, "editor");
+    assert_eq!(
+        (while_proposing, while_voting),
+        ("viewer".into(), "viewer".into())
+    );
+}
+
+#[tokio::test]
+async fn candidates_are_hidden_from_members_until_proposing_ends() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner).await;
+    let (_, editor) = fixture
+        .member(&room, "editor@example.org", Role::Editor)
+        .await;
+    fixture.seed_detections(&room, owner_id).await;
+    let (round, candidates) = fixture.round_on(&owner, &room, &room, "labelling").await;
+    let addr = fixture.serve().await;
+    let path = format!("{room}/{candidates}");
+
+    let hidden = handshake(addr, &path, &editor).await.err();
+    let listed_before = lists(&fixture.listed(&editor, &room).await, candidates).is_some();
+    fixture.move_to(&owner, &room, &round, "voting").await;
+    let (_, role) = connect(addr, &path, &editor).await;
+
+    assert_eq!(hidden, Some(403));
+    assert!(!listed_before);
+    assert_eq!(role, "viewer");
+}
+
+#[tokio::test]
+async fn a_reviewer_without_access_to_the_source_reads_the_candidates() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let source = fixture.project(&owner).await;
+    fixture.seed_detections(&source, owner_id).await;
+    let room = fixture.project(&owner).await;
+    let (_, reviewer) = fixture
+        .member(&room, "reviewer@example.org", Role::Editor)
+        .await;
+    let (round, candidates) = fixture.round_on(&owner, &room, &source, "review").await;
+    let addr = fixture.serve().await;
+
+    let refused = fixture
+        .get(&format!("/api/rooms/{source}/catalogues"), &reviewer)
+        .await
+        .0;
+    let (_, shown) = fixture
+        .get(&format!("/api/rooms/{room}/rounds/{round}"), &reviewer)
+        .await;
+    let (_, role) = connect(addr, &format!("{room}/{candidates}"), &reviewer).await;
+
+    assert_eq!(refused, StatusCode::NOT_FOUND);
+    assert_eq!(shown["state"], "voting");
+    assert_eq!(shown["candidates"]["doc"], candidates.to_string());
+    assert_eq!(role, "viewer");
 }

@@ -125,8 +125,9 @@ pub struct RoundPatch {
 
 pub mod rules {
     use cocat_core::role::Role;
+    use uuid::Uuid;
 
-    use super::{Mover, RoundRole, RoundRow, RoundState, Visibility, moves};
+    use super::{Mover, Proposing, RoundRole, RoundRow, RoundState, Visibility, moves};
 
     /// A user's place in a round: their role in the project and their roles in the round.
     pub struct Seat {
@@ -158,15 +159,41 @@ pub mod rules {
         }
     }
 
-    /// The role a user holds on a proposal document right now, if any.
-    pub fn proposal_role(round: &RoundRow, seat: &Seat, is_author: bool) -> Option<Role> {
-        let writes =
-            is_author && seat.holds(RoundRole::Proposer) && round.state == RoundState::Proposing;
-        if writes {
-            Some(Role::Editor)
-        } else {
-            may_read_proposal(round, seat, is_author).then_some(Role::Viewer)
+    /// Whose proposal document a user looks at.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Whose {
+        Own,
+        Another,
+        /// The round's candidates, which the server wrote and nobody edits.
+        Candidates,
+    }
+
+    impl Whose {
+        pub fn of(author: Uuid, candidates: bool, viewer: Uuid) -> Self {
+            match (candidates, author == viewer) {
+                (true, _) => Self::Candidates,
+                (false, true) => Self::Own,
+                (false, false) => Self::Another,
+            }
         }
+    }
+
+    /// The role a user holds on a proposal document right now, if any.
+    pub fn proposal_role(round: &RoundRow, seat: &Seat, whose: Whose) -> Option<Role> {
+        match whose {
+            Whose::Candidates => may_read_candidates(round, seat).then_some(Role::Viewer),
+            Whose::Own if seat.holds(RoundRole::Proposer) && round.state == Proposing => {
+                Some(Role::Editor)
+            }
+            Whose::Own => may_read_proposal(round, seat, true).then_some(Role::Viewer),
+            Whose::Another => may_read_proposal(round, seat, false).then_some(Role::Viewer),
+        }
+    }
+
+    /// Nobody's private work, so the visibility does not matter; members read them once
+    /// proposing ends, so they do not steer what is proposed.
+    fn may_read_candidates(round: &RoundRow, seat: &Seat) -> bool {
+        round.state != Proposing || seat.is_decider() || seat.owns_project()
     }
 
     fn may_read_proposal(round: &RoundRow, seat: &Seat, is_author: bool) -> bool {
@@ -292,15 +319,53 @@ pub struct RoundSpec {
     pub budget: Option<String>,
 }
 
-/// Creates a round in `proposing`; every project owner and editor proposes and votes, and
-/// `by` decides.
+/// Where a round's candidates were copied from.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct CandidateSource {
+    pub project: String,
+    /// The catalogue's uuid.
+    pub catalogue: String,
+}
+
+/// A round's candidates: the proposal document the server wrote them in, where they came
+/// from and how many there are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidates {
+    pub doc: Uuid,
+    pub source: CandidateSource,
+    pub count: i64,
+}
+
+/// Whether the project's owners and editors propose by default in a round of `kind`; in a
+/// review the candidates are the proposal.
+fn writers_propose(kind: Kind) -> bool {
+    match kind {
+        Kind::Review => false,
+        Kind::Downlink | Kind::Labelling => true,
+    }
+}
+
+/// Creates a round in `proposing`; every project owner and editor votes and, unless it is
+/// a review, proposes; `by` decides.
 pub async fn create_round(
     pool: &SqlitePool,
     room_id: &str,
     spec: RoundSpec,
     by: Uuid,
 ) -> Result<Uuid, DbError> {
+    create_round_with(pool, room_id, spec, by, None).await
+}
+
+/// Creates a round as `create_round` does, with its candidates authored by `by`.
+pub async fn create_round_with(
+    pool: &SqlitePool,
+    room_id: &str,
+    spec: RoundSpec,
+    by: Uuid,
+    candidates: Option<&Candidates>,
+) -> Result<Uuid, DbError> {
     let writers = project_writers(pool, room_id).await?;
+    let propose = writers_propose(spec.kind);
     let id = Uuid::new_v4();
     let mut tx = pool.begin().await?;
     sqlx::query(
@@ -318,12 +383,68 @@ pub async fn create_round(
     .execute(&mut *tx)
     .await?;
     for writer in writers {
-        insert_member(&mut tx, id, writer, RoundRole::Proposer).await?;
+        if propose {
+            insert_member(&mut tx, id, writer, RoundRole::Proposer).await?;
+        }
         insert_member(&mut tx, id, writer, RoundRole::Voter).await?;
     }
     insert_member(&mut tx, id, by, RoundRole::Decider).await?;
+    if let Some(candidates) = candidates {
+        insert_candidates(&mut tx, id, by, candidates).await?;
+    }
     tx.commit().await?;
     Ok(id)
+}
+
+async fn insert_candidates(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    round_id: Uuid,
+    author: Uuid,
+    candidates: &Candidates,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO round_proposal
+           (round_id, author, doc_id, candidates, source_project, source_catalogue, candidate_count)
+         VALUES (?, ?, ?, 1, ?, ?, ?)",
+    )
+    .bind(round_id.to_string())
+    .bind(author.to_string())
+    .bind(candidates.doc.to_string())
+    .bind(&candidates.source.project)
+    .bind(&candidates.source.catalogue)
+    .bind(candidates.count)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// The round's candidates, when it has any.
+pub async fn candidates(pool: &SqlitePool, id: Uuid) -> Result<Option<Candidates>, DbError> {
+    let row: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT doc_id, source_project, source_catalogue, candidate_count FROM round_proposal
+         WHERE round_id = ? AND candidates = 1",
+    )
+    .bind(id.to_string())
+    .fetch_optional(pool)
+    .await?;
+    let Some((doc, project, catalogue, count)) = row else {
+        return Ok(None);
+    };
+    Ok(Some(Candidates {
+        doc: parse_uuid(&doc)?,
+        source: CandidateSource { project, catalogue },
+        count,
+    }))
+}
+
+/// A round nobody proposes in has nothing to wait for: it starts reviewing at once, logged
+/// as its creator's move, whatever the moves table lets the creator do.
+pub async fn start_without_proposers(pool: &SqlitePool, id: Uuid, by: Uuid) -> Result<(), DbError> {
+    let members = members(pool, id).await?;
+    if members.iter().all(|(_, role)| *role != RoundRole::Proposer) {
+        set_state(pool, id, Proposing, Voting, None, Some(by), None).await?;
+    }
+    Ok(())
 }
 
 pub async fn round(pool: &SqlitePool, id: Uuid) -> Result<Option<RoundRow>, DbError> {
@@ -497,12 +618,13 @@ pub async fn proposal_of(
     id: Uuid,
     author: Uuid,
 ) -> Result<Option<Uuid>, DbError> {
-    let doc: Option<String> =
-        sqlx::query_scalar("SELECT doc_id FROM round_proposal WHERE round_id = ? AND author = ?")
-            .bind(id.to_string())
-            .bind(author.to_string())
-            .fetch_optional(pool)
-            .await?;
+    let doc: Option<String> = sqlx::query_scalar(
+        "SELECT doc_id FROM round_proposal WHERE round_id = ? AND author = ? AND candidates = 0",
+    )
+    .bind(id.to_string())
+    .bind(author.to_string())
+    .fetch_optional(pool)
+    .await?;
     Ok(parse_opt_uuid(doc)?)
 }
 
@@ -521,7 +643,8 @@ pub async fn add_proposal(pool: &SqlitePool, id: Uuid, author: Uuid) -> Result<U
 
 pub async fn proposals(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, Uuid)>, DbError> {
     let rows = sqlx::query(
-        "SELECT author, doc_id FROM round_proposal WHERE round_id = ? ORDER BY created_at, author",
+        "SELECT author, doc_id FROM round_proposal WHERE round_id = ? AND candidates = 0
+         ORDER BY created_at, author",
     )
     .bind(id.to_string())
     .fetch_all(pool)
@@ -589,14 +712,23 @@ pub async fn proposal_docs(
         .collect::<Result<_, _>>()?)
 }
 
-/// The round a project's document is a proposal of, and its author.
+/// A proposal document: its round, its author, and whether it holds the round's candidates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalDoc {
+    pub round: RoundRow,
+    pub author: Uuid,
+    pub candidates: bool,
+}
+
+/// The proposal a project's document is.
 pub async fn proposal_by_doc(
     pool: &SqlitePool,
     room_id: &str,
     doc: Uuid,
-) -> Result<Option<(RoundRow, Uuid)>, DbError> {
-    let author: Option<(String, String)> = sqlx::query_as(
-        "SELECT round_proposal.round_id, round_proposal.author FROM round_proposal
+) -> Result<Option<ProposalDoc>, DbError> {
+    let found: Option<(String, String, bool)> = sqlx::query_as(
+        "SELECT round_proposal.round_id, round_proposal.author, round_proposal.candidates
+         FROM round_proposal
          JOIN round ON round.id = round_proposal.round_id
          WHERE round.room_id = ? AND round_proposal.doc_id = ?",
     )
@@ -604,12 +736,18 @@ pub async fn proposal_by_doc(
     .bind(doc.to_string())
     .fetch_optional(pool)
     .await?;
-    let Some((round_id, author)) = author else {
+    let Some((round_id, author, candidates)) = found else {
         return Ok(None);
     };
     let row = round(pool, parse_uuid(&round_id)?).await?;
     Ok(row
-        .map(|row| Ok::<_, sqlx::Error>((row, parse_uuid(&author)?)))
+        .map(|round| {
+            Ok::<_, sqlx::Error>(ProposalDoc {
+                round,
+                author: parse_uuid(&author)?,
+                candidates,
+            })
+        })
         .transpose()?)
 }
 
@@ -839,10 +977,16 @@ mod tests {
         let author = seat(Role::Editor, PROPOSER);
         let proposing = round_in(RoundState::Proposing, Visibility::Open);
         let voting = round_in(RoundState::Voting, Visibility::Open);
-        assert_eq!(proposal_role(&proposing, &author, true), Some(Role::Editor));
-        assert_eq!(proposal_role(&voting, &author, true), Some(Role::Viewer));
         assert_eq!(
-            proposal_role(&proposing, &author, false),
+            proposal_role(&proposing, &author, Whose::Own),
+            Some(Role::Editor)
+        );
+        assert_eq!(
+            proposal_role(&voting, &author, Whose::Own),
+            Some(Role::Viewer)
+        );
+        assert_eq!(
+            proposal_role(&proposing, &author, Whose::Another),
             Some(Role::Viewer)
         );
     }
@@ -851,7 +995,10 @@ mod tests {
     fn a_removed_proposer_reads_but_no_longer_writes() {
         let removed = seat(Role::Editor, &[RoundRole::Voter]);
         let round = round_in(RoundState::Proposing, Visibility::Blind);
-        assert_eq!(proposal_role(&round, &removed, true), Some(Role::Viewer));
+        assert_eq!(
+            proposal_role(&round, &removed, Whose::Own),
+            Some(Role::Viewer)
+        );
     }
 
     #[test]
@@ -860,10 +1007,19 @@ mod tests {
         let editor = seat(Role::Editor, PROPOSER);
         let decider = seat(Role::Editor, &[RoundRole::Decider]);
         let owner = seat(Role::Owner, &[]);
-        assert_eq!(proposal_role(&round, &editor, false), None);
-        assert_eq!(proposal_role(&round, &decider, false), Some(Role::Viewer));
-        assert_eq!(proposal_role(&round, &owner, false), Some(Role::Viewer));
-        assert_eq!(proposal_role(&round, &editor, true), Some(Role::Editor));
+        assert_eq!(proposal_role(&round, &editor, Whose::Another), None);
+        assert_eq!(
+            proposal_role(&round, &decider, Whose::Another),
+            Some(Role::Viewer)
+        );
+        assert_eq!(
+            proposal_role(&round, &owner, Whose::Another),
+            Some(Role::Viewer)
+        );
+        assert_eq!(
+            proposal_role(&round, &editor, Whose::Own),
+            Some(Role::Editor)
+        );
     }
 
     #[test]
@@ -871,7 +1027,10 @@ mod tests {
         let editor = seat(Role::Editor, PROPOSER);
         for state in [RoundState::Voting, RoundState::Decided] {
             let round = round_in(state, Visibility::Blind);
-            assert_eq!(proposal_role(&round, &editor, false), Some(Role::Viewer));
+            assert_eq!(
+                proposal_role(&round, &editor, Whose::Another),
+                Some(Role::Viewer)
+            );
         }
     }
 
@@ -879,7 +1038,50 @@ mod tests {
     fn an_open_proposal_is_read_by_every_member() {
         let round = round_in(RoundState::Proposing, Visibility::Open);
         let viewer = seat(Role::Viewer, &[]);
-        assert_eq!(proposal_role(&round, &viewer, false), Some(Role::Viewer));
+        assert_eq!(
+            proposal_role(&round, &viewer, Whose::Another),
+            Some(Role::Viewer)
+        );
+    }
+
+    #[test]
+    fn nobody_writes_the_candidates_in_any_state() {
+        let creator = seat(Role::Owner, &[RoundRole::Proposer, RoundRole::Decider]);
+        for state in [
+            RoundState::Proposing,
+            RoundState::Voting,
+            RoundState::Decided,
+        ] {
+            let round = round_in(state, Visibility::Open);
+            assert_eq!(
+                proposal_role(&round, &creator, Whose::Candidates),
+                Some(Role::Viewer)
+            );
+        }
+    }
+
+    #[test]
+    fn candidates_are_read_by_deciders_and_owners_then_by_every_member() {
+        let member = seat(Role::Viewer, &[RoundRole::Voter]);
+        let decider = seat(Role::Editor, &[RoundRole::Decider]);
+        let owner = seat(Role::Owner, &[]);
+        for visibility in [Visibility::Open, Visibility::Blind] {
+            let proposing = round_in(RoundState::Proposing, visibility);
+            let voting = round_in(RoundState::Voting, visibility);
+            assert_eq!(proposal_role(&proposing, &member, Whose::Candidates), None);
+            assert_eq!(
+                proposal_role(&proposing, &decider, Whose::Candidates),
+                Some(Role::Viewer)
+            );
+            assert_eq!(
+                proposal_role(&proposing, &owner, Whose::Candidates),
+                Some(Role::Viewer)
+            );
+            assert_eq!(
+                proposal_role(&voting, &member, Whose::Candidates),
+                Some(Role::Viewer)
+            );
+        }
     }
 
     #[test]

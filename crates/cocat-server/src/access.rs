@@ -7,15 +7,15 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::db::{self, DbError, DocumentKind};
-use crate::rounds::rules::{self, Seat};
-use crate::rounds::{self, RoundRow};
+use crate::rounds::rules::{self, Seat, Whose};
+use crate::rounds::{self, ProposalDoc};
 use crate::{AppState, documents};
 
 /// What a room key of a project holds.
 pub enum Content {
     Catalogues,
     Document(DocumentKind),
-    Proposal { round: Box<RoundRow>, author: Uuid },
+    Proposal(Box<ProposalDoc>),
 }
 
 impl Content {
@@ -23,7 +23,7 @@ impl Content {
     pub fn kind(&self) -> Option<DocumentKind> {
         match self {
             Self::Document(kind) => Some(*kind),
-            Self::Catalogues | Self::Proposal { .. } => None,
+            Self::Catalogues | Self::Proposal(_) => None,
         }
     }
 }
@@ -42,10 +42,7 @@ pub async fn content(
     }
     Ok(rounds::proposal_by_doc(pool, project, doc)
         .await?
-        .map(|(round, author)| Content::Proposal {
-            round: Box::new(round),
-            author,
-        }))
+        .map(|proposal| Content::Proposal(Box::new(proposal))))
 }
 
 /// The role a project member holds on the content: their project role, except on a
@@ -56,15 +53,16 @@ pub async fn role_on(
     project_role: Role,
     user: Uuid,
 ) -> Result<Option<Role>, DbError> {
-    let Content::Proposal { round, author } = content else {
+    let Content::Proposal(proposal) = content else {
         return Ok(Some(project_role));
     };
-    let members = rounds::members(pool, round.id).await?;
+    let members = rounds::members(pool, proposal.round.id).await?;
     let seat = Seat {
         project_role,
         roles: rounds::roles_of(&members, user),
     };
-    Ok(rules::proposal_role(round, &seat, *author == user))
+    let whose = Whose::of(proposal.author, proposal.candidates, user);
+    Ok(rules::proposal_role(&proposal.round, &seat, whose))
 }
 
 /// The role `user` holds on the room key now; `None` for no access or an unknown key.

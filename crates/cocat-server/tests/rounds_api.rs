@@ -2,10 +2,11 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
-use cocat_core::model::{self, NewCatalogue};
+use cocat_core::model::{self, EventRecord, NewCatalogue};
 use cocat_core::role::Role;
 use cocat_core::store::FileRoomStore;
-use cocat_server::room::RoomManager;
+use cocat_core::time::Timestamp;
+use cocat_server::room::{Author, RoomManager};
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use serde_json::{Value, json};
 use std::fs;
@@ -13,7 +14,8 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use uuid::Uuid;
-use yrs::{Doc, ReadTxn, StateVector, Transact};
+use yrs::updates::decoder::Decode;
+use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
 struct Fixture {
     state: AppState,
@@ -975,4 +977,284 @@ async fn a_too_long_note_is_refused() {
         (refused, accepted),
         (StatusCode::UNPROCESSABLE_ENTITY, StatusCode::OK)
     );
+}
+
+const DETECTIONS: &str = "cccccccc-0000-4000-8000-000000000003";
+const FIRST: &str = "eeeeeeee-0000-4000-8000-000000000001";
+const SECOND: &str = "eeeeeeee-0000-4000-8000-000000000002";
+const TRASHED: &str = "eeeeeeee-0000-4000-8000-000000000003";
+const LATER: &str = "eeeeeeee-0000-4000-8000-000000000004";
+
+fn at(text: &str) -> Timestamp {
+    Timestamp::parse(text).unwrap()
+}
+
+/// A catalogue "detections" listing `events`; the `true` ones are in the trash.
+fn detections(events: &[(&str, bool)]) -> Vec<u8> {
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        let catalogue = NewCatalogue {
+            uuid: DETECTIONS.to_owned(),
+            name: "detections".to_owned(),
+            ..NewCatalogue::default()
+        };
+        model::create_catalogue(&mut txn, &catalogue).unwrap();
+        for (uuid, _) in events {
+            let record = EventRecord::new(
+                *uuid,
+                at("2020-01-01T00:00:00Z"),
+                at("2020-01-01T01:00:00Z"),
+            );
+            model::create_event(&mut txn, &record).unwrap();
+        }
+        let uuids: Vec<String> = events.iter().map(|(uuid, _)| (*uuid).to_owned()).collect();
+        model::add_catalogue_events(&mut txn, DETECTIONS, &uuids);
+        for (uuid, _) in events.iter().filter(|(_, trashed)| *trashed) {
+            model::delete_event(&mut txn, uuid);
+        }
+    }
+    doc.transact()
+        .encode_state_as_update_v1(&StateVector::default())
+}
+
+/// What a room holds: its catalogues and the events outside the trash.
+struct Held {
+    catalogues: Vec<model::CatalogueSummary>,
+    events: Vec<String>,
+    trash: usize,
+}
+
+impl Fixture {
+    async fn write_room(&self, key: &str, author: Uuid, update: Vec<u8>) {
+        let allowance = self
+            .state
+            .rooms
+            .allowance(&self.state.pool, key)
+            .await
+            .unwrap();
+        self.state
+            .rooms
+            .write_as(key, allowance, Author::Client(author), update)
+            .await
+            .unwrap();
+    }
+
+    /// Adds LATER to the detections of `room`, on top of what it holds.
+    async fn add_later_detection(&self, room: &str, author: Uuid) {
+        let held = self
+            .state
+            .rooms
+            .read(room, |doc| {
+                doc.transact()
+                    .encode_state_as_update_v1(&StateVector::default())
+            })
+            .await
+            .unwrap();
+        let doc = Doc::new();
+        let mut txn = doc.transact_mut();
+        txn.apply_update(Update::decode_v1(&held).unwrap()).unwrap();
+        let before = txn.state_vector();
+        let record = EventRecord::new(
+            LATER,
+            at("2020-01-02T00:00:00Z"),
+            at("2020-01-02T01:00:00Z"),
+        );
+        model::create_event(&mut txn, &record).unwrap();
+        model::add_catalogue_events(&mut txn, DETECTIONS, &[LATER.to_owned()]);
+        let update = txn.encode_state_as_update_v1(&before);
+        drop(txn);
+        self.write_room(room, author, update).await;
+    }
+
+    async fn held(&self, key: &str) -> Held {
+        self.state
+            .rooms
+            .read(key, |doc| {
+                let txn = doc.transact();
+                let catalogues = model::catalogues(&txn);
+                let mut events: Vec<String> = catalogues
+                    .iter()
+                    .flat_map(|found| model::listed_events(&txn, &found.uuid))
+                    .filter(|uuid| model::event(&txn, uuid).is_some())
+                    .collect();
+                events.sort();
+                Held {
+                    catalogues,
+                    events,
+                    trash: model::trash(&txn).len(),
+                }
+            })
+            .await
+            .unwrap()
+    }
+
+    async fn review_round(&self, token: &str, room: &str, source: &str) -> (StatusCode, Value) {
+        let body = json!({
+            "name": "Review",
+            "visibility": "open",
+            "kind": "review",
+            "candidates": {"project": source, "catalogue": DETECTIONS},
+        });
+        self.round(token, room, body).await
+    }
+}
+
+fn candidates_key(room: &str, round: &Value) -> String {
+    format!("{room}/{}", round["candidates"]["doc"].as_str().unwrap())
+}
+
+#[tokio::test]
+async fn a_review_round_copies_its_candidates_and_starts_reviewing() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let events = [(FIRST, false), (SECOND, false)];
+    fixture
+        .write_room(&room, owner_id, detections(&events))
+        .await;
+
+    let (status, round) = fixture.review_round(&owner, &room, &room).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{round}");
+    assert_eq!(round["state"], "voting");
+    assert_eq!(round["proposers"], json!([]));
+    assert_eq!(round["voters"], json!(["owner@example.org"]));
+    assert_eq!(round["proposals"], json!([]));
+    let candidates = &round["candidates"];
+    assert_eq!(candidates["count"], 2);
+    assert_eq!(
+        candidates["source"],
+        json!({"project": room, "catalogue": DETECTIONS})
+    );
+    assert!(candidates["doc"].is_string());
+    let last = round["log"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(last["what"], "state: voting");
+    assert_eq!(last["actor"], "owner@example.org");
+}
+
+#[tokio::test]
+async fn candidates_keep_the_source_ids_and_name_their_source() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let events = [(FIRST, false), (SECOND, false)];
+    fixture
+        .write_room(&room, owner_id, detections(&events))
+        .await;
+
+    let (_, round) = fixture.review_round(&owner, &room, &room).await;
+
+    let held = fixture.held(&candidates_key(&room, &round)).await;
+    assert_eq!(held.events, [FIRST, SECOND]);
+    let [catalogue] = held.catalogues.as_slice() else {
+        panic!("expected one catalogue, got {:?}", held.catalogues);
+    };
+    assert_eq!(
+        (catalogue.uuid.as_str(), catalogue.name.as_str()),
+        (DETECTIONS, "detections")
+    );
+    let hop = catalogue.copied_from.last().unwrap();
+    assert_eq!(hop.project, room);
+    assert_eq!(hop.catalogue, DETECTIONS);
+    assert_eq!(hop.by.as_deref(), Some("owner@example.org"));
+}
+
+#[tokio::test]
+async fn candidates_are_a_snapshot() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    fixture
+        .write_room(&room, owner_id, detections(&[(FIRST, false)]))
+        .await;
+    let (_, round) = fixture.review_round(&owner, &room, &room).await;
+
+    fixture.add_later_detection(&room, owner_id).await;
+
+    assert_eq!(fixture.held(&room).await.events, [FIRST, LATER]);
+    let held = fixture.held(&candidates_key(&room, &round)).await;
+    assert_eq!(held.events, [FIRST]);
+    let id = round["id"].as_str().unwrap();
+    let path = format!("/api/rooms/{room}/rounds/{id}");
+    let (_, again) = fixture.send(Method::GET, &path, &owner, None).await;
+    assert_eq!(again["candidates"]["count"], 1);
+}
+
+#[tokio::test]
+async fn trashed_source_events_are_not_candidates() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let events = [(FIRST, false), (TRASHED, true), (SECOND, false)];
+    fixture
+        .write_room(&room, owner_id, detections(&events))
+        .await;
+
+    let (_, round) = fixture.review_round(&owner, &room, &room).await;
+
+    assert_eq!(round["candidates"]["count"], 2);
+    let held = fixture.held(&candidates_key(&room, &round)).await;
+    assert_eq!(held.events, [FIRST, SECOND]);
+    assert_eq!(held.trash, 0);
+}
+
+#[tokio::test]
+async fn a_source_the_creator_cannot_read_is_refused() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (stranger_id, stranger) = fixture.user_token("stranger@example.org").await;
+    let theirs = fixture.project(&stranger, "catalogues").await;
+    fixture
+        .write_room(&theirs, stranger_id, detections(&[(FIRST, false)]))
+        .await;
+
+    let (status, body) = fixture.review_round(&owner, &room, &theirs).await;
+    let (missing, _) = fixture.review_round(&owner, &room, &room).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(missing, StatusCode::NOT_FOUND);
+    let (_, list) = fixture
+        .send(
+            Method::GET,
+            &format!("/api/rooms/{room}/rounds"),
+            &owner,
+            None,
+        )
+        .await;
+    assert_eq!(list, json!([]));
+}
+
+#[tokio::test]
+async fn candidates_come_from_a_public_catalogue_too() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (curator_id, _) = fixture.user_token("curator@example.org").await;
+    let public = "public.detections";
+    let made = db::create_public_room(
+        &fixture.state.pool,
+        &db::PublicRoom {
+            id: public.to_owned(),
+            name: "Detections".to_owned(),
+            folder: None,
+            source: None,
+            description: None,
+            public_count: None,
+            counted_file: None,
+        },
+        Some(curator_id),
+    )
+    .await
+    .unwrap();
+    assert!(made);
+    fixture
+        .write_room(public, curator_id, detections(&[(FIRST, false)]))
+        .await;
+
+    let (status, round) = fixture.review_round(&owner, &room, public).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{round}");
+    assert_eq!(round["candidates"]["count"], 1);
 }

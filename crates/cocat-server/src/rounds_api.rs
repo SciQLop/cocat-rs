@@ -20,12 +20,12 @@ use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
 use crate::history::diff::replay_until;
 use crate::openapi::Detail;
 use crate::room::Author;
-use crate::rounds::rules::{self, Seat};
+use crate::rounds::rules::{self, Seat, Whose};
 use crate::rounds::{
-    self, Kind, RoundPatch, RoundRole, RoundRow, RoundSpec, RoundState, Verdict, VerdictRow,
-    Visibility,
+    self, CandidateSource, Kind, RoundPatch, RoundRole, RoundRow, RoundSpec, RoundState, Verdict,
+    VerdictRow, Visibility,
 };
-use crate::{AppState, db, lifecycle, ws};
+use crate::{AppState, db, lifecycle, round_candidates, ws};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -44,6 +44,15 @@ struct ProposalOut {
     author: String,
     /// Absent when the caller may not read this proposal yet.
     doc: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct CandidatesOut {
+    /// Absent when the caller may not read the candidates yet.
+    doc: Option<Uuid>,
+    source: CandidateSource,
+    /// How many events were copied.
+    count: i64,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -73,6 +82,8 @@ struct RoundOut {
     voters: Vec<String>,
     deciders: Vec<String>,
     proposals: Vec<ProposalOut>,
+    /// The events under review, copied from a catalogue when the round was made.
+    candidates: Option<CandidatesOut>,
     log: Vec<LogOut>,
 }
 
@@ -85,6 +96,9 @@ struct NewRound {
     deadline: Option<String>,
     #[schema(value_type = Option<Object>)]
     budget: Option<Value>,
+    /// A catalogue the caller can read, in any project: its live events are copied, uuids
+    /// kept, as the round's candidates. A round without proposers then starts in voting.
+    candidates: Option<CandidateSource>,
 }
 
 fn set_or_clear<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
@@ -235,6 +249,7 @@ impl Emails {
 async fn present(state: &AppState, round: RoundRow, viewer: Uuid) -> Result<RoundOut, ApiError> {
     let members = rounds::members(&state.pool, round.id).await?;
     let proposals = rounds::proposals(&state.pool, round.id).await?;
+    let candidates = rounds::candidates(&state.pool, round.id).await?;
     let log = rounds::log(&state.pool, round.id).await?;
     let ids = members
         .iter()
@@ -254,9 +269,15 @@ async fn present(state: &AppState, round: RoundRow, viewer: Uuid) -> Result<Roun
             .into_iter()
             .map(|(author, doc)| ProposalOut {
                 author: emails.of(author),
-                doc: rules::proposal_role(&round, &seat, author == viewer).map(|_| doc),
+                doc: rules::proposal_role(&round, &seat, Whose::of(author, false, viewer))
+                    .map(|_| doc),
             })
             .collect(),
+        candidates: candidates.map(|candidates| CandidatesOut {
+            doc: rules::proposal_role(&round, &seat, Whose::Candidates).map(|_| candidates.doc),
+            source: candidates.source,
+            count: candidates.count,
+        }),
         log: log
             .into_iter()
             .map(|line| LogOut {
@@ -313,11 +334,11 @@ async fn list_rounds(
     request_body = NewRound,
     security(("cookie" = [])),
     responses(
-        (status = 201, description = "The new round, proposing; the caller decides it", body = RoundOut),
+        (status = 201, description = "The new round, proposing, or voting when nobody proposes; the caller decides it", body = RoundOut),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is a viewer", body = Detail),
-        (status = 404, description = "No such room, or the caller is not a member", body = Detail),
-        (status = 409, description = "A public or personal project has no rounds", body = Detail),
+        (status = 404, description = "No such room, or the caller is not a member; or no candidates catalogue the caller can read", body = Detail),
+        (status = 409, description = "A public or personal project has no rounds, or the candidates do not fit its storage", body = Detail),
         (status = 422, description = "The name, deadline or budget is invalid", body = Detail),
     )
 )]
@@ -337,19 +358,23 @@ async fn create_round(
         Some(_) => Kind::Downlink,
         None => Kind::Labelling,
     });
-    let id = rounds::create_round(
-        &state.pool,
-        &room_id,
-        RoundSpec {
-            name,
-            kind,
-            visibility: body.visibility,
-            deadline,
-            budget,
-        },
-        user.id,
-    )
-    .await?;
+    let copied = match &body.candidates {
+        Some(source) => Some(round_candidates::copy(&state, &room_id, source, &user).await?),
+        None => None,
+    };
+    let spec = RoundSpec {
+        name,
+        kind,
+        visibility: body.visibility,
+        deadline,
+        budget,
+    };
+    let candidates = copied.as_ref().map(|copied| &copied.candidates);
+    let id = rounds::create_round_with(&state.pool, &room_id, spec, user.id, candidates).await?;
+    if let Some(copied) = copied {
+        round_candidates::write(&state, &room_id, user.id, copied).await?;
+    }
+    rounds::start_without_proposers(&state.pool, id, user.id).await?;
     let row = rounds::round(&state.pool, id)
         .await?
         .ok_or(ApiError::Internal)?;
