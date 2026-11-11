@@ -6,9 +6,11 @@
 pub mod admin;
 pub mod amda;
 pub mod cactus;
+pub mod catcsv;
 pub mod cdaw;
 pub mod donki;
 pub mod grmb;
+pub mod helio4cast;
 pub mod icmecat;
 pub mod patient;
 pub mod rolling;
@@ -95,6 +97,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(stix::Stix),
         Arc::new(cactus::Cactus),
         Arc::new(grmb::Grmb),
+        Arc::new(helio4cast::Helio4cast),
     ]
 }
 

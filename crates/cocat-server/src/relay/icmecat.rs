@@ -9,21 +9,20 @@
 //! An event runs from the ICME's start to the end of its magnetic obstacle. Its other
 //! parameters keep the catalogue's names, with their unit added: `mo_bmax_nt`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use cocat_core::model::EventRecord;
 use cocat_core::time::Timestamp;
-use scraper::{Html, Selector};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use uuid::Uuid;
 
+use super::catcsv::{self, Entry, Row};
 use super::{Fetched, Provider};
 
 pub struct Icmecat;
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x9c4e7a15_2d3b_4f86_a1e0_5b7d3c8e6f42);
-const SITE: &str = "helioforecast.space";
 const PAGE: &str = "https://helioforecast.space/icmecat";
 const DESCRIPTION: &str = "Interplanetary coronal mass ejections seen in situ by {}, from the HELIO4CAST ICMECAT (Moestl et al.), https://helioforecast.space/icmecat. If results from this catalogue go into a peer-reviewed paper, the authors ask to be contacted about co-authorship.";
 /// The columns that are not attributes: the event's key, its catalogue and its two ends.
@@ -34,156 +33,41 @@ const STRUCTURE: [&str; 5] = [
     "icme_start_time",
     "mo_end_time",
 ];
-/// How the file names the spacecraft whose name it shortens.
-const OBSERVERS: [(&str, &str); 3] = [
-    ("SolarOrbiter", "Solar Orbiter"),
-    ("ULYSSES", "Ulysses"),
-    ("PSP", "Parker Solar Probe"),
-];
-/// What a column's name holds, and the unit it is in, from the catalogue's header file.
-const UNITS: [(&str, &str); 9] = [
-    ("heliodistance", "au"),
-    ("_long_", "deg"),
-    ("_lat_", "deg"),
-    ("duration", "h"),
-    ("_b", "nt"),
-    ("speed", "km_s"),
-    ("pdyn", "npa"),
-    ("density", "cm3"),
-    ("temperature", "k"),
-];
-
-/// The CSV the page links, whatever its version.
-fn csv_url(page: &str) -> Result<String, String> {
-    let links = Selector::parse("a[href]").map_err(|error| error.to_string())?;
-    let base = reqwest::Url::parse(PAGE).map_err(|error| error.to_string())?;
-    Html::parse_document(page)
-        .select(&links)
-        .filter_map(|link| link.attr("href"))
-        .filter(|href| href.contains("ICMECAT") && href.ends_with(".csv"))
-        .find_map(|href| base.join(href).ok())
-        .ok_or_else(|| "the page links no CSV, has its layout changed?".to_owned())
-        .and_then(on_the_site)
-}
-
-fn on_the_site(url: reqwest::Url) -> Result<String, String> {
-    match (url.scheme(), url.host_str()) {
-        ("https", Some(SITE)) => Ok(url.into()),
-        _ => Err(format!(
-            "the page links a CSV outside https://{SITE}: {url}"
-        )),
-    }
-}
-
-/// A table row by column name.
-type Row = HashMap<String, String>;
 
 fn lists(body: &str) -> Result<Vec<Fetched>, String> {
-    let mut reader = csv::Reader::from_reader(body.as_bytes());
-    let headers = reader.headers().map_err(|error| error.to_string())?.clone();
-    let columns: Vec<String> = headers
-        .iter()
-        .filter(|name| !STRUCTURE.contains(name))
-        .map(attribute_name)
-        .collect();
-    let mut by_observer = BTreeMap::<String, Vec<EventRecord>>::new();
-    for record in reader.records() {
-        let row: Row = record
-            .and_then(|record| record.deserialize(Some(&headers)))
-            .map_err(|error| error.to_string())?;
-        let (observer, event) = event(&row)?;
-        by_observer.entry(observer).or_default().push(event);
-    }
-    if by_observer.is_empty() {
-        return Err("no event found, has the file layout changed?".to_owned());
-    }
-    Ok(by_observer
+    let grouped = catcsv::grouped(body, &NAMESPACE, &STRUCTURE, entry)?;
+    Ok(grouped
+        .lists
         .into_iter()
-        .map(|(observer, events)| catalogue(&observer, &columns, events))
+        .map(|(observer, events)| catalogue(&observer, &grouped.columns, events))
         .collect())
 }
 
-fn event(row: &Row) -> Result<(String, EventRecord), String> {
-    let id = field(row, "icmecat_id")?;
-    let time =
-        |column: &str| icme_time(field(row, column)?).ok_or_else(|| format!("{id}: bad {column}"));
-    let uuid = Uuid::new_v5(&NAMESPACE, id.as_bytes()).to_string();
-    let mut record = EventRecord::new(uuid, time("icme_start_time")?, time("mo_end_time")?);
-    record.attributes = attributes(row).map_err(|error| format!("{id}: {error}"))?;
-    Ok((field(row, "sc_insitu")?.to_owned(), record))
-}
-
-fn field<'a>(row: &'a Row, column: &str) -> Result<&'a str, String> {
-    row.get(column)
-        .map(String::as_str)
-        .ok_or_else(|| format!("a row has no {column}"))
-}
-
-/// The file writes `2025-08-10T05:17Z`, without seconds.
-fn icme_time(text: &str) -> Option<Timestamp> {
-    Timestamp::parse(&text.replace('Z', ":00Z"))
-}
-
-fn attributes(row: &Row) -> Result<Map<String, Value>, String> {
-    let values = row
-        .iter()
-        .filter(|(column, value)| !STRUCTURE.contains(&column.as_str()) && !value.is_empty());
-    values
-        .filter_map(|(column, value)| {
-            let value = attribute_value(column, value).transpose()?;
-            Some(value.map(|value| (attribute_name(column), value)))
-        })
-        .collect()
-}
-
-/// `None` for a number that is not finite (`nan`, `inf`): the catalogue has none there.
-fn attribute_value(column: &str, text: &str) -> Result<Option<Value>, String> {
-    let bad = || format!("{column} is {text}");
-    if column.ends_with("_time") {
-        let at = icme_time(text).ok_or_else(bad)?;
-        return Ok(Some(Value::String(at.rfc3339().map_err(|_| bad())?)));
-    }
-    let number: f64 = text.parse().map_err(|_| bad())?;
-    Ok(serde_json::Number::from_f64(number).map(Value::Number))
-}
-
-fn attribute_name(column: &str) -> String {
-    match UNITS.iter().find(|(part, _)| column.contains(part)) {
-        Some((_, unit)) => format!("{column}_{unit}"),
-        None => column.to_owned(),
-    }
-}
-
-fn observer_name(observer: &str) -> &str {
-    OBSERVERS
-        .iter()
-        .find(|(raw, _)| *raw == observer)
-        .map_or(observer, |(_, name)| name)
+/// An event runs from the ICME's start to the end of its magnetic obstacle.
+fn entry(row: &Row) -> Result<Entry, String> {
+    let key = catcsv::field(row, "icmecat_id")?.to_owned();
+    let time = |column| catcsv::named(&key, catcsv::time(row, column));
+    Ok(Entry {
+        list: catcsv::field(row, "sc_insitu")?.to_owned(),
+        start: time("icme_start_time")?,
+        stop: time("mo_end_time")?,
+        key,
+    })
 }
 
 fn catalogue(observer: &str, columns: &[String], events: Vec<EventRecord>) -> Fetched {
     let key = observer.to_lowercase();
-    let name = observer_name(observer);
+    let name = catcsv::observer_name(observer);
     Fetched {
         catalogue: Uuid::new_v5(&NAMESPACE, key.as_bytes()).to_string(),
         key,
-        folder: "ICMECAT".to_owned(),
+        folder: "HELIO4CAST/ICMECAT".to_owned(),
         name: name.to_owned(),
         description: DESCRIPTION.replace("{}", name),
         url: PAGE.to_owned(),
         columns: columns.to_vec(),
         events: Ok(events),
     }
-}
-
-async fn download(http: &reqwest::Client, url: &str) -> Result<String, String> {
-    let response = http.get(url).send().await.map_err(super::fetch_error)?;
-    response
-        .error_for_status()
-        .map_err(super::fetch_error)?
-        .text()
-        .await
-        .map_err(super::fetch_error)
 }
 
 #[async_trait]
@@ -206,8 +90,9 @@ impl Provider for Icmecat {
         _settings: &Value,
         _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
-        let url = csv_url(&download(http, PAGE).await?)?;
-        lists(&download(http, &url).await?)
+        let page = catcsv::download(http, PAGE).await?;
+        let url = catcsv::csv_url(PAGE, &page, "ICMECAT")?;
+        lists(&catcsv::download(http, &url).await?)
     }
 }
 
@@ -245,18 +130,20 @@ mod tests {
     #[test]
     fn the_csv_is_the_one_the_page_links() {
         assert_eq!(
-            csv_url(PAGE_LINKS).unwrap(),
+            catcsv::csv_url(PAGE, PAGE_LINKS, "ICMECAT").unwrap(),
             "https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v23.csv"
         );
     }
 
     #[test]
     fn a_page_without_the_csv_is_an_error() {
-        assert!(csv_url("<html><a href=\"x.json\">json</a></html>").is_err());
+        assert!(
+            catcsv::csv_url(PAGE, "<html><a href=\"x.json\">json</a></html>", "ICMECAT").is_err()
+        );
     }
 
     #[test]
-    fn each_spacecraft_has_its_catalogue_under_icmecat() {
+    fn each_spacecraft_has_its_catalogue_under_helio4cast_icmecat() {
         let lists = lists(SAMPLE).unwrap();
 
         let mut names: Vec<_> = lists.iter().map(|list| list.name.as_str()).collect();
@@ -278,7 +165,7 @@ mod tests {
             ]
         );
         let solo = list("solarorbiter");
-        assert_eq!(solo.folder, "ICMECAT");
+        assert_eq!(solo.folder, "HELIO4CAST/ICMECAT");
         assert_eq!(solo.name, "Solar Orbiter");
         assert_eq!(solo.url, PAGE);
         assert!(solo.description.contains("co-authorship"));
@@ -340,26 +227,6 @@ mod tests {
         assert_eq!(
             event.attributes["mo_start_time"],
             json!("2012-03-15T04:10:00Z")
-        );
-    }
-
-    #[test]
-    fn a_link_to_another_host_is_refused() {
-        let foreign = "<a href=\"https://example.org/HELIO4CAST_ICMECAT_v24.csv\">csv</a>";
-        let insecure = "<a href=\"http://helioforecast.space/HELIO4CAST_ICMECAT_v24.csv\">csv</a>";
-
-        for page in [foreign, insecure] {
-            assert!(csv_url(page).unwrap_err().contains("helioforecast.space"));
-        }
-    }
-
-    #[test]
-    fn a_relative_link_stays_on_the_site() {
-        let page = "<a href=\"static/sync/icmecat/HELIO4CAST_ICMECAT_v24.csv\">csv</a>";
-
-        assert_eq!(
-            csv_url(page).unwrap(),
-            "https://helioforecast.space/static/sync/icmecat/HELIO4CAST_ICMECAT_v24.csv"
         );
     }
 

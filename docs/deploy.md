@@ -154,6 +154,9 @@ follows.
 - **HELIO4CAST ICMECAT** needs nothing: one catalogue per spacecraft, weekly. Its authors ask
   to be contacted about co-authorship when results go into a peer-reviewed paper; the
   catalogues' descriptions say so.
+- **HELIO4CAST** (ARRCAT, SIRCAT and LineupCAT from helioforecast.space) needs nothing and
+  sits in the same "HELIO4CAST" folder as the ICMECAT: ARRCAT has one catalogue per target,
+  SIRCAT one per spacecraft, LineupCAT one; weekly, Monday 06:45 UTC. Same co-authorship request.
 - **STIX** (Solar Orbiter flare list, FHNW data center) needs nothing: the first run reads
   every flare since 2020 in 30-day requests, later runs the last 90 days; daily.
 - **CACTus** (SIDC) needs nothing: the level-zero list (ends 2015) and the quick-look list

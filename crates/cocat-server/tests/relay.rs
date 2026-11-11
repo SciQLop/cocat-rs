@@ -306,6 +306,23 @@ async fn a_first_run_makes_the_providers_catalogues_in_its_folder() {
 }
 
 #[tokio::test]
+async fn a_folder_the_provider_changes_is_followed_on_the_next_run() {
+    let world = World::start().await;
+    world.run().await.unwrap();
+    let moved = Fetched {
+        folder: "Fake/Moved".to_owned(),
+        ..shocks(vec![event("e1", 1), event("e2", 2)])
+    };
+
+    world.answer(Ok(vec![moved, storms()]));
+    world.run().await.unwrap();
+
+    assert_eq!(world.row(SHOCKS).await["folder"], "Fake/Moved");
+    assert_eq!(world.row(STORMS).await["folder"], "Fake/Lists");
+    assert_eq!(world.listed(SHOCKS, "cat-shocks").await, ["e1", "e2"]);
+}
+
+#[tokio::test]
 async fn a_second_run_with_the_same_list_writes_nothing() {
     let world = World::start().await;
     world.run().await.unwrap();

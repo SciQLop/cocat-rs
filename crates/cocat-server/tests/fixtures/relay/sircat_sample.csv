@@ -1,0 +1,7 @@
+,sircat_id,sc_insitu,sir_start_time,hss_start_time,sir_end_time,hss_end_time,hss_vtmax_time,sc_heliodistance,sc_long_heeq,sc_lat_heeq,hss_vtmax,hss_vtmean,hss_vtstd,hss_btmax,hss_btmean,hss_btstd,hss_bzmin,hss_bzmean,hss_bzstd,hss_duration,sir_vtmax,sir_vtmean,sir_vtstd,sir_btmax,sir_btmean,sir_btstd,sir_bzmin,sir_bzmean,sir_bzstd,sir_duration
+0,SIR_MAVEN_HUANG_20141203_01,MAVEN,2014-12-03T03:25Z,2014-12-03T13:04Z,2014-12-03T22:56Z,,,1.3818,-100.64,5.18,,,,,,,,,,,567.2,515.6,31.0,5.1,4.7,0.3,-1.4,0.2,1.4,9.87
+1,SIR_MAVEN_HUANG_20141217_01,MAVEN,2014-12-17T22:25Z,2014-12-18T18:02Z,2014-12-21T02:30Z,,,1.3815,-106.3,5.49,,,,,,,,,,,378.7,354.9,19.6,9.2,7.0,1.7,-3.5,-0.1,1.9,56.47
+742,SIR_WIND_GRANDIN_20070109_01,Wind,,2007-01-09T04:00Z,,2007-01-12T05:00Z,2007-01-11T17:34Z,0.9726,0.1,-3.86,566.7,415.0,58.8,8.8,6.3,1.1,-7.7,0.5,2.9,73.0,,,,,,,,,,
+743,SIR_WIND_GRANDIN_20070114_01,Wind,,2007-01-14T08:00Z,,2007-01-22T04:00Z,2007-01-17T12:53Z,0.9729,0.13,-4.41,749.4,568.5,102.3,14.6,5.9,2.8,-12.4,0.2,3.1,188.0,,,,,,,,,,
+88,SIR_STEREO_A_JIAN_20070226_01,STEREO-A,2007-02-25T17:40Z,2007-02-26T02:15Z,2007-03-01T01:10Z,,,0.9681,0.98,-7.29,,,,,,,,,,,692.9,476.5,116.7,13.4,7.0,2.3,-11.8,0.2,3.7,70.92
+89,SIR_STEREO_A_JIAN_20070306_01,STEREO-A,2007-03-04T15:50Z,2007-03-06T10:46Z,2007-03-07T20:00Z,,,0.9673,1.24,-7.34,,,,,,,,,,,693.2,475.0,82.7,11.0,6.5,1.9,-6.9,1.1,3.0,33.23
