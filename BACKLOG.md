@@ -50,3 +50,14 @@ which SciQLop's Qt desktop makes moot), 2026-11-06.
 See `docs/superpowers/reports/2026-11-06-phase-4b.md`, "Leads not proven": export blocking
 an open room, outbound queues bounded in frames not bytes, one OS thread per open room,
 rate-limit key including the path.
+
+## Viewing a past version of a big project is slow
+
+Picking a version in the history opens the project "as it was" (read-only view behind the
+changes list), which rebuilds the whole project at that version on the server and sends it
+in one answer (`GET /api/rooms/{id}/history/{version}/state`). On a STIX-sized project
+(107k events) that is most of the ~6 s before the first changes show, even though the
+changes themselves now come in pages (counts and the first 200 at once, cached diffs).
+Give it the same treatment as the live catalogue page: a progressive preview of the past
+catalogue from a paged route at that version (reusing the diff cache's rebuilt documents),
+with the full past state loaded only when the visitor needs it (copy, restore, search).
