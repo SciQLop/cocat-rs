@@ -36,6 +36,7 @@ from ._native import (
     restore,
     review_submission,
     revoke_invitation,
+    round_cost as _round_cost,
     rule_from_tscat,
     set_editors_can_share,
     set_role,
@@ -80,6 +81,7 @@ __all__ = [
     "restore",
     "review_submission",
     "revoke_invitation",
+    "round_cost",
     "rule_from_tscat",
     "set_editors_can_share",
     "set_role",
@@ -128,6 +130,23 @@ _ARGUMENTS = {
 _POLL = 0.1
 # What a listener hears as a value: once when it registers, then on every change.
 _WATCHED = ("status", "role")
+
+
+def _cost_row(event):
+    if isinstance(event, dict):
+        return event
+    return {
+        "uuid": event.uuid,
+        "start": event.start,
+        "stop": event.stop,
+        "attributes": event.attributes,
+    }
+
+
+def round_cost(events, budget):
+    """What `events` (events, or dicts with `uuid`, `start`, `stop`, `attributes`) cost
+    under a round's `budget`: a dict with `total`, `cap`, `unit`, `unpriced` and `text`."""
+    return _round_cost([_cost_row(event) for event in events], budget)
 
 
 class _Registration:
@@ -237,6 +256,41 @@ class Project:
         """Offers a copy made with `propose_change` as the public catalogue's next version."""
         uuid = getattr(catalogue, "uuid", catalogue)
         return self._server_call("submit_update", uuid, note)
+
+    def rounds(self):
+        """The selection rounds of this project."""
+        return self._server_call("rounds")
+
+    def create_round(self, name, visibility="open", deadline=None, budget=None):
+        """A selection round; `visibility` is `open` or `blind`. Returns it as a dict."""
+        return self._server_call("create_round", name, visibility, deadline, budget)
+
+    def round(self, round_id):
+        return self._server_call("round", round_id)
+
+    def update_round(self, round_id, **fields):
+        """Changes `name`, `visibility`, `deadline` or `budget`; `None` clears the last two."""
+        return self._server_call("update_round", round_id, **fields)
+
+    def set_round_members(self, round_id, proposers, voters, deciders):
+        """Replaces who proposes, votes and decides, by email."""
+        return self._server_call("set_round_members", round_id, proposers, voters, deciders)
+
+    def move_round(self, round_id, state, final_catalogue=None):
+        """Moves the round to `state`; deciding needs the final catalogue's uuid."""
+        return self._server_call("move_round", round_id, state, final_catalogue)
+
+    def my_proposal(self, round_id, cache=None):
+        """Your proposal document of the round, a project of its own; close it when done."""
+        return self._server_call("my_proposal", round_id, cache)
+
+    def vote(self, round_id, events):
+        """Replaces your votes with these events (or their uuids)."""
+        uuids = [getattr(event, "uuid", event) for event in events]
+        return self._server_call("vote", round_id, uuids)
+
+    def votes(self, round_id):
+        return self._server_call("votes", round_id)
 
     @classmethod
     def open(cls, cache_dir, project_id):

@@ -633,7 +633,8 @@ pub(crate) fn is_remote(txn: &TransactionMut<'_>) -> bool {
         .is_some_and(|origin| *origin == Origin::from(REMOTE_ORIGIN))
 }
 
-/// The room's websocket address, keeping any path prefix the server url carries.
+/// The room's websocket address, keeping any path prefix the server url carries. A proposal
+/// document's id is `project/doc`, which the server routes as two segments.
 fn websocket_url(base: &str, room_id: &str) -> Result<Url, RoomError> {
     let mut url = Url::parse(base)?;
     let scheme = match url.scheme() {
@@ -648,7 +649,7 @@ fn websocket_url(base: &str, room_id: &str) -> Result<Url, RoomError> {
         .map_err(|_| RoomError::Scheme)?
         .pop_if_empty()
         .push("room")
-        .push(room_id);
+        .extend(room_id.split('/'));
     Ok(url)
 }
 
@@ -656,4 +657,21 @@ fn websocket_url(base: &str, room_id: &str) -> Result<Url, RoomError> {
 /// a panic elsewhere must not turn every later change into a panic of its own.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::websocket_url;
+
+    #[test]
+    fn a_document_room_url_keeps_its_slash_as_a_path_segment() {
+        let url = websocket_url("http://localhost:8000/", "proj/doc").unwrap();
+        assert_eq!(url.as_str(), "ws://localhost:8000/room/proj/doc");
+    }
+
+    #[test]
+    fn a_plain_room_url_escapes_what_a_segment_cannot_hold() {
+        let url = websocket_url("http://localhost:8000/", "my room").unwrap();
+        assert_eq!(url.as_str(), "ws://localhost:8000/room/my%20room");
+    }
 }

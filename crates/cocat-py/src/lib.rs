@@ -3,6 +3,7 @@
 //! Everything that can be done without Python types happens in Rust; the Python wrapper
 //! (`cocat_rs/__init__.py`) adds the asyncio and listener plumbing that needs a loop.
 
+mod rounds;
 mod server_errors;
 mod sharing;
 mod sign_in;
@@ -2238,6 +2239,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("NotFound", not_found(module.py())?)?;
     server_errors::register(module)?;
     sharing::register(module)?;
+    rounds::register(module)?;
     submissions::register(module)?;
     sign_in::register(module)?;
     Ok(())

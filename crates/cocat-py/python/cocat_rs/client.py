@@ -15,6 +15,7 @@ import threading
 import warnings
 import webbrowser
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
 from urllib.parse import urlparse
@@ -257,6 +258,61 @@ class Client:
     def withdraw_submission(self, id: int) -> dict[str, Any]:
         return self._call(_native.withdraw_submission, id)
 
+    def rounds(self, project_id: str) -> list[dict[str, Any]]:
+        return self._call(_native.rounds, project_id)
+
+    def create_round(
+        self,
+        project_id: str,
+        name: str,
+        visibility: str = "open",
+        deadline: str | datetime | None = None,
+        budget: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """A selection round of the project; `budget` is JSON-LD, see `round_cost`."""
+        body = {"name": name, "visibility": visibility, "deadline": _iso(deadline), "budget": budget}
+        return self._call(_native.create_round, project_id, body)
+
+    def round(self, project_id: str, round_id: str) -> dict[str, Any]:
+        return self._call(_native.round, project_id, round_id)
+
+    def update_round(self, project_id: str, round_id: str, **fields: Any) -> dict[str, Any]:
+        """Changes `name`, `visibility`, `deadline` or `budget`; `None` clears the last two."""
+        changes = {**fields, **({"deadline": _iso(fields["deadline"])} if "deadline" in fields else {})}
+        return self._call(_native.update_round, project_id, round_id, changes)
+
+    def set_round_members(
+        self,
+        project_id: str,
+        round_id: str,
+        proposers: list[str],
+        voters: list[str],
+        deciders: list[str],
+    ) -> dict[str, Any]:
+        """Replaces who proposes, votes and decides, by email."""
+        return self._call(
+            _native.set_round_members, project_id, round_id, proposers, voters, deciders
+        )
+
+    def move_round(
+        self, project_id: str, round_id: str, state: str, final_catalogue: str | None = None
+    ) -> dict[str, Any]:
+        return self._call(_native.move_round, project_id, round_id, state, final_catalogue)
+
+    def my_proposal(
+        self, project_id: str, round_id: str, cache: str | Path | None = None
+    ) -> Project:
+        """Your proposal document of the round, opened like a project; close it when done."""
+        proposal = self._call(_native.my_proposal, project_id, round_id)
+        return self.open(f"{project_id}/{proposal['doc']}", cache)
+
+    def vote(self, project_id: str, round_id: str, events: list[str]) -> None:
+        """Replaces your votes with these event uuids."""
+        return self._call(_native.set_votes, project_id, round_id, events)
+
+    def votes(self, project_id: str, round_id: str) -> list[dict[str, Any]]:
+        return self._call(_native.votes, project_id, round_id)
+
     def members(self, project_id: str) -> list[dict[str, str]]:
         return self._call(_native.members, project_id)
 
@@ -388,6 +444,10 @@ class Client:
                 f"Several of your projects are called {wanted!r}; open one by its id: {', '.join(named)}"
             )
         return named[0] if named else wanted
+
+
+def _iso(moment: str | datetime | None) -> str | None:
+    return moment.isoformat() if isinstance(moment, datetime) else moment
 
 
 def default_client() -> Client:
