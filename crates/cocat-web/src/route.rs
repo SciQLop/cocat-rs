@@ -31,6 +31,8 @@ pub enum Route {
     Rounds,
     NewRound,
     Round(String),
+    /// The visitor's own proposal in a round, by the round's id.
+    Proposal(String),
     /// A project's file, by its path in the file list.
     File(String),
     /// A catalogue of another project this one links to, by the link's id.
@@ -51,6 +53,12 @@ impl Route {
             return decoded(path).map_or(Route::Default, Route::File);
         }
         if let Some(id) = hash.strip_prefix("/rounds/") {
+            if let Some(round) = id
+                .strip_suffix("/proposal")
+                .filter(|round| !round.is_empty())
+            {
+                return Route::Proposal(round.to_owned());
+            }
             return if id.is_empty() {
                 Route::Rounds
             } else if id == "new" {
@@ -111,7 +119,9 @@ impl Route {
             Route::Home => Some("Home"),
             Route::History { .. } => Some("History"),
             Route::Groups | Route::Group(_) => Some("Groups"),
-            Route::Rounds | Route::NewRound | Route::Round(_) => Some("Rounds"),
+            Route::Rounds | Route::NewRound | Route::Round(_) | Route::Proposal(_) => {
+                Some("Rounds")
+            }
             Route::Submissions | Route::Submission(_) => Some("Submissions"),
             Route::MySubmissions => Some("My submissions"),
             _ => None,
@@ -162,6 +172,7 @@ impl Route {
             Route::Rounds => "#/rounds".to_owned(),
             Route::NewRound => "#/rounds/new".to_owned(),
             Route::Round(id) => format!("#/rounds/{id}"),
+            Route::Proposal(id) => format!("#/rounds/{id}/proposal"),
             Route::Public(None) => "#public".to_owned(),
             Route::Public(Some(folder)) => {
                 format!(
@@ -401,6 +412,14 @@ mod tests {
     }
 
     #[test]
+    fn the_proposal_route_round_trips() {
+        let route = Route::parse("#/rounds/r1/proposal");
+        assert_eq!(route, Route::Proposal("r1".into()));
+        assert_eq!(route.hash(), "#/rounds/r1/proposal");
+        assert_eq!(route.crumb(), Some("Rounds"));
+    }
+
+    #[test]
     fn a_route_writes_the_hash_it_reads() {
         for route in [
             Route::Home,
@@ -412,6 +431,7 @@ mod tests {
             Route::Rounds,
             Route::NewRound,
             Route::Round("r1".into()),
+            Route::Proposal("r1".into()),
             Route::Public(None),
             Route::Public(Some("AMDA/EARTH".into())),
             Route::Submissions,

@@ -141,7 +141,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     let in_rounds = Memo::new(move |_| {
         matches!(
             shown.get(),
-            Route::Rounds | Route::NewRound | Route::Round(_)
+            Route::Rounds | Route::NewRound | Route::Round(_) | Route::Proposal(_)
         )
     });
     // Both keep their value once the page leaves the history: see `HistoryPage`.

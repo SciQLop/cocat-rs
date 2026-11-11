@@ -70,7 +70,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
             </a>
             <Show when=move || can_start || rounds.with(|rounds| !rounds.is_empty())>
                 <a class="catalogue" href=rounds_href.clone()
-                    aria-current=move || current(matches!(shown.get(), Route::Rounds | Route::NewRound | Route::Round(_)))>
+                    aria-current=move || current(matches!(shown.get(), Route::Rounds | Route::NewRound | Route::Round(_) | Route::Proposal(_)))>
                     <span class="name">"Rounds"</span>
                     <span class="count">{move || rounds.with(Vec::len)}</span>
                 </a>

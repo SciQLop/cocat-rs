@@ -90,6 +90,25 @@ impl RoomConfig {
     }
 }
 
+impl RoomConfig {
+    /// The page's config for proposal `doc` of the open project, a room of its own whose
+    /// socket is `<base>/room/<project>/<doc>`.
+    pub fn for_proposal(&self, doc: &str, role: Role) -> Option<Self> {
+        let mut url = Url::parse(&self.ws_url).ok()?;
+        url.path_segments_mut()
+            .ok()?
+            .pop()
+            .push(&self.room_id)
+            .push(doc);
+        Some(Self {
+            room_id: format!("{}/{doc}", self.room_id),
+            role,
+            ws_url: url.into(),
+            ..self.clone()
+        })
+    }
+}
+
 /// The server's socket for a room is `<base>/room/<id>`: the open room's URL with its last
 /// segment swapped.
 fn socket_for(ws_url: &str, room_id: &str) -> Option<String> {
@@ -350,6 +369,18 @@ mod tests {
             switched.ws_url,
             "wss://cocat.example.org/cocat-dev/room/old%20lab"
         );
+    }
+
+    #[test]
+    fn a_proposal_room_is_a_document_of_the_project_with_its_own_socket() {
+        let proposal = config().for_proposal("doc1", Role::Viewer).unwrap();
+        assert_eq!(proposal.room_id, "lab/doc1");
+        assert_eq!(proposal.role, Role::Viewer);
+        assert_eq!(
+            proposal.ws_url,
+            "wss://cocat.example.org/cocat-dev/room/lab/doc1"
+        );
+        assert_eq!(proposal.api_url, config().api_url);
     }
 
     #[test]

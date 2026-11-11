@@ -2,6 +2,7 @@
 
 use crate::sharing::Member;
 use cocat_core::model::EventRecord;
+use cocat_core::role::Role;
 use cocat_core::round::review::{ReviewRow, progress, reviewed};
 use cocat_core::round::{
     Budget, Cost, Quantity, budget_json as core_budget_json, cost, parse_budget, parse_unit,
@@ -112,6 +113,32 @@ pub fn your_part(round: &Round, me: &str, progress: Option<Progress>) -> Option<
             ),
             None => "Decide once the reviews are in".to_owned(),
         }),
+        _ => None,
+    }
+}
+
+/// The catalogue a first-time proposal starts with.
+pub fn proposal_catalogue_name(round: &str, me: &str) -> String {
+    format!("{round}: {me}")
+}
+
+/// The author writes their proposal only while the round is proposing; the server holds
+/// the same line.
+pub fn proposal_role(state: &str) -> Role {
+    if state == "proposing" {
+        Role::Editor
+    } else {
+        Role::Viewer
+    }
+}
+
+/// The button to `me`'s proposal: open while proposing, a look at it afterwards.
+pub fn proposal_action(round: &Round, me: &str) -> Option<&'static str> {
+    let proposer = round.proposers.iter().any(|email| email == me);
+    let started = round.proposals.iter().any(|proposal| proposal.author == me);
+    match round.state.as_str() {
+        "proposing" if proposer => Some("Open my proposal"),
+        _ if started => Some("See my proposal"),
         _ => None,
     }
 }
@@ -474,6 +501,32 @@ mod tests {
             notation: "Gbit".into(),
             unpriced: vec![],
         }
+    }
+
+    #[test]
+    fn a_new_proposal_gets_its_catalogue_name() {
+        assert_eq!(
+            proposal_catalogue_name("Spring", "a@x.org"),
+            "Spring: a@x.org"
+        );
+    }
+
+    #[test]
+    fn a_proposal_is_open_to_write_only_while_proposing() {
+        assert_eq!(proposal_role("proposing"), Role::Editor);
+        assert_eq!(proposal_role("voting"), Role::Viewer);
+        assert_eq!(proposal_role("decided"), Role::Viewer);
+    }
+
+    #[test]
+    fn a_proposer_opens_their_proposal_then_only_sees_it() {
+        let say = |round: &Round, me| proposal_action(round, me);
+        assert_eq!(say(&round(), "a@x.org"), Some("Open my proposal"));
+        assert_eq!(say(&round(), "b@x.org"), Some("Open my proposal"));
+        assert_eq!(say(&round(), "v@x.org"), None);
+        let voting = in_state("downlink", "voting");
+        assert_eq!(say(&voting, "a@x.org"), Some("See my proposal"));
+        assert_eq!(say(&voting, "b@x.org"), None);
     }
 
     #[test]

@@ -5,11 +5,14 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
-use crate::rounds::{Round, can_start, group, over_cap, state_words, voter_title, your_part};
+use crate::rounds::{
+    Round, can_start, group, over_cap, proposal_action, state_words, voter_title, your_part,
+};
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::links::is_personal;
 use crate::views::projects::Projects;
+use crate::views::proposal::ProposalPage;
 use crate::views::round_form::NewRoundForm;
 use cocat_core::model;
 use cocat_core::room_id::is_public_id;
@@ -35,14 +38,20 @@ pub fn project_rounds() -> RwSignal<Vec<Round>> {
 #[component]
 pub fn RoundsPage(shown: Memo<Route>) -> impl IntoView {
     let rounds = project_rounds();
-    view! {
-        <main class="content groups-page rounds-page">
-            {move || match shown.get() {
-                Route::NewRound => view! { <NewRoundForm/> }.into_any(),
-                Route::Round(id) => round_view(rounds.get(), &id).into_any(),
-                _ => round_list(rounds.get()).into_any(),
-            }}
-        </main>
+    move || match shown.get() {
+        Route::Proposal(id) => view! { <ProposalPage id rounds/> }.into_any(),
+        route => view! {
+            <main class="content groups-page rounds-page">{rounds_view(route, rounds.get())}</main>
+        }
+        .into_any(),
+    }
+}
+
+fn rounds_view(route: Route, rounds: Vec<Round>) -> AnyView {
+    match route {
+        Route::NewRound => view! { <NewRoundForm/> }.into_any(),
+        Route::Round(id) => round_view(rounds, &id).into_any(),
+        _ => round_list(rounds).into_any(),
     }
 }
 
@@ -122,8 +131,11 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         .into_any();
     };
     let settings = settings_line(&round);
+    let proposal = proposal_action(&round, &me()).map(|action| {
+        view! { <p><a class="button primary" href=Route::Proposal(round.id.clone()).href(&page)>{action}</a></p> }
+    });
     let part = your_part(&round, &me(), None).map(|part| {
-        view! { <section class="your-part-box"><h2 class="eyebrow">"Your part"</h2><p>{part}</p></section> }
+        view! { <section class="your-part-box"><h2 class="eyebrow">"Your part"</h2><p>{part}</p>{proposal}</section> }
     });
     let people = |title, emails: Vec<String>| role_section(title, emails);
     let proposers = people(
