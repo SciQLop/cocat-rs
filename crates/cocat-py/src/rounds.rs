@@ -247,6 +247,7 @@ fn row_dict<'py>(py: Python<'py>, row: &ReviewRow) -> Result<Bound<'py, PyDict>>
     dict.set_item("rejects", row.rejects)?;
     dict.set_item("unsure", row.unsure)?;
     dict.set_item("mine", row.mine.map(verdict_name))?;
+    dict.set_item("previous", row.previous.map(verdict_name))?;
     dict.set_item("set_aside", row.set_aside)?;
     Ok(dict)
 }
@@ -257,9 +258,13 @@ fn row_of(item: &Bound<'_, PyAny>) -> Result<ReviewRow> {
         dict.get_item(key)?
             .ok_or_else(|| value_error(format!("a review row needs a {key}")))
     };
-    let mine = match required("mine")? {
-        value if value.is_none() => None,
-        value => Some(verdict_of(&value.extract::<String>()?)?),
+    let verdict = |value: Bound<'_, PyAny>| match value {
+        value if value.is_none() => Ok(None),
+        value => verdict_of(&value.extract::<String>()?).map(Some),
+    };
+    let previous = match dict.get_item("previous")? {
+        Some(value) => verdict(value)?,
+        None => None,
     };
     Ok(ReviewRow {
         event: record_of(&required("event")?)?,
@@ -267,7 +272,8 @@ fn row_of(item: &Bound<'_, PyAny>) -> Result<ReviewRow> {
         accepts: required("accepts")?.extract()?,
         rejects: required("rejects")?.extract()?,
         unsure: required("unsure")?.extract()?,
-        mine,
+        mine: verdict(required("mine")?)?,
+        previous,
         set_aside: required("set_aside")?.extract()?,
     })
 }

@@ -2,7 +2,9 @@
 
 A row stands for one candidate or proposed event: a dict with `event` (a dict with `uuid`,
 `start`, `stop`, `attributes`), `proposal` (the proposer's email, `None` for a candidate),
-`accepts`, `rejects`, `unsure`, `mine` (your verdict in the current revision) and `set_aside`.
+`accepts`, `rejects`, `unsure`, `mine` (your verdict in the current revision), `previous`
+(your last verdict from an earlier revision when you gave none since; it does not count as
+reviewed) and `set_aside`.
 """
 
 from . import _native

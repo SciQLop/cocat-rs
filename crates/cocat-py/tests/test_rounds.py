@@ -244,6 +244,19 @@ def test_the_review_rules_agree_with_the_verdicts(server, tmp_path):
     )
 
 
+def test_a_verdict_from_the_previous_review_shows_but_does_not_count():
+    event = {"uuid": "e1", "start": "2020-01-01T00:00:00Z", "stop": "2020-01-01T00:01:00Z"}
+    verdicts = {"revision": 2, "events": [{
+        "event": "e1", "accept": 0, "reject": 0, "unsure": 0,
+        "by": [{"reviewer": "me@x.org", "verdict": "reject", "revision": 1}],
+    }]}
+    rows = cc.round_review.rows([(None, [event])], verdicts, "me@x.org")
+
+    assert rows[0]["mine"] is None
+    assert rows[0]["previous"] == "reject"
+    assert cc.round_review.progress(rows) == (0, 1, 0)
+
+
 def test_deciding_twice_from_python_keeps_one_catalogue(server, tmp_path):
     owner = owner_client(server)
     made, events = review_of(owner, server, tmp_path)

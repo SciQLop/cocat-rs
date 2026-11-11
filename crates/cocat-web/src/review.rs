@@ -84,6 +84,19 @@ pub fn verdict_word(verdict: Option<Verdict>) -> &'static str {
     }
 }
 
+/// The visitor's verdict on a row; one from an earlier revision says so.
+pub fn mine_text(row: &ReviewRow) -> String {
+    match (row.mine, row.previous) {
+        (None, Some(previous)) => {
+            format!(
+                "{} (from the previous review)",
+                verdict_word(Some(previous))
+            )
+        }
+        (mine, _) => verdict_word(mine).to_owned(),
+    }
+}
+
 /// "{done} of {total} reviewed".
 pub fn counter(rows: &[ReviewRow]) -> String {
     let (done, total, _) = progress(rows);
@@ -127,6 +140,7 @@ mod tests {
             rejects: 0,
             unsure: 0,
             mine,
+            previous: None,
             set_aside: false,
         }
     }
@@ -198,6 +212,16 @@ mod tests {
         assert_eq!(verdict_word(Some(Verdict::Reject)), "rejected");
         assert_eq!(verdict_word(Some(Verdict::Unsure)), "unsure");
         assert_eq!(verdict_word(None), "");
+    }
+
+    #[test]
+    fn a_verdict_from_the_previous_review_says_so() {
+        let mut rows = sample();
+        rows[1].previous = Some(Verdict::Reject);
+        rows[0].previous = Some(Verdict::Reject);
+        assert_eq!(mine_text(&rows[1]), "rejected (from the previous review)");
+        assert_eq!(mine_text(&rows[0]), "accepted");
+        assert_eq!(mine_text(&rows[3]), "");
     }
 
     #[test]

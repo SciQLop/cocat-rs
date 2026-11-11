@@ -31,6 +31,8 @@ pub struct ReviewRow {
     pub unsure: u32,
     /// What the caller said in the round's current revision.
     pub mine: Option<Verdict>,
+    /// What the caller said last in an earlier revision, when they have not said it again.
+    pub previous: Option<Verdict>,
     /// A verdict on an event that is no longer a candidate or proposed; `event` then holds
     /// nothing but its uuid.
     pub set_aside: bool,
@@ -66,13 +68,25 @@ fn tally_row(
     me: &str,
     revision: i64,
 ) -> ReviewRow {
-    let mine = tally.and_then(|tally| {
-        tally
-            .by
-            .iter()
-            .find(|given| given.reviewer == me && given.revision == revision)
-            .map(|given| given.verdict)
-    });
+    let given: Vec<&Given> = tally
+        .map(|tally| {
+            tally
+                .by
+                .iter()
+                .filter(|given| given.reviewer == me)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mine = given
+        .iter()
+        .find(|given| given.revision == revision)
+        .map(|given| given.verdict);
+    let previous = given
+        .iter()
+        .filter(|given| given.revision < revision)
+        .max_by_key(|given| given.revision)
+        .map(|given| given.verdict)
+        .filter(|_| mine.is_none());
     ReviewRow {
         event,
         proposal,
@@ -80,6 +94,7 @@ fn tally_row(
         rejects: tally.map_or(0, |tally| tally.reject),
         unsure: tally.map_or(0, |tally| tally.unsure),
         mine,
+        previous,
         set_aside: false,
     }
 }
@@ -252,6 +267,18 @@ mod tests {
             ]
         );
         assert_eq!(rows[2].proposal.as_deref(), Some("ada@x.org"));
+    }
+
+    #[test]
+    fn my_verdict_from_an_earlier_revision_shows_as_previous_and_does_not_count() {
+        let rows = sample();
+
+        assert_eq!(rows[1].mine, None);
+        assert_eq!(rows[1].previous, Some(Verdict::Reject));
+        assert_eq!(rows[0].previous, None);
+        assert_eq!(rows[2].previous, None);
+        assert_eq!(progress(&rows).0, 1);
+        assert_eq!(next_unreviewed(&rows, 0), Some(1));
     }
 
     #[test]

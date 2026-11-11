@@ -11,8 +11,8 @@ use web_sys::{Element, KeyboardEvent, ScrollIntoViewOptions, ScrollLogicalPositi
 use crate::api;
 use crate::format::{duration_text, time_text, value_text};
 use crate::review::{
-    Filter, KeyAction, after_verdict, attribute_columns, counter, key_action, selected,
-    shown as shown_rows, step, verdict_word,
+    Filter, KeyAction, after_verdict, attribute_columns, counter, key_action, mine_text, selected,
+    shown as shown_rows, step,
 };
 use crate::rounds::Round;
 use crate::route::Route;
@@ -23,11 +23,14 @@ use cocat_core::role::Role;
 use cocat_core::round::review::{ReviewRow, Verdict, progress, proposal_events, rows};
 use cocat_core::time::Timestamp;
 
+/// The review rows, none until everything arrived.
+pub type ReviewRows = Memo<Option<Vec<ReviewRow>>>;
+
 /// A round's review rows: its documents live, the verdicts as last fetched; none until
 /// every document synced and the verdicts arrived.
 #[derive(Clone, Copy)]
 pub struct Review {
-    pub rows: Memo<Option<Vec<ReviewRow>>>,
+    pub rows: ReviewRows,
     pub failure: RwSignal<Option<String>>,
     verdicts: RwSignal<Option<Value>>,
     /// The latest verdicts fetch: an older answer arriving after it is dropped.
@@ -147,7 +150,16 @@ fn ReviewTable(round: Round, shown: Memo<Route>) -> impl IntoView {
         })
     });
     let pick = picker(round.id.clone(), review);
-    follow_keys(review, visible, current, pick);
+    let me = expect_context::<Room>().config.user_email.clone();
+    let reviewer = round.reviews_now(&me);
+    if reviewer {
+        follow_keys(review, visible, current, pick);
+    }
+    let how = match (reviewer, round.decides_now(&me)) {
+        (true, _) => "Keys: a accept, r reject, u unsure, j next, k previous",
+        (false, true) => "You decide this round; reviewers give the verdicts.",
+        _ => "Read-only: reviewers give the verdicts while the round is reviewing.",
+    };
     Effect::new(move |_| {
         let uuid = current.get().and_then(|index| uuid_at(review, index));
         uuid.map(|uuid| bring_into_view(&uuid))
@@ -177,7 +189,7 @@ fn ReviewTable(round: Round, shown: Memo<Route>) -> impl IntoView {
                     <option value="not-reviewed">"Not reviewed"</option>
                 </select>
             </label>
-            <span class="hint">"Keys: a accept, r reject, u unsure, j next, k previous"</span>
+            <span class="hint">{how}</span>
         </div>
         {move || review.failure.get().map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
         <div class="review-scroll">
@@ -325,7 +337,7 @@ fn table_rows(
                         <td class="mono">{row.accepts}</td>
                         <td class="mono">{row.rejects}</td>
                         <td class="mono">{row.unsure}</td>
-                        <td>{verdict_word(row.mine)}</td>
+                        <td class="mine">{mine_text(row)}</td>
                     </tr>
                 }
                 .into_any()

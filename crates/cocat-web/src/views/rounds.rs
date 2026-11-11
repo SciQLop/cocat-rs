@@ -15,7 +15,7 @@ use crate::views::decide::DecidePage;
 use crate::views::links::is_personal;
 use crate::views::projects::Projects;
 use crate::views::proposal::ProposalPage;
-use crate::views::review::{Review, ReviewPage};
+use crate::views::review::{Review, ReviewPage, ReviewRows, find_round};
 use crate::views::round_form::NewRoundForm;
 use cocat_core::model;
 use cocat_core::room_id::is_public_id;
@@ -53,19 +53,49 @@ pub fn RoundsPage(shown: Memo<Route>) -> impl IntoView {
             <main class="content groups-page rounds-page review-page"><DecidePage id rounds/></main>
         }
         .into_any(),
-        route => view! {
-            <main class="content groups-page rounds-page">{rounds_view(route, rounds.get())}</main>
+        Route::Round(id) => view! {
+            <main class="content groups-page rounds-page"><RoundPage id rounds/></main>
         }
         .into_any(),
+        Route::NewRound => view! {
+            <main class="content groups-page rounds-page"><NewRoundForm/></main>
+        }
+        .into_any(),
+        _ => view! { <main class="content groups-page rounds-page">{move || round_list(rounds.get())}</main> }
+            .into_any(),
     }
     }
 }
 
-fn rounds_view(route: Route, rounds: Vec<Round>) -> AnyView {
-    match route {
-        Route::NewRound => view! { <NewRoundForm/> }.into_any(),
-        Route::Round(id) => round_view(rounds, &id).into_any(),
-        _ => round_list(rounds).into_any(),
+/// One round. Its review documents open once, when the visitor reviews or decides it now,
+/// not again on each reload of the list.
+#[component]
+fn RoundPage(id: String, rounds: RwSignal<Vec<Round>>) -> impl IntoView {
+    let found = find_round(id, rounds);
+    let me = me();
+    let reviewing = Memo::new(move |_| {
+        found.with(|round| {
+            round
+                .as_ref()
+                .map(|round| round.reviews_now(&me) || round.decides_now(&me))
+        })
+    });
+    move || match reviewing.get() {
+        None => missing_round().into_any(),
+        Some(reviewing) => {
+            let rows = reviewing
+                .then(|| found.with_untracked(|round| round.as_ref().map(|r| Review::load(r).rows)))
+                .flatten();
+            (move || found.get().map(|round| round_view(round, rows))).into_any()
+        }
+    }
+}
+
+fn missing_round() -> impl IntoView {
+    let back = Route::Rounds.href(&page());
+    view! {
+        <div class="groups-head"><h1>"Round"</h1><a class="button" href=back>"Back to rounds"</a></div>
+        <p class="quiet">"This round does not exist, or you cannot see it."</p>
     }
 }
 
@@ -134,18 +164,11 @@ fn round_row(round: &Round, me: &str, page: &str) -> impl IntoView + use<> {
     }
 }
 
-fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
+fn round_view(round: Round, rows: Option<ReviewRows>) -> impl IntoView {
     let page = page();
     let back = Route::Rounds.href(&page);
-    let Some(round) = rounds.into_iter().find(|round| round.id == id) else {
-        return view! {
-            <div class="groups-head"><h1>"Round"</h1><a class="button" href=back>"Back to rounds"</a></div>
-            <p class="quiet">"This round does not exist, or you cannot see it."</p>
-        }
-        .into_any();
-    };
     let settings = settings_line(&round);
-    let part = view! { <YourPart round=round.clone()/> };
+    let part = view! { <YourPart round=round.clone() rows/> };
     let people = |title, emails: Vec<String>| role_section(title, emails);
     let proposers = people(
         "Proposers",
@@ -179,13 +202,12 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         {final_section(&round, &page)}
         <section><h2 class="eyebrow">"Log"</h2><ul class="plain-list">{log}</ul></section>
     }
-    .into_any()
 }
 
 /// What the round asks of the visitor, with the counts once the events and verdicts are in,
 /// and the buttons to do it.
 #[component]
-fn YourPart(round: Round) -> impl IntoView {
+fn YourPart(round: Round, rows: Option<ReviewRows>) -> impl IntoView {
     let (me, page) = (me(), page());
     let part = your_part(&round, &me, None)?;
     let link = |label: &'static str, route: Route| {
@@ -206,8 +228,6 @@ fn YourPart(round: Round) -> impl IntoView {
     let decide = round
         .decides_now(&me)
         .then(|| link("Build the final catalogue", Route::Decide(id.clone())));
-    let rows =
-        (round.reviews_now(&me) || round.decides_now(&me)).then(|| Review::load(&round).rows);
     let text = move || {
         let progress = rows.and_then(|rows| rows.with(|rows| rows.as_deref().map(Progress::of)));
         your_part(&round, &me, progress).unwrap_or_else(|| part.clone())
