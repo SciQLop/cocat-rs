@@ -21,6 +21,7 @@
 - Final catalogue from the web: uuid = uuid v5 (namespace URL, `"cocat:round:" + round_id`); events get fresh uuids and carry `candidate` (candidate uuid), `proposed_by` (list of emails), `accepts`, `rejects`, `unsure` (integers). Re-deciding rewrites the same catalogue.
 - Wording: in review rounds the voter role shows as "reviewer" and `voting` shows as "reviewing". Intro sentence on the Rounds page, verbatim: "In a round, several people propose or review time intervals, then a decider keeps one final catalogue."
 - Review keys: `a` accept, `r` reject, `u` unsure, `j` next, `k` previous; after a verdict the next unreviewed row is selected. Counter text: "{done} of {total} reviewed".
+- **SciQLop is the main place people propose, review and decide, next to the data** (the user, 2026-11-11). So every rule a client applies — progress, set-aside verdicts, the majority default, building the final events, the final catalogue uuid — lives in `cocat-core` (`cocat_core::round::review`) and is exposed to Python; the web page only calls it. Anything the web can do, Python can do in one call.
 - No changes to SciQLop or its plugin. One build/test at a time, foreground. Full gate before each commit (fmt, clippy native, `cargo test --workspace`, clippy wasm; Python tasks add the pytest suite; web tasks add `trunk build --release`). Commit to `main` with explicit paths; never push.
 
 ## Review Focus
@@ -76,9 +77,11 @@
 
 **Files:** `crates/cocat-client/src/rounds.rs`, `crates/cocat-py/src/rounds.rs`, `crates/cocat-py/python/cocat_rs/client.py`, `__init__.py`, `raw.py`, `crates/cocat-py/tests/test_rounds.py`.
 
-**Interfaces:** `create_round(..., kind=None, candidates=None)` where `candidates` is a `Catalogue` object or `(project_id, catalogue_uuid)`; `move_round(..., note=None)`; `verdict(round_id, event, value)` (`value` in `"accept"|"reject"|"unsure"|None`); `verdicts(round_id)` returning the GET shape; Project methods mirror Client ones.
+**Also create:** `crates/cocat-core/src/round/review.rs` with the pure rules (moved here from Task 8): `pub struct ReviewRow { event: EventRecord, proposal: Option<String> /*author email, None = candidates*/, accepts, rejects, unsure: u32, mine: Option<Verdict>, set_aside: bool }`, `rows(events_by_proposal, verdicts_json, me) -> Vec<ReviewRow>`, `next_unreviewed(&[ReviewRow], from) -> Option<usize>`, `progress(&[ReviewRow]) -> (done, total, set_aside)`, `majority(&[ReviewRow]) -> Vec<bool>` (accepts > rejects; ties excluded), `final_events(&[ReviewRow], picked: &[bool]) -> Vec<EventRecord>` (fresh uuids; `candidate`, `proposed_by`, `accepts`, `rejects`, `unsure` attributes), `final_catalogue_uuid(round_id) -> String` (uuid v5); with their unit tests (the Task 8 test names) here.
 
-- [ ] **Step 1: Failing tests:** `test_a_pipeline_reviews_its_detections` (pipeline saves 5 events in its own project; creates a review round in the team project with `candidates=catalogue` and two reviewers; reviewers give verdicts; `verdicts()` matches the pipeline's own uuids with counts), `test_a_move_carries_a_note`.
+**Interfaces:** Python also gets `cocat_rs.round_review(...)` wrappers for `progress`, `majority`, `final_events`, and `Project.decide(round_id, picked_events)` which writes the final catalogue under `final_catalogue_uuid` (replacing its events if it exists) and moves the round to decided — one call for SciQLop. `create_round(..., kind=None, candidates=None)` where `candidates` is a `Catalogue` object or `(project_id, catalogue_uuid)`; `move_round(..., note=None)`; `verdict(round_id, event, value)` (`value` in `"accept"|"reject"|"unsure"|None`); `verdicts(round_id)` returning the GET shape; Project methods mirror Client ones.
+
+- [ ] **Step 1: Failing tests:** the core tests listed above, `test_deciding_twice_from_python_keeps_one_catalogue`, `test_a_pipeline_reviews_its_detections` (pipeline saves 5 events in its own project; creates a review round in the team project with `candidates=catalogue` and two reviewers; reviewers give verdicts; `verdicts()` matches the pipeline's own uuids with counts), `test_a_move_carries_a_note`.
 - [ ] **Steps 2–5** as above, with the Python suite.
 
 ### Task 5: The rounds list explains itself
@@ -113,11 +116,11 @@
 
 ### Task 8: Reviewing and deciding
 
-**Files:** Create `crates/cocat-web/src/views/review.rs`, `crates/cocat-web/src/views/decide.rs`, `crates/cocat-web/src/review.rs` (pure). Modify `route.rs` (`#/rounds/{id}/review`, `#/rounds/{id}/decide`), `views/rounds.rs`, `views/mod.rs`, `style.css`.
+**Files:** Create `crates/cocat-web/src/views/review.rs`, `crates/cocat-web/src/views/decide.rs`. Modify `route.rs` (`#/rounds/{id}/review`, `#/rounds/{id}/decide`), `views/rounds.rs`, `views/mod.rs`, `style.css`.
 
-**Interfaces (pure, in `review.rs`):** `fn rows(candidates_and_proposals, verdicts, me) -> Vec<ReviewRow>`; `fn next_unreviewed(rows, from) -> Option<usize>`; `fn progress(rows) -> (done, total, set_aside)`; `fn majority(rows) -> Vec<bool>` (accepts > rejects, ties excluded); `fn final_events(rows, picked, emails) -> Vec<EventRecord>` (fresh uuids, attributes per Global Constraints); `fn final_catalogue_uuid(round_id) -> String` (uuid v5).
+**Interfaces:** consumes `cocat_core::round::review` from Task 4 (no copy of its rules in the web crate): `fn rows(candidates_and_proposals, verdicts, me) -> Vec<ReviewRow>`; `fn next_unreviewed(rows, from) -> Option<usize>`; `fn progress(rows) -> (done, total, set_aside)`; `fn majority(rows) -> Vec<bool>` (accepts > rejects, ties excluded); `fn final_events(rows, picked, emails) -> Vec<EventRecord>` (fresh uuids, attributes per Global Constraints); `fn final_catalogue_uuid(round_id) -> String` (uuid v5).
 - Review page: table over the candidates proposal and every readable proposal, columns per spec, keys per Global Constraints, filter "not reviewed / all", counter text; each key press `PUT …/verdicts/{event}`; selected row kept in the URL (`?row=`).
 - Decide page (deciders, in `voting`): rows sorted by accepts, "Keep what a majority accepted", budget gauge via `cocat_core::round::cost` on the ticked rows, "Decide" writes the catalogue with `final_catalogue_uuid` and `final_events` into the project document (replacing its events if it exists), then `POST …/state` decided.
 
-- [ ] **Step 1: Failing tests** (pure): `the_next_unreviewed_row_follows_a_verdict`, `progress_counts_this_revision_only_and_sets_aside_removed_events`, `majority_keeps_more_accepts_than_rejects`, `final_events_carry_their_candidate_and_counts`, `deciding_again_rewrites_the_same_catalogue` (same uuid from the same round; `final_events` replaces), `the_review_and_decide_routes_round_trip`.
+- [ ] **Step 1: Failing tests:** `the_review_and_decide_routes_round_trip`, `a_key_press_maps_to_a_verdict` (pure key → verdict/move mapping), `deciding_again_rewrites_the_same_catalogue` (web write path replaces events under the same uuid).
 - [ ] **Steps 2–5** as above. Controller runs one end-to-end Firefox flow: pipeline catalogue → review round → two reviewers by keyboard → decide → marker on the final catalogue.
