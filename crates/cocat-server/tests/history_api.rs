@@ -1729,3 +1729,41 @@ async fn a_bad_limit_or_cursor_is_refused() {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{query}: {body}");
     }
 }
+
+#[tokio::test]
+async fn a_valid_cursor_without_a_limit_is_refused() {
+    let fixture = five_events().await;
+    let (_, first) = changes(&fixture, "?limit=2").await;
+    let cursor = first["next"].as_str().unwrap();
+
+    let (status, body) = changes(&fixture, &format!("?cursor={cursor}")).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body["detail"].as_str().unwrap().contains("needs a limit"));
+}
+
+#[tokio::test]
+async fn changed_and_removed_events_are_tallied_and_a_purged_one_sorts_by_its_old_start() {
+    let fixture = five_events().await;
+    fixture.write(fixture.bob, MINUTE, |txn| {
+        for uuid in ["a", "b"] {
+            model::set_event_field(txn, uuid, &EventField::Confidence(Some(0.5))).unwrap();
+        }
+        assert!(model::purge_event(txn, "c"));
+        assert!(model::delete_event(txn, "d"));
+        model::create_event(txn, &event_at("f", 50)).unwrap();
+    });
+
+    let (status, answer) = fixture
+        .get(
+            &format!("/api/rooms/{ROOM}/history/1?limit=10"),
+            fixture.carol,
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(tally(&answer["counts"]["total"]), (1, 2, 2));
+    let rows = answer["counts"]["catalogues"].as_array().unwrap();
+    assert_eq!(tally(&rows[0]), (0, 2, 0));
+    assert_eq!(uuids(&answer), ["f", "d", "c", "b", "a"]);
+}

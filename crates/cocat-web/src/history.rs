@@ -64,6 +64,47 @@ pub struct Diff {
     pub catalogues: Vec<CatalogueChange>,
 }
 
+/// How many events were added, changed and removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub struct Tally {
+    pub added: u32,
+    pub changed: u32,
+    pub removed: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CatalogueTally {
+    pub name: String,
+    #[serde(flatten)]
+    pub tally: Tally,
+}
+
+/// The event changes of a version in all, and in each catalogue that holds some.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct Counts {
+    pub total: Tally,
+    pub catalogues: Vec<CatalogueTally>,
+}
+
+/// One page of a version's changes, as the server answers a request with a `limit`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ChangesPage {
+    pub counts: Counts,
+    pub catalogues: Vec<CatalogueChange>,
+    pub events: Vec<EventChange>,
+    pub next: Option<String>,
+}
+
+/// The pages of a version's changes loaded so far, as table rows.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Changes {
+    pub counts: Counts,
+    pub catalogues: Vec<CatalogueChange>,
+    pub rows: Vec<DiffRow>,
+    /// The cursor of the page still to load.
+    pub next: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct EventChange {
     pub uuid: String,
@@ -217,6 +258,54 @@ pub fn counts_text(added: u32, changed: u32, removed: u32) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(", "))
 }
 
+/// "3 changed, 2 added, 1 removed", leaving out what is zero.
+pub fn tally_text(tally: &Tally) -> String {
+    let parts: Vec<String> = [
+        (tally.changed, "changed"),
+        (tally.added, "added"),
+        (tally.removed, "removed"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, word)| format!("{count} {word}"))
+    .collect();
+    if parts.is_empty() {
+        "no event changed".to_owned()
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// Events listed beyond the end of the view before the next page is asked for.
+const NEAR_THE_END: usize = 60;
+
+/// Whether the next page should be asked for: the view reaches the end of what is loaded, or
+/// everything is wanted.
+pub fn wants_next(view_end: usize, loaded: usize, next: Option<&str>, everything: bool) -> bool {
+    next.is_some() && (everything || view_end + NEAR_THE_END >= loaded)
+}
+
+impl Changes {
+    pub fn first(page: ChangesPage) -> Self {
+        Self {
+            counts: page.counts,
+            catalogues: page.catalogues,
+            rows: diff_rows_of(&page.events),
+            next: page.next,
+        }
+    }
+
+    /// Adds the page that came after `cursor`; a page of any other cursor is a stale answer
+    /// and is dropped.
+    pub fn append(&mut self, cursor: &str, page: ChangesPage) {
+        if self.next.as_deref() != Some(cursor) {
+            return;
+        }
+        self.rows.extend(diff_rows_of(&page.events));
+        self.next = page.next;
+    }
+}
+
 /// How many events the diff added, changed and removed.
 pub fn diff_counts(diff: &Diff) -> (u32, u32, u32) {
     let count = |change: Change| {
@@ -236,19 +325,19 @@ pub fn diff_counts(diff: &Diff) -> (u32, u32, u32) {
 
 /// The diff's events as table rows, in time order.
 pub fn diff_rows(diff: &Diff) -> Vec<DiffRow> {
-    let mut rows: Vec<DiffRow> = diff.events.iter().filter_map(diff_row).collect();
+    diff_rows_of(&diff.events)
+}
+
+fn diff_rows_of(events: &[EventChange]) -> Vec<DiffRow> {
+    let mut rows: Vec<DiffRow> = events.iter().filter_map(diff_row).collect();
     rows.sort_by_key(|row| row.start);
     rows
 }
 
 /// The events of `rows` (a catalogue as it was) the diff does not name, as unchanged rows.
 /// Intervals a rule derived are not events, and are left out.
-pub fn unchanged_rows(rows: &[Row], diff: &Diff) -> Vec<DiffRow> {
-    let changed: HashSet<&str> = diff
-        .events
-        .iter()
-        .map(|event| event.uuid.as_str())
-        .collect();
+pub fn unchanged_rows(rows: &[Row], changed: &[DiffRow]) -> Vec<DiffRow> {
+    let changed: HashSet<&str> = changed.iter().map(|row| row.uuid.as_str()).collect();
     rows.iter()
         .filter_map(|row| {
             let uuid = row.uuid.as_ref()?;
@@ -847,12 +936,18 @@ mod tests {
         let doc = room();
         let members = rows(&doc.transact(), "c-static").unwrap();
         let first = members[0].uuid.clone().unwrap();
-        let diff = Diff {
-            events: vec![change(&first, Change::Changed, &["status"], None, None)],
+        let changed = diff_rows(&Diff {
+            events: vec![change(
+                &first,
+                Change::Changed,
+                &["status"],
+                Some(record(START, 0.6, "final", &[])),
+                Some(record(START, 0.9, "final", &[])),
+            )],
             catalogues: Vec::new(),
-        };
+        });
 
-        let unchanged = unchanged_rows(&members, &diff);
+        let unchanged = unchanged_rows(&members, &changed);
 
         assert_eq!(unchanged.len(), members.len() - 1);
         assert!(
@@ -927,5 +1022,77 @@ mod tests {
             endpoint("https://host/api/", "lab", &[], &[]).as_deref(),
             Some("https://host/api/rooms/lab/history")
         );
+    }
+
+    fn page_of(uuids: &[&str], next: Option<&str>) -> ChangesPage {
+        let added = |uuid: &&str| {
+            change(
+                uuid,
+                Change::Added,
+                &[],
+                None,
+                Some(record(START, 0.9, "final", &[])),
+            )
+        };
+        ChangesPage {
+            events: uuids.iter().map(added).collect(),
+            next: next.map(str::to_owned),
+            ..ChangesPage::default()
+        }
+    }
+
+    fn uuids_of(changes: &Changes) -> Vec<&str> {
+        changes.rows.iter().map(|row| row.uuid.as_str()).collect()
+    }
+
+    #[test]
+    fn the_summary_reads_the_counts() {
+        let page: ChangesPage = serde_json::from_value(serde_json::json!({
+            "counts": {
+                "total": {"added": 2, "changed": 3, "removed": 1},
+                "catalogues": [{"catalogue": "c", "name": "Waves", "added": 0, "changed": 4, "removed": 0}]
+            },
+            "catalogues": [],
+            "events": [],
+            "next": null
+        }))
+        .unwrap();
+
+        assert_eq!(
+            tally_text(&page.counts.total),
+            "3 changed, 2 added, 1 removed"
+        );
+        assert_eq!(page.counts.catalogues[0].name, "Waves");
+        assert_eq!(tally_text(&page.counts.catalogues[0].tally), "4 changed");
+        assert_eq!(tally_text(&Tally::default()), "no event changed");
+    }
+
+    #[test]
+    fn the_next_page_is_asked_near_the_end() {
+        assert!(wants_next(150, 200, Some("c"), false));
+        assert!(!wants_next(20, 200, Some("c"), false));
+        assert!(!wants_next(200, 200, None, false));
+        assert!(wants_next(0, 200, Some("c"), true));
+    }
+
+    #[test]
+    fn pages_are_appended_in_order() {
+        let mut changes = Changes::first(page_of(&["a", "b"], Some("one")));
+
+        changes.append("one", page_of(&["c"], Some("two")));
+        changes.append("two", page_of(&["d"], None));
+
+        assert_eq!(uuids_of(&changes), ["a", "b", "c", "d"]);
+        assert_eq!(changes.next, None);
+    }
+
+    #[test]
+    fn a_page_that_does_not_follow_the_loaded_ones_is_dropped() {
+        let mut changes = Changes::first(page_of(&["a"], Some("one")));
+
+        changes.append("elsewhere", page_of(&["x"], None));
+
+        assert_eq!(uuids_of(&changes), ["a"]);
+        assert_eq!(changes.next.as_deref(), Some("one"));
     }
 }

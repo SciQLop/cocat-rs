@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::history::{Diff, History, Version, endpoint, refusal_text, save_body};
+use crate::history::{ChangesPage, History, Version, endpoint, refusal_text, save_body};
 use crate::projects::{Project, api_url};
 use crate::session::RoomConfig;
 use crate::sharing::Created;
@@ -39,16 +39,25 @@ pub async fn history(
     Ok(history.versions)
 }
 
-/// What the version changed, for a catalogue or the room.
-pub async fn changes(
+/// Events asked for at once when the changes load a page at a time.
+const CHANGES_PAGE: &str = "200";
+
+/// One page of what the version changed, for a catalogue or the room: the first without a
+/// cursor, else the one the previous page named.
+pub async fn changes_page(
     config: &RoomConfig,
     version: u64,
     catalogue: Option<&str>,
-) -> Result<Diff, ApiError> {
-    let query: Vec<(&str, &str)> = catalogue
-        .map(|uuid| ("catalogue", uuid))
-        .into_iter()
-        .collect();
+    cursor: Option<&str>,
+) -> Result<ChangesPage, ApiError> {
+    let query: Vec<(&str, &str)> = [
+        Some(("limit", CHANGES_PAGE)),
+        catalogue.map(|uuid| ("catalogue", uuid)),
+        cursor.map(|cursor| ("cursor", cursor)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let url = url(config, &[&version.to_string()], &query)?;
     json(Request::get(&url)).await
 }

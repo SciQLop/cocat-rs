@@ -272,6 +272,8 @@ async fn changes(
             let (start, end) = compared(span(slots, &saved, version)?, query.since, |since| {
                 span(slots, &saved, since)
             })?;
+            // simplify: a cache hit still reads the whole log; key the cache by record count
+            // and skip the read when a page of a version that cannot grow is asked again.
             let key = (key_room, start, end, query.catalogue.clone());
             Some(cache.get_or_compute(key, || {
                 let (before, after) = before_and_after(records, start, end);

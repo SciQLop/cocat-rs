@@ -1,28 +1,29 @@
 //! The history: the versions of what was on screen, what one of them changed, and, for
 //! editors, naming and restoring it. Also the event panel's latest changes.
 
+use std::ops::Range;
 use std::time::Duration;
 
-use leptos::html::{Input, Textarea};
+use leptos::html::{Div, Input, Textarea};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsValue;
 
 use crate::api;
 use crate::history::{
-    Cell, Change, Day, DiffRow, Reloads, Version, author, browse_href, by_day, catalogue_line,
-    clock, copy_suggestion, counts_text, diff_counts, diff_rows, past_rows, summary,
-    unchanged_rows, when_text,
+    Cell, Change, Changes, ChangesPage, Day, DiffRow, Reloads, Version, author, browse_href,
+    by_day, catalogue_line, clock, copy_suggestion, counts_text, past_rows, summary, tally_text,
+    unchanged_rows, wants_next, when_text,
 };
+use crate::layout::window as visible_rows;
 use crate::route::Route;
+use crate::rows::Row;
 use crate::state::Room;
 use crate::views::controls::{Error, Hint, confirm, error_line, go_to};
 use crate::views::projects::Projects;
 
-/// Unchanged events shown at most below a version's changes.
-// simplify: a plain table, cut at this many rows; the live table's virtualised rows would
-// show a 100k-event catalogue whole if people need to scroll it all.
-const MOST_ROWS: usize = 2_000;
+/// Every changes row's height in pixels; the stylesheet sets the same.
+const ROW: f64 = 40.0;
 /// The event panel's latest changes.
 const LAST_CHANGES: usize = 5;
 
@@ -58,7 +59,7 @@ pub fn HistoryPage(scope: Memo<Option<String>>, picked: Memo<Option<u64>>) -> im
         <div class="history">
             <main class="content history-main">
                 {move || match picked.get() {
-                    Some(id) => view! { <Changes id scope/> }.into_any(),
+                    Some(id) => view! { <ChangesPanel id scope/> }.into_any(),
                     None => view! {
                         <div class="page-head"><h1>"History"</h1></div>
                         <p class="quiet">"Pick a version to see what it changed."</p>
@@ -369,23 +370,25 @@ fn SaveVersion(
     }
 }
 
-/// The changes table of one version.
+type Past = LocalResource<Option<Result<Vec<Row>, String>>>;
+
+/// The changes of one version: the counts first, then the events a page at a time.
 #[component]
-fn Changes(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
+fn ChangesPanel(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
     let config = expect_context::<Room>().config.clone();
     let only_changed = RwSignal::new(true);
-    let diff = {
+    let first = {
         let config = config.clone();
         LocalResource::new(move || {
             let (config, catalogue) = (config.clone(), scope.get());
             async move {
-                api::changes(&config, id, catalogue.as_deref())
+                api::changes_page(&config, id, catalogue.as_deref(), None)
                     .await
                     .map_err(|error| error.to_string())
             }
         })
     };
-    let past = LocalResource::new(move || {
+    let past: Past = LocalResource::new(move || {
         let wanted = scope.get().filter(|_| !only_changed.get());
         let config = config.clone();
         async move {
@@ -397,32 +400,11 @@ fn Changes(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
         }
     });
     let table = move || {
-        let diff = diff.get()?;
-        let past = past.get().flatten();
-        Some(match (diff, past) {
-            (Err(error), _) | (_, Some(Err(error))) => {
-                view! { <p class="field-error" role="alert">{error}</p> }.into_any()
-            }
-            (Ok(diff), past) => {
-                let (added, changed, removed) = diff_counts(&diff);
-                let mut rows = diff_rows(&diff);
-                if let Some(Ok(past)) = past {
-                    rows.extend(unchanged_rows(&past, &diff));
-                    rows.sort_by_key(|row| row.start);
-                }
-                let total = rows.len();
-                rows.truncate(MOST_ROWS);
-                view! {
-                    <p class="legend">{legend(added, changed, removed)}</p>
-                    <ul class="catalogue-changes">
-                        {diff.catalogues.iter().map(|change| view! { <li>{catalogue_line(change)}</li> }).collect_view()}
-                    </ul>
-                    <DiffTable rows/>
-                    {(total > MOST_ROWS).then(|| view! {
-                        <p class="quiet">{format!("Showing the first {MOST_ROWS} of {total} events.")}</p>
-                    })}
-                }
-                .into_any()
+        Some(match first.get()? {
+            Err(error) => view! { <p class="field-error" role="alert">{error}</p> }.into_any(),
+            Ok(page) => {
+                let catalogue = scope.get_untracked();
+                view! { <ChangesTable id catalogue page past only_changed/> }.into_any()
             }
         })
     };
@@ -447,6 +429,143 @@ fn Changes(id: u64, scope: Memo<Option<String>>) -> impl IntoView {
     }
 }
 
+/// The unchanged events of a past catalogue among the changed rows, in time order.
+fn with_unchanged(rows: &[DiffRow], past: &[Row]) -> Vec<DiffRow> {
+    let mut all = rows.to_vec();
+    all.extend(unchanged_rows(past, rows));
+    all.sort_by_key(|row| row.start);
+    all
+}
+
+/// The rows of `range` as table rows; the range is cut to the rows there are.
+fn rows_in(rows: &[DiffRow], range: Range<usize>) -> Vec<AnyView> {
+    let end = range.end.min(rows.len());
+    let start = range.start.min(end);
+    rows[start..end].iter().cloned().map(diff_row).collect()
+}
+
+/// One version's changes as first answered, and the pages that follow as the table nears its
+/// end. Only the rows in view are in the page, like the event table.
+#[component]
+fn ChangesTable(
+    id: u64,
+    catalogue: Option<String>,
+    page: ChangesPage,
+    past: Past,
+    only_changed: RwSignal<bool>,
+) -> impl IntoView {
+    let config = expect_context::<Room>().config.clone();
+    let changes = RwSignal::new(Changes::first(page));
+    let fetching = RwSignal::new(false);
+    let failure = RwSignal::new(None::<String>);
+    let scroller = NodeRef::<Div>::new();
+    let scroll_top = RwSignal::new(0.0);
+    let viewport = RwSignal::new(ROW * 16.0);
+    let measure = move || {
+        if let Some(scroller) = scroller.get() {
+            scroll_top.set(f64::from(scroller.scroll_top()));
+            viewport.set(f64::from(scroller.client_height()));
+        }
+    };
+    Effect::new(move |_| measure());
+    let merged = Memo::new(move |_| {
+        if only_changed.get() {
+            return None;
+        }
+        changes.with(|changes| {
+            let past = past.with(|past| match past {
+                Some(Some(Ok(past))) => Some(past.clone()),
+                _ => None,
+            })?;
+            changes
+                .next
+                .is_none()
+                .then(|| with_unchanged(&changes.rows, &past))
+        })
+    });
+    let total = move || {
+        merged.with(|merged| match merged {
+            Some(rows) => rows.len(),
+            None => changes.with(|changes| changes.rows.len()),
+        })
+    };
+    let range = Memo::new(move |_| visible_rows(scroll_top.get(), viewport.get(), ROW, total()));
+    Effect::new(move |_| {
+        let view_end = range.get().end;
+        let everything = !only_changed.get();
+        let busy = fetching.get() || failure.with(Option::is_some);
+        let (loaded, cursor) = changes.with(|c| (c.rows.len(), c.next.clone()));
+        let Some(cursor) =
+            cursor.filter(|cursor| !busy && wants_next(view_end, loaded, Some(cursor), everything))
+        else {
+            return;
+        };
+        fetching.set(true);
+        let (config, catalogue) = (config.clone(), catalogue.clone());
+        spawn_local(async move {
+            let answer = api::changes_page(&config, id, catalogue.as_deref(), Some(&cursor)).await;
+            fetching.set(false);
+            match answer {
+                Ok(page) => changes.update(|changes| changes.append(&cursor, page)),
+                Err(error) => failure.set(Some(error.to_string())),
+            }
+        });
+    });
+    let body = move || {
+        let range = range.get();
+        let total = total();
+        let rows = merged.with(|merged| match merged {
+            Some(rows) => rows_in(rows, range.clone()),
+            None => changes.with(|changes| rows_in(&changes.rows, range.clone())),
+        });
+        let end = range.end.min(total);
+        view! {
+            <tr class="spacer" style=format!("height: {}px", range.start.min(end) as f64 * ROW)></tr>
+            {rows}
+            <tr class="spacer" style=format!("height: {}px", (total - end) as f64 * ROW)></tr>
+        }
+    };
+    let past_error = move || {
+        past.with(|past| match past {
+            Some(Some(Err(error))) => Some(error.clone()),
+            _ => None,
+        })
+    };
+    let summary = move || {
+        changes.with(|changes| {
+            let counts = &changes.counts;
+            let lines = counts
+                .catalogues
+                .iter()
+                .map(|row| format!("“{}”: {}", row.name, tally_text(&row.tally)))
+                .collect::<Vec<_>>();
+            view! {
+                <p class="legend">{tally_text(&counts.total)}</p>
+                <ul class="catalogue-changes">
+                    {changes.catalogues.iter().map(|change| view! { <li>{catalogue_line(change)}</li> }).collect_view()}
+                </ul>
+                <ul class="catalogue-changes">
+                    {lines.into_iter().map(|line| view! { <li>{line}</li> }).collect_view()}
+                </ul>
+            }
+        })
+    };
+    view! {
+        {summary}
+        {move || past_error().map(|error| view! { <p class="field-error" role="alert">{error}</p> })}
+        <div class="table-scroll" node_ref=scroller on:scroll=move |_| measure()>
+            <table class="events diff">
+                {diff_head()}
+                <tbody>{body}</tbody>
+            </table>
+        </div>
+        {move || failure.get().map(|error| view! { <p class="field-error" role="alert">{error}</p> })}
+        <Show when=move || fetching.get()>
+            <p class="quiet">"Loading more changes…"</p>
+        </Show>
+    }
+}
+
 /// The counts with the colours of their rows.
 pub(crate) fn legend(added: u32, changed: u32, removed: u32) -> impl IntoView {
     if counts_text(added, changed, removed).is_none() {
@@ -465,29 +584,35 @@ pub(crate) fn DiffTable(rows: Vec<DiffRow>) -> impl IntoView {
     view! {
         <div class="table-scroll diff-scroll">
             <table class="events diff">
-                <colgroup>
-                    <col class="w-mark"/>
-                    <col class="w-start"/>
-                    <col class="w-duration"/>
-                    <col class="w-tags"/>
-                    <col class="w-confidence"/>
-                    <col class="w-status"/>
-                    <col/>
-                </colgroup>
-                <thead>
-                    <tr>
-                        <th scope="col"><span class="sr-only">"Change"</span></th>
-                        {["Start", "Duration", "Tags", "Confidence", "Status", "Also changed"]
-                            .map(|label| view! { <th scope="col">{label}</th> })}
-                    </tr>
-                </thead>
+                {diff_head()}
                 <tbody>{rows.into_iter().map(diff_row).collect_view()}</tbody>
             </table>
         </div>
     }
 }
 
-fn diff_row(row: DiffRow) -> impl IntoView {
+fn diff_head() -> impl IntoView {
+    view! {
+        <colgroup>
+            <col class="w-mark"/>
+            <col class="w-start"/>
+            <col class="w-duration"/>
+            <col class="w-tags"/>
+            <col class="w-confidence"/>
+            <col class="w-status"/>
+            <col/>
+        </colgroup>
+        <thead>
+            <tr>
+                <th scope="col"><span class="sr-only">"Change"</span></th>
+                {["Start", "Duration", "Tags", "Confidence", "Status", "Also changed"]
+                    .map(|label| view! { <th scope="col">{label}</th> })}
+            </tr>
+        </thead>
+    }
+}
+
+fn diff_row(row: DiffRow) -> AnyView {
     let (class, mark, label) = match row.change {
         Some(Change::Added) => ("added", "+", "Added"),
         Some(Change::Changed) => ("changed", "~", "Changed"),
@@ -506,6 +631,7 @@ fn diff_row(row: DiffRow) -> impl IntoView {
             <td class="quiet-cell">{row.also.join(", ")}</td>
         </tr>
     }
+    .into_any()
 }
 
 fn cell(cell: Cell, mono: bool) -> impl IntoView {
