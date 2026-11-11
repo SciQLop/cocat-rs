@@ -431,6 +431,24 @@ pub async fn project_proposals(
         .collect::<Result<_, sqlx::Error>>()?)
 }
 
+/// The document ids of every proposal of the project's rounds; they share its storage.
+pub async fn proposal_docs(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    room_id: &str,
+) -> Result<Vec<Uuid>, DbError> {
+    let docs: Vec<String> = sqlx::query_scalar(
+        "SELECT round_proposal.doc_id FROM round_proposal
+         JOIN round ON round.id = round_proposal.round_id WHERE round.room_id = ?",
+    )
+    .bind(room_id)
+    .fetch_all(executor)
+    .await?;
+    Ok(docs
+        .iter()
+        .map(|doc| parse_uuid(doc))
+        .collect::<Result<_, _>>()?)
+}
+
 /// The round a project's document is a proposal of, and its author.
 pub async fn proposal_by_doc(
     pool: &SqlitePool,

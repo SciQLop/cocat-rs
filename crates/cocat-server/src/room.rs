@@ -61,9 +61,12 @@ const WRITE_TRIES: usize = 3;
 
 async fn project_keys(pool: &SqlitePool, room_id: &str) -> Result<Vec<String>, crate::db::DbError> {
     let documents = crate::db::documents_of(pool, room_id).await?;
+    let proposals = crate::rounds::proposal_docs(pool, room_id).await?;
     let documents = documents
         .into_iter()
-        .map(|(doc, _)| crate::documents::key(room_id, doc));
+        .map(|(doc, _)| doc)
+        .chain(proposals)
+        .map(|doc| crate::documents::key(room_id, doc));
     Ok(std::iter::once(room_id.to_owned())
         .chain(documents)
         .collect())

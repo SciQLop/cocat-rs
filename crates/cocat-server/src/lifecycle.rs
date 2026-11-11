@@ -206,17 +206,18 @@ pub async fn delete_room(
     Ok(())
 }
 
-/// Deletes the project row, then the files of its catalogues and documents. The documents are
-/// read in the same transaction as the delete, because the row takes them with it and a
-/// document created in between would otherwise leave its file behind. False when there was no
+/// Deletes the project row, then the files of its catalogues, documents and round proposals.
+/// These are read in the same transaction as the delete, because the row takes them with it
+/// and one created in between would otherwise leave its file behind. False when there was no
 /// such project.
 pub(crate) async fn remove_project(state: &AppState, room_id: &str) -> Result<bool, DbError> {
     let mut tx = db::begin_immediate(&state.pool).await?;
-    let documents: Vec<Uuid> = db::documents_of(&mut *tx, room_id)
+    let mut documents: Vec<Uuid> = db::documents_of(&mut *tx, room_id)
         .await?
         .into_iter()
         .map(|(doc, _)| doc)
         .collect();
+    documents.extend(crate::rounds::proposal_docs(&mut *tx, room_id).await?);
     let deleted = db::delete_room(&mut *tx, room_id).await?;
     tx.commit().await?;
     if !deleted {

@@ -9,6 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::fs;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
@@ -28,6 +29,7 @@ const WAIT: Duration = Duration::from_secs(10);
 
 struct Fixture {
     state: AppState,
+    rooms_dir: PathBuf,
     _dir: TempDir,
 }
 
@@ -40,7 +42,7 @@ impl Fixture {
         let state = AppState {
             pool,
             secret: "test-secret".to_owned(),
-            rooms: RoomManager::new(rooms, None),
+            rooms: RoomManager::new(rooms.clone(), None),
             before_attach: None,
             login_limit: LoginLimit::default(),
             mailer: None,
@@ -50,7 +52,11 @@ impl Fixture {
             providers: Default::default(),
             http: Default::default(),
         };
-        Self { state, _dir: dir }
+        Self {
+            state,
+            rooms_dir: rooms,
+            _dir: dir,
+        }
     }
 
     async fn user_token(&self, email: &str) -> (Uuid, String) {
@@ -550,4 +556,62 @@ async fn opening_the_round_to_all_shows_proposals_to_every_member() {
     assert_eq!(role, "viewer");
     let listed = fixture.listed(&viewer, &room).await;
     assert_eq!(lists(&listed, doc).unwrap()["kind"], "proposal");
+}
+
+fn big_update(bytes: usize) -> Vec<u8> {
+    update_with("text", &"x".repeat(bytes))
+}
+
+#[tokio::test]
+async fn deleting_a_project_removes_its_proposal_files() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner).await;
+    let round = fixture.round(&owner, &room, "blind").await;
+    let doc = fixture.proposal(&owner, &room, &round).await;
+    fixture.write(&room, doc, owner_id, "interval").await;
+    let key = documents::key(&room, doc);
+    fixture.state.rooms.flush(&key).await.unwrap();
+    assert!(cocat_core::store::room_file(&fixture.rooms_dir, &key).exists());
+
+    let (status, _) = fixture
+        .send(Method::DELETE, &format!("/api/rooms/{room}"), &owner, None)
+        .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fs::read_dir(&fixture.rooms_dir).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn proposal_bytes_count_toward_the_project_quota() {
+    let fixture = Fixture::start().await;
+    let (owner_id, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner).await;
+    let (editor_id, editor) = fixture
+        .member(&room, "editor@example.org", Role::Editor)
+        .await;
+    db::set_user_quota(&fixture.state.pool, owner_id, Some(1))
+        .await
+        .unwrap();
+    let round = fixture.round(&owner, &room, "open").await;
+    let rooms = &fixture.state.rooms;
+    let pool = &fixture.state.pool;
+    let write = |token: String, author: Uuid| {
+        let (room, round) = (room.clone(), round.clone());
+        let fixture = &fixture;
+        async move {
+            let doc = fixture.proposal(&token, &room, &round).await;
+            let key = documents::key(&room, doc);
+            let allowance = rooms.allowance(pool, &key).await.unwrap();
+            rooms
+                .write_as(&key, allowance, Author::Client(author), big_update(600_000))
+                .await
+        }
+    };
+
+    let first = write(owner.clone(), owner_id).await;
+    let second = write(editor.clone(), editor_id).await;
+
+    assert!(first.unwrap());
+    assert!(matches!(second, Err(cocat_server::room::RoomError::Full)));
 }
