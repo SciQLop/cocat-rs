@@ -238,13 +238,18 @@ pub fn next_step(created: Option<String>) -> Next {
 
 // simplify: guesses the import race from the words "not found" in the server's 404; give
 // the API an error code for a missing candidates catalogue to match on instead.
-/// A failed creation in words; the server's 404 on the candidates right after an import means
-/// the file's catalogue has not reached it yet.
-pub fn creation_failure(message: &str, with_candidates: bool) -> String {
-    if with_candidates && message.contains("not found") {
+/// A failed creation in words; the server's 404 when the candidates are a catalogue just
+/// imported means its catalogue has not reached it yet.
+pub fn creation_failure(message: &str, just_imported: bool) -> String {
+    if just_imported && message.contains("not found") {
         return "The import has not reached the server yet; try again in a moment.".to_owned();
     }
     message.to_owned()
+}
+
+/// The People table's column for the voter role, as a verb like "Proposes" and "Decides".
+pub fn voter_verb(kind: &str) -> &'static str {
+    if kind == "review" { "Reviews" } else { "Votes" }
 }
 
 /// What the voter role is called: reviewers judge detections, voters pick among proposals.
@@ -792,6 +797,12 @@ mod tests {
         assert_eq!(changed.visibility(), "open");
         let blind = changed.with_preset(PRESETS[2], &members(), "me@x.org");
         assert_eq!(blind.visibility(), "blind");
+    }
+
+    #[test]
+    fn the_people_columns_are_verbs() {
+        assert_eq!(voter_verb("review"), "Reviews");
+        assert_eq!(voter_verb("labelling"), "Votes");
     }
 
     #[test]

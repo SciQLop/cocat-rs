@@ -11,7 +11,7 @@ use crate::links::{Listed, sources};
 use crate::public::PublicCatalogue;
 use crate::rounds::{
     BudgetForm, DATA_UNITS, Need, NewRound, Next, PRESETS, RateRow, Round, Source, TIMES,
-    creation_failure, next_step, voter_title,
+    creation_failure, next_step, voter_verb,
 };
 use crate::route::Route;
 use crate::sharing::Member;
@@ -110,17 +110,17 @@ async fn create(
     room: &str,
     form: &NewRound,
     source: Option<Source>,
+    just_imported: bool,
 ) -> Result<String, String> {
     let mut form = form.clone();
     form.candidates = match source {
         Some(source) => Some(public_catalogue(api, source).await?),
         None => None,
     };
-    let with_candidates = form.candidates.is_some();
     let body = form.request()?;
     let made: Round = api::create(api, &["rooms", room, "rounds"], body)
         .await
-        .map_err(|error| creation_failure(&error.to_string(), with_candidates))?;
+        .map_err(|error| creation_failure(&error.to_string(), just_imported))?;
     Ok(made.id)
 }
 
@@ -132,12 +132,13 @@ async fn start(
     room: &str,
     form: &NewRound,
     source: Option<Source>,
+    just_imported: bool,
     created: RwSignal<Option<String>>,
 ) -> Result<String, String> {
     let id = match next_step(created.get_untracked()) {
         Next::SetPeople(id) => id,
         Next::Create => {
-            let id = create(api, room, form, source).await?;
+            let id = create(api, room, form, source, just_imported).await?;
             created.try_set(Some(id.clone()));
             id
         }
@@ -218,10 +219,13 @@ pub fn NewRoundForm() -> impl IntoView {
             let (api, here) = (api.clone(), here.clone());
             let (current, source) =
                 form.with_untracked(|form| (form.clone(), form.candidates.clone()));
+            let just_imported = source.as_ref().is_some_and(|source| {
+                importer.imported.get_untracked().as_deref() == Some(source.catalogue.as_str())
+            });
             busy.set(true);
             error.set(None);
             spawn_local(async move {
-                match start(&api, &here, &current, source, created).await {
+                match start(&api, &here, &current, source, just_imported, created).await {
                     Ok(id) => go_to(&Route::Round(id).hash()),
                     Err(why) => {
                         error.try_set(Some(why));
@@ -297,9 +301,9 @@ fn Visibility(form: RwSignal<NewRound>) -> impl IntoView {
     };
     view! {
         <fieldset class="round-presets">
-            <legend class="field-label">"Who sees the verdicts?"</legend>
-            {option("open", "Everyone in the round (open)")}
-            {option("blind", "Each person only their own (blind)")}
+            <legend class="field-label">"Who sees each person's work before the round ends?"</legend>
+            {option("open", "Everyone in the project (open)")}
+            {option("blind", "Only its author, the deciders and the owners (blind)")}
         </fieldset>
     }
 }
@@ -447,7 +451,7 @@ fn Candidates(
 #[component]
 fn People(form: RwSignal<NewRound>) -> impl IntoView {
     let count = move || form.with(|f| f.seats.len());
-    let voters = move || voter_title(form.with(|f| f.kind()));
+    let voters = move || voter_verb(form.with(|f| f.kind()));
     view! {
         <fieldset class="round-people">
             <legend class="field-label">"People"</legend>

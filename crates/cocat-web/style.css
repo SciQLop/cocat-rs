@@ -1645,7 +1645,8 @@ a.home-project:hover { color: var(--accent); }
 .budget.over-cap { color: var(--danger); font-weight: 600; }
 .round-form { max-width: 640px; gap: 16px; }
 .round-form fieldset { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); padding: 12px; margin: 0; }
-.round-presets .inline-choice { flex-direction: row; align-items: center; gap: 8px; }
+.round-form :is(.round-presets .inline-choice, .round-people td) input:is([type="radio"], [type="checkbox"]) { width: auto; height: auto; margin: 0; padding: 0; flex: none; }
+.round-presets .inline-choice { flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; }
 .round-form .amount { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .round-form .amount input[type="text"] { width: 130px; }
 .round-people table { border-collapse: collapse; }
