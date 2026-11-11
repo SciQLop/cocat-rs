@@ -79,8 +79,8 @@ const KINDS: [Kind; 8] = [
 ];
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x6ef18c5f_f0a8_49d6_8d92_7b8c37272eaf);
-const ENDPOINT: &str = "https://api.nasa.gov/DONKI";
-const DEFAULT_KEY: &str = "DEMO_KEY";
+/// CCMC serves DONKI itself since 2026-09-30; the api.nasa.gov proxy answers 404 since then.
+const ENDPOINT: &str = "https://ccmc.gsfc.nasa.gov/DONKI-API/get";
 const FIRST_DAY: Date = date!(2010 - 01 - 01);
 /// A year per request, ends included.
 const REQUEST_SPAN: Duration = Duration::days(364);
@@ -206,23 +206,12 @@ fn windows(refreshed: Option<Timestamp>, now: Timestamp) -> Result<Vec<(Date, Da
     rolling::windows(refreshed, now, FIRST_DAY, REQUEST_SPAN)
 }
 
-fn request_url(
-    kind: &Kind,
-    (start, end): (Date, Date),
-    settings: &Value,
-) -> Result<String, String> {
+fn request_url(kind: &Kind, (start, end): (Date, Date)) -> Result<String, String> {
     let day = |date: Date| {
         date.format(format_description!("[year]-[month]-[day]"))
             .map_err(|error| error.to_string())
     };
-    let key = text(settings, "api_key")
-        .filter(|key| !key.is_empty())
-        .unwrap_or(DEFAULT_KEY);
-    let params = [
-        ("startDate", day(start)?),
-        ("endDate", day(end)?),
-        ("api_key", key.to_owned()),
-    ];
+    let params = [("startDate", day(start)?), ("endDate", day(end)?)];
     reqwest::Url::parse_with_params(&format!("{ENDPOINT}/{}", kind.code), params)
         .map(String::from)
         .map_err(|error| error.to_string())
@@ -241,13 +230,12 @@ async fn fetch_window(http: &reqwest::Client, url: String) -> Result<Vec<u8>, St
 
 async fn fetch_kind(
     http: &reqwest::Client,
-    settings: &Value,
     windows: &[(Date, Date)],
     kind: &Kind,
 ) -> Result<Fetched, String> {
     let mut events = Vec::new();
     for window in windows {
-        let url = request_url(kind, *window, settings)?;
+        let url = request_url(kind, *window)?;
         let body = fetch_window(http, url)
             .await
             .map_err(|error| format!("{} {}: {error}", kind.code, window.0))?;
@@ -271,20 +259,20 @@ impl Provider for Donki {
     }
 
     fn settings(&self) -> &'static [&'static str] {
-        &["api_key"]
+        &[]
     }
 
     async fn fetch(
         &self,
         http: &reqwest::Client,
-        settings: &Value,
+        _settings: &Value,
         refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
         let now = Timestamp::now();
         let mut lists = Vec::new();
         for kind in &KINDS {
             let windows = windows(refreshed.get(&key(kind)).copied(), now)?;
-            lists.push(fetch_kind(http, settings, &windows, kind).await?);
+            lists.push(fetch_kind(http, &windows, kind).await?);
         }
         Ok(lists)
     }
@@ -421,28 +409,25 @@ mod tests {
     }
 
     #[test]
-    fn the_provider_is_registered_off_with_its_key_setting() {
+    fn the_provider_is_registered_off_and_needs_no_key() {
         let provider = crate::relay::providers()
             .into_iter()
             .find(|provider| provider.id() == "donki")
             .unwrap();
 
         assert_eq!(provider.source(), "DONKI (NASA CCMC)");
-        assert_eq!(provider.settings(), ["api_key"]);
+        assert!(provider.settings().is_empty());
     }
 
     #[test]
-    fn the_key_comes_from_the_settings() {
+    fn donki_is_asked_at_ccmc_without_a_key() {
         let window = (at("2024-05-01T00:00:00Z"), at("2024-05-31T00:00:00Z"));
         let window = (date_of(window.0).unwrap(), date_of(window.1).unwrap());
-        let url = |settings| request_url(&kind("FLR"), window, &settings).unwrap();
 
         assert_eq!(
-            url(json!({"api_key": "k3y"})),
-            "https://api.nasa.gov/DONKI/FLR?startDate=2024-05-01&endDate=2024-05-31&api_key=k3y"
+            request_url(&kind("FLR"), window).unwrap(),
+            "https://ccmc.gsfc.nasa.gov/DONKI-API/get/FLR?startDate=2024-05-01&endDate=2024-05-31"
         );
-        assert!(url(json!({})).ends_with("api_key=DEMO_KEY"));
-        assert!(url(json!({"api_key": ""})).ends_with("api_key=DEMO_KEY"));
     }
 
     #[test]

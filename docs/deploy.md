@@ -144,9 +144,9 @@ its schedule (a cron line in UTC, or its default), its settings, its last run an
 now". The provider is the source of truth: nobody, curators included, edits a catalogue it
 follows.
 
-- **DONKI** needs a NASA API key (free, at once, from https://api.nasa.gov): set `api_key`
-  in its settings. The demo key allows about ten requests an hour, and the first run reads
-  every type from 2010 in yearly windows (136 requests); later runs read the last 90 days,
+- **DONKI** is read from CCMC (`https://ccmc.gsfc.nasa.gov/DONKI-API/get/`), which needs no
+  key; the api.nasa.gov address used before 30 September 2026 now answers 404. The first run
+  reads every type from 2010 in yearly windows (136 requests); later runs read the last 90 days,
   except for a type whose catalogue is new or was deleted, which is read whole again.
   Daily at 03:30 UTC by default.
 - **CDAW** needs nothing; weekly, Monday 05:30 UTC (the LASCO list is updated weekly).
