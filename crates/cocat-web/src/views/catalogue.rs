@@ -2,6 +2,8 @@
 
 use leptos::prelude::*;
 
+use crate::views::proposal::InProposal;
+
 use crate::help::{Shown, empty_text};
 use crate::period::Period;
 use crate::route::Route;
@@ -298,6 +300,7 @@ fn showing(room: &Room, shown: &Route) -> Shown {
         },
         Route::Trash => Shown::Trash,
         Route::AllEvents => Shown::Catalogue { smart: false },
+        _ if use_context::<InProposal>().is_some() => Shown::NoProposal,
         _ => Shown::NoCatalogue,
     }
 }

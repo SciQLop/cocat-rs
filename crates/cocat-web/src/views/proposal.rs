@@ -7,15 +7,12 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::api;
-use crate::connection;
 use crate::edit;
-use crate::rounds::{Round, proposal_catalogue_name, proposal_role};
+use crate::rounds::{Round, first_catalogue_due, proposal_catalogue_name, proposal_role};
 use crate::route::Route;
-use crate::rows::Row;
 use crate::state::Room;
 use crate::sync::Status;
-use crate::views::catalogue::CataloguePage;
-use crate::views::event_panel::{EventPanel, Shown};
+use crate::views::live_room::{RoomBrowser, open_room};
 use crate::views::transfer::{ImportDialog, Importer};
 use cocat_core::model;
 
@@ -77,60 +74,57 @@ fn ProposalRoom(round: Round, doc: String) -> impl IntoView {
     let Some(config) = outer.config.for_proposal(&doc, proposal_role(&round.state)) else {
         return notice_view("This proposal cannot be opened from this page.", true);
     };
-    let room = Room::new(config);
-    provide_context(room.clone());
+    provide_context(InProposal);
     let importer = Importer::new();
     provide_context(importer);
-    let connection = match connection::connect_project(room.clone()) {
-        Ok(connection) => StoredValue::new_local(connection),
-        Err(error) => {
-            return notice_view(&format!("The proposal cannot sync: {error}"), true);
-        }
+    let room = match open_room(config) {
+        Ok(room) => room,
+        Err(error) => return notice_view(&format!("The proposal cannot sync: {error}"), true),
     };
-    on_cleanup(move || {
-        connection.try_with_value(|connection| connection.close());
-    });
     start_catalogue(
         &room,
         proposal_catalogue_name(&round.name, &room.config.user_email),
     );
-    let shown = Memo::new(move |_| Route::Default);
-    let selected = RwSignal::new(None::<Row>);
-    let screen = RwSignal::new(None);
-    let panel = Memo::new(move |_| selected.with(Shown::of));
-    let (editor, published) = (room.can_write(), room.editing);
-    Effect::new(move |_| {
-        let editing = panel.with(|shown| shown.event().map(str::to_owned));
-        published.set(editing.filter(|_| editor));
+    let first = Memo::new(move |_| {
+        room.read(|txn| model::catalogues(txn).into_iter().next().map(|c| c.uuid))
     });
+    let shown = Memo::new(move |_| Route::Default.or_first(first.get().as_deref()));
+    let editable = proposal_role(&round.state).can_write();
     let back =
         Route::Round(round.id.clone()).href(&window().location().pathname().unwrap_or_default());
-    let state = if editor {
+    // simplify: the role is the round's state when the page opened; a page left open after
+    // the round moved on still offers edits, which the server refuses. Upgrade: watch the round.
+    let state = if editable {
         "You can edit it until the round moves on."
     } else {
         "Read-only: the round has moved on."
     };
     view! {
         {move || importer.is_open().then(|| view! { <ImportDialog/> })}
-        <main class="content">
-            <div class="groups-head">
-                <h1>"Your proposal: " {round.name.clone()}</h1>
-                <a class="button" href=back>"Back to the round"</a>
-            </div>
-            <p class="quiet">{state}</p>
-            <CataloguePage shown selected screen/>
-        </main>
-        <EventPanel selected shown=panel route=shown screen/>
+        <div class="browser"><div class="pane">
+            <RoomBrowser shown>
+                <div class="groups-head">
+                    <h1>"Your proposal: " {round.name.clone()}</h1>
+                    <a class="button" href=back>"Back to the round"</a>
+                </div>
+                <p class="quiet">{state}</p>
+            </RoomBrowser>
+        </div></div>
     }
     .into_any()
 }
 
-/// A first-time proposal is an empty document: once synced, its author gets one catalogue.
+/// Marks the subtree that shows a proposal, so its empty states speak of it.
+#[derive(Clone, Copy)]
+pub struct InProposal;
+
+/// A first-time proposal is an empty document: once synced, its author gets one catalogue,
+/// and never again, even when they delete it.
 fn start_catalogue(room: &Room, name: String) {
     let room = room.clone();
     Effect::new(move |_| {
         let synced = room.status.get() == Status::Live && room.loading.with(Option::is_none);
-        if synced && room.can_write() && room.read(|txn| model::catalogues(txn).is_empty()) {
+        if synced && room.can_write() && room.read(|txn| first_catalogue_due(txn)) {
             let author = room.config.user_email.clone();
             _ = room.write(|txn| edit::new_catalogue(txn, &name, &author));
         }

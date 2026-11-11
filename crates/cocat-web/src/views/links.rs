@@ -9,19 +9,16 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api::ApiError;
-use crate::connection;
 use crate::edit;
 use crate::links::{
     Listed, ListedCatalogues, Reach, Unread, linkable, project_name, reach, shown_name, sources,
 };
 use crate::projects::Project;
 use crate::route::Route;
-use crate::rows::Row;
 use crate::state::Room;
 use crate::sync::Status;
-use crate::views::catalogue::CataloguePage;
 use crate::views::controls::go_to;
-use crate::views::event_panel::{EventPanel, Shown};
+use crate::views::live_room::{RoomBrowser, open_room};
 use crate::views::projects::Projects;
 
 /// Each linked project's catalogues, read once per page: names and whether they still exist.
@@ -395,30 +392,16 @@ fn Original(project: Project, uuid: String, id: String) -> impl IntoView {
             None,
         );
     };
-    let room = Room::new(config);
-    provide_context(room.clone());
     provide_context(LinkedFrom(project.clone()));
-    let connection = match connection::connect_project(room.clone()) {
-        Ok(connection) => StoredValue::new_local(connection),
+    let room = match open_room(config) {
+        Ok(room) => room,
         Err(error) => {
             return view! { <main class="content"><p role="alert">{format!("The linked catalogue cannot sync: {error}")}</p></main> }
                 .into_any();
         }
     };
-    on_cleanup(move || {
-        connection.try_with_value(|connection| connection.close());
-    });
     let here = Route::Catalogue(uuid.clone());
     let shown = Memo::new(move |_| here.clone());
-    let selected = RwSignal::new(None::<Row>);
-    let screen = RwSignal::new(None);
-    let panel = Memo::new(move |_| selected.with(Shown::of));
-    let editor = room.can_write();
-    let published = room.editing;
-    Effect::new(move |_| {
-        let editing = panel.with(|shown| shown.event().map(str::to_owned));
-        published.set(editing.filter(|_| editor));
-    });
     let reader = room.clone();
     let deleted = Memo::new(move |_| {
         let live = reader.status.get() == Status::Live;
@@ -429,12 +412,11 @@ fn Original(project: Project, uuid: String, id: String) -> impl IntoView {
         if deleted.get() {
             return gone_view(no_longer(&name), Some((outer.clone(), id.clone())));
         }
+        let from = name.clone();
         view! {
-            <main class="content">
-                <p class="linked-from">"Linked from " <strong>{name.clone()}</strong> ": changes go there."</p>
-                <CataloguePage shown selected screen/>
-            </main>
-            <EventPanel selected shown=panel route=shown screen/>
+            <RoomBrowser shown>
+                <p class="linked-from">"Linked from " <strong>{from}</strong> ": changes go there."</p>
+            </RoomBrowser>
         }
         .into_any()
     })

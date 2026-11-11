@@ -1,7 +1,7 @@
 //! Selection rounds as the page shows them: the server's JSON and the lines drawn from it.
 
 use crate::sharing::Member;
-use cocat_core::model::EventRecord;
+use cocat_core::model::{self, EventRecord};
 use cocat_core::role::Role;
 use cocat_core::round::review::{ReviewRow, progress, reviewed};
 use cocat_core::round::{
@@ -9,6 +9,7 @@ use cocat_core::round::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use yrs::ReadTxn;
 
 /// A round as `GET /api/rooms/{room}/rounds` lists it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -120,6 +121,12 @@ pub fn your_part(round: &Round, me: &str, progress: Option<Progress>) -> Option<
 /// The catalogue a first-time proposal starts with.
 pub fn proposal_catalogue_name(round: &str, me: &str) -> String {
     format!("{round}: {me}")
+}
+
+/// Whether a proposal document still needs its first catalogue: only when it never held
+/// one, the deleted ones counting.
+pub fn first_catalogue_due<T: ReadTxn>(txn: &T) -> bool {
+    model::all_catalogues(txn).is_empty()
 }
 
 /// The author writes their proposal only while the round is proposing; the server holds
@@ -509,6 +516,19 @@ mod tests {
             proposal_catalogue_name("Spring", "a@x.org"),
             "Spring: a@x.org"
         );
+    }
+
+    #[test]
+    fn a_proposal_gets_its_first_catalogue_once_even_when_it_was_deleted() {
+        use yrs::{Doc, Transact};
+        let doc = Doc::new();
+        assert!(first_catalogue_due(&doc.transact()));
+        let made =
+            crate::edit::new_catalogue(&mut doc.transact_mut(), "Spring: a@x.org", "a@x.org");
+        assert!(!first_catalogue_due(&doc.transact()));
+        crate::edit::trash_catalogue(&mut doc.transact_mut(), &made.unwrap()).unwrap();
+        assert!(model::catalogues(&doc.transact()).is_empty());
+        assert!(!first_catalogue_due(&doc.transact()));
     }
 
     #[test]

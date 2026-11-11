@@ -13,6 +13,7 @@ pub fn href(anchor: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shown {
     NoCatalogue,
+    NoProposal,
     Catalogue { smart: bool },
     Trash,
 }
@@ -21,6 +22,7 @@ pub enum Shown {
 pub fn empty_text(shown: Shown, filtered: bool, can_write: bool) -> &'static str {
     match (shown, filtered, can_write) {
         (_, true, _) => "No event matches the filter.",
+        (Shown::NoProposal, _, _) => "Your proposal has no intervals yet.",
         (Shown::NoCatalogue, _, true) => {
             "This project has no catalogue yet. Make one with the + next to Catalogues, or from SciQLop."
         }
@@ -47,6 +49,7 @@ mod tests {
     fn a_filter_that_hides_everything_says_so() {
         for shown in [
             Shown::NoCatalogue,
+            Shown::NoProposal,
             Shown::Catalogue { smart: false },
             Shown::Trash,
         ] {

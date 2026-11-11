@@ -12,6 +12,7 @@ pub mod history;
 pub mod home;
 pub mod invite;
 pub mod links;
+pub mod live_room;
 pub mod menus;
 pub mod notebook;
 pub mod notice;
