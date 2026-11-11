@@ -11,14 +11,15 @@ use web_sys::{Element, KeyboardEvent, ScrollIntoViewOptions, ScrollLogicalPositi
 use crate::api;
 use crate::format::{duration_text, time_text, value_text};
 use crate::review::{
-    Filter, KeyAction, after_verdict, attribute_columns, counter, key_action, mine_text, selected,
-    shown as shown_rows, step,
+    Filter, INCOMPLETE, KeyAction, SYNC_WAIT_MS, after_verdict, arrived, attribute_columns,
+    counter, from_text, key_action, mine_text, selected, shown as shown_rows, step,
 };
 use crate::rounds::Round;
 use crate::route::Route;
 use crate::state::Room;
 use crate::views::live_room::{connect_room, synced};
 use crate::views::projects::Projects;
+use crate::views::upload::sleep;
 use cocat_core::role::Role;
 use cocat_core::round::review::{ReviewRow, Verdict, progress, proposal_events, rows};
 use cocat_core::time::Timestamp;
@@ -32,6 +33,8 @@ pub type ReviewRows = Memo<Option<Vec<ReviewRow>>>;
 pub struct Review {
     pub rows: ReviewRows,
     pub failure: RwSignal<Option<String>>,
+    /// Some proposal documents did not sync in time, so `rows` leaves their events out.
+    pub incomplete: Memo<bool>,
     verdicts: RwSignal<Option<Value>>,
     /// The latest verdicts fetch: an older answer arriving after it is dropped.
     asked: StoredValue<u64>,
@@ -52,16 +55,30 @@ impl Review {
             })
             .collect();
         let verdicts = RwSignal::new(None::<Value>);
+        let waited_out = RwSignal::new(false);
+        spawn_local(async move {
+            sleep(SYNC_WAIT_MS).await;
+            waited_out.try_set(true);
+        });
+        let docs = StoredValue::new(docs);
+        let loaded = Memo::new(move |_| {
+            let events = docs.with_value(|docs| {
+                docs.iter()
+                    .map(|(author, room)| {
+                        synced(room)
+                            .then(|| (author.clone(), room.read(|txn| proposal_events(txn))))
+                    })
+                    .collect()
+            });
+            arrived(events, waited_out.get())
+        });
         let rows = Memo::new(move |_| {
             let verdicts = verdicts.get()?;
-            let events = docs
-                .iter()
-                .map(|(author, room)| {
-                    synced(room).then(|| (author.clone(), room.read(|txn| proposal_events(txn))))
-                })
-                .collect::<Option<Vec<_>>>()?;
+            let (events, _) = loaded.get()?;
             rows(&events, &verdicts, &me).ok()
         });
+        let incomplete =
+            Memo::new(move |_| loaded.with(|loaded| matches!(loaded, Some((_, true)))));
         let path = [
             outer.config.api_url.clone(),
             outer.config.room_id.clone(),
@@ -69,6 +86,7 @@ impl Review {
         ];
         let review = Self {
             rows,
+            incomplete,
             failure: RwSignal::new(None),
             verdicts,
             asked: StoredValue::new(0),
@@ -113,6 +131,16 @@ impl Review {
 /// The round `id` once the list has it.
 pub fn find_round(id: String, rounds: RwSignal<Vec<Round>>) -> Memo<Option<Round>> {
     Memo::new(move |_| rounds.with(|rounds| rounds.iter().find(|round| round.id == id).cloned()))
+}
+
+/// The warning shown when some proposals did not load.
+pub fn incomplete_view(review: Review) -> impl IntoView {
+    move || {
+        review
+            .incomplete
+            .get()
+            .then(|| view! { <p class="field-error" role="alert">{INCOMPLETE}</p> })
+    }
 }
 
 pub fn notice_view(text: &str) -> AnyView {
@@ -192,6 +220,7 @@ fn ReviewTable(round: Round, shown: Memo<Route>) -> impl IntoView {
             <span class="hint">{how}</span>
         </div>
         {move || review.failure.get().map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
+        {incomplete_view(review)}
         <div class="review-scroll">
             <table class="events review-table">
                 <thead><tr>
@@ -324,10 +353,7 @@ fn table_rows(
             .map(|index| {
                 let row = &rows[index];
                 let cells = event_cells(row, &columns);
-                let from = row
-                    .proposal
-                    .clone()
-                    .unwrap_or_else(|| "candidates".to_owned());
+                let from = from_text(row);
                 view! {
                     <tr class="row" id=row_id(&row.event.uuid)
                         aria-selected=(picked == Some(index)).to_string()

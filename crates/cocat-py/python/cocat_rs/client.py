@@ -88,6 +88,14 @@ class SignIn:
         self._cancelled.set()
 
 
+def _members(
+    proposers: list[str] | None, voters: list[str] | None, deciders: list[str] | None
+) -> dict[str, list[str]] | None:
+    given = {"proposers": proposers, "voters": voters, "deciders": deciders}
+    named = {role: emails for role, emails in given.items() if emails is not None}
+    return named or None
+
+
 def _candidates(source: Any) -> dict[str, str] | None:
     if source is None:
         return None
@@ -277,8 +285,14 @@ class Client:
         budget: dict[str, Any] | None = None,
         kind: str | None = None,
         candidates: Catalogue | tuple[str, str] | None = None,
+        proposers: list[str] | None = None,
+        voters: list[str] | None = None,
+        deciders: list[str] | None = None,
     ) -> dict[str, Any]:
         """A selection round of the project; `budget` is JSON-LD, see `round_cost`.
+
+        `proposers`, `voters` and `deciders` are emails of project members; a role left out
+        keeps its default. A round without proposers starts in voting.
 
         `kind` is `review`, `downlink` or `labelling`. `candidates` is a catalogue (or its
         `(project id, catalogue uuid)`) you can read: its events are copied into the round,
@@ -290,6 +304,7 @@ class Client:
             "budget": budget,
             "kind": kind,
             "candidates": _candidates(candidates),
+            "members": _members(proposers, voters, deciders),
         }
         return self._call(_native.create_round, project_id, body)
 

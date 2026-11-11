@@ -99,6 +99,8 @@ struct NewRound {
     /// A catalogue the caller can read, in any project: its live events are copied, uuids
     /// kept, as the round's candidates. A round without proposers then starts in voting.
     candidates: Option<CandidateSource>,
+    /// Who proposes, votes and decides, by email; a role left out keeps its defaults.
+    members: Option<NewMembers>,
 }
 
 fn set_or_clear<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
@@ -119,6 +121,13 @@ struct RoundChange {
     #[serde(default, deserialize_with = "set_or_clear")]
     #[schema(value_type = Option<Object>)]
     budget: Option<Option<Value>>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct NewMembers {
+    proposers: Option<Vec<String>>,
+    voters: Option<Vec<String>>,
+    deciders: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -359,10 +368,12 @@ async fn create_round(
         None => Kind::Labelling,
     });
     if kind == Kind::Review && body.candidates.is_none() {
-        return Err(unprocessable(
-            "A review round needs candidates: pick a catalogue.",
-        ));
+        return Err(needs_candidates());
     }
+    let members = match &body.members {
+        Some(given) => resolve_given(&state, &room_id, given).await?,
+        None => Default::default(),
+    };
     let copied = match &body.candidates {
         Some(source) => Some(round_candidates::copy(&state, &room_id, source, &user).await?),
         None => None,
@@ -382,6 +393,7 @@ async fn create_round(
         rounds::delete_round(&state.pool, id).await?;
         return Err(error);
     }
+    replace_roles(&state, id, &members).await?;
     rounds::start_without_proposers(&state.pool, id, user.id).await?;
     let row = rounds::round(&state.pool, id)
         .await?
@@ -415,6 +427,10 @@ async fn get_round(
     Ok(Json(present(&state, row, user.id).await?))
 }
 
+fn needs_candidates() -> ApiError {
+    unprocessable("A review round needs candidates: pick a catalogue.")
+}
+
 fn patch_of(change: RoundChange) -> Result<RoundPatch, ApiError> {
     Ok(RoundPatch {
         name: change.name.as_deref().map(clean_name).transpose()?,
@@ -446,7 +462,7 @@ fn patch_of(change: RoundChange) -> Result<RoundPatch, ApiError> {
         (status = 403, description = "The caller neither decides the round nor owns the project", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
         (status = 409, description = "The round is decided", body = Detail),
-        (status = 422, description = "The name, deadline or budget is invalid", body = Detail),
+        (status = 422, description = "The name, deadline or budget is invalid, or a round without candidates is switched to review", body = Detail),
     )
 )]
 async fn patch_round(
@@ -458,6 +474,10 @@ async fn patch_round(
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     require_administrator(&seat)?;
     refuse_decided(&row)?;
+    let switches_to_review = change.kind == Some(Kind::Review) && row.kind != Kind::Review;
+    if switches_to_review && rounds::candidates(&state.pool, row.id).await?.is_none() {
+        return Err(needs_candidates());
+    }
     rounds::update_round(&state.pool, row.id, patch_of(change)?).await?;
     ws::check_room_roles(&state, &room_id).await;
     Ok(Json(reload(&state, row.id, user.id).await?))
@@ -499,6 +519,53 @@ async fn resolve(
     Ok(out)
 }
 
+async fn resolved_members(
+    state: &AppState,
+    room_id: &str,
+    given: &RoundMembers,
+) -> Result<Vec<(Uuid, RoundRole)>, ApiError> {
+    let mut members = resolve(state, room_id, &given.proposers, RoundRole::Proposer).await?;
+    members.extend(resolve(state, room_id, &given.voters, RoundRole::Voter).await?);
+    members.extend(resolve(state, room_id, &given.deciders, RoundRole::Decider).await?);
+    Ok(members)
+}
+
+/// The roles `given` names, and the seats it gives in them.
+async fn resolve_given(
+    state: &AppState,
+    room_id: &str,
+    given: &NewMembers,
+) -> Result<(Vec<RoundRole>, Vec<(Uuid, RoundRole)>), ApiError> {
+    let mut named = Vec::new();
+    let mut seats = Vec::new();
+    for (role, emails) in [
+        (RoundRole::Proposer, &given.proposers),
+        (RoundRole::Voter, &given.voters),
+        (RoundRole::Decider, &given.deciders),
+    ] {
+        if let Some(emails) = emails {
+            named.push(role);
+            seats.extend(resolve(state, room_id, emails, role).await?);
+        }
+    }
+    Ok((named, seats))
+}
+
+/// Gives the round `seats` in the roles `named`, leaving its other roles as they are.
+async fn replace_roles(
+    state: &AppState,
+    id: Uuid,
+    (named, seats): &(Vec<RoundRole>, Vec<(Uuid, RoundRole)>),
+) -> Result<(), ApiError> {
+    let kept = rounds::members(&state.pool, id)
+        .await?
+        .into_iter()
+        .filter(|(_, role)| !named.contains(role));
+    let all: Vec<_> = kept.chain(seats.iter().copied()).collect();
+    rounds::set_members(&state.pool, id, &all).await?;
+    Ok(())
+}
+
 #[utoipa::path(
     put,
     path = "/api/rooms/{room_id}/rounds/{round}/members",
@@ -525,9 +592,7 @@ async fn put_members(
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     require_administrator(&seat)?;
     refuse_decided(&row)?;
-    let mut members = resolve(&state, &room_id, &body.proposers, RoundRole::Proposer).await?;
-    members.extend(resolve(&state, &room_id, &body.voters, RoundRole::Voter).await?);
-    members.extend(resolve(&state, &room_id, &body.deciders, RoundRole::Decider).await?);
+    let members = resolved_members(&state, &room_id, &body).await?;
     rounds::set_members(&state.pool, row.id, &members).await?;
     ws::check_room_roles(&state, &room_id).await;
     Ok(Json(reload(&state, row.id, user.id).await?))
@@ -783,6 +848,15 @@ fn may_vote(round: &RoundRow, seat: &Seat) -> Result<(), ApiError> {
     }
 }
 
+fn written(stored: bool) -> Result<StatusCode, ApiError> {
+    match stored {
+        true => Ok(StatusCode::OK),
+        false => Err(ApiError::Conflict(
+            "The round moved on; your verdicts were not stored".to_owned(),
+        )),
+    }
+}
+
 fn checked_event(event: &str) -> Result<String, ApiError> {
     Uuid::parse_str(event)
         .map(|uuid| uuid.to_string())
@@ -798,8 +872,8 @@ async fn store_verdicts(
     let (room_id, round) = ids;
     let (row, seat) = load(state, room_id, round, user).await?;
     may_vote(&row, &seat)?;
-    rounds::set_verdicts(&state.pool, row.id, user, row.revision, &changes).await?;
-    Ok(StatusCode::OK)
+    let stored = rounds::set_verdicts(&state.pool, row.id, user, row.revision, &changes).await?;
+    written(stored)
 }
 
 #[utoipa::path(
@@ -815,6 +889,7 @@ async fn store_verdicts(
         (status = 200, description = "The caller's verdicts were merged in"),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
+        (status = 409, description = "The round moved on while the verdicts were being stored", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
         (status = 422, description = "An event id is not a uuid", body = Detail),
     )
@@ -847,6 +922,7 @@ async fn put_verdicts(
         (status = 200, description = "The caller's verdict on the event was set"),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
+        (status = 409, description = "The round moved on while the verdicts were being stored", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
         (status = 422, description = "The event id is not a uuid", body = Detail),
     )
@@ -939,6 +1015,7 @@ async fn get_verdicts(
         (status = 200, description = "The caller accepts exactly these events; rejects and unsures stay"),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is no voter of the round, or it is not voting", body = Detail),
+        (status = 409, description = "The round moved on while the verdicts were being stored", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
     )
 )]
@@ -950,8 +1027,8 @@ async fn put_votes(
 ) -> Result<StatusCode, ApiError> {
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     may_vote(&row, &seat)?;
-    rounds::set_accepts(&state.pool, &row, user.id, &body.events).await?;
-    Ok(StatusCode::OK)
+    let stored = rounds::set_accepts(&state.pool, &row, user.id, &body.events).await?;
+    written(stored)
 }
 
 fn accepts_by_voter(rows: Vec<(String, VerdictRow)>, revision: i64) -> Vec<VotesOut> {

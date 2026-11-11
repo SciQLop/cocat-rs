@@ -242,7 +242,7 @@ fn verdict_of(name: &str) -> Result<Verdict> {
 fn row_dict<'py>(py: Python<'py>, row: &ReviewRow) -> Result<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("event", event_dict(py, &row.event)?)?;
-    dict.set_item("proposal", &row.proposal)?;
+    dict.set_item("sources", &row.sources)?;
     dict.set_item("accepts", row.accepts)?;
     dict.set_item("rejects", row.rejects)?;
     dict.set_item("unsure", row.unsure)?;
@@ -268,7 +268,7 @@ fn row_of(item: &Bound<'_, PyAny>) -> Result<ReviewRow> {
     };
     Ok(ReviewRow {
         event: record_of(&required("event")?)?,
-        proposal: required("proposal")?.extract()?,
+        sources: required("sources")?.extract()?,
         accepts: required("accepts")?.extract()?,
         rejects: required("rejects")?.extract()?,
         unsure: required("unsure")?.extract()?,

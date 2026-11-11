@@ -24,8 +24,9 @@ pub enum Verdict {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReviewRow {
     pub event: EventRecord,
-    /// The proposer's email; `None` for a candidate.
-    pub proposal: Option<String>,
+    /// Every document the event came from, in order: a proposer's email, `None` for the
+    /// candidates.
+    pub sources: Vec<Option<String>>,
     pub accepts: u32,
     pub rejects: u32,
     pub unsure: u32,
@@ -63,7 +64,7 @@ struct Given {
 
 fn tally_row(
     event: EventRecord,
-    proposal: Option<String>,
+    sources: Vec<Option<String>>,
     tally: Option<&Tally>,
     me: &str,
     revision: i64,
@@ -89,7 +90,7 @@ fn tally_row(
         .filter(|_| mine.is_none());
     ReviewRow {
         event,
-        proposal,
+        sources,
         accepts: tally.map_or(0, |tally| tally.accept),
         rejects: tally.map_or(0, |tally| tally.reject),
         unsure: tally.map_or(0, |tally| tally.unsure),
@@ -104,8 +105,28 @@ fn stub(uuid: &str) -> EventRecord {
     EventRecord::new(uuid, epoch, epoch)
 }
 
-/// The rows of the candidates (proposal `None`) and proposals (their author's email), in the
-/// order given, then one set-aside row per verdict on an event not among them.
+type Merged = Vec<(EventRecord, Vec<Option<String>>)>;
+
+/// One entry per event uuid, in order of first appearance, with every document it is in.
+fn merge_by_uuid(events_by_proposal: &[(Option<String>, Vec<EventRecord>)]) -> Merged {
+    let mut merged: Merged = Vec::new();
+    let mut index: HashMap<&str, usize> = HashMap::new();
+    for (proposal, events) in events_by_proposal {
+        for event in events {
+            match index.get(event.uuid.as_str()) {
+                Some(&at) => merged[at].1.push(proposal.clone()),
+                None => {
+                    index.insert(&event.uuid, merged.len());
+                    merged.push((event.clone(), vec![proposal.clone()]));
+                }
+            }
+        }
+    }
+    merged
+}
+
+/// The rows of the candidates (proposal `None`) and proposals (their author's email): one
+/// per event uuid, in the order first met, then one set-aside row per verdict on an event not among them.
 /// `verdicts` is the answer of `GET …/verdicts`; `me` is the caller's email.
 pub fn rows(
     events_by_proposal: &[(Option<String>, Vec<EventRecord>)],
@@ -118,12 +139,11 @@ pub fn rows(
         .iter()
         .map(|tally| (tally.event.as_str(), tally))
         .collect();
-    let current: Vec<ReviewRow> = events_by_proposal
-        .iter()
-        .flat_map(|(proposal, events)| events.iter().map(move |event| (proposal, event)))
-        .map(|(proposal, event)| {
+    let current: Vec<ReviewRow> = merge_by_uuid(events_by_proposal)
+        .into_iter()
+        .map(|(event, sources)| {
             let tally = tallies.get(event.uuid.as_str()).copied();
-            tally_row(event.clone(), proposal.clone(), tally, me, answer.revision)
+            tally_row(event, sources, tally, me, answer.revision)
         })
         .collect();
     let known: HashSet<&str> = current.iter().map(|row| row.event.uuid.as_str()).collect();
@@ -133,7 +153,13 @@ pub fn rows(
         .filter(|tally| !known.contains(tally.event.as_str()))
         .map(|tally| ReviewRow {
             set_aside: true,
-            ..tally_row(stub(&tally.event), None, Some(tally), me, answer.revision)
+            ..tally_row(
+                stub(&tally.event),
+                Vec::new(),
+                Some(tally),
+                me,
+                answer.revision,
+            )
         })
         .collect();
     Ok([current, set_aside].concat())
@@ -175,7 +201,7 @@ pub fn majority(rows: &[ReviewRow]) -> Vec<bool> {
 fn final_event(row: &ReviewRow) -> EventRecord {
     let mut event = row.event.clone();
     event.uuid = Uuid::new_v4().to_string();
-    let proposed_by: Vec<&String> = row.proposal.iter().collect();
+    let proposed_by: BTreeSet<&String> = row.sources.iter().flatten().collect();
     let added: Map<String, Value> = [
         ("candidate", json!(row.event.uuid)),
         ("proposed_by", json!(proposed_by)),
@@ -266,7 +292,34 @@ mod tests {
                 (0, 0, 0, None)
             ]
         );
-        assert_eq!(rows[2].proposal.as_deref(), Some("ada@x.org"));
+        assert_eq!(rows[2].sources, [Some("ada@x.org".to_owned())]);
+    }
+
+    #[test]
+    fn an_event_in_several_documents_is_one_row_with_every_source_and_one_final_event() {
+        let events = [
+            (None, vec![event("a")]),
+            (Some("ada@x.org".to_owned()), vec![event("a"), event("c")]),
+            (Some("bo@x.org".to_owned()), vec![event("a")]),
+        ];
+
+        let rows = rows(&events, &verdicts(), "me@x.org").unwrap();
+
+        assert_eq!(rows.iter().filter(|row| !row.set_aside).count(), 2);
+        assert_eq!(
+            rows[0].sources,
+            [
+                None,
+                Some("ada@x.org".to_owned()),
+                Some("bo@x.org".to_owned())
+            ]
+        );
+        let kept = final_events(&rows, &[true, false, false, false]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            kept[0].attributes["proposed_by"],
+            json!(["ada@x.org", "bo@x.org"])
+        );
     }
 
     #[test]

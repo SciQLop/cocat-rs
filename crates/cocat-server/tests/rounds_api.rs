@@ -933,12 +933,12 @@ async fn a_kind_is_set_at_creation_and_changed_by_patch() {
             Method::PATCH,
             &path,
             &owner,
-            Some(json!({"kind": "review"})),
+            Some(json!({"kind": "downlink"})),
         )
         .await;
 
     let kinds = [&plain, &budgeted, &downlinked, &patched].map(|round| round["kind"].clone());
-    assert_eq!(kinds, ["labelling", "downlink", "downlink", "review"]);
+    assert_eq!(kinds, ["labelling", "downlink", "downlink", "downlink"]);
     assert_eq!(plain["revision"], 1);
 }
 
@@ -1268,6 +1268,83 @@ async fn a_review_round_without_candidates_is_refused_with_a_sentence() {
     let body = json!({"name": "Review", "visibility": "open", "kind": "review"});
 
     let (status, answer) = fixture.round(&owner, &room, body).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+    assert_eq!(
+        answer["detail"],
+        "A review round needs candidates: pick a catalogue."
+    );
+}
+
+#[tokio::test]
+async fn a_round_created_with_members_has_them_and_without_proposers_starts_voting() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let members = json!({"proposers": [], "voters": ["owner@example.org"], "deciders": ["owner@example.org"]});
+    let body = json!({"name": "R", "visibility": "open", "members": members});
+
+    let (status, round) = fixture.round(&owner, &room, body).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{round}");
+    assert_eq!(round["state"], "voting");
+    assert_eq!(round["proposers"], json!([]));
+    assert_eq!(round["voters"], json!(["owner@example.org"]));
+}
+
+#[tokio::test]
+async fn a_role_left_out_of_the_members_keeps_its_defaults() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let body = json!({"name": "R", "visibility": "open", "members": {"voters": []}});
+
+    let (status, round) = fixture.round(&owner, &room, body).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{round}");
+    assert_eq!(round["voters"], json!([]));
+    assert_eq!(round["deciders"], json!(["owner@example.org"]));
+    assert_eq!(round["proposers"], json!(["owner@example.org"]));
+}
+
+#[tokio::test]
+async fn a_round_created_with_a_stranger_as_member_is_refused_and_not_made() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let members = json!({"proposers": ["stranger@example.org"], "voters": [], "deciders": []});
+    let body = json!({"name": "R", "visibility": "open", "members": members});
+
+    let (status, _) = fixture.round(&owner, &room, body).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, listed) = fixture
+        .send(
+            Method::GET,
+            &format!("/api/rooms/{room}/rounds"),
+            &owner,
+            None,
+        )
+        .await;
+    assert_eq!(listed, json!([]));
+}
+
+#[tokio::test]
+async fn a_round_without_candidates_cannot_be_switched_to_review() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, plain) = fixture.round(&owner, &room, new_round()).await;
+    let path = format!("/api/rooms/{room}/rounds/{}", plain["id"].as_str().unwrap());
+
+    let (status, answer) = fixture
+        .send(
+            Method::PATCH,
+            &path,
+            &owner,
+            Some(json!({"kind": "review"})),
+        )
+        .await;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
     assert_eq!(

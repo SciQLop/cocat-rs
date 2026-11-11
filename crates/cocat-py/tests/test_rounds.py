@@ -302,3 +302,56 @@ def test_a_decided_event_keeps_the_fields_of_its_candidate(server, tmp_path):
     assert kept.confidence == pytest.approx(0.6)
     assert kept.attributes["candidate"] == events[0].uuid
     team.close()
+
+
+def test_deciding_again_brings_a_trashed_final_catalogue_back(server, tmp_path):
+    owner = owner_client(server)
+    made, events = review_of(owner, server, tmp_path)
+    project, round_id = server.project_id, made["id"]
+    owner.set_verdicts(project, round_id, {events[0].uuid: "accept"})
+    team = owner.open(project, cache=tmp_path / "team")
+    rows = cc.round_review.rows(
+        [(None, candidate_events(owner, server, made, tmp_path))],
+        owner.verdicts(project, round_id),
+        server.email,
+    )
+    final = cc.round_review.final_events(rows, cc.round_review.majority(rows))
+    team.decide(round_id, final)
+    team.catalogue(cc.round_review.final_catalogue_uuid(round_id)).delete()
+
+    team.decide(round_id, final)
+
+    kept = team.catalogue(cc.round_review.final_catalogue_uuid(round_id))
+    assert not kept.deleted
+    assert len(kept.events) == 1
+    team.close()
+
+
+def test_a_round_is_created_with_its_members(server):
+    ada = signed_in(server, "ada@example.org")
+    owner = owner_client(server)
+
+    made = owner.create_round(
+        server.project_id,
+        "Members",
+        proposers=[],
+        voters=["ada@example.org"],
+        deciders=[server.email],
+    )
+
+    assert made["state"] == "voting"
+    assert made["voters"] == ["ada@example.org"]
+    assert made["proposers"] == []
+    del ada
+
+
+def test_an_event_in_several_documents_is_one_row_and_one_final_event():
+    event = {"uuid": "e1", "start": "2020-01-01T00:00:00Z", "stop": "2020-01-01T00:01:00Z"}
+    documents = [(None, [event]), ("ada@x.org", [event]), ("bo@x.org", [event])]
+    rows = cc.round_review.rows(documents, {"revision": 1, "events": []}, "me@x.org")
+
+    [only] = cc.round_review.final_events(rows, [True])
+
+    assert len(rows) == 1
+    assert rows[0]["sources"] == [None, "ada@x.org", "bo@x.org"]
+    assert only["attributes"]["proposed_by"] == ["ada@x.org", "bo@x.org"]

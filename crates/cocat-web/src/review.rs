@@ -85,6 +85,30 @@ pub fn verdict_word(verdict: Option<Verdict>) -> &'static str {
 }
 
 /// The visitor's verdict on a row; one from an earlier revision says so.
+/// How long the pages wait for every document before showing what they have.
+pub const SYNC_WAIT_MS: u32 = 15_000;
+
+pub const INCOMPLETE: &str = "Some proposals could not be loaded; the list may be incomplete.";
+
+/// The documents that arrived (`None` for one still loading) and whether some are missing.
+/// While waiting for them all, nothing is shown yet.
+pub fn arrived<T>(docs: Vec<Option<T>>, waited_out: bool) -> Option<(Vec<T>, bool)> {
+    let missing = docs.iter().any(Option::is_none);
+    (waited_out || !missing).then(|| (docs.into_iter().flatten().collect(), missing))
+}
+
+/// Where the event came from: "candidates" and the proposers' emails, each once.
+pub fn from_text(row: &ReviewRow) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    for source in &row.sources {
+        let name = source.as_deref().unwrap_or("candidates");
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.join(", ")
+}
+
 pub fn mine_text(row: &ReviewRow) -> String {
     match (row.mine, row.previous) {
         (None, Some(previous)) => {
@@ -135,7 +159,7 @@ mod tests {
         let at = Timestamp::parse("2020-01-01T00:00:00Z").unwrap();
         ReviewRow {
             event: EventRecord::new(uuid, at, at),
-            proposal: None,
+            sources: vec![None],
             accepts,
             rejects: 0,
             unsure: 0,
@@ -155,6 +179,25 @@ mod tests {
             row("d", 2, None),
             gone,
         ]
+    }
+
+    #[test]
+    fn documents_are_awaited_until_the_wait_is_over_then_the_loaded_ones_show() {
+        assert_eq!(arrived(vec![Some(1), None], false), None);
+        assert_eq!(
+            arrived(vec![Some(1), Some(2)], false),
+            Some((vec![1, 2], false))
+        );
+        assert_eq!(arrived(vec![Some(1), None], true), Some((vec![1], true)));
+        assert_eq!(arrived::<u8>(vec![], false), Some((vec![], false)));
+    }
+
+    #[test]
+    fn an_event_from_several_documents_names_each_source_once() {
+        let mut shared = row("a", 0, None);
+        shared.sources = vec![None, Some("ada@x.org".into()), Some("ada@x.org".into())];
+
+        assert_eq!(from_text(&shared), "candidates, ada@x.org");
     }
 
     #[test]

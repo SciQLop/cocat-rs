@@ -204,13 +204,13 @@ class Project:
         self._client = client
         self._id = project_id
 
-    def _server_call(self, method, *arguments):
+    def _server_call(self, method, *arguments, **keywords):
         if self._client is None:
             raise RuntimeError(
                 "This project was opened from a folder: open it with cocat_rs.open() "
                 "to reach its history and submissions."
             )
-        return getattr(self._client, method)(self._id, *arguments)
+        return getattr(self._client, method)(self._id, *arguments, **keywords)
 
     def open_link(self, link_id, cache=None):
         """Opens the project link `link_id` points into: answers it and the linked catalogue.
@@ -263,13 +263,33 @@ class Project:
         return self._server_call("rounds")
 
     def create_round(
-        self, name, visibility="open", deadline=None, budget=None, kind=None, candidates=None
+        self,
+        name,
+        visibility="open",
+        deadline=None,
+        budget=None,
+        kind=None,
+        candidates=None,
+        proposers=None,
+        voters=None,
+        deciders=None,
     ):
         """A selection round; `visibility` is `open` or `blind`, `kind` `review`, `downlink`
         or `labelling`. `candidates` is a catalogue you can read (or its `(project id,
-        catalogue uuid)`), copied into the round for review. Returns the round as a dict."""
+        catalogue uuid)`), copied into the round for review. `proposers`, `voters` and
+        `deciders` are member emails; a role left out keeps its default, and a round without
+        proposers starts in voting. Returns the round as a dict."""
         return self._server_call(
-            "create_round", name, visibility, deadline, budget, kind, candidates
+            "create_round",
+            name,
+            visibility,
+            deadline,
+            budget,
+            kind,
+            candidates,
+            proposers=proposers,
+            voters=voters,
+            deciders=deciders,
         )
 
     def round(self, round_id):
@@ -291,7 +311,8 @@ class Project:
     def decide(self, round_id, events, note=None):
         """Writes `events` (dicts, as `round_review.final_events` returns them) as the
         round's final catalogue, replacing the events it holds when the round was decided
-        before, then moves the round to decided. This project must be the round's."""
+        before (and bringing it back from the trash), then moves the round to decided. Deciding a
+        decided round only rewrites the catalogue. This project must be the round's."""
         uuid = round_review.final_catalogue_uuid(round_id)
         name = self.round(round_id)["name"]
         catalogue = self._final_catalogue(uuid, name)
@@ -303,9 +324,12 @@ class Project:
 
     def _final_catalogue(self, uuid, name):
         try:
-            return self.catalogue(uuid)
+            catalogue = self.catalogue(uuid)
         except LookupError:
             return self.create_catalogue(name, uuid=uuid)
+        if catalogue.deleted:
+            catalogue.restore()
+        return catalogue
 
     def _replace_events(self, catalogue, events):
         for old in catalogue.events:

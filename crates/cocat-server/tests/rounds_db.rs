@@ -455,6 +455,17 @@ async fn deleting_an_account_keeps_its_proposals_and_votes() {
         .unwrap();
     let id = round_with_deadline(&pool, owner, None).await;
     let doc = rounds::add_proposal(&pool, id, alice).await.unwrap();
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     rounds::set_verdicts(
         &pool,
         id,
@@ -573,4 +584,54 @@ async fn existing_rounds_get_a_kind() {
         rounds::round(&pool, plain).await.unwrap().unwrap().kind,
     );
     assert_eq!(kinds, (Kind::Downlink, Kind::Labelling));
+}
+
+async fn voting_round(pool: &SqlitePool, owner: Uuid) -> Uuid {
+    let id = round_with_deadline(pool, owner, None).await;
+    let moved = rounds::set_state(
+        pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(moved);
+    id
+}
+
+#[tokio::test]
+async fn a_verdict_is_written_only_while_the_round_is_voting_in_the_revision_given() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = voting_round(&pool, owner).await;
+    let accept = [("e1".to_owned(), Some(Verdict::Accept))];
+
+    let on_time = rounds::set_verdicts(&pool, id, owner, 1, &accept)
+        .await
+        .unwrap();
+    let stale = rounds::set_verdicts(&pool, id, owner, 0, &accept)
+        .await
+        .unwrap();
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Voting,
+        RoundState::Decided,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let late = rounds::set_verdicts(&pool, id, owner, 1, &accept)
+        .await
+        .unwrap();
+
+    assert_eq!((on_time, stale, late), (true, false, false));
+    assert_eq!(rounds::verdicts(&pool, id).await.unwrap().len(), 1);
 }

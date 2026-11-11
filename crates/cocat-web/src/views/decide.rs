@@ -9,11 +9,11 @@ use serde_json::json;
 
 use crate::api::{self, ApiError};
 use crate::edit::{self, EditError};
-use crate::review::{attribute_columns, by_accepts};
+use crate::review::{attribute_columns, by_accepts, from_text};
 use crate::rounds::{Round, over_cap, state_words};
 use crate::route::Route;
 use crate::state::Room;
-use crate::views::review::{Review, event_cells, find_round, notice_view};
+use crate::views::review::{Review, event_cells, find_round, incomplete_view, notice_view};
 use crate::views::upload::sleep;
 use cocat_core::round::review::{ReviewRow, final_catalogue_uuid, final_events, majority};
 
@@ -89,6 +89,7 @@ fn DecideTable(round: Round) -> impl IntoView {
         </div>
         {move || failure.get().or_else(|| review.failure.get())
             .map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
+        {incomplete_view(review)}
         <div class="review-scroll">
             <table class="events review-table">
                 <thead><tr>
@@ -164,10 +165,7 @@ fn table_rows(
                         }
                     })
                 };
-                let from = row
-                    .proposal
-                    .clone()
-                    .unwrap_or_else(|| "candidates".to_owned());
+                let from = from_text(row);
                 view! {
                     <tr class="row" aria-selected=kept.to_string()>
                         <td><input type="checkbox" prop:checked=kept on:change=toggle/></td>

@@ -1,7 +1,8 @@
 """The rules of reviewing a round, the same ones the web page applies.
 
-A row stands for one candidate or proposed event: a dict with `event` (a dict with `uuid`,
-`start`, `stop`, `attributes`), `proposal` (the proposer's email, `None` for a candidate),
+A row stands for one event, however many documents hold it: a dict with `event` (a dict with
+`uuid`, `start`, `stop`, `attributes`), `sources` (one entry per document holding it: the
+proposer's email, `None` for the candidates),
 `accepts`, `rejects`, `unsure`, `mine` (your verdict in the current revision), `previous`
 (your last verdict from an earlier revision when you gave none since; it does not count as
 reviewed) and `set_aside`.
@@ -47,7 +48,7 @@ def event_row(event):
 
 
 def rows(proposals, verdicts, me):
-    """One row per event of `proposals`, a list of `(author email or None for the
+    """One row per event uuid of `proposals`, a list of `(author email or None for the
     candidates, events)`, with what `Client.verdicts` returned and your email `me`. Verdicts
     on events that are no longer there come last, with `set_aside` true."""
     listed = [(author, [event_row(event) for event in events]) for author, events in proposals]

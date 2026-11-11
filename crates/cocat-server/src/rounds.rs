@@ -107,7 +107,11 @@ pub fn moves(kind: Kind) -> &'static [Move] {
 
 /// Where the ticker takes a round of `kind` sitting in `from` once its deadline has passed.
 fn deadline_move(kind: Kind, from: RoundState) -> Option<RoundState> {
-    moves(kind)
+    deadline_target(moves(kind), from)
+}
+
+fn deadline_target(table: &[Move], from: RoundState) -> Option<RoundState> {
+    table
         .iter()
         .find(|(start, _, mover)| *start == from && *mover == Mover::Deadline)
         .map(|(_, to, _)| *to)
@@ -773,14 +777,18 @@ pub struct VerdictRow {
 }
 
 /// Sets (`Some`) or clears (`None`) the reviewer's verdicts, each tagged with `revision`.
+/// `false`, and nothing written, when the round is no longer voting in that revision.
 pub async fn set_verdicts(
     pool: &SqlitePool,
     id: Uuid,
     reviewer: Uuid,
     revision: i64,
     changes: &[(String, Option<Verdict>)],
-) -> Result<(), DbError> {
+) -> Result<bool, DbError> {
     let mut tx = pool.begin().await?;
+    if !is_voting_in(&mut tx, id, revision).await? {
+        return Ok(false);
+    }
     for (event, verdict) in changes {
         match verdict {
             Some(verdict) => {
@@ -790,7 +798,22 @@ pub async fn set_verdicts(
         }
     }
     tx.commit().await?;
-    Ok(())
+    Ok(true)
+}
+
+async fn is_voting_in(
+    tx: &mut sqlx::SqliteConnection,
+    id: Uuid,
+    revision: i64,
+) -> Result<bool, sqlx::Error> {
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM round WHERE id = ? AND state = 'voting' AND revision = ?",
+    )
+    .bind(id.to_string())
+    .bind(revision)
+    .fetch_optional(tx)
+    .await?;
+    Ok(found.is_some())
 }
 
 async fn upsert_verdict(
@@ -838,7 +861,7 @@ pub async fn set_accepts(
     round: &RoundRow,
     reviewer: Uuid,
     events: &[String],
-) -> Result<(), DbError> {
+) -> Result<bool, DbError> {
     let dropped = verdicts(pool, round.id)
         .await?
         .into_iter()
@@ -893,19 +916,23 @@ pub async fn log(pool: &SqlitePool, id: Uuid) -> Result<Vec<LogLine>, DbError> {
         .collect::<Result<_, sqlx::Error>>()?)
 }
 
-/// Rounds still proposing whose deadline has passed. Compared as instants, not as text:
-/// as text "...:00.5Z" sorts before "...:00Z".
+/// Rounds whose deadline has passed while in a state their kind's deadline moves out of.
+/// Compared as instants, not as text: as text "...:00.5Z" sorts before "...:00Z".
 pub async fn due_rounds(pool: &SqlitePool, now: &str) -> Result<Vec<Uuid>, DbError> {
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM round WHERE state = 'proposing' AND deadline IS NOT NULL AND julianday(deadline) <= julianday(?)",
-    )
+    let rows = sqlx::query(select_round!(
+        "WHERE deadline IS NOT NULL AND julianday(deadline) <= julianday(?)"
+    ))
     .bind(now)
     .fetch_all(pool)
     .await?;
-    Ok(ids
-        .iter()
-        .map(|id| parse_uuid(id))
-        .collect::<Result<_, _>>()?)
+    let mut due = Vec::new();
+    for row in &rows {
+        let round = round_from_row(row)?;
+        if deadline_move(round.kind, round.state).is_some() {
+            due.push(round.id);
+        }
+    }
+    Ok(due)
 }
 
 /// Moves every round whose deadline has passed to voting, as the server and not a person.
@@ -1172,6 +1199,17 @@ mod tests {
             std::cmp::Ordering::Less => seat.project_role == Role::Owner,
             std::cmp::Ordering::Equal => false,
         }
+    }
+
+    #[test]
+    fn the_deadline_states_come_from_the_moves_table() {
+        let table: &[Move] = &[
+            (Proposing, Voting, Mover::Decider),
+            (Voting, Decided, Mover::Deadline),
+        ];
+
+        assert_eq!(deadline_target(table, Voting), Some(Decided));
+        assert_eq!(deadline_target(table, Proposing), None);
     }
 
     #[test]
