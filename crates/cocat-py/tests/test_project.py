@@ -381,8 +381,20 @@ def test_attributes_register_their_type_and_warn_on_a_mismatch(project):
 
     project.set_attribute_info("q", unit="nT", description="quality")
     assert project.attribute_types()["q"]["unit"] == "nT"
-    with pytest.raises(LookupError):
+    with pytest.raises(LookupError, match="type="):
         project.set_attribute_info("nope", unit="s")
+
+
+def test_an_attribute_is_described_before_any_event_carries_it(project):
+    project.set_attribute_info("mlt", unit="h", description="local time", type="number")
+
+    assert project.attribute_types()["mlt"] == {
+        "type": "number",
+        "unit": "h",
+        "description": "local time",
+    }
+    with pytest.raises(ValueError, match="number, text, bool, date"):
+        project.set_attribute_info("x", type="colour")
 
 
 def test_a_datetime_attribute_is_a_date(project):

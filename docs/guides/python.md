@@ -213,7 +213,7 @@ Scripts written for the older Python `cocat` package can run with a one-line cha
 ```python
 from cocat_rs import api as cocat   # was: import cocat
 
-cocat.set_config(host="https://cocat.my-lab.org", port=443, project_id="my-project")
+cocat.set_config(host="https://cocat.my-lab.org", project_id="my-project")
 cocat.log_in("you@example.org", "your password")
 catalogue = cocat.get_catalogue("Bow shock crossings")
 cocat.save()

@@ -728,7 +728,7 @@ Events carry more than a range: `status` (`preliminary`, `confirmed`, `reviewed`
 `rejected`), `confidence` (0 to 1), `start_err` and `stop_err` (seconds), `origin` (what made
 the event, from `project.create_origin(...)`), `source_id`, `created`, `comment` and a
 `shape`. All are settable and all are keyword arguments of `create_event`. Attributes register
-their type in the project (`project.attribute_types()`); writing another type warns but is kept.
+their type in the project (`project.attribute_types()`); writing another type warns but is kept. `project.set_attribute_info(key, unit=, description=, type=)` documents a key; `type` (number, text, bool, date) registers one no event carries yet.
 
 ```python
 event = project.create_event(start, stop, author="you@example.org", confidence=0.8,

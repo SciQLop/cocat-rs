@@ -53,12 +53,15 @@ stop the next person from adding the same false detection again.
 
 **Which attributes, with units.**
 For instance `spacecraft`, `normal_x`, `normal_y`, `normal_z`, `mlt`. cocat remembers each
-attribute's type. Once events carry an attribute, give it a unit and a description from
-Python:
+attribute's type. Give each one a unit and a description from Python, even before any event
+carries it:
 
 ```python
-project.set_attribute_info("mlt", unit="h", description="magnetic local time of the crossing")
+project.set_attribute_info("mlt", unit="h", description="magnetic local time of the crossing",
+                           type="number")
 ```
+
+The `type` (number, text, bool or date) is only needed for an attribute no event has yet.
 
 Put the conventions in the project itself, as a README file uploaded to the project's
 **Files** (the **+** next to Files). Everyone who joins finds them there.

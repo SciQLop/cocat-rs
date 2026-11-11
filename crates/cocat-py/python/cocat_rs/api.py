@@ -31,6 +31,9 @@ CONNECT_TIMEOUT = 30.0
 REFRESH_TIMEOUT = 30.0
 
 
+_SCHEME_PORTS = {"http": 80, "https": 443}
+
+
 class Session:
     """The project and the connection a script's module-level calls act on."""
 
@@ -56,8 +59,7 @@ class Session:
         if host is not None:
             parsed = urlparse(host)
             self.host = f"{parsed.scheme}://{parsed.hostname}"
-            if parsed.port is not None:
-                self.port = parsed.port
+            self.port = parsed.port or _SCHEME_PORTS.get(parsed.scheme, self.port)
             prefix = parsed.path.strip("/")
             self.prefix = f"{prefix}/" if prefix else ""
         if port is not None:

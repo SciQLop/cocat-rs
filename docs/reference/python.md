@@ -55,7 +55,7 @@ import cocat_rs as cc
 | `event.catalogues` | uuids of the catalogues listing it |
 | `event.delete()`, `event.restore()`, `event.purge()` | trash, back, gone for good |
 | `project.trash()` | what is in the trash |
-| `project.set_attribute_info("key", unit=..., description=...)` | document an attribute |
+| `project.set_attribute_info("key", unit=..., description=..., type=...)` | document an attribute; `type` only for a new one |
 
 ## Search
 

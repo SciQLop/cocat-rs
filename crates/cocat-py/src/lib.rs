@@ -1552,20 +1552,30 @@ impl Project {
         Ok(types.into_any().unbind())
     }
 
-    /// Sets the unit and description of a registered key; `None` keeps a field, `""`
-    /// removes it.
-    #[pyo3(signature = (key, unit=None, description=None))]
+    /// Sets the unit and description of a key; `None` keeps a field, `""` removes it. A key
+    /// no event carries yet needs its `type` (number, text, bool or date) to be registered.
+    #[pyo3(signature = (key, unit=None, description=None, r#type=None))]
     fn set_attribute_info(
         &self,
         key: &str,
         unit: Option<String>,
         description: Option<String>,
+        r#type: Option<&str>,
     ) -> Result<()> {
+        let kind = r#type
+            .map(|name| {
+                AttributeType::from_name(name)
+                    .ok_or_else(|| value_error("type is one of number, text, bool, date"))
+            })
+            .transpose()?;
         if !write(&self.room, |txn| {
+            if let Some(kind) = kind {
+                model::register_attribute(txn, key, kind);
+            }
             model::set_attribute_info(txn, key, unit.as_deref(), description.as_deref())
         })? {
             return Err(PyLookupError::new_err(format!(
-                "no attribute {key} is registered"
+                "no attribute {key} is registered: write it on an event first, or give its type=\"number\" (or text, bool, date)"
             )));
         }
         Ok(())

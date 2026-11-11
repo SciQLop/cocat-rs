@@ -137,6 +137,15 @@ def test_login_with_port_in_host(server, tmp_path) -> None:
     assert api.SESSION.port == int(server.url.rsplit(":", 1)[1])
 
 
+@pytest.mark.parametrize(
+    ("host", "port"), [("https://cocat.example.org/cocat", 443), ("http://cocat.example.org", 80)]
+)
+def test_a_host_without_port_uses_its_scheme_port(host, port) -> None:
+    api.set_config(host=host)
+
+    assert api.SESSION.port == port
+
+
 def test_atexit(server, tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", lambda _: "yes")
     configure(server, tmp_path, project_id=server.project_id)
