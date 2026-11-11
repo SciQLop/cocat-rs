@@ -131,6 +131,7 @@ then go into other catalogues too.
 Edit an event by setting its fields:
 
 ```python
+event.stop = "2019-12-01T10:18:00Z"   # a datetime or a time string
 event.status = "confirmed"
 event.confidence = 0.9
 event.set_attributes(mach=3.2)

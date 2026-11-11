@@ -161,6 +161,17 @@ def test_an_event_range_changes(project):
     assert project.event(event.uuid).attributes == {"flag": True, "level": 4}
 
 
+def test_start_and_stop_are_set_one_at_a_time(project):
+    event = an_event(project)
+    later_start = datetime.datetime(2025, 3, 1, 0, 0, tzinfo=UTC)
+    later_stop = datetime.datetime(2025, 3, 1, 0, 5, tzinfo=UTC)
+
+    event.start = later_start
+    event.stop = "2025-03-01T00:05:00Z"
+
+    assert project.event(event.uuid).range == (later_start, later_stop)
+
+
 def test_a_deleted_event_goes_to_the_trash_and_comes_back(project):
     catalogue = a_catalogue(project)
     event = an_event(project)

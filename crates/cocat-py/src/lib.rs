@@ -885,6 +885,17 @@ impl Event {
         }
         Ok(())
     }
+
+    fn move_to(&self, start: Timestamp, stop: Timestamp) -> Result<()> {
+        let found = write(&self.room, |txn| {
+            model::set_event_range(txn, &self.uuid, start, stop)
+        })?
+        .map_err(value_error)?;
+        if !found {
+            return Err(unknown("event"));
+        }
+        Ok(())
+    }
 }
 
 #[pymethods]
@@ -925,16 +936,19 @@ impl Event {
     #[setter]
     fn set_range(&self, range: &Bound<'_, PyAny>) -> Result<()> {
         let (start, stop): (Bound<'_, PyAny>, Bound<'_, PyAny>) = range.extract()?;
-        let start = to_timestamp(&start)?;
-        let stop = to_timestamp(&stop)?;
-        let found = write(&self.room, |txn| {
-            model::set_event_range(txn, &self.uuid, start, stop)
-        })?
-        .map_err(value_error)?;
-        if !found {
-            return Err(unknown("event"));
-        }
-        Ok(())
+        self.move_to(to_timestamp(&start)?, to_timestamp(&stop)?)
+    }
+
+    /// Moves the start and keeps the stop. Nothing checks the order, so an event can be
+    /// moved later one end at a time.
+    #[setter]
+    fn set_start(&self, start: &Bound<'_, PyAny>) -> Result<()> {
+        self.move_to(to_timestamp(start)?, self.record()?.stop)
+    }
+
+    #[setter]
+    fn set_stop(&self, stop: &Bound<'_, PyAny>) -> Result<()> {
+        self.move_to(self.record()?.start, to_timestamp(stop)?)
     }
 
     #[getter]

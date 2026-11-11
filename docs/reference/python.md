@@ -51,9 +51,8 @@ import cocat_rs as cc
 |---|---|
 | `project.create_event(start=..., stop=..., tags=..., attributes=..., confidence=..., status=...)` | a new event (not yet in a catalogue) |
 | `project.event(uuid)` | one event |
-| `event.start`, `event.stop` | read |
-| `event.range = (start, stop)` | move the event |
-| `event.tags`, `event.status`, `event.confidence`, `event.comment` | read or set |
+| `event.start`, `event.stop`, `event.tags`, `event.status`, `event.confidence`, `event.comment` | read or set |
+| `event.range = (start, stop)` | move both ends at once |
 | `event.attributes`, `event.set_attributes(key=value)`, `event.remove_attributes("key")` | your own values |
 | `event.catalogues` | uuids of the catalogues listing it |
 | `event.delete()`, `event.restore()`, `event.purge()` | trash, back, gone for good |
