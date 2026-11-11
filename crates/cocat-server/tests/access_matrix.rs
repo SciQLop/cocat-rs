@@ -1043,10 +1043,13 @@ impl World {
         let round = rounds::create_round(
             &state.pool,
             &room.id,
-            "R1",
-            rounds::Visibility::Open,
-            None,
-            None,
+            rounds::RoundSpec {
+                name: "R1".to_owned(),
+                kind: rounds::Kind::Labelling,
+                visibility: rounds::Visibility::Open,
+                deadline: None,
+                budget: None,
+            },
             owner,
         )
         .await

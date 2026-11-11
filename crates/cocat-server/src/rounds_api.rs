@@ -21,7 +21,9 @@ use crate::history::diff::replay_until;
 use crate::openapi::Detail;
 use crate::room::Author;
 use crate::rounds::rules::{self, Seat};
-use crate::rounds::{self, RoundPatch, RoundRole, RoundRow, RoundState, Visibility};
+use crate::rounds::{
+    self, Kind, RoundPatch, RoundRole, RoundRow, RoundSpec, RoundState, Visibility,
+};
 use crate::{AppState, db, lifecycle, ws};
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -46,6 +48,7 @@ struct LogOut {
     at: String,
     actor: Option<String>,
     what: String,
+    note: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -53,7 +56,10 @@ struct RoundOut {
     id: Uuid,
     project: String,
     name: String,
+    kind: Kind,
     state: RoundState,
+    /// Starts at 1; each move back into proposing adds one.
+    revision: i64,
     visibility: Visibility,
     deadline: Option<String>,
     /// The budget as compact JSON-LD.
@@ -70,6 +76,8 @@ struct RoundOut {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct NewRound {
     name: String,
+    /// Defaults to `downlink` with a budget, else `labelling`.
+    kind: Option<Kind>,
     visibility: Visibility,
     deadline: Option<String>,
     #[schema(value_type = Option<Object>)]
@@ -86,6 +94,7 @@ fn set_or_clear<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct RoundChange {
     name: Option<String>,
+    kind: Option<Kind>,
     visibility: Option<Visibility>,
     #[serde(default, deserialize_with = "set_or_clear")]
     #[schema(value_type = Option<String>)]
@@ -107,6 +116,19 @@ struct Move {
     state: RoundState,
     /// The catalogue of the project that is the outcome; required to decide.
     final_catalogue: Option<String>,
+    /// Free text kept with the move in the round's log, at most 2000 characters.
+    note: Option<String>,
+}
+
+const NOTE_LIMIT: usize = 2000;
+
+fn checked_note(note: Option<&str>) -> Result<Option<&str>, ApiError> {
+    match note {
+        Some(note) if note.chars().count() > NOTE_LIMIT => Err(unprocessable(format!(
+            "A note is at most {NOTE_LIMIT} characters"
+        ))),
+        note => Ok(note),
+    }
 }
 
 fn unknown_round(round: &str) -> ApiError {
@@ -238,6 +260,7 @@ async fn present(state: &AppState, round: RoundRow, viewer: Uuid) -> Result<Roun
                 at: line.at,
                 actor: line.actor.map(|actor| emails.of(actor)),
                 what: line.what,
+                note: line.note,
             })
             .collect(),
         budget: round
@@ -247,7 +270,9 @@ async fn present(state: &AppState, round: RoundRow, viewer: Uuid) -> Result<Roun
         id: round.id,
         project: round.room_id,
         name: round.name,
+        kind: round.kind,
         state: round.state,
+        revision: round.revision,
         visibility: round.visibility,
         deadline: round.deadline,
         final_catalogue: round.final_catalogue,
@@ -305,13 +330,20 @@ async fn create_round(
     let name = clean_name(&body.name)?;
     let deadline = body.deadline.as_deref().map(checked_deadline).transpose()?;
     let budget = body.budget.as_ref().map(stored_budget).transpose()?;
+    let kind = body.kind.unwrap_or(match budget {
+        Some(_) => Kind::Downlink,
+        None => Kind::Labelling,
+    });
     let id = rounds::create_round(
         &state.pool,
         &room_id,
-        &name,
-        body.visibility,
-        deadline,
-        budget,
+        RoundSpec {
+            name,
+            kind,
+            visibility: body.visibility,
+            deadline,
+            budget,
+        },
         user.id,
     )
     .await?;
@@ -350,6 +382,7 @@ async fn get_round(
 fn patch_of(change: RoundChange) -> Result<RoundPatch, ApiError> {
     Ok(RoundPatch {
         name: change.name.as_deref().map(clean_name).transpose()?,
+        kind: change.kind,
         visibility: change.visibility,
         deadline: change
             .deadline
@@ -519,6 +552,7 @@ async fn move_round(
     ApiPath((room_id, round)): ApiPath<(String, String)>,
     JsonBody(change): JsonBody<Move>,
 ) -> Result<Json<RoundOut>, ApiError> {
+    let note = checked_note(change.note.as_deref())?;
     let (row, seat) = load(&state, &room_id, &round, user.id).await?;
     if !rules::may_move(&row, &seat, change.state) {
         return Err(forbidden(
@@ -536,6 +570,7 @@ async fn move_round(
         change.state,
         catalogue,
         Some(user.id),
+        note,
     )
     .await?;
     if !moved {

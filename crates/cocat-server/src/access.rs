@@ -15,7 +15,7 @@ use crate::{AppState, documents};
 pub enum Content {
     Catalogues,
     Document(DocumentKind),
-    Proposal { round: RoundRow, author: Uuid },
+    Proposal { round: Box<RoundRow>, author: Uuid },
 }
 
 impl Content {
@@ -42,7 +42,10 @@ pub async fn content(
     }
     Ok(rounds::proposal_by_doc(pool, project, doc)
         .await?
-        .map(|(round, author)| Content::Proposal { round, author }))
+        .map(|(round, author)| Content::Proposal {
+            round: Box::new(round),
+            author,
+        }))
 }
 
 /// The role a project member holds on the content: their project role, except on a

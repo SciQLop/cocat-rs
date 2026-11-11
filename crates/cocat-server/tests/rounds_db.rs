@@ -1,7 +1,7 @@
 use cocat_core::role::Role;
 use cocat_server::db::{self, ProjectKind};
 use cocat_server::room::RoomManager;
-use cocat_server::rounds::{self, RoundRole, RoundState, Visibility};
+use cocat_server::rounds::{self, Kind, RoundRole, RoundState, Visibility};
 use cocat_server::{AppState, links::Links, ratelimit::LoginLimit};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -46,9 +46,20 @@ async fn a_new_round_seats_owners_and_editors_and_its_creator_decides() {
         .await
         .unwrap();
 
-    let id = rounds::create_round(&pool, "lab", "R1", Visibility::Blind, None, None, editor)
-        .await
-        .unwrap();
+    let id = rounds::create_round(
+        &pool,
+        "lab",
+        rounds::RoundSpec {
+            name: "R1".to_owned(),
+            kind: Kind::Labelling,
+            visibility: Visibility::Blind,
+            deadline: None,
+            budget: None,
+        },
+        editor,
+    )
+    .await
+    .unwrap();
 
     let expected = sorted(vec![
         (owner, RoundRole::Proposer),
@@ -68,9 +79,20 @@ async fn deleting_the_project_deletes_its_rounds() {
     let (pool, _dir) = pool().await;
     let owner = user(&pool, "owner@x.org").await;
     project(&pool, owner).await;
-    let id = rounds::create_round(&pool, "lab", "R1", Visibility::Open, None, None, owner)
-        .await
-        .unwrap();
+    let id = rounds::create_round(
+        &pool,
+        "lab",
+        rounds::RoundSpec {
+            name: "R1".to_owned(),
+            kind: Kind::Labelling,
+            visibility: Visibility::Open,
+            deadline: None,
+            budget: None,
+        },
+        owner,
+    )
+    .await
+    .unwrap();
     rounds::set_state(
         &pool,
         id,
@@ -78,6 +100,7 @@ async fn deleting_the_project_deletes_its_rounds() {
         RoundState::Voting,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -104,10 +127,13 @@ async fn due_rounds_are_the_proposing_ones_past_their_deadline() {
             rounds::create_round(
                 &pool,
                 "lab",
-                "R",
-                Visibility::Open,
-                deadline.map(str::to_owned),
-                None,
+                rounds::RoundSpec {
+                    name: "R".to_owned(),
+                    kind: Kind::Labelling,
+                    visibility: Visibility::Open,
+                    deadline: deadline.map(str::to_owned),
+                    budget: None,
+                },
                 owner,
             )
             .await
@@ -123,6 +149,7 @@ async fn due_rounds_are_the_proposing_ones_past_their_deadline() {
         moved,
         RoundState::Proposing,
         RoundState::Voting,
+        None,
         None,
         None,
     )
@@ -161,10 +188,13 @@ async fn round_with_deadline(pool: &SqlitePool, owner: Uuid, deadline: Option<&s
     rounds::create_round(
         pool,
         "lab",
-        "R",
-        Visibility::Open,
-        deadline.map(str::to_owned),
-        None,
+        rounds::RoundSpec {
+            name: "R".to_owned(),
+            kind: Kind::Labelling,
+            visibility: Visibility::Open,
+            deadline: deadline.map(str::to_owned),
+            budget: None,
+        },
         owner,
     )
     .await
@@ -254,6 +284,7 @@ async fn a_round_decided_before_the_deadline_closes_stays_decided() {
         RoundState::Decided,
         Some("cat"),
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -281,6 +312,7 @@ async fn moving_back_clears_a_deadline_that_has_passed_so_the_ticker_leaves_it()
         RoundState::Voting,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -292,6 +324,7 @@ async fn moving_back_clears_a_deadline_that_has_passed_so_the_ticker_leaves_it()
         RoundState::Proposing,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -331,6 +364,7 @@ async fn moving_back_keeps_a_deadline_still_ahead() {
         RoundState::Voting,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -342,6 +376,7 @@ async fn moving_back_keeps_a_deadline_still_ahead() {
         RoundState::Proposing,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -366,6 +401,7 @@ async fn a_move_from_a_stale_state_changes_and_logs_nothing() {
         RoundState::Voting,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -387,6 +423,7 @@ async fn moving_off_decided_forgets_the_final_catalogue() {
         RoundState::Decided,
         Some("cat"),
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -398,6 +435,7 @@ async fn moving_off_decided_forgets_the_final_catalogue() {
         RoundState::Proposing,
         None,
         Some(owner),
+        None,
     )
     .await
     .unwrap();
@@ -429,4 +467,101 @@ async fn deleting_an_account_keeps_its_proposals_and_votes() {
         rounds::votes(&pool, id).await.unwrap(),
         [(alice, "e1".to_owned())]
     );
+}
+
+async fn round_of_kind(pool: &SqlitePool, owner: Uuid, kind: Kind) -> Uuid {
+    rounds::create_round(
+        pool,
+        "lab",
+        rounds::RoundSpec {
+            name: "R".to_owned(),
+            kind,
+            visibility: Visibility::Open,
+            deadline: None,
+            budget: None,
+        },
+        owner,
+    )
+    .await
+    .unwrap()
+}
+
+async fn go(pool: &SqlitePool, id: Uuid, from: RoundState, to: RoundState, note: Option<&str>) {
+    let moved = rounds::set_state(pool, id, from, to, None, None, note)
+        .await
+        .unwrap();
+    assert!(moved);
+}
+
+#[tokio::test]
+async fn a_note_travels_with_the_move() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_of_kind(&pool, owner, Kind::Review).await;
+
+    go(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        Some("ready"),
+    )
+    .await;
+    go(&pool, id, RoundState::Voting, RoundState::Decided, None).await;
+
+    let log = rounds::log(&pool, id).await.unwrap();
+    let notes: Vec<_> = log.iter().map(|l| l.note.as_deref()).collect();
+    assert_eq!(notes, [Some("ready"), None]);
+}
+
+#[tokio::test]
+async fn moving_back_starts_a_new_revision() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_of_kind(&pool, owner, Kind::Review).await;
+    let revision = || async { rounds::round(&pool, id).await.unwrap().unwrap().revision };
+
+    go(&pool, id, RoundState::Proposing, RoundState::Voting, None).await;
+    let forward = revision().await;
+    go(&pool, id, RoundState::Voting, RoundState::Proposing, None).await;
+    let back = revision().await;
+    go(&pool, id, RoundState::Proposing, RoundState::Decided, None).await;
+    go(&pool, id, RoundState::Decided, RoundState::Voting, None).await;
+    let sideways = revision().await;
+
+    assert_eq!((forward, back, sideways), (1, 2, 2));
+}
+
+#[tokio::test]
+async fn existing_rounds_get_a_kind() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let budgeted = round_of_kind(&pool, owner, Kind::Labelling).await;
+    let plain = round_of_kind(&pool, owner, Kind::Review).await;
+    sqlx::query("UPDATE round SET budget = '{}', kind = 'labelling' WHERE id = ?")
+        .bind(budgeted.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE round SET kind = 'labelling' WHERE id = ?")
+        .bind(plain.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let backfill = include_str!("../migrations/0025_round_kinds.sql");
+    let statement = backfill
+        .lines()
+        .find(|line| line.starts_with("UPDATE round SET kind"))
+        .unwrap();
+    sqlx::query(statement).execute(&pool).await.unwrap();
+
+    let kinds = (
+        rounds::round(&pool, budgeted).await.unwrap().unwrap().kind,
+        rounds::round(&pool, plain).await.unwrap().unwrap().kind,
+    );
+    assert_eq!(kinds, (Kind::Downlink, Kind::Labelling));
 }

@@ -658,3 +658,68 @@ async fn a_decider_demoted_to_viewer_loses_the_decider_powers() {
         )
     );
 }
+
+#[tokio::test]
+async fn a_kind_is_set_at_creation_and_changed_by_patch() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+
+    let (_, plain) = fixture.round(&owner, &room, new_round()).await;
+    let with_budget = json!({"name": "R", "visibility": "open", "budget": budget()});
+    let (_, budgeted) = fixture.round(&owner, &room, with_budget).await;
+    let review = json!({"name": "R", "visibility": "open", "kind": "review"});
+    let (_, reviewed) = fixture.round(&owner, &room, review).await;
+    let id = plain["id"].as_str().unwrap();
+    let path = format!("/api/rooms/{room}/rounds/{id}");
+    let (_, patched) = fixture
+        .send(
+            Method::PATCH,
+            &path,
+            &owner,
+            Some(json!({"kind": "review"})),
+        )
+        .await;
+
+    let kinds = [&plain, &budgeted, &reviewed, &patched].map(|round| round["kind"].clone());
+    assert_eq!(kinds, ["labelling", "downlink", "review", "review"]);
+    assert_eq!(plain["revision"], 1);
+}
+
+#[tokio::test]
+async fn a_note_and_a_revision_show_in_the_round() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, body) = fixture.round(&owner, &room, new_round()).await;
+    let round = body["id"].as_str().unwrap();
+
+    let forward = json!({"state": "voting", "note": "Please check the stops"});
+    fixture.move_to(&owner, &room, round, forward).await;
+    let (_, back) = fixture
+        .move_to(&owner, &room, round, json!({"state": "proposing"}))
+        .await;
+
+    assert_eq!(back["revision"], 2);
+    assert_eq!(back["log"][0]["note"], "Please check the stops");
+    assert_eq!(back["log"][1]["note"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_too_long_note_is_refused() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (_, body) = fixture.round(&owner, &room, new_round()).await;
+    let round = body["id"].as_str().unwrap();
+
+    let long = json!({"state": "voting", "note": "x".repeat(2001)});
+    let (refused, _) = fixture.move_to(&owner, &room, round, long).await;
+    let fits = json!({"state": "voting", "note": "x".repeat(2000)});
+    let (accepted, _) = fixture.move_to(&owner, &room, round, fits).await;
+
+    assert_eq!(
+        (refused, accepted),
+        (StatusCode::UNPROCESSABLE_ENTITY, StatusCode::OK)
+    );
+}

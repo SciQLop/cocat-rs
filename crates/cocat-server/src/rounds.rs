@@ -35,6 +35,11 @@ text_enum!(
     RoundState { Proposing, Voting, Decided }
 );
 text_enum!(Visibility { Open, Blind });
+text_enum!(Kind {
+    Review,
+    Downlink,
+    Labelling
+});
 text_enum!(RoundRole {
     Proposer,
     Voter,
@@ -46,7 +51,9 @@ pub struct RoundRow {
     pub id: Uuid,
     pub room_id: String,
     pub name: String,
+    pub kind: Kind,
     pub state: RoundState,
+    pub revision: i64,
     pub visibility: Visibility,
     pub deadline: Option<String>,
     pub budget: Option<String>,
@@ -60,12 +67,52 @@ pub struct LogLine {
     pub at: String,
     pub actor: Option<Uuid>,
     pub what: String,
+    pub note: Option<String>,
+}
+
+/// Who may make a move; `Deadline` is the server's ticker, not a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mover {
+    Decider,
+    Owner,
+    Proposer,
+    Deadline,
+}
+
+type Move = (RoundState, RoundState, Mover);
+
+use RoundState::{Decided, Proposing, Voting};
+
+const STANDARD_MOVES: &[Move] = &[
+    (Proposing, Voting, Mover::Decider),
+    (Proposing, Voting, Mover::Deadline),
+    (Proposing, Decided, Mover::Decider),
+    (Voting, Decided, Mover::Decider),
+    (Voting, Proposing, Mover::Owner),
+    (Decided, Proposing, Mover::Owner),
+    (Decided, Voting, Mover::Owner),
+];
+
+/// The only place that knows the order of a round's states: what each kind allows.
+pub fn moves(kind: Kind) -> &'static [Move] {
+    match kind {
+        Kind::Review | Kind::Downlink | Kind::Labelling => STANDARD_MOVES,
+    }
+}
+
+/// Where the ticker takes a round of `kind` sitting in `from` once its deadline has passed.
+fn deadline_move(kind: Kind, from: RoundState) -> Option<RoundState> {
+    moves(kind)
+        .iter()
+        .find(|(start, _, mover)| *start == from && *mover == Mover::Deadline)
+        .map(|(_, to, _)| *to)
 }
 
 /// A change to a round's settings; `None` leaves a field alone, `Some(None)` clears it.
 #[derive(Debug, Default, Clone)]
 pub struct RoundPatch {
     pub name: Option<String>,
+    pub kind: Option<Kind>,
     pub visibility: Option<Visibility>,
     pub deadline: Option<Option<String>>,
     pub budget: Option<Option<String>>,
@@ -74,7 +121,7 @@ pub struct RoundPatch {
 pub mod rules {
     use cocat_core::role::Role;
 
-    use super::{RoundRole, RoundRow, RoundState, Visibility};
+    use super::{Mover, RoundRole, RoundRow, RoundState, Visibility, moves};
 
     /// A user's place in a round: their role in the project and their roles in the round.
     pub struct Seat {
@@ -89,6 +136,15 @@ pub mod rules {
 
         fn owns_project(&self) -> bool {
             self.project_role == Role::Owner
+        }
+
+        fn can_move_as(&self, mover: Mover) -> bool {
+            match mover {
+                Mover::Decider => self.is_decider(),
+                Mover::Owner => self.owns_project(),
+                Mover::Proposer => self.holds(RoundRole::Proposer) && self.project_role.can_write(),
+                Mover::Deadline => false,
+            }
         }
 
         /// A decider only while their project role can still write: a demotion ends it.
@@ -137,13 +193,12 @@ pub mod rules {
         seat.owns_project() || seat.is_decider()
     }
 
-    /// Deciders move a round forward; only a project owner moves it back.
+    /// Whether the round's kind lets someone in this seat make the move.
     pub fn may_move(round: &RoundRow, seat: &Seat, to: RoundState) -> bool {
-        match to.cmp(&round.state) {
-            std::cmp::Ordering::Greater => seat.is_decider(),
-            std::cmp::Ordering::Less => seat.owns_project(),
-            std::cmp::Ordering::Equal => false,
-        }
+        moves(round.kind)
+            .iter()
+            .filter(|(from, target, _)| *from == round.state && *target == to)
+            .any(|(_, _, mover)| seat.can_move_as(*mover))
     }
 }
 
@@ -160,7 +215,9 @@ fn round_from_row(row: &SqliteRow) -> Result<RoundRow, sqlx::Error> {
         id: parse_uuid(&row.try_get::<String, _>("id")?)?,
         room_id: row.try_get("room_id")?,
         name: row.try_get("name")?,
+        kind: row.try_get("kind")?,
         state: row.try_get("state")?,
+        revision: row.try_get("revision")?,
         visibility: row.try_get("visibility")?,
         deadline: row.try_get("deadline")?,
         budget: row.try_get("budget")?,
@@ -173,7 +230,7 @@ fn round_from_row(row: &SqliteRow) -> Result<RoundRow, sqlx::Error> {
 macro_rules! select_round {
     ($tail:literal) => {
         concat!(
-            "SELECT id, room_id, name, state, visibility, deadline, budget, final_catalogue, ",
+            "SELECT id, room_id, name, kind, state, revision, visibility, deadline, budget, final_catalogue, ",
             "created_by, CAST(created_at AS TEXT) AS created_at FROM round ",
             $tail
         )
@@ -220,30 +277,38 @@ async fn insert_member(
     Ok(())
 }
 
+/// What a new round is made of.
+#[derive(Debug, Clone)]
+pub struct RoundSpec {
+    pub name: String,
+    pub kind: Kind,
+    pub visibility: Visibility,
+    pub deadline: Option<String>,
+    pub budget: Option<String>,
+}
+
 /// Creates a round in `proposing`; every project owner and editor proposes and votes, and
 /// `by` decides.
 pub async fn create_round(
     pool: &SqlitePool,
     room_id: &str,
-    name: &str,
-    visibility: Visibility,
-    deadline: Option<String>,
-    budget: Option<String>,
+    spec: RoundSpec,
     by: Uuid,
 ) -> Result<Uuid, DbError> {
     let writers = project_writers(pool, room_id).await?;
     let id = Uuid::new_v4();
     let mut tx = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO round (id, room_id, name, visibility, deadline, budget, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO round (id, room_id, name, kind, visibility, deadline, budget, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(room_id)
-    .bind(name)
-    .bind(visibility)
-    .bind(deadline)
-    .bind(budget)
+    .bind(spec.name)
+    .bind(spec.kind)
+    .bind(spec.visibility)
+    .bind(spec.deadline)
+    .bind(spec.budget)
     .bind(by.to_string())
     .execute(&mut *tx)
     .await?;
@@ -278,7 +343,8 @@ pub async fn update_round(pool: &SqlitePool, id: Uuid, patch: RoundPatch) -> Res
            name = COALESCE(?2, name),
            visibility = COALESCE(?3, visibility),
            deadline = CASE WHEN ?4 THEN ?5 ELSE deadline END,
-           budget = CASE WHEN ?6 THEN ?7 ELSE budget END
+           budget = CASE WHEN ?6 THEN ?7 ELSE budget END,
+           kind = COALESCE(?8, kind)
          WHERE id = ?1",
     )
     .bind(id.to_string())
@@ -288,6 +354,7 @@ pub async fn update_round(pool: &SqlitePool, id: Uuid, patch: RoundPatch) -> Res
     .bind(patch.deadline.flatten())
     .bind(patch.budget.is_some())
     .bind(patch.budget.flatten())
+    .bind(patch.kind)
     .execute(pool)
     .await?;
     Ok(())
@@ -301,8 +368,9 @@ fn state_name(state: RoundState) -> &'static str {
     }
 }
 
-/// Moves the round from `from` and writes the move in its history. `false`, and nothing
-/// written, when the round is no longer in `from`.
+/// Moves the round from `from` and writes the move, with its note, in its history. A move
+/// into proposing from another state starts a new revision. `false`, and nothing written,
+/// when the round is no longer in `from`.
 pub async fn set_state(
     pool: &SqlitePool,
     id: Uuid,
@@ -310,10 +378,12 @@ pub async fn set_state(
     state: RoundState,
     final_catalogue: Option<&str>,
     actor: Option<Uuid>,
+    note: Option<&str>,
 ) -> Result<bool, DbError> {
     let mut tx = pool.begin().await?;
     let moved = sqlx::query(
         "UPDATE round SET state = ?2,
+           revision = revision + (?2 = 'proposing' AND ?4 != 'proposing'),
            final_catalogue = CASE WHEN ?2 = 'decided'
              THEN COALESCE(?3, final_catalogue) ELSE NULL END
          WHERE id = ?1 AND state = ?4",
@@ -327,7 +397,8 @@ pub async fn set_state(
     .rows_affected()
         > 0;
     if moved {
-        log_line(&mut tx, id, actor, &format!("state: {}", state_name(state))).await?;
+        let what = format!("state: {}", state_name(state));
+        log_line(&mut tx, id, actor, &what, note).await?;
         if state == RoundState::Proposing {
             clear_passed_deadline(&mut tx, id, actor).await?;
         }
@@ -341,11 +412,13 @@ async fn log_line(
     id: Uuid,
     actor: Option<Uuid>,
     what: &str,
+    note: Option<&str>,
 ) -> Result<(), DbError> {
-    sqlx::query("INSERT INTO round_log (round_id, actor, what) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO round_log (round_id, actor, what, note) VALUES (?, ?, ?, ?)")
         .bind(id.to_string())
         .bind(actor.map(|actor| actor.to_string()))
         .bind(what)
+        .bind(note)
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -367,7 +440,7 @@ async fn clear_passed_deadline(
     .await?
     .rows_affected();
     if cleared > 0 {
-        log_line(tx, id, actor, "deadline cleared").await?;
+        log_line(tx, id, actor, "deadline cleared", None).await?;
     }
     Ok(())
 }
@@ -579,7 +652,7 @@ pub async fn votes(pool: &SqlitePool, id: Uuid) -> Result<Vec<(Uuid, String)>, D
 
 pub async fn log(pool: &SqlitePool, id: Uuid) -> Result<Vec<LogLine>, DbError> {
     let rows = sqlx::query(
-        "SELECT CAST(at AS TEXT) AS at, actor, what FROM round_log WHERE round_id = ? ORDER BY rowid",
+        "SELECT CAST(at AS TEXT) AS at, actor, what, note FROM round_log WHERE round_id = ? ORDER BY rowid",
     )
     .bind(id.to_string())
     .fetch_all(pool)
@@ -591,6 +664,7 @@ pub async fn log(pool: &SqlitePool, id: Uuid) -> Result<Vec<LogLine>, DbError> {
                 at: row.try_get("at")?,
                 actor: parse_opt_uuid(row.try_get("actor")?)?,
                 what: row.try_get("what")?,
+                note: row.try_get("note")?,
             })
         })
         .collect::<Result<_, sqlx::Error>>()?)
@@ -629,25 +703,17 @@ pub async fn close_due(state: &AppState, now: OffsetDateTime) -> Result<usize, D
     Ok(moved)
 }
 
-/// Moves a round to voting and logs it, only if it is still proposing: a decider may have
-/// moved it since the deadline was seen. `false` when nothing changed.
+/// Takes a round still proposing to where its kind sends it at the deadline, logged as the
+/// server. `false` when nothing changed: a decider may have moved it since the deadline was
+/// seen, or its kind has no deadline move.
 pub async fn close_if_proposing(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> {
-    let mut tx = pool.begin().await?;
-    let changed =
-        sqlx::query("UPDATE round SET state = 'voting' WHERE id = ? AND state = 'proposing'")
-            .bind(id.to_string())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-    if changed > 0 {
-        sqlx::query("INSERT INTO round_log (round_id, actor, what) VALUES (?, NULL, ?)")
-            .bind(id.to_string())
-            .bind(format!("state: {}", state_name(RoundState::Voting)))
-            .execute(&mut *tx)
-            .await?;
+    let Some(row) = round(pool, id).await? else {
+        return Ok(false);
+    };
+    match deadline_move(row.kind, row.state) {
+        Some(to) => set_state(pool, id, row.state, to, None, None, None).await,
+        None => Ok(false),
     }
-    tx.commit().await?;
-    Ok(changed > 0)
 }
 
 /// Wakes every minute, like the relay scheduler.
@@ -675,7 +741,9 @@ mod tests {
             id: Uuid::nil(),
             room_id: "lab".into(),
             name: "R".into(),
+            kind: Kind::Labelling,
             state,
+            revision: 1,
             visibility,
             deadline: None,
             budget: None,
@@ -776,5 +844,57 @@ mod tests {
         assert!(!may_administer(&demoted));
         assert!(may_administer(&seat(Role::Editor, &[RoundRole::Decider])));
         assert!(may_administer(&seat(Role::Owner, &[])));
+    }
+
+    #[test]
+    fn the_moves_table_reproduces_todays_rules() {
+        let states = [
+            RoundState::Proposing,
+            RoundState::Voting,
+            RoundState::Decided,
+        ];
+        let seats = [
+            seat(Role::Editor, &[RoundRole::Decider]),
+            seat(Role::Owner, &[]),
+            seat(Role::Editor, PROPOSER),
+            seat(Role::Viewer, &[RoundRole::Decider]),
+        ];
+        for kind in [Kind::Review, Kind::Downlink, Kind::Labelling] {
+            for (from, to) in states
+                .iter()
+                .flat_map(|f| states.iter().map(move |t| (f, t)))
+            {
+                for seat in &seats {
+                    let mut round = round_in(*from, Visibility::Open);
+                    round.kind = kind;
+                    assert_eq!(
+                        may_move(&round, seat, *to),
+                        todays_rule(*from, *to, seat),
+                        "{kind:?} {from:?} -> {to:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn todays_rule(from: RoundState, to: RoundState, seat: &Seat) -> bool {
+        match to.cmp(&from) {
+            std::cmp::Ordering::Greater => {
+                seat.roles.contains(&RoundRole::Decider) && seat.project_role.can_write()
+            }
+            std::cmp::Ordering::Less => seat.project_role == Role::Owner,
+            std::cmp::Ordering::Equal => false,
+        }
+    }
+
+    #[test]
+    fn only_the_deadline_closes_proposing_by_itself() {
+        for kind in [Kind::Review, Kind::Downlink, Kind::Labelling] {
+            assert_eq!(
+                deadline_move(kind, RoundState::Proposing),
+                Some(RoundState::Voting)
+            );
+            assert_eq!(deadline_move(kind, RoundState::Voting), None);
+        }
     }
 }
