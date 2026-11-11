@@ -318,6 +318,42 @@ async fn deciding_needs_an_existing_catalogue() {
 }
 
 #[tokio::test]
+async fn deciding_stamps_the_round_on_the_final_catalogue() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    fixture.seed_catalogue(&room);
+    fixture.editor(&room, "ada@example.org", Role::Editor).await;
+    let body = json!({"name": "Round 1", "visibility": "open", "budget": budget()});
+    let (_, created) = fixture.round(&owner, &room, body).await;
+    let round = created["id"].as_str().unwrap();
+    let members =
+        json!({"proposers": ["ada@example.org"], "voters": [], "deciders": ["owner@example.org"]});
+    let path = format!("/api/rooms/{room}/rounds/{round}/members");
+    fixture
+        .send(Method::PUT, &path, &owner, Some(members))
+        .await;
+
+    let good = json!({"state": "decided", "final_catalogue": CATALOGUE});
+    let (status, _) = fixture.move_to(&owner, &room, round, good).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let path = format!("/api/rooms/{room}/catalogues/{CATALOGUE}");
+    let (_, catalogue) = fixture.send(Method::GET, &path, &owner, None).await;
+    let stamp: Value =
+        serde_json::from_str(catalogue["attributes"]["round"].as_str().unwrap()).unwrap();
+    assert_eq!(stamp["@type"], "cocat:Round");
+    assert_eq!(stamp["cocat:name"], "Round 1");
+    assert_eq!(stamp["cocat:decidedBy"], "owner@example.org");
+    assert_eq!(stamp["cocat:proposers"], json!(["ada@example.org"]));
+    assert_eq!(
+        stamp["cocat:budget"]["cocat:cap"]["qudt:numericValue"],
+        10.0
+    );
+    assert!(stamp["cocat:decidedAt"].is_string());
+}
+
+#[tokio::test]
 async fn an_owner_moves_a_round_back_and_it_is_logged() {
     let fixture = Fixture::start().await;
     let (_, owner) = fixture.user_token("owner@example.org").await;

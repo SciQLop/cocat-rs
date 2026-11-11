@@ -558,23 +558,42 @@ pub async fn due_rounds(pool: &SqlitePool, now: &str) -> Result<Vec<Uuid>, DbErr
 }
 
 /// Moves every round whose deadline has passed to voting, as the server and not a person.
+/// Returns how many it moved.
 pub async fn close_due(state: &AppState, now: OffsetDateTime) -> Result<usize, DbError> {
     let now = now
         .format(&Rfc3339)
         .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
-    let due = due_rounds(&state.pool, &now).await?;
-    for id in &due {
-        close(state, *id).await?;
+    let mut moved = 0;
+    for id in due_rounds(&state.pool, &now).await? {
+        if close_if_proposing(&state.pool, id).await? {
+            moved += 1;
+            if let Some(row) = round(&state.pool, id).await? {
+                ws::check_room_roles(state, &row.room_id).await;
+            }
+        }
     }
-    Ok(due.len())
+    Ok(moved)
 }
 
-async fn close(state: &AppState, id: Uuid) -> Result<(), DbError> {
-    set_state(&state.pool, id, RoundState::Voting, None, None).await?;
-    if let Some(row) = round(&state.pool, id).await? {
-        ws::check_room_roles(state, &row.room_id).await;
+/// Moves a round to voting and logs it, only if it is still proposing: a decider may have
+/// moved it since the deadline was seen. `false` when nothing changed.
+pub async fn close_if_proposing(pool: &SqlitePool, id: Uuid) -> Result<bool, DbError> {
+    let mut tx = pool.begin().await?;
+    let changed =
+        sqlx::query("UPDATE round SET state = 'voting' WHERE id = ? AND state = 'proposing'")
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+    if changed > 0 {
+        sqlx::query("INSERT INTO round_log (round_id, actor, what) VALUES (?, NULL, ?)")
+            .bind(id.to_string())
+            .bind(format!("state: {}", state_name(RoundState::Voting)))
+            .execute(&mut *tx)
+            .await?;
     }
-    Ok(())
+    tx.commit().await?;
+    Ok(changed > 0)
 }
 
 /// Wakes every minute, like the relay scheduler.

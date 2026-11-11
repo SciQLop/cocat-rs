@@ -10,14 +10,16 @@ use cocat_core::role::Role;
 use cocat_core::round::{budget_json, parse_budget};
 use cocat_core::time::Timestamp;
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 use yrs::Transact;
 
 use crate::api::{ApiError, ApiPath, CurrentUser, JsonBody, membership};
+use crate::history::diff::replay_until;
 use crate::openapi::Detail;
+use crate::room::Author;
 use crate::rounds::rules::{self, Seat};
 use crate::rounds::{self, RoundPatch, RoundRole, RoundRow, RoundState, Visibility};
 use crate::{AppState, db, lifecycle, ws};
@@ -527,9 +529,77 @@ async fn move_round(
         ));
     }
     let catalogue = outcome(&state, &room_id, &change).await?;
+    if let Some(catalogue) = catalogue {
+        stamp_round(&state, &row, catalogue, user.id).await?;
+    }
     rounds::set_state(&state.pool, row.id, change.state, catalogue, Some(user.id)).await?;
     ws::check_room_roles(&state, &room_id).await;
     Ok(Json(reload(&state, row.id, user.id).await?))
+}
+
+fn round_stamp(round: &RoundRow, decider: &str, proposers: Vec<String>, at: String) -> Value {
+    let budget = round
+        .budget
+        .as_deref()
+        .and_then(|budget| serde_json::from_str::<Value>(budget).ok());
+    let mut stamp = json!({
+        "@context": {"cocat": "https://cocat.sciqlop.fr/ns/round#"},
+        "@type": "cocat:Round",
+        "cocat:name": round.name,
+        "cocat:decidedBy": decider,
+        "cocat:decidedAt": at,
+        "cocat:proposers": proposers,
+    });
+    if let Some(budget) = budget {
+        stamp["cocat:budget"] = budget;
+    }
+    stamp
+}
+
+/// The update that sets the catalogue's `round` attribute, applied on the room as it is.
+async fn stamp_update(
+    state: &AppState,
+    room_id: &str,
+    catalogue: &str,
+    stamp: &Value,
+) -> Result<Vec<u8>, ApiError> {
+    let uuid = catalogue.to_owned();
+    let attributes = Map::from_iter([("round".to_owned(), Value::String(stamp.to_string()))]);
+    let update = state
+        .rooms
+        .read_log(room_id, 1, move |records, _| {
+            let present = replay_until(records, u64::MAX);
+            let mut txn = present.transact_mut();
+            model::set_catalogue_attributes(&mut txn, &uuid, &attributes)
+                .map(|_| txn.encode_update_v1())
+        })
+        .await?;
+    update.map_err(|_| ApiError::Internal)
+}
+
+/// Records the round on the final catalogue, as the decider's own write.
+async fn stamp_round(
+    state: &AppState,
+    round: &RoundRow,
+    catalogue: &str,
+    decider: Uuid,
+) -> Result<(), ApiError> {
+    let members = rounds::members(&state.pool, round.id).await?;
+    let emails = Emails::load(state, members.iter().map(|(id, _)| *id).chain([decider])).await?;
+    let at = Timestamp::now().rfc3339().map_err(|_| ApiError::Internal)?;
+    let stamp = round_stamp(
+        round,
+        &emails.of(decider),
+        emails.with_role(&members, RoundRole::Proposer),
+        at,
+    );
+    let update = stamp_update(state, &round.room_id, catalogue, &stamp).await?;
+    let allowance = state.rooms.allowance(&state.pool, &round.room_id).await?;
+    state
+        .rooms
+        .write_as(&round.room_id, allowance, Author::Client(decider), update)
+        .await?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

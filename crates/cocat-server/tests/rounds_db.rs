@@ -226,3 +226,22 @@ async fn a_deadline_with_fractions_is_due_only_once_it_has_passed() {
 
     assert_eq!((before, after), (vec![], vec![id]));
 }
+
+#[tokio::test]
+async fn a_round_decided_before_the_deadline_closes_stays_decided() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, Some("2026-01-01T00:00:00Z")).await;
+    rounds::set_state(&pool, id, RoundState::Decided, Some("cat"), Some(owner))
+        .await
+        .unwrap();
+
+    let closed = rounds::close_if_proposing(&pool, id).await.unwrap();
+
+    assert!(!closed);
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!(row.state, RoundState::Decided);
+    let last = rounds::log(&pool, id).await.unwrap().pop().unwrap();
+    assert_eq!(last.what, "state: decided");
+}
