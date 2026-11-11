@@ -90,6 +90,11 @@ pub mod rules {
         fn owns_project(&self) -> bool {
             self.project_role == Role::Owner
         }
+
+        /// A decider only while their project role can still write: a demotion ends it.
+        fn is_decider(&self) -> bool {
+            self.holds(RoundRole::Decider) && self.project_role.can_write()
+        }
     }
 
     /// The role a user holds on a proposal document right now, if any.
@@ -109,7 +114,7 @@ pub mod rules {
             Visibility::Blind => {
                 round.state != RoundState::Proposing
                     || is_author
-                    || seat.holds(RoundRole::Decider)
+                    || seat.is_decider()
                     || seat.owns_project()
             }
         }
@@ -121,16 +126,21 @@ pub mod rules {
             Visibility::Blind => {
                 round.state == RoundState::Decided
                     || is_voter_self
-                    || seat.holds(RoundRole::Decider)
+                    || seat.is_decider()
                     || seat.owns_project()
             }
         }
     }
 
+    /// Who may change a round's settings and members.
+    pub fn may_administer(seat: &Seat) -> bool {
+        seat.owns_project() || seat.is_decider()
+    }
+
     /// Deciders move a round forward; only a project owner moves it back.
     pub fn may_move(round: &RoundRow, seat: &Seat, to: RoundState) -> bool {
         match to.cmp(&round.state) {
-            std::cmp::Ordering::Greater => seat.holds(RoundRole::Decider),
+            std::cmp::Ordering::Greater => seat.is_decider(),
             std::cmp::Ordering::Less => seat.owns_project(),
             std::cmp::Ordering::Equal => false,
         }
@@ -291,30 +301,74 @@ fn state_name(state: RoundState) -> &'static str {
     }
 }
 
-/// Moves the round and writes the move in its history.
+/// Moves the round from `from` and writes the move in its history. `false`, and nothing
+/// written, when the round is no longer in `from`.
 pub async fn set_state(
     pool: &SqlitePool,
     id: Uuid,
+    from: RoundState,
     state: RoundState,
     final_catalogue: Option<&str>,
     actor: Option<Uuid>,
-) -> Result<(), DbError> {
+) -> Result<bool, DbError> {
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        "UPDATE round SET state = ?, final_catalogue = COALESCE(?, final_catalogue) WHERE id = ?",
+    let moved = sqlx::query(
+        "UPDATE round SET state = ?2,
+           final_catalogue = CASE WHEN ?2 = 'decided'
+             THEN COALESCE(?3, final_catalogue) ELSE NULL END
+         WHERE id = ?1 AND state = ?4",
     )
+    .bind(id.to_string())
     .bind(state)
     .bind(final_catalogue)
-    .bind(id.to_string())
+    .bind(from)
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected()
+        > 0;
+    if moved {
+        log_line(&mut tx, id, actor, &format!("state: {}", state_name(state))).await?;
+        if state == RoundState::Proposing {
+            clear_passed_deadline(&mut tx, id, actor).await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(moved)
+}
+
+async fn log_line(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    actor: Option<Uuid>,
+    what: &str,
+) -> Result<(), DbError> {
     sqlx::query("INSERT INTO round_log (round_id, actor, what) VALUES (?, ?, ?)")
         .bind(id.to_string())
         .bind(actor.map(|actor| actor.to_string()))
-        .bind(format!("state: {}", state_name(state)))
-        .execute(&mut *tx)
+        .bind(what)
+        .execute(&mut **tx)
         .await?;
-    tx.commit().await?;
+    Ok(())
+}
+
+/// A round back in proposing with a deadline already behind it would be closed again by the
+/// next tick, undoing the move.
+async fn clear_passed_deadline(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: Uuid,
+    actor: Option<Uuid>,
+) -> Result<(), DbError> {
+    let cleared = sqlx::query(
+        "UPDATE round SET deadline = NULL
+         WHERE id = ? AND deadline IS NOT NULL AND julianday(deadline) <= julianday('now')",
+    )
+    .bind(id.to_string())
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    if cleared > 0 {
+        log_line(tx, id, actor, "deadline cleared").await?;
+    }
     Ok(())
 }
 
@@ -712,5 +766,15 @@ mod tests {
         assert!(!may_move(&voting, &decider, RoundState::Proposing));
         assert!(may_move(&decided, &owner, RoundState::Proposing));
         assert!(!may_move(&proposing, &owner, RoundState::Voting));
+    }
+
+    #[test]
+    fn a_decider_who_cannot_edit_the_project_decides_nothing() {
+        let demoted = seat(Role::Viewer, &[RoundRole::Decider]);
+        let proposing = round_in(RoundState::Proposing, Visibility::Open);
+        assert!(!may_move(&proposing, &demoted, RoundState::Voting));
+        assert!(!may_administer(&demoted));
+        assert!(may_administer(&seat(Role::Editor, &[RoundRole::Decider])));
+        assert!(may_administer(&seat(Role::Owner, &[])));
     }
 }

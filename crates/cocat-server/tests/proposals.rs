@@ -615,3 +615,33 @@ async fn proposal_bytes_count_toward_the_project_quota() {
     assert!(first.unwrap());
     assert!(matches!(second, Err(cocat_server::room::RoomError::Full)));
 }
+
+#[tokio::test]
+async fn turning_an_open_round_blind_closes_other_members_sockets_on_a_proposal() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner).await;
+    let (_, alice) = fixture
+        .member(&room, "alice@example.org", Role::Editor)
+        .await;
+    let (_, bob) = fixture.member(&room, "bob@example.org", Role::Editor).await;
+    let round = fixture.round(&owner, &room, "open").await;
+    let doc = fixture.proposal(&alice, &room, &round).await;
+    let addr = fixture.serve().await;
+    let path = format!("{room}/{doc}");
+    let (mut watcher, role) = connect(addr, &path, &bob).await;
+    assert_eq!(role, "viewer");
+
+    let (status, body) = fixture
+        .send(
+            Method::PATCH,
+            &format!("/api/rooms/{room}/rounds/{round}"),
+            &owner,
+            Some(json!({"visibility": "blind"})),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(close_code(&mut watcher).await, Some(4403));
+    assert_eq!(handshake(addr, &path, &bob).await.err(), Some(403));
+}

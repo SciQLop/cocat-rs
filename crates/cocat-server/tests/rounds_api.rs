@@ -599,3 +599,62 @@ async fn open_votes_show_to_every_member() {
         json!([{"voter": "owner@example.org", "events": [EVENT_A]}])
     );
 }
+
+#[tokio::test]
+async fn a_round_moved_back_shows_no_final_catalogue() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    fixture.seed_catalogue(&room);
+    let (_, body) = fixture.round(&owner, &room, new_round()).await;
+    let round = body["id"].as_str().unwrap();
+    let good = json!({"state": "decided", "final_catalogue": CATALOGUE});
+    let (_, decided) = fixture.move_to(&owner, &room, round, good).await;
+    assert_eq!(decided["final_catalogue"], CATALOGUE);
+
+    let (_, body) = fixture
+        .move_to(&owner, &room, round, json!({"state": "proposing"}))
+        .await;
+
+    assert_eq!(body["final_catalogue"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_decider_demoted_to_viewer_loses_the_decider_powers() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user_token("owner@example.org").await;
+    let room = fixture.project(&owner, "catalogues").await;
+    let (editor_id, editor) = fixture
+        .editor(&room, "editor@example.org", Role::Editor)
+        .await;
+    let (_, body) = fixture.round(&editor, &room, new_round()).await;
+    let round = body["id"].as_str().unwrap();
+    db::set_role(&fixture.state.pool, &room, editor_id, Role::Viewer)
+        .await
+        .unwrap();
+
+    let (moved, _) = fixture
+        .move_to(&editor, &room, round, json!({"state": "voting"}))
+        .await;
+    let path = format!("/api/rooms/{room}/rounds/{round}");
+    let (patched, _) = fixture
+        .send(Method::PATCH, &path, &editor, Some(json!({"name": "Mine"})))
+        .await;
+    let (seated, _) = fixture
+        .send(
+            Method::PUT,
+            &format!("{path}/members"),
+            &editor,
+            Some(json!({"proposers": [], "voters": [], "deciders": ["editor@example.org"]})),
+        )
+        .await;
+
+    assert_eq!(
+        (moved, patched, seated),
+        (
+            StatusCode::FORBIDDEN,
+            StatusCode::FORBIDDEN,
+            StatusCode::FORBIDDEN
+        )
+    );
+}

@@ -71,9 +71,16 @@ async fn deleting_the_project_deletes_its_rounds() {
     let id = rounds::create_round(&pool, "lab", "R1", Visibility::Open, None, None, owner)
         .await
         .unwrap();
-    rounds::set_state(&pool, id, RoundState::Voting, None, Some(owner))
-        .await
-        .unwrap();
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         rounds::log(&pool, id).await.unwrap()[0].what,
         "state: voting"
@@ -111,9 +118,16 @@ async fn due_rounds_are_the_proposing_ones_past_their_deadline() {
     let future = make(Some("2027-01-01T00:00:00Z")).await;
     let none = make(None).await;
     let moved = make(Some("2026-01-01T00:00:00Z")).await;
-    rounds::set_state(&pool, moved, RoundState::Voting, None, None)
-        .await
-        .unwrap();
+    rounds::set_state(
+        &pool,
+        moved,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let due = rounds::due_rounds(&pool, "2026-06-01T00:00:00Z")
         .await
@@ -233,9 +247,16 @@ async fn a_round_decided_before_the_deadline_closes_stays_decided() {
     let owner = user(&pool, "owner@x.org").await;
     project(&pool, owner).await;
     let id = round_with_deadline(&pool, owner, Some("2026-01-01T00:00:00Z")).await;
-    rounds::set_state(&pool, id, RoundState::Decided, Some("cat"), Some(owner))
-        .await
-        .unwrap();
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Decided,
+        Some("cat"),
+        Some(owner),
+    )
+    .await
+    .unwrap();
 
     let closed = rounds::close_if_proposing(&pool, id).await.unwrap();
 
@@ -244,4 +265,168 @@ async fn a_round_decided_before_the_deadline_closes_stays_decided() {
     assert_eq!(row.state, RoundState::Decided);
     let last = rounds::log(&pool, id).await.unwrap().pop().unwrap();
     assert_eq!(last.what, "state: decided");
+}
+
+#[tokio::test]
+async fn moving_back_clears_a_deadline_that_has_passed_so_the_ticker_leaves_it() {
+    let (pool, dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, Some("2026-01-01T00:00:00Z")).await;
+    let state = app_state(pool.clone(), &dir);
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
+
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Voting,
+        RoundState::Proposing,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
+    let moved = rounds::close_due(&state, instant("2099-01-01T00:00:00Z"))
+        .await
+        .unwrap();
+
+    assert_eq!(moved, 0);
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!((row.state, row.deadline), (RoundState::Proposing, None));
+    let log = rounds::log(&pool, id).await.unwrap();
+    let last: Vec<_> = log
+        .iter()
+        .rev()
+        .take(2)
+        .map(|l| (l.what.as_str(), l.actor))
+        .collect();
+    assert_eq!(
+        last,
+        [
+            ("deadline cleared", Some(owner)),
+            ("state: proposing", Some(owner))
+        ]
+    );
+}
+
+#[tokio::test]
+async fn moving_back_keeps_a_deadline_still_ahead() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, Some("2099-01-01T00:00:00Z")).await;
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
+
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Voting,
+        RoundState::Proposing,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
+
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!(row.deadline.as_deref(), Some("2099-01-01T00:00:00Z"));
+}
+
+#[tokio::test]
+async fn a_move_from_a_stale_state_changes_and_logs_nothing() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, None).await;
+    rounds::close_if_proposing(&pool, id).await.unwrap();
+    let before = rounds::log(&pool, id).await.unwrap().len();
+
+    let moved = rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Voting,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
+
+    assert!(!moved);
+    assert_eq!(rounds::log(&pool, id).await.unwrap().len(), before);
+}
+
+#[tokio::test]
+async fn moving_off_decided_forgets_the_final_catalogue() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let id = round_with_deadline(&pool, owner, None).await;
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Proposing,
+        RoundState::Decided,
+        Some("cat"),
+        Some(owner),
+    )
+    .await
+    .unwrap();
+
+    rounds::set_state(
+        &pool,
+        id,
+        RoundState::Decided,
+        RoundState::Proposing,
+        None,
+        Some(owner),
+    )
+    .await
+    .unwrap();
+
+    let row = rounds::round(&pool, id).await.unwrap().unwrap();
+    assert_eq!(row.final_catalogue, None);
+}
+
+#[tokio::test]
+async fn deleting_an_account_keeps_its_proposals_and_votes() {
+    let (pool, _dir) = pool().await;
+    let owner = user(&pool, "owner@x.org").await;
+    project(&pool, owner).await;
+    let alice = user(&pool, "alice@x.org").await;
+    db::add_member(&pool, "lab", alice, Role::Editor)
+        .await
+        .unwrap();
+    let id = round_with_deadline(&pool, owner, None).await;
+    let doc = rounds::add_proposal(&pool, id, alice).await.unwrap();
+    rounds::set_votes(&pool, id, alice, &["e1".to_owned()])
+        .await
+        .unwrap();
+
+    db::delete_user(&pool, alice).await.unwrap();
+
+    assert_eq!(rounds::proposals(&pool, id).await.unwrap(), [(alice, doc)]);
+    assert_eq!(rounds::proposal_docs(&pool, "lab").await.unwrap(), [doc]);
+    assert_eq!(
+        rounds::votes(&pool, id).await.unwrap(),
+        [(alice, "e1".to_owned())]
+    );
 }

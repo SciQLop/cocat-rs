@@ -144,12 +144,8 @@ async fn load(
     ))
 }
 
-fn may_administer(seat: &Seat) -> bool {
-    seat.project_role == Role::Owner || seat.roles.contains(&RoundRole::Decider)
-}
-
 fn require_administrator(seat: &Seat) -> Result<(), ApiError> {
-    match may_administer(seat) {
+    match rules::may_administer(seat) {
         true => Ok(()),
         false => Err(forbidden("Only a decider or a project owner may do this")),
     }
@@ -513,6 +509,7 @@ async fn outcome<'a>(
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "Deciders move a round forward, only a project owner moves it back", body = Detail),
         (status = 404, description = "No such room or round, or the caller is not a member", body = Detail),
+        (status = 409, description = "The round changed state since it was read", body = Detail),
         (status = 422, description = "Deciding needs a catalogue of the project", body = Detail),
     )
 )]
@@ -532,7 +529,20 @@ async fn move_round(
     if let Some(catalogue) = catalogue {
         stamp_round(&state, &row, catalogue, user.id).await?;
     }
-    rounds::set_state(&state.pool, row.id, change.state, catalogue, Some(user.id)).await?;
+    let moved = rounds::set_state(
+        &state.pool,
+        row.id,
+        row.state,
+        change.state,
+        catalogue,
+        Some(user.id),
+    )
+    .await?;
+    if !moved {
+        return Err(ApiError::Conflict(
+            "The round changed state meanwhile; reload it".to_owned(),
+        ));
+    }
     ws::check_room_roles(&state, &room_id).await;
     Ok(Json(reload(&state, row.id, user.id).await?))
 }

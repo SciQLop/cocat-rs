@@ -34,13 +34,13 @@ pub struct LogEntry {
 }
 
 impl Round {
-    /// "alice@example.org: submitted", or "not yet".
+    /// "alice@example.org: started", or "not yet".
     pub fn proposer_line(&self, email: &str) -> String {
-        let submitted = self
+        let started = self
             .proposals
             .iter()
             .any(|proposal| proposal.author == email);
-        let status = if submitted { "submitted" } else { "not yet" };
+        let status = if started { "started" } else { "not yet" };
         format!("{email}: {status}")
     }
 
@@ -82,8 +82,8 @@ mod tests {
     }
 
     #[test]
-    fn a_proposer_line_says_whether_they_submitted() {
-        assert_eq!(round().proposer_line("a@x.org"), "a@x.org: submitted");
+    fn a_proposer_line_says_whether_they_started() {
+        assert_eq!(round().proposer_line("a@x.org"), "a@x.org: started");
         assert_eq!(round().proposer_line("b@x.org"), "b@x.org: not yet");
     }
 

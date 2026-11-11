@@ -20,9 +20,11 @@ CREATE TABLE round_member (
     PRIMARY KEY (round_id, user_id, role)
 );
 
+-- author and voter are not foreign keys: deleting an account must not delete the proposals
+-- (their files would be orphaned) or the votes; they stay as the uuid.
 CREATE TABLE round_proposal (
     round_id TEXT NOT NULL REFERENCES round(id) ON DELETE CASCADE,
-    author TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    author TEXT NOT NULL,
     doc_id TEXT NOT NULL UNIQUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (round_id, author)
@@ -30,7 +32,7 @@ CREATE TABLE round_proposal (
 
 CREATE TABLE round_vote (
     round_id TEXT NOT NULL REFERENCES round(id) ON DELETE CASCADE,
-    voter TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    voter TEXT NOT NULL,
     event TEXT NOT NULL,
     PRIMARY KEY (round_id, voter, event)
 );
