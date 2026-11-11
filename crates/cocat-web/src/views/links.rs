@@ -86,7 +86,7 @@ impl Lookups {
     }
 }
 
-async fn catalogues_of(api: &str, project: &str) -> Result<Vec<Listed>, ApiError> {
+pub async fn catalogues_of(api: &str, project: &str) -> Result<Vec<Listed>, ApiError> {
     crate::api::read::<ListedCatalogues>(api, &["rooms", project, "catalogues"])
         .await
         .map(|listed| listed.catalogues)

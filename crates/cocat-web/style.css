@@ -1643,3 +1643,12 @@ a.home-project:hover { color: var(--accent); }
 .your-part-box p { margin: 0; font-weight: 500; }
 .round-note { margin: 4px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted); }
 .budget.over-cap { color: var(--danger); font-weight: 600; }
+.round-form { max-width: 640px; gap: 16px; }
+.round-form fieldset { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); padding: 12px; margin: 0; }
+.round-presets .inline-choice { flex-direction: row; align-items: center; gap: 8px; }
+.round-form .amount { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.round-form .amount input[type="text"] { width: 130px; }
+.round-people table { border-collapse: collapse; }
+.round-people th { font-weight: 500; text-align: center; padding: 0 8px; color: var(--muted); }
+.round-people td { padding: 4px 8px; text-align: center; }
+.round-people td:first-child { text-align: left; }

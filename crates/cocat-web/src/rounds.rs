@@ -1,8 +1,11 @@
 //! Selection rounds as the page shows them: the server's JSON and the lines drawn from it.
 
+use crate::sharing::Member;
 use cocat_core::model::EventRecord;
 use cocat_core::round::review::{ReviewRow, progress, reviewed};
-use cocat_core::round::{Cost, cost, parse_budget};
+use cocat_core::round::{
+    Budget, Cost, Quantity, budget_json as core_budget_json, cost, parse_budget, parse_unit,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -171,6 +174,252 @@ pub fn over_cap(cost: &Cost) -> bool {
     cost.total > cost.cap
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Need {
+    Required,
+    Optional,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Defaults {
+    Nobody,
+    Writers,
+}
+
+/// A starting point for the new-round form: what each kind of round usually needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Preset {
+    pub label: &'static str,
+    pub kind: &'static str,
+    pub visibility: &'static str,
+    pub budget_form: bool,
+    pub candidates: Need,
+    pub default_proposers: Defaults,
+}
+
+pub const PRESETS: [Preset; 3] = [
+    Preset {
+        label: "Review detections",
+        kind: "review",
+        visibility: "open",
+        budget_form: false,
+        candidates: Need::Required,
+        default_proposers: Defaults::Nobody,
+    },
+    Preset {
+        label: "Selective downlink",
+        kind: "downlink",
+        visibility: "open",
+        budget_form: true,
+        candidates: Need::Optional,
+        default_proposers: Defaults::Writers,
+    },
+    Preset {
+        label: "Labelling",
+        kind: "labelling",
+        visibility: "blind",
+        budget_form: false,
+        candidates: Need::Optional,
+        default_proposers: Defaults::Writers,
+    },
+];
+
+/// What the voter role is called: reviewers judge detections, voters pick among proposals.
+pub fn voter_title(kind: &str) -> &'static str {
+    if kind == "review" {
+        "Reviewers"
+    } else {
+        "Voters"
+    }
+}
+
+/// Owners and editors may start a round, but not in a personal or a public project.
+pub fn can_start(writer: bool, personal: bool, public: bool) -> bool {
+    writer && !personal && !public
+}
+
+pub const DATA_UNITS: [&str; 10] = [
+    "byte", "kbyte", "Mbyte", "Gbyte", "Kibyte", "Mibyte", "Gibyte", "bit", "kbit", "Mbit",
+];
+pub const TIMES: [&str; 3] = ["s", "min", "h"];
+
+/// One project member's roles in the round being made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seat {
+    pub email: String,
+    pub can_decide: bool,
+    pub proposer: bool,
+    pub voter: bool,
+    pub decider: bool,
+}
+
+/// What a mode costs: `amount` of `unit` per `per`, for events whose attribute is `value`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RateRow {
+    pub value: String,
+    pub amount: String,
+    pub unit: String,
+    pub per: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetForm {
+    pub attribute: String,
+    pub cap: String,
+    pub cap_unit: String,
+    pub rates: Vec<RateRow>,
+}
+
+impl Default for BudgetForm {
+    fn default() -> Self {
+        Self {
+            attribute: String::new(),
+            cap: String::new(),
+            cap_unit: "Gbit".into(),
+            rates: Vec::new(),
+        }
+    }
+}
+
+fn quantity(amount: &str, notation: &str) -> Result<Quantity, String> {
+    let value = amount
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| format!("{amount:?} is not a number"))?;
+    let unit = parse_unit(notation).map_err(|error| error.to_string())?;
+    Ok(Quantity {
+        value,
+        notation: notation.to_owned(),
+        unit,
+    })
+}
+
+fn rate(row: &RateRow) -> Result<(String, Quantity), String> {
+    let notation = format!("{}/{}", row.unit, row.per);
+    Ok((
+        row.value.trim().to_owned(),
+        quantity(&row.amount, &notation)?,
+    ))
+}
+
+/// The budget as the spec's JSON-LD, checked the way the server will check it.
+pub fn budget_json(form: &BudgetForm) -> Result<Value, String> {
+    let attribute = form.attribute.trim().to_owned();
+    if attribute.is_empty() {
+        return Err("Name the event attribute the budget prices.".to_owned());
+    }
+    let budget = Budget {
+        attribute,
+        cap: quantity(&form.cap, &form.cap_unit)?,
+        rates: form.rates.iter().map(rate).collect::<Result<_, _>>()?,
+    };
+    let made = core_budget_json(&budget);
+    parse_budget(&made).map_err(|error| error.to_string())?;
+    Ok(made)
+}
+
+/// The new-round form's content: a preset's defaults, then the visitor's edits.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewRound {
+    pub name: String,
+    pub preset: Preset,
+    pub deadline: String,
+    pub budget: Option<BudgetForm>,
+    pub candidates: Option<Source>,
+    pub seats: Vec<Seat>,
+}
+
+impl NewRound {
+    pub fn new(preset: Preset, members: &[Member], me: &str) -> Self {
+        let propose = |writer| writer && preset.default_proposers == Defaults::Writers;
+        let seats = members
+            .iter()
+            .map(|member| Seat {
+                email: member.email.clone(),
+                can_decide: member.role.can_write(),
+                proposer: propose(member.role.can_write()),
+                voter: member.role.can_write(),
+                decider: member.email == me,
+            })
+            .collect();
+        Self {
+            name: String::new(),
+            preset,
+            deadline: String::new(),
+            budget: preset.budget_form.then(BudgetForm::default),
+            candidates: None,
+            seats,
+        }
+    }
+
+    /// Another preset's defaults, keeping what the visitor typed and picked.
+    pub fn with_preset(self, preset: Preset, members: &[Member], me: &str) -> Self {
+        let fresh = Self::new(preset, members, me);
+        Self {
+            name: self.name,
+            deadline: self.deadline,
+            candidates: self.candidates,
+            budget: self.budget.filter(|_| preset.budget_form).or(fresh.budget),
+            ..fresh
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        self.preset.kind
+    }
+
+    pub fn visibility(&self) -> &'static str {
+        self.preset.visibility
+    }
+
+    /// The body of `POST /api/rooms/{room}/rounds`, or what is missing.
+    pub fn request(&self) -> Result<Value, String> {
+        let name = self.name.trim();
+        if name.is_empty() {
+            return Err("Give the round a name.".to_owned());
+        }
+        if self.preset.candidates == Need::Required && self.candidates.is_none() {
+            return Err("Pick the catalogue of detections to review.".to_owned());
+        }
+        if self.candidates.is_none() && self.chosen(|seat| seat.proposer).is_empty() {
+            return Err("Pick at least one proposer, or a catalogue of candidates.".to_owned());
+        }
+        let mut body = serde_json::json!({
+            "name": name, "kind": self.kind(), "visibility": self.visibility(),
+        });
+        if let Some(source) = &self.candidates {
+            body["candidates"] =
+                serde_json::json!({"project": source.project, "catalogue": source.catalogue});
+        }
+        if !self.deadline.trim().is_empty() {
+            body["deadline"] = Value::String(self.deadline.trim().to_owned());
+        }
+        if let Some(budget) = &self.budget {
+            body["budget"] = budget_json(budget)?;
+        }
+        Ok(body)
+    }
+
+    /// The body of `PUT .../members`.
+    pub fn members_request(&self) -> Value {
+        serde_json::json!({
+            "proposers": self.chosen(|seat| seat.proposer),
+            "voters": self.chosen(|seat| seat.voter),
+            "deciders": self.chosen(|seat| seat.decider),
+        })
+    }
+
+    fn chosen(&self, role: fn(&Seat) -> bool) -> Vec<&str> {
+        self.seats
+            .iter()
+            .filter(|seat| role(seat))
+            .map(|seat| seat.email.as_str())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +562,185 @@ mod tests {
         assert_eq!(decided_in(&attributes(stamp)), expected);
         assert_eq!(decided_in(&attributes(json!("not json"))), None);
         assert_eq!(decided_in(&Map::new()), None);
+    }
+
+    fn members() -> Vec<Member> {
+        let member = |email: &str, role: &str| {
+            serde_json::from_value(json!({"user_id": email, "email": email, "role": role})).unwrap()
+        };
+        vec![
+            member("me@x.org", "owner"),
+            member("ed@x.org", "editor"),
+            member("view@x.org", "viewer"),
+        ]
+    }
+
+    fn form(preset: usize) -> NewRound {
+        NewRound::new(PRESETS[preset], &members(), "me@x.org")
+    }
+
+    fn emails(seats: &[Seat], role: fn(&Seat) -> bool) -> Vec<&str> {
+        seats
+            .iter()
+            .filter(|seat| role(seat))
+            .map(|seat| seat.email.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn each_preset_fills_the_form() {
+        let review = form(0);
+        assert_eq!((review.kind(), review.visibility()), ("review", "open"));
+        assert!(review.budget.is_none());
+        assert_eq!(review.preset.candidates, Need::Required);
+        assert!(emails(&review.seats, |seat| seat.proposer).is_empty());
+
+        let downlink = form(1);
+        assert_eq!(
+            (downlink.kind(), downlink.visibility()),
+            ("downlink", "open")
+        );
+        assert!(downlink.budget.is_some());
+        assert_eq!(downlink.preset.candidates, Need::Optional);
+        assert_eq!(
+            emails(&downlink.seats, |seat| seat.proposer),
+            ["me@x.org", "ed@x.org"]
+        );
+
+        let labelling = form(2);
+        assert_eq!(
+            (labelling.kind(), labelling.visibility()),
+            ("labelling", "blind")
+        );
+        assert!(labelling.budget.is_none());
+        assert_eq!(
+            emails(&labelling.seats, |seat| seat.proposer),
+            ["me@x.org", "ed@x.org"]
+        );
+        assert_eq!(
+            emails(&labelling.seats, |seat| seat.voter),
+            ["me@x.org", "ed@x.org"]
+        );
+        assert_eq!(emails(&labelling.seats, |seat| seat.decider), ["me@x.org"]);
+    }
+
+    fn budget_form() -> BudgetForm {
+        BudgetForm {
+            attribute: "mode".into(),
+            cap: "5".into(),
+            cap_unit: "Gbit".into(),
+            rates: vec![RateRow {
+                value: "burst".into(),
+                amount: "2".into(),
+                unit: "Mibyte".into(),
+                per: "min".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn the_budget_form_makes_the_spec_json_ld() {
+        let made = budget_json(&budget_form()).unwrap();
+        assert_eq!(made["@type"], "cocat:Budget");
+        assert_eq!(made["cocat:attribute"], "mode");
+        assert_eq!(made["cocat:cap"]["qudt:numericValue"], 5.0);
+        assert_eq!(made["cocat:cap"]["qudt:hasUnit"]["skos:notation"], "Gbit");
+        let rate = &made["cocat:rates"][0];
+        assert_eq!(rate["cocat:value"], "burst");
+        assert_eq!(
+            rate["cocat:rate"]["qudt:hasUnit"]["skos:notation"],
+            "Mibyte/min"
+        );
+        assert!(parse_budget(&made).is_ok());
+    }
+
+    #[test]
+    fn a_budget_with_a_rate_in_the_wrong_unit_is_refused_before_sending() {
+        let wrong = |edit: fn(&mut BudgetForm)| {
+            let mut form = budget_form();
+            edit(&mut form);
+            budget_json(&form).is_err()
+        };
+        assert!(wrong(|form| form.rates[0].per = "fortnight".into()));
+        assert!(wrong(|form| form.rates[0].unit = "MB".into()));
+        assert!(wrong(|form| form.cap_unit = "Mibyte/min".into()));
+        assert!(wrong(|form| form.cap = "lots".into()));
+        assert!(wrong(|form| form.attribute = " ".into()));
+    }
+
+    #[test]
+    fn a_round_is_sent_only_when_it_can_work() {
+        let source = Source {
+            project: "p".into(),
+            catalogue: "c".into(),
+        };
+        let mut round = form(2);
+        assert!(round.request().is_err());
+        round.name = " Spring ".into();
+        let body = round.request().unwrap();
+        assert_eq!(body["name"], "Spring");
+        assert_eq!(body["kind"], "labelling");
+        assert!(body.get("candidates").is_none());
+
+        let mut review = form(0);
+        review.name = "Detections".into();
+        assert!(review.request().is_err());
+        review.candidates = Some(source);
+        let body = review.request().unwrap();
+        assert_eq!(
+            body["candidates"],
+            json!({"project": "p", "catalogue": "c"})
+        );
+
+        let mut nobody = form(2);
+        nobody.name = "x".into();
+        nobody
+            .seats
+            .iter_mut()
+            .for_each(|seat| seat.proposer = false);
+        assert!(nobody.request().is_err());
+    }
+
+    #[test]
+    fn only_editors_can_decide_and_the_members_body_lists_each_role() {
+        let round = form(2);
+        let editable: Vec<_> = round.seats.iter().map(|seat| seat.can_decide).collect();
+        assert_eq!(editable, [true, true, false]);
+        let body = round.members_request();
+        assert_eq!(body["proposers"], json!(["me@x.org", "ed@x.org"]));
+        assert_eq!(body["voters"], json!(["me@x.org", "ed@x.org"]));
+        assert_eq!(body["deciders"], json!(["me@x.org"]));
+    }
+
+    #[test]
+    fn changing_preset_keeps_what_was_typed() {
+        let mut typed = form(1);
+        typed.name = "Spring".into();
+        typed.budget.as_mut().unwrap().cap = "7".into();
+        let source = Source {
+            project: "p".into(),
+            catalogue: "c".into(),
+        };
+        typed.candidates = Some(source.clone());
+        let changed = typed.with_preset(PRESETS[2], &members(), "me@x.org");
+        assert_eq!(changed.name, "Spring");
+        assert_eq!(changed.candidates, Some(source));
+        assert_eq!(changed.kind(), "labelling");
+        assert!(changed.budget.is_none());
+    }
+
+    #[test]
+    fn the_voter_role_is_called_reviewer_in_review_rounds() {
+        assert_eq!(voter_title("review"), "Reviewers");
+        assert_eq!(voter_title("downlink"), "Voters");
+        assert_eq!(voter_title("labelling"), "Voters");
+    }
+
+    #[test]
+    fn rounds_start_in_personal_or_public_projects_never() {
+        assert!(can_start(true, false, false));
+        assert!(!can_start(false, false, false));
+        assert!(!can_start(true, true, false));
+        assert!(!can_start(true, false, true));
     }
 }

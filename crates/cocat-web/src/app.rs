@@ -138,7 +138,12 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let in_history = Memo::new(move |_| matches!(shown.get(), Route::History { .. }));
     let in_groups = Memo::new(move |_| matches!(shown.get(), Route::Groups | Route::Group(_)));
-    let in_rounds = Memo::new(move |_| matches!(shown.get(), Route::Rounds | Route::Round(_)));
+    let in_rounds = Memo::new(move |_| {
+        matches!(
+            shown.get(),
+            Route::Rounds | Route::NewRound | Route::Round(_)
+        )
+    });
     // Both keep their value once the page leaves the history: see `HistoryPage`.
     let scope = Memo::new(move |kept: Option<&Option<String>>| match shown.get() {
         Route::History { catalogue, .. } => catalogue,

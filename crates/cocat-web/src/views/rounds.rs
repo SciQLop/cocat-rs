@@ -5,10 +5,14 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::api;
-use crate::rounds::{Round, group, over_cap, state_words, your_part};
+use crate::rounds::{Round, can_start, group, over_cap, state_words, voter_title, your_part};
 use crate::route::Route;
 use crate::state::Room;
+use crate::views::links::is_personal;
+use crate::views::projects::Projects;
+use crate::views::round_form::NewRoundForm;
 use cocat_core::model;
+use cocat_core::room_id::is_public_id;
 
 fn page() -> String {
     window().location().pathname().unwrap_or_default()
@@ -34,6 +38,7 @@ pub fn RoundsPage(shown: Memo<Route>) -> impl IntoView {
     view! {
         <main class="content groups-page rounds-page">
             {move || match shown.get() {
+                Route::NewRound => view! { <NewRoundForm/> }.into_any(),
                 Route::Round(id) => round_view(rounds.get(), &id).into_any(),
                 _ => round_list(rounds.get()).into_any(),
             }}
@@ -42,6 +47,18 @@ pub fn RoundsPage(shown: Memo<Route>) -> impl IntoView {
 }
 
 const INTRO: &str = "In a round, several people propose or review time intervals, then a decider keeps one final catalogue.";
+
+/// Whether the visitor may start a round in the open project.
+pub fn can_start_here() -> bool {
+    let room = expect_context::<Room>();
+    let projects = expect_context::<Projects>();
+    let id = &room.config.room_id;
+    can_start(
+        room.can_write(),
+        is_personal(projects, id),
+        is_public_id(id),
+    )
+}
 
 fn me() -> String {
     expect_context::<Room>().config.user_email.clone()
@@ -67,10 +84,13 @@ fn round_list(rounds: Vec<Round>) -> impl IntoView {
         view! { <section><h2 class="eyebrow">{title}</h2><ul class="plain-list">{rows}</ul></section> }
     })
     .collect_view();
+    let new_round = can_start_here().then(|| {
+        view! { <a class="button primary" href=Route::NewRound.href(&page)>"New round"</a> }
+    });
     view! {
         <div class="groups-head">
             <h1>"Rounds"</h1>
-            <a class="button" href=back>"Back to catalogues"</a>
+            <span class="row-buttons">{new_round}<a class="button" href=back>"Back to catalogues"</a></span>
         </div>
         <p class="quiet">{INTRO}</p>
         {groups}
@@ -105,26 +125,17 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
     let part = your_part(&round, &me(), None).map(|part| {
         view! { <section class="your-part-box"><h2 class="eyebrow">"Your part"</h2><p>{part}</p></section> }
     });
-    let voter_title = if round.kind == "review" {
-        "Reviewers"
-    } else {
-        "Voters"
-    };
-    let voters = round
-        .voters
-        .iter()
-        .map(|email| view! { <li>{email.clone()}</li> })
-        .collect_view();
-    let proposers = round
-        .proposers
-        .iter()
-        .map(|email| view! { <li>{round.proposer_line(email)}</li> })
-        .collect_view();
-    let deciders = round
-        .deciders
-        .iter()
-        .map(|email| view! { <li>{email.clone()}</li> })
-        .collect_view();
+    let people = |title, emails: Vec<String>| role_section(title, emails);
+    let proposers = people(
+        "Proposers",
+        round
+            .proposers
+            .iter()
+            .map(|email| round.proposer_line(email))
+            .collect(),
+    );
+    let voters = people(voter_title(&round.kind), round.voters.clone());
+    let deciders = people("Deciders", round.deciders.clone());
     let log = round
         .log
         .iter()
@@ -141,13 +152,24 @@ fn round_view(rounds: Vec<Round>, id: &str) -> impl IntoView {
         </div>
         <p class="quiet">{settings}</p>
         {part}
-        <section><h2 class="eyebrow">"Proposers"</h2><ul class="plain-list">{proposers}</ul></section>
-        <section><h2 class="eyebrow">{voter_title}</h2><ul class="plain-list">{voters}</ul></section>
-        <section><h2 class="eyebrow">"Deciders"</h2><ul class="plain-list">{deciders}</ul></section>
+        {proposers}
+        {voters}
+        {deciders}
         {final_section(&round, &page)}
         <section><h2 class="eyebrow">"Log"</h2><ul class="plain-list">{log}</ul></section>
     }
     .into_any()
+}
+
+/// A role's people under its title; nothing when nobody has the role.
+fn role_section(title: &'static str, lines: Vec<String>) -> Option<impl IntoView + use<>> {
+    (!lines.is_empty()).then(|| {
+        let items = lines
+            .into_iter()
+            .map(|line| view! { <li>{line}</li> })
+            .collect_view();
+        view! { <section><h2 class="eyebrow">{title}</h2><ul class="plain-list">{items}</ul></section> }
+    })
 }
 
 fn settings_line(round: &Round) -> String {

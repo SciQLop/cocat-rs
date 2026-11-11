@@ -29,6 +29,7 @@ pub enum Route {
     },
     /// The selection rounds of the open project, and one of them by id.
     Rounds,
+    NewRound,
     Round(String),
     /// A project's file, by its path in the file list.
     File(String),
@@ -52,6 +53,8 @@ impl Route {
         if let Some(id) = hash.strip_prefix("/rounds/") {
             return if id.is_empty() {
                 Route::Rounds
+            } else if id == "new" {
+                Route::NewRound
             } else {
                 Route::Round(id.to_owned())
             };
@@ -108,7 +111,7 @@ impl Route {
             Route::Home => Some("Home"),
             Route::History { .. } => Some("History"),
             Route::Groups | Route::Group(_) => Some("Groups"),
-            Route::Rounds | Route::Round(_) => Some("Rounds"),
+            Route::Rounds | Route::NewRound | Route::Round(_) => Some("Rounds"),
             Route::Submissions | Route::Submission(_) => Some("Submissions"),
             Route::MySubmissions => Some("My submissions"),
             _ => None,
@@ -157,6 +160,7 @@ impl Route {
             Route::Trash => "#trash".to_owned(),
             Route::Groups => "#groups".to_owned(),
             Route::Rounds => "#/rounds".to_owned(),
+            Route::NewRound => "#/rounds/new".to_owned(),
             Route::Round(id) => format!("#/rounds/{id}"),
             Route::Public(None) => "#public".to_owned(),
             Route::Public(Some(folder)) => {
@@ -257,6 +261,13 @@ mod tests {
         assert_eq!(Route::parse("#group=g1"), Route::Group("g1".into()));
         assert_eq!(Route::parse("#group="), Route::Default);
         assert_eq!(Route::Groups.history(), history(None, None));
+    }
+
+    #[test]
+    fn the_new_round_route_round_trips() {
+        assert_eq!(Route::parse("#/rounds/new"), Route::NewRound);
+        assert_eq!(Route::NewRound.hash(), "#/rounds/new");
+        assert_eq!(Route::NewRound.crumb(), Some("Rounds"));
     }
 
     #[test]
@@ -399,6 +410,7 @@ mod tests {
             Route::Groups,
             Route::Group("g1".into()),
             Route::Rounds,
+            Route::NewRound,
             Route::Round("r1".into()),
             Route::Public(None),
             Route::Public(Some("AMDA/EARTH".into())),

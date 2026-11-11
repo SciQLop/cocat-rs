@@ -16,26 +16,34 @@ use crate::transfer::{self, Format, Incoming, Summary};
 use crate::views::actions::Form;
 use crate::views::controls::{Error, Hint, error_line, go_to, now};
 use crate::views::project_dialogs::Dialog;
+use crate::views::projects::Projects;
 
 /// The import dialog: `None` while closed, else open with the file dropped, if any.
 #[derive(Clone, Copy)]
-pub struct Importer(RwSignal<Option<Option<File>>, LocalStorage>);
+pub struct Importer {
+    dialog: RwSignal<Option<Option<File>>, LocalStorage>,
+    /// The first catalogue the last import made, for a page that wants to use it.
+    pub imported: RwSignal<Option<String>>,
+}
 
 impl Importer {
     pub fn new() -> Self {
-        Self(RwSignal::new_local(None))
+        Self {
+            dialog: RwSignal::new_local(None),
+            imported: RwSignal::new(None),
+        }
     }
 
     pub fn open(self, file: Option<File>) {
-        self.0.set(Some(file));
+        self.dialog.set(Some(file));
     }
 
     fn close(self) {
-        self.0.set(None);
+        self.dialog.set(None);
     }
 
     pub fn is_open(self) -> bool {
-        self.0.with(Option::is_some)
+        self.dialog.with(Option::is_some)
     }
 }
 
@@ -332,6 +340,7 @@ async fn text_of(file: &File) -> Result<String, String> {
 #[component]
 pub fn ImportDialog() -> impl IntoView {
     let importer = expect_context::<Importer>();
+    let projects = expect_context::<Projects>();
     let room = StoredValue::new_local(expect_context::<Room>());
     let stage = RwSignal::new(Stage::Pick);
     let incoming = StoredValue::new_local(None::<Incoming>);
@@ -369,7 +378,7 @@ pub fn ImportDialog() -> impl IntoView {
             }
         });
     };
-    if let Some(Some(file)) = importer.0.get_untracked() {
+    if let Some(Some(file)) = importer.dialog.get_untracked() {
         take(file);
     }
     let picked = move |event: leptos::ev::Event| {
@@ -400,8 +409,11 @@ pub fn ImportDialog() -> impl IntoView {
             match written {
                 Ok(written) => {
                     importer.close();
-                    if let Some(first) = written.catalogues.first() {
-                        go_to(&Route::Catalogue(first.clone()).hash());
+                    let first = written.catalogues.first().cloned();
+                    importer.imported.set(first.clone());
+                    let starting_a_round = projects.route.get_untracked() == Route::NewRound;
+                    if let Some(first) = first.filter(|_| !starting_a_round) {
+                        go_to(&Route::Catalogue(first).hash());
                     }
                 }
                 Err(failure) => {

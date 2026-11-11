@@ -28,6 +28,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let public = page.clone();
     let rounds = project_rounds();
     let rounds_href = Route::Rounds.href(&page);
+    let can_start = crate::views::rounds::can_start_here();
     let linked = page.clone();
     let entries = NodeRef::<leptos::html::Nav>::new();
     keep_current_in_view(entries, move || shown.track());
@@ -67,9 +68,9 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 </span>
                 <span class="count">{move || list.get().trash}</span>
             </a>
-            <Show when=move || rounds.with(|rounds| !rounds.is_empty())>
+            <Show when=move || can_start || rounds.with(|rounds| !rounds.is_empty())>
                 <a class="catalogue" href=rounds_href.clone()
-                    aria-current=move || current(matches!(shown.get(), Route::Rounds | Route::Round(_)))>
+                    aria-current=move || current(matches!(shown.get(), Route::Rounds | Route::NewRound | Route::Round(_)))>
                     <span class="name">"Rounds"</span>
                     <span class="count">{move || rounds.with(Vec::len)}</span>
                 </a>
