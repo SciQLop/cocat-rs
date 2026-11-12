@@ -22,7 +22,9 @@ you may find:
 - **HELIO4CAST** ICMECAT, one catalogue per spacecraft, and its companion lists;
 - **Solar Orbiter STIX** flares;
 - the SIDC's automatic **CACTus** CME detections;
-- the Cluster **GRMB** and Solar Orbiter **PMOD** lists.
+- the Cluster **GRMB** and Solar Orbiter **PMOD** lists;
+- **ONERA**'s ICME, sheath and SIR lists from OMNI, their radiation belt electron
+  enhancements back to 1868, and the detections of Nguyen et al. (2025).
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA
 CCMC), refreshed 2026-11-11", with a link to the source. When the source corrects an event,

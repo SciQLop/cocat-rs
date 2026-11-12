@@ -1,0 +1,101 @@
+{
+ "status": "OK",
+ "data": {
+  "latestVersion": {
+   "versionNumber": 1,
+   "files": [
+    {
+     "label": "event_utils.py",
+     "dataFile": {
+      "id": 344471,
+      "filename": "event_utils.py"
+     }
+    },
+    {
+     "label": "Figures.ipynb",
+     "dataFile": {
+      "id": 601593,
+      "filename": "Figures.ipynb"
+     }
+    },
+    {
+     "label": "ICMEs_resunet.csv",
+     "dataFile": {
+      "id": 601083,
+      "filename": "ICMEs_resunet.csv"
+     }
+    },
+    {
+     "label": "ICMEs_spodify.csv",
+     "dataFile": {
+      "id": 601084,
+      "filename": "ICMEs_spodify.csv"
+     }
+    },
+    {
+     "label": "omni_data.pkl",
+     "dataFile": {
+      "id": 601082,
+      "filename": "omni_data.pkl"
+     }
+    },
+    {
+     "label": "SIRs_resunet.csv",
+     "dataFile": {
+      "id": 601085,
+      "filename": "SIRs_resunet.csv"
+     }
+    },
+    {
+     "label": "SIRs_spodify.csv",
+     "dataFile": {
+      "id": 601086,
+      "filename": "SIRs_spodify.csv"
+     }
+    },
+    {
+     "label": "thresholds_ICMEs.csv",
+     "dataFile": {
+      "id": 601577,
+      "filename": "thresholds_ICMEs.csv"
+     }
+    },
+    {
+     "label": "thresholds_SIRs.csv",
+     "dataFile": {
+      "id": 601576,
+      "filename": "thresholds_SIRs.csv"
+     }
+    },
+    {
+     "label": "window_index_Resunet.npy",
+     "dataFile": {
+      "id": 601207,
+      "filename": "window_index_Resunet.npy"
+     }
+    },
+    {
+     "label": "window_index_spodify.npy",
+     "dataFile": {
+      "id": 601339,
+      "filename": "window_index_spodify.npy"
+     }
+    },
+    {
+     "label": "Y_pred_Resunet.npy",
+     "dataFile": {
+      "id": 601574,
+      "filename": "Y_pred_Resunet.npy"
+     }
+    },
+    {
+     "label": "Y_pred_spodify.npy",
+     "dataFile": {
+      "id": 601575,
+      "filename": "Y_pred_spodify.npy"
+     }
+    }
+   ]
+  }
+ }
+}

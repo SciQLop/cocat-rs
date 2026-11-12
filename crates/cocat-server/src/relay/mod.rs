@@ -12,6 +12,7 @@ pub mod donki;
 pub mod grmb;
 pub mod helio4cast;
 pub mod icmecat;
+pub mod onera;
 pub mod patient;
 pub mod pmod;
 pub mod rolling;
@@ -39,6 +40,12 @@ use crate::ws;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REDIRECTS: usize = 5;
+/// The other host a provider's host may redirect to: a data repository serving its files
+/// from its own storage, as Recherche Data Gouv sends ONERA's to an S3 bucket.
+const STORAGE: [(&str, &str); 1] = [(
+    "entrepot.recherche.data.gouv.fr",
+    "prod-onera.opens3r-tls.stockage.inrae.fr",
+)];
 
 /// One list a provider publishes: a public catalogue `public.<provider>.<key>` holding one
 /// catalogue, uuid `catalogue`, and `events`, whose uuids stay the same across fetches.
@@ -100,6 +107,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(grmb::Grmb),
         Arc::new(helio4cast::Helio4cast),
         Arc::new(pmod::Pmod),
+        Arc::new(onera::Onera),
     ]
 }
 
@@ -123,7 +131,8 @@ pub fn user_agent() -> String {
 }
 
 /// The client providers fetch with: a timeout per request, cocat's User-Agent, and redirects
-/// followed only on the host asked, so a provider cannot send the server to another one.
+/// followed only on the host asked (or its known storage), so a provider cannot send the
+/// server to another one.
 /// It speaks TLS through OpenSSL, not rustls: CDAW's firewall resets rustls handshakes
 /// (checked 2026-11-10; curl and OpenSSL clients get through).
 pub fn http_client() -> Result<reqwest::Client, reqwest::Error> {
@@ -145,7 +154,10 @@ pub fn http_client() -> Result<reqwest::Client, reqwest::Error> {
 /// the first being the one asked for.
 fn follows(next: &reqwest::Url, previous: &[reqwest::Url]) -> bool {
     let asked = previous.first().and_then(reqwest::Url::host_str);
-    previous.len() <= MAX_REDIRECTS && asked.is_some() && asked == next.host_str()
+    let storage = STORAGE.iter().any(|&(repository, storage)| {
+        asked == Some(repository) && next.scheme() == "https" && next.host_str() == Some(storage)
+    });
+    previous.len() <= MAX_REDIRECTS && asked.is_some() && (asked == next.host_str() || storage)
 }
 
 /// What a run did.
@@ -542,5 +554,21 @@ mod tests {
         ));
         assert!(follows(&same, &vec![asked.clone(); 5]));
         assert!(!follows(&same, &vec![asked; 6]));
+    }
+
+    #[test]
+    fn a_repository_redirect_is_followed_only_to_its_own_storage() {
+        let asked = url("https://entrepot.recherche.data.gouv.fr/api/access/datafile/1");
+        let storage = url("https://prod-onera.opens3r-tls.stockage.inrae.fr/10.57745/X/abc");
+
+        assert!(follows(&storage, std::slice::from_ref(&asked)));
+        assert!(!follows(
+            &url("http://prod-onera.opens3r-tls.stockage.inrae.fr/10.57745/X/abc"),
+            std::slice::from_ref(&asked)
+        ));
+        assert!(!follows(
+            &storage,
+            &[url("https://cdaw.gsfc.nasa.gov/CME_list/a.txt")]
+        ));
     }
 }
