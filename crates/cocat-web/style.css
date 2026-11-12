@@ -251,6 +251,16 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .heading { min-width: 0; }
 .heading p { margin: 6px 0 0; }
+.catalogue-description { max-width: 72ch; margin-top: 8px; }
+.catalogue-description p { white-space: pre-line; }
+.catalogue-description .link-button { margin-left: -4px; }
+.catalogue-description.folded p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
 .rule { margin: 4px 0 0; color: var(--muted); }
 .rule-error {
   margin: 8px 0 0;

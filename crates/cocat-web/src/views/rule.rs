@@ -103,14 +103,18 @@ pub fn Heading(
     members: Members,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
-    let relay = cocat_core::room_id::is_public_id(&room.config.room_id)
-        .then(|| crate::views::public::relay_of(room.config.room_id.clone()));
+    let listed = cocat_core::room_id::is_public_id(&room.config.room_id)
+        .then(|| crate::views::public::listed(room.config.room_id.clone()));
+    let listed = move || listed.and_then(|listed| listed.get());
     view! {
         <div class="heading">
             <h1>{move || about.with(|about| about.title.clone())}</h1>
             <p class="quiet">{counts}</p>
-            {move || relay.and_then(|relay| relay.get()).map(|relay| view! {
+            {move || listed().and_then(|listed| listed.relay).map(|relay| view! {
                 <p class="quiet">{crate::views::public::relay_line(&relay)}</p>
+            })}
+            {move || listed().and_then(|listed| listed.description).map(|text| view! {
+                <crate::views::public::Description text/>
             })}
             {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
                 <p class="quiet copied" title=chain>{line}</p>

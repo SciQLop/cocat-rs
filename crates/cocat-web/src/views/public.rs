@@ -44,9 +44,8 @@ pub fn PublicSpace() -> impl IntoView {
     }
 }
 
-/// Where the public catalogue `id` comes from, once the index is read; `None` for one people
-/// keep.
-pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
+/// The index entry of the public catalogue `id`, once the index is read.
+pub fn listed(id: String) -> Memo<Option<PublicCatalogue>> {
     let projects = expect_context::<Projects>();
     Memo::new(move |_| {
         projects.public.with(|listed| {
@@ -54,9 +53,34 @@ pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
                 .iter()
                 .flatten()
                 .find(|catalogue| catalogue.id == id)
-                .and_then(|catalogue| catalogue.relay.clone())
+                .cloned()
         })
     })
+}
+
+/// Where the public catalogue `id` comes from, once the index is read; `None` for one people
+/// keep.
+pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
+    let listed = listed(id);
+    Memo::new(move |_| listed.get().and_then(|listed| listed.relay))
+}
+
+/// The curator's description on the catalogue's page; a long one starts folded.
+#[component]
+pub fn Description(text: String) -> impl IntoView {
+    let long = crate::public::folds(&text);
+    let open = RwSignal::new(false);
+    view! {
+        <div class="catalogue-description" class:folded=move || long && !open.get()>
+            <p>{text}</p>
+            {long.then(|| view! {
+                <button type="button" class="link-button" aria-expanded=move || open.get().to_string()
+                    on:click=move |_| open.update(|open| *open = !*open)>
+                    {move || if open.get() { "Show less" } else { "Show all" }}
+                </button>
+            })}
+        </div>
+    }
 }
 
 /// "From DONKI (NASA CCMC), refreshed 2026-11-11", with a link to the list at its source.
