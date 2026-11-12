@@ -43,7 +43,7 @@ as people edit the project.
 The easy way to make one: type a search, then press **Save as new smart catalogue…**.
 See [Search](reference/search.md).
 
-To keep what a smart catalogue holds today, use **More → Freeze…**. It makes a normal
+To keep what a smart catalogue holds today, use **Catalogue → Freeze…**. It makes a normal
 catalogue you can edit.
 
 ## Projects

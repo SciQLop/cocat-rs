@@ -54,7 +54,7 @@ with project.transaction():
 project.save()
 ```
 
-Or import a file (VOTable, tscat JSON, TFCat) into the project.
+Or import a file (VOTable, tscat JSON, TFCat, CSV, HPEvent) into the project.
 
 ### 2. Start the round
 

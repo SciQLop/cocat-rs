@@ -98,7 +98,7 @@ for shock in shocks.events:
 
 ## Offer your own
 
-Made a catalogue others could use? Open it and choose **More → Submit to Public
+Made a catalogue others could use? Open it and choose **Catalogue → Submit to Public
 catalogues…**. Give it a title, a folder and a description that says how it was made. Add a
 note for the curators if you like.
 
@@ -114,7 +114,7 @@ Found a wrong time in a curated catalogue?
 
 1. Open it and choose **Propose a change…**. It is copied into one of your projects.
 2. Fix the copy.
-3. Choose **More → Submit as an update…** on the copy, with a note saying what you changed.
+3. Choose **Catalogue → Submit as an update…** on the copy, with a note saying what you changed.
 
 A curator sees exactly what your update adds, changes and removes, and accepts or declines it.
 

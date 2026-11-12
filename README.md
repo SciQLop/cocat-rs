@@ -846,6 +846,12 @@ back. The file's spectral axis becomes the catalogue's `shape_axis`, and an expo
 shape axis back into the coordinate system; a catalogue without one exports as frequency in
 Hz. A file without a coordinate system (`crs`) is refused.
 
+**HPEvent** lists (SPASE Heliophysics Event List, the format of CDAWeb's and the STEREO
+Science Center's event lists) import as one catalogue each (`cocat_core::hpevent`), named
+after the list's title. The header's description becomes the catalogue's `description`, each
+field's unit goes to the attribute registry, and declared nulls are dropped. An export writes
+HPEvent 1.0.4, with each attribute's unit from the registry.
+
 **CSV** files import as one catalogue, named after the file (`cocat_core::csv_table`, which
 the web app's import and export share). A `start` and a `stop` (or `end`) column are needed;
 `tags` (`;` or `,`), `status`, `confidence`, `author`, `comment` and `uuid` fill those fields,

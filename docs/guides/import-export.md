@@ -12,12 +12,13 @@ supplementary material. cocat reads the common formats and writes them back.
 | **tscat database** | yes, from Python | – | your local tscat catalogues, all at once |
 | **TFCat** (`.json`) | yes | yes | radio events with time–frequency shapes |
 | **CSV** (`.csv`, `.tsv`) | yes | yes | spreadsheets, tables from papers |
+| **HPEvent** (`.txt`) | yes | yes | SPASE Heliophysics Event Lists, as CDAWeb and the STEREO Science Center publish them |
 | **pandas / polars DataFrame** | yes, from Python | yes, from Python | analysis in notebooks |
 
 ## Import in the browser
 
-Use **Import…** in the project menu, or the **+** above the catalogues. You can also drop the
-file on the events.
+Use **Import a file…** in the **+** menu above the catalogues, or **Import catalogues…** in the
+project's **⋯** menu. You can also drop the file on the events.
 
 The page reads the file first and tells you what it will do, for example:
 
@@ -34,15 +35,17 @@ Some details:
 - A **tscat JSON** file updates the catalogue with the same id.
 - A **TFCat** file makes one new catalogue, named after the file's title.
 - A **CSV** file makes one new catalogue, named after the file. See [CSV files](#csv-files).
+- An **HPEvent** list makes one new catalogue, named after the list's title. Its description
+  becomes the catalogue's, and each field's unit goes to the project's attributes.
 
 Only editors can import.
 
 ## Export in the browser
 
-Open a catalogue, then **More → Export…**, and pick the format.
+Open a catalogue, then **Catalogue → Export…**, and pick the format.
 
 To put several catalogues in one VOTable or tscat file, use **Export catalogues…** in the
-project menu and tick the ones you want.
+project's **⋯** menu and tick the ones you want.
 
 Readers can export too.
 
@@ -52,6 +55,8 @@ Readers can export too.
       confidence as a rating from 1 to 10, so it comes back rounded to one decimal.
     - **TFCat** knows shapes in frequency, wavelength, energy or wavenumber. Events without a
       shape become rectangles from start to stop.
+    - **HPEvent** writes one list, with each attribute's unit from the project. Events keep
+      their times and attributes, not their ids.
     - A **smart catalogue** is exported with the events it holds now, without its rule.
 
 ## Moving from tscat
@@ -171,12 +176,14 @@ and the same events get the new attribute.
 ```python
 project.import_votable("catalogue.xml")
 project.import_tfcat("bursts.json")
+project.import_hpevent("shocks.txt")     # a SPASE HPEvent list
 
 project.import_csv("table.csv")
 project.import_dataframe(frame, name="From pandas")
 
 cc.export_votable([catalogue], "catalogue.xml")
 cc.export_tfcat(catalogue, "bursts.json")
+cc.export_hpevent([catalogue], "catalogue.txt")
 cc.export_csv([catalogue], "catalogue.csv")
 frame = catalogue.to_pandas()
 ```

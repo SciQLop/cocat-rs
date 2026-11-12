@@ -88,6 +88,8 @@ import cocat_rs as cc
 | `project.import_tfcat(path)` | TFCat in |
 | `cc.export_votable([catalogue, ...], path)` | VOTable out |
 | `cc.export_tfcat(catalogue, path)` | TFCat out |
+| `project.import_hpevent(path, name=None)` | HPEvent list in |
+| `cc.export_hpevent([catalogue], path)` | HPEvent list out |
 | `project.import_csv(path, name=None)` | CSV in |
 | `cc.export_csv([catalogue, ...], path)` | CSV out |
 | `catalogue.to_pandas()`, `catalogue.to_polars()` | a DataFrame, one row per event |

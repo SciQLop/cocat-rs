@@ -87,8 +87,8 @@ project.create_smart_catalogue("Strong shocks", "tag:shock confidence:>=0.8")
 
 Some selections are about time, not fields: "merge events closer than 10 minutes", "shocks
 that happen within an hour after a CME", "intervals in A but not in B". These need a **rule**.
-Open a catalogue and use **More → Add a rule…**. The editor starts with an example to change,
-and tells you in words what the rule picks before you save it.
+Open a catalogue and use **Catalogue → Edit rule as JSON…**. The editor shows an example to
+change, and the page then says in words what the rule picks.
 
-Rules that make new intervals (merging, shifting) give read-only intervals. **More → Freeze…**
+Rules that make new intervals (merging, shifting) give read-only intervals. **Catalogue → Freeze…**
 turns them into normal events you can edit.

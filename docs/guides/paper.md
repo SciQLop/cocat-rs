@@ -58,7 +58,7 @@ a new version, and the events made since go to the trash.
 
 ## 4. Export the file for the journal
 
-Most journals and data repositories want a file. Open the catalogue, then **More →
+Most journals and data repositories want a file. Open the catalogue, then **Catalogue →
 Export…**:
 
 - **VOTable** (`.xml`): the astronomy table standard. TOPCAT and AMDA read it. Good for a data
@@ -66,6 +66,8 @@ Export…**:
 - **CSV** (`.csv`): opens in any spreadsheet. Good as supplementary material, and it reads
   back into cocat.
 - **TFCat** (`.json`): for radio events with time–frequency shapes.
+- **HPEvent** (`.txt`): the SPASE Heliophysics Event List, with each attribute's unit. Good
+  for the Heliophysics Data Resource Library.
 
 Export from a copy of the named version (step 3), so the file is exactly that version.
 
@@ -76,7 +78,7 @@ Export from a copy of the named version (step 3), so the file is exactly that ve
 
 ## 5. Make it public
 
-To let everyone on the server use your catalogue, open it and choose **More → Submit to Public
+To let everyone on the server use your catalogue, open it and choose **Catalogue → Submit to Public
 catalogues…**. A curator reviews it. Once accepted, it appears under **Public catalogues**
 with your name, for every account to read and copy.
 

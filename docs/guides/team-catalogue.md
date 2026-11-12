@@ -21,8 +21,8 @@ Press **Share**.
 
 Send a **Share link** in your team chat, or an **Email invitation** to each person.
 
-If you share many projects with the same people, make a **group** once (project menu →
-**Groups…**) and give the group a role instead. New lab members then join one group, not ten
+If you share many projects with the same people, make a **group** once (your account menu, top right →
+**Groups**) and give the group a role instead. New lab members then join one group, not ten
 projects.
 
 ## 3. Agree on conventions

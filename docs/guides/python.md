@@ -195,6 +195,7 @@ from cocat_rs import tscat
 
 project.import_votable("amda_catalogue.xml")
 project.import_tfcat("type_iii.json")
+project.import_hpevent("cdaweb_list.txt")   # a SPASE HPEvent list
 tscat.import_json(project, "export_from_tscat.json")
 tscat.import_database(project)      # your local tscat database (pip install 'cocat-rs[tscat]')
 project.import_csv("table.csv")     # start and stop columns; others become attributes

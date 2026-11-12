@@ -8,7 +8,7 @@ place to answer, and gives you a way to see and compare all the answers.
 
 ### Make a group for the class
 
-Open the project menu → **Groups…** → create `Space plasma M2 – 2026`. Press **Share link**
+Open your account menu (top right) → **Groups** → create `Space plasma M2 – 2026`. Press **Share link**
 in the group and send the link to the students, on the course page or by email. Each
 student creates an account and joins the group.
 
