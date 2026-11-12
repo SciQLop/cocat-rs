@@ -199,6 +199,8 @@ pub enum RoomError {
     Gone,
     #[error("the room reached its storage limit")]
     Full,
+    #[error("the room's file cannot be written (is the disk full?)")]
+    Unwritable,
     #[error(transparent)]
     Db(#[from] crate::db::DbError),
 }
@@ -811,6 +813,11 @@ impl RoomHandle {
         let _ = self.commands.send(RoomCommand::Panic);
     }
 
+    #[cfg(test)]
+    pub fn fail_writes(&self) {
+        let _ = self.commands.send(RoomCommand::FailWrites);
+    }
+
     pub fn frame(&self, client: ClientId, frame: Bytes) {
         let _ = self.commands.send(RoomCommand::Frame { client, frame });
     }
@@ -867,6 +874,7 @@ impl RoomHandle {
         .map_err(|_| RoomError::Gone)?;
         match written.await {
             Ok(Ok(changed)) => Ok(changed),
+            Ok(Err(CloseReason::Failed)) => Err(RoomError::Unwritable),
             Ok(Err(_)) => Err(RoomError::Full),
             Err(_) => Err(RoomError::Unanswered),
         }
@@ -937,6 +945,9 @@ enum RoomCommand {
     /// Only the tests send this: the room thread has to survive its own panic.
     #[cfg(test)]
     Panic,
+    /// Only the tests send this: every later write fails, as on a full disk.
+    #[cfg(test)]
+    FailWrites,
 }
 
 struct Client {
@@ -1142,12 +1153,25 @@ fn room_loop(
                     }
                     #[cfg(test)]
                     RoomCommand::Panic => panic!("a command asked the room to panic"),
+                    #[cfg(test)]
+                    RoomCommand::FailWrites => {
+                        store.fail_writes();
+                        Step::Serving
+                    }
                 };
                 drain(&commands, &mut backlog);
                 // Written before the broadcast so a client that sees an update can read it
                 // back from the file; the fsync follows on the timer.
-                if backlog.is_empty() {
-                    write(&mut store, &mut stamps, &room_id);
+                let stored = !backlog.is_empty() || write(&mut store, &mut stamps, &room_id);
+                if !stored {
+                    // Nothing that is not on the disk goes out. The clients hold their edits
+                    // and send them again when they reconnect, so closing them loses nothing
+                    // and tells them; the records stay pending for the next write.
+                    broadcast = None;
+                    if let Some((_, written)) = &mut answer {
+                        *written = Err(CloseReason::Failed);
+                    }
+                    close_all(&mut clients, CloseReason::Failed);
                 }
                 if let Some(frame) = broadcast {
                     broadcast_to(&mut clients, frame);
@@ -1403,7 +1427,7 @@ fn settle(backlog: &mut VecDeque<RoomCommand>) {
             | RoomCommand::Read { .. }
             | RoomCommand::Write { .. } => {}
             #[cfg(test)]
-            RoomCommand::Panic => {}
+            RoomCommand::Panic | RoomCommand::FailWrites => {}
         }
     }
 }
@@ -1420,14 +1444,16 @@ fn open_stamps(update_dir: &Path, room_id: &str) -> Option<StampFile> {
 
 /// Stamps are written only once their records are, so a failed room write never leaves a
 /// stamp ahead of its record on the disk.
-fn write(store: &mut FileRoomStore, stamps: &mut Option<StampFile>, room_id: &str) {
+/// Whether the room's records are on the disk now.
+fn write(store: &mut FileRoomStore, stamps: &mut Option<StampFile>, room_id: &str) -> bool {
     if let Err(error) = store.write() {
-        tracing::warn!(room = %room_id, %error, "cannot write the room");
-        return;
+        tracing::error!(room = %room_id, %error, "cannot write the room, closing its clients");
+        return false;
     }
     if let Some(Err(error)) = stamps.as_mut().map(StampFile::write) {
         tracing::warn!(room = %room_id, %error, "cannot write the room's stamps");
     }
+    true
 }
 
 fn sync(store: &mut FileRoomStore, stamps: &mut Option<StampFile>, room_id: &str) {
@@ -1948,6 +1974,54 @@ mod tests {
         let reopened = manager.get_or_open("lab").unwrap();
         let doc = full_state(&reopened, 3).await;
         assert!(has_key(&doc, "a"), "the pre-panic state came back");
+    }
+
+    #[tokio::test]
+    async fn an_update_that_cannot_be_stored_closes_the_clients_unrelayed() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_path_buf(), None);
+        let room = manager.get_or_open("lab").unwrap();
+        let owner = Uuid::new_v4();
+        let (out, _writer) = outbox();
+        room.attach(1, owner, "test@example.org".to_owned(), Role::Editor, out)
+            .unwrap();
+        let (out, mut observer) = outbox();
+        room.attach(2, owner, "test@example.org".to_owned(), Role::Viewer, out)
+            .unwrap();
+
+        room.fail_writes();
+        room.frame(
+            1,
+            Bytes::from(Message::Sync(SyncMessage::Update(update_with("a", "1"))).encode_v1()),
+        );
+
+        let closed = timeout(WAIT, &mut observer.close)
+            .await
+            .expect("the room closes its clients")
+            .expect("a reason");
+        assert_eq!(closed.reason(), CloseReason::Failed.reason());
+        while let Ok(frame) = observer.frames.try_recv() {
+            let relayed = matches!(
+                Message::decode_v1(&frame),
+                Ok(Message::Sync(SyncMessage::Update(_)))
+            );
+            assert!(!relayed, "an update the disk refused reached another client");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_write_that_cannot_be_stored_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_path_buf(), None);
+        let room = manager.get_or_open("lab").unwrap();
+        let (out, _client) = outbox();
+        room.attach(1, Uuid::new_v4(), "test@example.org".to_owned(), Role::Owner, out)
+            .unwrap();
+
+        room.fail_writes();
+        let written = room.write_as(Author::Server, update_with("a", "1")).await;
+
+        assert!(matches!(written, Err(RoomError::Unwritable)), "{written:?}");
     }
 
     #[test]

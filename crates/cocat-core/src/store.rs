@@ -114,6 +114,15 @@ impl FileRoomStore {
         self.records
     }
 
+    /// Makes every later write fail, as a full disk does: for the tests of the callers'
+    /// handling of it, which cannot fill a disk.
+    #[doc(hidden)]
+    pub fn fail_writes(&mut self) {
+        if let Ok(read_only) = File::open(&self.path) {
+            self.file = read_only;
+        }
+    }
+
     pub fn append(&mut self, update: Bytes) -> Result<(), StoreError> {
         write_varuint(update.len() as u64, &mut self.pending);
         self.pending.extend_from_slice(&update);

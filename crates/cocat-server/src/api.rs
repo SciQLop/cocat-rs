@@ -195,6 +195,9 @@ impl From<RoomError> for ApiError {
                 Self::Unavailable("Server memory budget reached".to_owned())
             }
             RoomError::Full => Self::Conflict("The project reached its storage limit".to_owned()),
+            RoomError::Unwritable => {
+                Self::Unavailable("The server cannot store changes right now".to_owned())
+            }
             other => {
                 tracing::error!(%other, "the room could not be read");
                 Self::Internal
