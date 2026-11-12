@@ -163,6 +163,11 @@ pub enum CliError {
     Import(#[from] import::ImportError),
     #[error("{0}")]
     WeakPassword(#[from] crate::password::WeakPassword),
+    #[error(
+        "the database {0} is missing but the storage folder holds projects: check the path and \
+         the volume, or restore the database from a backup"
+    )]
+    MissingDatabase(PathBuf),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -359,6 +364,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
+    check_database(db_path, update_dir)?;
     let pool = db::open(db_path).await?;
     db::refuse_reserved_ids(&pool).await?;
     crate::relay::store::stop_all(&pool).await?;
@@ -523,6 +529,29 @@ fn shutdown_signal() -> impl Future<Output = ()> {
     }
 }
 
+/// Refuses to start on project files without their database: a wrong path or an unmounted
+/// volume would otherwise create an empty one, and every project would lose its owners.
+fn check_database(db_path: &Path, update_dir: &Path) -> Result<(), CliError> {
+    if db_path.exists() || !holds_projects(update_dir)? {
+        return Ok(());
+    }
+    Err(CliError::MissingDatabase(db_path.to_owned()))
+}
+
+fn holds_projects(update_dir: &Path) -> Result<bool, CliError> {
+    let dir = if update_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        update_dir
+    };
+    for entry in fs::read_dir(dir)? {
+        if cocat_core::store::room_id_from_file(&entry?.path()).is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn parse_role(value: &str) -> Result<Role, UnknownRole> {
     value.parse()
 }
@@ -530,6 +559,23 @@ fn parse_role(value: &str) -> Result<Role, UnknownRole> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_database_beside_project_files_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = dir.path().join("storage");
+        fs::create_dir(&storage).unwrap();
+        let db = dir.path().join("cocat-rs.db");
+
+        assert!(check_database(&db, &storage).is_ok(), "a first start");
+        fs::write(storage.join("lab.y.h"), b"").unwrap();
+        assert!(check_database(&db, &storage).is_ok(), "side files are no projects");
+        fs::write(storage.join("lab.y"), b"0.0.1\0").unwrap();
+        let error = check_database(&db, &storage).unwrap_err();
+        assert!(error.to_string().contains("cocat-rs.db"), "{error}");
+        fs::write(&db, b"").unwrap();
+        assert!(check_database(&db, &storage).is_ok(), "the database is there");
+    }
 
     #[test]
     fn storage_limits_default_without_env() {
