@@ -40,7 +40,7 @@ podman run -d --name cocat -p 6570:6570 \
 | Mount | Holds |
 |---|---|
 | `/storage` | the project files: `<room_id>.y` and its history stamps `<room_id>.y.h`; a workspace adds one `<project>%2F<document>.y` (and `.y.h`) per document, and its whole files under `blobs/` |
-| `/db` | `cocat-rs.db` (accounts, projects, memberships, sessions) and `cocat-rs.db.secret` |
+| `/db` | `cocat-rs.db` and `cocat-rs.db.secret`. The database holds everything that is not a project's content: accounts and password hashes, sessions and app tokens, projects with their owners, members, groups and invitations, quotas, public-catalogue and curator settings, saved versions, rounds, submissions (their only copy), the workspace document and uploaded-file lists, and the providers' state. Without it the project files have no owners. |
 | `/log` | kept for the Python image's contract; the server prints to the container output (`podman logs cocat`) |
 
 The server listens on port 6570 inside the container (`PORT`). It runs as the `cocat` user
@@ -48,6 +48,21 @@ The server listens on port 6570 inside the container (`PORT`). It runs as the `c
 podman: `podman unshare chown 1000:1000 <dir>`). With SELinux, add `:Z` to a bind mount.
 `podman stop` sends `SIGTERM`: the server flushes every open project before it exits, so give
 it time (`--stop-timeout 30`).
+
+Safety rails on the data:
+
+- One process per `/storage`: the server and `cocat-server import` lock
+  `/storage/.cocat.lock`, so a second one stops at startup instead of cutting the records the
+  first writes. `import --dry-run` only reads, and takes no lock.
+- The server refuses to start when `/storage` holds projects but the database is missing (a
+  wrong path, an unmounted volume): it would otherwise create an empty database, and every
+  project would lose its owners. Restore the database, or fix the mount.
+- A project file that cannot be read to its end (a torn last write, or damage) is cut at the
+  last good record, and what was cut is kept beside it as `<room_id>.y.cut-<seconds>`, with
+  an error in the log. After a crash this is a few bytes; a large one means damage, and its
+  records can be recovered by hand.
+- When a write fails (disk full), the project's clients are closed and nothing unwritten is
+  relayed. The clients keep their edits and send them again when they reconnect.
 
 ## Configuration
 
@@ -290,7 +305,8 @@ and so are accounts created there.
 
 ## Backups
 
-Copy, together:
+Copy, together, **the database first**: every project file is written before its database
+row, so a database older than the files never names a file the copy lacks.
 
 - the whole project directory (`/storage`), with its `blobs/` folder: every `<room_id>.y` and `<room_id>.y.h`, and for workspaces every `<project>%2F<document>.y` and `.y.h` plus `blobs/`;
 - the database `/db/cocat-rs.db`, with SQLite's online backup, never a plain file copy
