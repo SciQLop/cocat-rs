@@ -70,7 +70,7 @@ const JUNO: &str = "Louis, Hospodarsky, Jackman et al. (2022), Lists of magnetop
 const CASSINI: &str = "Jackman (2022), List of Saturn magnetopause and bow shock crossings by the Cassini spacecraft, Zenodo, https://doi.org/10.5281/zenodo.5913537, licence CC-BY-4.0; see Jackman et al. (2019), JGR, https://doi.org/10.1029/2019JA026628.";
 const MESSENGER: &str = "Sun (2026), Lists of Magnetopause and Bow Shock Crossings of Mercury by MESSENGER Spacecraft, Zenodo, https://doi.org/10.5281/zenodo.18236915, licence CC-BY-4.0; see Sun et al. (2020), GRL, https://doi.org/10.1029/2020GL089784.";
 
-const LISTS: [List; 43] = [
+const LISTS: [List; 47] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -624,6 +624,58 @@ const LISTS: [List; 43] = [
             pattern: "*_####.txt",
         },
         read: omni_magnetopause,
+        part: "",
+    },
+    List {
+        key: "stereo-icmes",
+        folder: "Literature/Heliosphere/STEREO (Lan Jian)",
+        name: "ICMEs at STEREO A and B (Jian)",
+        about: "Interplanetary coronal mass ejections seen in situ by STEREO A and B from 2006, compiled by Lan Jian: `stereo` is A or B, the magnetic obstacle's start, hybrid and ambiguous markers, peak total pressure, field and speed with and without the sheath, speed change, Group and magnetic cloud index, and a comment.",
+        credit: "Lan K. Jian, STEREO Level 3 event lists, STEREO Science Center, https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/; see Jian et al. (2013, 2018), Solar Physics. Public (NASA Heliophysics data, CC0).",
+        url: "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/",
+        files: Files::Remote(&[
+            "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/LanJian_STEREO_ICME_List.txt",
+        ]),
+        read: hpevent,
+        part: "",
+    },
+    List {
+        key: "stereo-sirs",
+        folder: "Literature/Heliosphere/STEREO (Lan Jian)",
+        name: "Stream interaction regions at STEREO A and B (Jian)",
+        about: "Stream interaction regions seen by STEREO A and B from 2007, compiled by Lan Jian: `stereo` is A or B, the time of the peak total pressure, the peak pressure, field and density, and the lowest and highest speeds; hybrid (with an ICME) and ambiguous markers.",
+        credit: "Lan K. Jian, STEREO Level 3 event lists, STEREO Science Center, https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/; see Jian et al. (2013, 2018), Solar Physics. Public (NASA Heliophysics data, CC0).",
+        url: "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/",
+        files: Files::Remote(&[
+            "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/LanJian_STEREO_SIR_List.txt",
+        ]),
+        read: hpevent,
+        part: "SIR_start_time SIR_end_time hybrid_event_marker ambiguous_event_marker STEREO Ptmax_time Ptmax Bmax Npmax Vmin Vmax",
+    },
+    List {
+        key: "stereo-shocks",
+        folder: "Literature/Heliosphere/STEREO (Lan Jian)",
+        name: "Interplanetary shocks at STEREO A and B (Jian)",
+        about: "Shocks seen by STEREO A and B from 2007, compiled by Lan Jian: `stereo` is A or B, the field jump, the shock normal angle, upstream β, magnetosonic Mach number, burst data availability, the driver and a comment (F forward, R reverse).",
+        credit: "Lan K. Jian, STEREO Level 3 event lists, STEREO Science Center, https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/; see Jian et al. (2013, 2018), Solar Physics. Public (NASA Heliophysics data, CC0).",
+        url: "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/",
+        files: Files::Remote(&[
+            "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/LanJian_STEREO_Shock_List.txt",
+        ]),
+        read: hpevent,
+        part: "",
+    },
+    List {
+        key: "stereo-seps",
+        folder: "Literature/Heliosphere/STEREO (Lan Jian)",
+        name: "Solar energetic particle events at STEREO A and B (Jian)",
+        about: "SEP events at STEREO A and B from 2006, when 13-100 MeV protons from HET exceed 10 pfu (like NOAA's solar proton events): `stereo` is A or B, the peak flux and the fluence, and a comment.",
+        credit: "Lan K. Jian, STEREO Level 3 event lists, STEREO Science Center, https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/; see Jian et al. (2013, 2018), Solar Physics. Public (NASA Heliophysics data, CC0).",
+        url: "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/",
+        files: Files::Remote(&[
+            "https://stereo-ssc.nascom.nasa.gov/pub/ins_data/impact/level3/SEPs_spase_hpevent.txt",
+        ]),
+        read: hpevent,
         part: "",
     },
 ];
@@ -1207,75 +1259,67 @@ fn ipshocks(text: &str, _part: &str) -> Result<Vec<Item>, String> {
         .collect()
 }
 
-/// A list in the HPEvent format of CDAWeb's event lists: `#` header lines giving the
-/// columns' `FieldNames`, `FieldUnits` and `FieldNulls`, then one event per line, its start
-/// and stop first. A null or missing stop makes a point. Attributes take the column's name
-/// and its unit; comments write `_` for spaces.
-fn hpevent(text: &str, _part: &str) -> Result<Vec<Item>, String> {
-    const NO_UNIT: [&str; 5] = ["datetime", "text", "char", "none", ""];
-    let header = |key: &str| -> Vec<String> {
-        text.lines()
-            .find_map(|line| line.trim_start_matches('#').trim().strip_prefix(key))
-            .map(|rest| rest.split_whitespace().map(str::to_owned).collect())
-            .unwrap_or_default()
-    };
-    let (names, units, nulls) = (
-        header("FieldNames:"),
-        header("FieldUnits:"),
-        header("FieldNulls:"),
-    );
-    if names.len() < 2 {
-        return Err("no FieldNames line".to_owned());
-    }
-    let attribute = |index: usize| {
-        let name = names[index].to_lowercase();
-        match units.get(index).map(|unit| unit.to_lowercase()) {
-            Some(unit) if !NO_UNIT.contains(&unit.as_str()) => format!("{name}_{unit}"),
-            _ => name,
-        }
-    };
-    text.lines()
-        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
-        .map(|line| {
-            let cells: Vec<&str> = match line.contains('\t') {
-                true => line.split('\t').map(str::trim).collect(),
-                false => line.split_whitespace().collect(),
+/// A list in the HPEvent format (CDAWeb's event lists, the STEREO Science Center's), read
+/// by cocat's own HPEvent reader. Attributes take the field's name in lower case and its
+/// unit; comments write `_` for spaces; STEREO's 1 and -1 are A and B. `part`, when given,
+/// names the fields, for a list whose header miscounts them.
+fn hpevent(text: &str, part: &str) -> Result<Vec<Item>, String> {
+    let names: Vec<&str> = part.split_whitespace().collect();
+    let names = (!names.is_empty()).then_some(names.as_slice());
+    let list = cocat_core::hpevent::read(text, names).map_err(|error| error.to_string())?;
+    let renamed: HashMap<&str, String> = list
+        .fields
+        .iter()
+        .map(|field| {
+            let name = field.name.to_lowercase();
+            let name = match &field.unit {
+                Some(unit) => format!("{name}_{}", slug(unit)),
+                None => name,
             };
-            let start = cells
-                .first()
-                .and_then(|cell| Timestamp::parse(cell))
-                .ok_or_else(|| format!("bad start in {line:?}"))?;
-            let stop = cells
-                .get(1)
-                .filter(|cell| !cell.starts_with("0001-"))
-                .and_then(|cell| Timestamp::parse(cell))
-                .map_or(start, |stop| stop.max(start));
-            let mut attributes = Map::new();
-            for (index, cell) in cells.iter().copied().enumerate().take(names.len()).skip(2) {
-                if cell == "NULL" || nulls.get(index).is_some_and(|null| null == cell) {
-                    continue;
-                }
-                let name = attribute(index);
-                let cell = match name.contains("comment") {
-                    true => cell.replace('_', " "),
-                    false => cell.to_owned(),
-                };
-                keep(&mut attributes, [(name.as_str(), cell.as_str())]);
-            }
-            let id = format!(
-                "{}|{}|{}",
-                cells[0],
-                cells.get(1).unwrap_or(&""),
-                cells.get(2).unwrap_or(&"")
-            );
-            Ok(Item {
-                id,
-                start,
-                stop,
-                attributes,
-            })
+            (field.name.as_str(), name)
         })
-        .collect()
+        .collect();
+    let first_field = list.fields.first().map(|field| field.name.clone());
+    Ok(list
+        .events
+        .into_iter()
+        .map(|event| {
+            let label = first_field
+                .as_ref()
+                .and_then(|name| event.attributes.get(name))
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let id = format!("{}|{}|{label}", event.start, event.stop);
+            let attributes = event
+                .attributes
+                .into_iter()
+                .map(|(name, value)| {
+                    let renamed = renamed
+                        .get(name.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| name.to_lowercase());
+                    let value = match (renamed.as_str(), value) {
+                        ("stereo", Value::Number(side)) => match side.as_i64() {
+                            Some(1) => Value::from("A"),
+                            Some(-1) => Value::from("B"),
+                            _ => Value::Number(side),
+                        },
+                        (name, Value::String(text)) if name.contains("comment") => {
+                            Value::from(text.replace('_', " "))
+                        }
+                        (_, value) => value,
+                    };
+                    (renamed, value)
+                })
+                .collect();
+            Item {
+                id,
+                start: event.start,
+                stop: event.stop,
+                attributes,
+            }
+        })
+        .collect())
 }
 
 /// The sightings of the Carrington event's aurora (1859), a CSV with its times in UTC.
@@ -2237,6 +2281,22 @@ mod tests {
         assert!(
             !items[0].attributes.contains_key("flow_speed_km_s"),
             "9999.9 is a fill value"
+        );
+    }
+
+    #[test]
+    fn a_stereo_sir_takes_the_names_its_header_miscounts() {
+        let sirs = include_str!("../../tests/fixtures/relay/literature_stereo_sirs.txt");
+        let list = LISTS.iter().find(|list| list.key == "stereo-sirs").unwrap();
+        let items = hpevent(sirs, list.part).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].start, at("2007-02-25T17:40:00Z"));
+        assert_eq!(items[0].stop, at("2007-03-01T01:10:00Z"));
+        assert_eq!(items[0].attributes["stereo"], json!("A"));
+        assert_eq!(items[0].attributes["vmax_km_s"], json!(693));
+        assert_eq!(
+            items[0].attributes["ptmax_time"],
+            json!("2007-02-26T02:15:00.000Z")
         );
     }
 

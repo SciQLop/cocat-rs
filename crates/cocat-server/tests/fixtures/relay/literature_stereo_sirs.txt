@@ -1,0 +1,6 @@
+#ListTitle: List of Stream Interaction Regions (SIRs) Observed at STEREO A/B
+#FieldNames: SIR_start_time SIR_end time hybrid_event_marker ambiguous_event_marker STEREO Ptmax_time Ptmax Bmax Npmax Vmin Vmax
+#FieldUnits: DateTime DateTime None None None DateTime nPa nT cm^-3 km/s km/s
+#FieldNulls: 0001-01-01T00:00:00.000Z 0001-01-01T00:00:00.000Z -1 -1 0 0001-01-01T00:00:00.000Z -1 -1 -1 -1 -1
+2007-02-25T17:40:00.000Z	2007-03-01T01:10:00.000Z	0	0	1	2007-02-26T02:15:00.000Z	185	13.3	62.9	294	693
+2007-03-04T15:50:00.000Z	2007-03-07T20:00:00.000Z	0	0	1	2007-03-06T10:46:00.000Z	142	11.0	18.8	344	693

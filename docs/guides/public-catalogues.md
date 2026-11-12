@@ -31,7 +31,8 @@ you may find:
   small-scale flux ropes of Hu et al. (Wind, ACE, Ulysses, Parker Solar Probe); the CDAWeb
   event lists (ISTP Solar Wind Catalog, bow shock crossings since 1973, magnetopause crossings
   since 1963, current sheet exhausts, the 1859 aurora sightings); HELCATS HIGeoCAT and LINKCAT;
-  MMS burst selections and magnetopause crossings.
+  MMS burst selections and magnetopause crossings; Lan Jian's STEREO ICME, SIR, shock and SEP
+  lists.
   Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA
