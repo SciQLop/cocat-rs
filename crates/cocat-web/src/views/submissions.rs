@@ -16,8 +16,8 @@ use crate::public::PublicCatalogue;
 use crate::route::Route;
 use crate::state::Room;
 use crate::submissions::{
-    Detail, Proposal, Submission, SubmitFields, copy_body, copy_href, folders, pending,
-    review_body, submit_body, update_body,
+    Detail, Proposal, Submission, SubmitFields, copy_body, copy_href, copy_target, folders,
+    pending, review_body, submit_body, update_body,
 };
 use crate::views::actions::Form;
 use crate::views::controls::{Error, Hint, confirm, error_line};
@@ -255,6 +255,10 @@ fn ProjectPicker(
                 .collect::<Vec<Project>>()
         })
     };
+    let target = move || {
+        let open = projects.open.with(|open| open.room_id.clone());
+        projects.list.with(|listed| copy_target(listed, &open))
+    };
     let into = NodeRef::<Select>::new();
     let error: Error = RwSignal::new(None);
     let send = move |event: leptos::ev::SubmitEvent| {
@@ -279,10 +283,17 @@ fn ProjectPicker(
             <label>
                 <span class="field-label">"Copy it into"</span>
                 <select node_ref=into>
-                    <option value="">"A new project"</option>
-                    {move || writable().into_iter().map(|project| view! {
-                        <option value=project.id.clone()>{project.name.clone()}</option>
-                    }).collect_view()}
+                    {move || {
+                        let target = target();
+                        let projects = writable().into_iter().map(|project| {
+                            let picked = target.as_deref() == Some(project.id.as_str());
+                            view! { <option value=project.id.clone() selected=picked>{project.name.clone()}</option> }
+                        }).collect_view();
+                        view! {
+                            {projects}
+                            <option value="" selected=target.is_none()>"A new project"</option>
+                        }
+                    }}
                 </select>
             </label>
             {error_line(error)}

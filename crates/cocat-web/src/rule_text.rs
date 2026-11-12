@@ -306,12 +306,16 @@ pub fn copied_text(chain: &[Hop]) -> Option<(String, String)> {
     Some((line, format!("Copied, oldest first:\n{}", steps.join("\n"))))
 }
 
-/// "<project> › <catalogue>, <date>".
+/// "<project> › <catalogue>, <date>", the name once when both are the same (a public
+/// catalogue is a project of its own name).
 fn place_text(hop: &Hop) -> String {
     let when = Timestamp::from_unix_millis(hop.at)
         .and_then(Timestamp::unix_nanos)
         .map(date_text)
         .unwrap_or_default();
+    if hop.project_name == hop.catalogue_name {
+        return format!("{}, {when}", hop.catalogue_name);
+    }
     format!("{} › {}, {when}", hop.project_name, hop.catalogue_name)
 }
 
@@ -356,6 +360,13 @@ mod copied_tests {
             title,
             "Copied, oldest first:\n1. Public catalogues › Bow shock list, 2025-11-10\n2. Lab › Bow shocks, 2025-11-10, by alice.martin"
         );
+    }
+
+    #[test]
+    fn a_public_catalogue_named_like_its_project_is_named_once() {
+        let chain = [hop("ICMEs (ResUNet++)", "ICMEs (ResUNet++)", None)];
+        let (line, _) = copied_text(&chain).unwrap();
+        assert_eq!(line, "Copied from ICMEs (ResUNet++), 2025-11-10");
     }
 }
 

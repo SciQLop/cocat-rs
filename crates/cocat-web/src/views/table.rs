@@ -40,6 +40,9 @@ pub fn Table(
     columns: Memo<Vec<String>>,
     selected: RwSignal<Option<Row>>,
     empty: Signal<&'static str>,
+    /// A link under the empty text, when the page has somewhere to send the visitor.
+    #[prop(optional)]
+    empty_link: Option<Signal<Option<(&'static str, String)>>>,
     /// Where the table is scrolled to; the table opens there.
     scroll_top: RwSignal<f64>,
     /// The preview cannot sort yet.
@@ -120,6 +123,9 @@ pub fn Table(
             </table>
             <Show when=none_shown>
                 <p class="quiet empty">{empty}</p>
+                {move || empty_link.and_then(|link| link.get()).map(|(label, href)| view! {
+                    <p class="empty-link"><a class="button" href=href>{label}</a></p>
+                })}
             </Show>
         </div>
     }

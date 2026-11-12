@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use crate::views::preview::{PreviewView, load_preview};
 use crate::views::proposal::InProposal;
 
-use crate::help::{Shown, empty_text};
+use crate::help::{Shown, empty_text, offers_public};
 use crate::period::Period;
 use crate::preview::{PreviewState, Stage, TableState, stage, switch_state};
 use crate::route::Route;
@@ -274,6 +274,17 @@ fn CatalogueView(
         let filtered = members.with(|members| members.is_ok_and(|rows| !rows.is_empty()));
         empty_text(showing(&reader, &shown.get()), filtered, can_write)
     });
+    let linker = room.clone();
+    let empty_link = Signal::derive(move || {
+        let filtered = members.with(|members| members.is_ok_and(|rows| !rows.is_empty()));
+        offers_public(showing(&linker, &shown.get()), filtered, can_write).then(|| {
+            let page = window().location().pathname().unwrap_or_default();
+            (
+                "Browse the public catalogues",
+                Route::Public(None).href(&page),
+            )
+        })
+    });
     let keys =
         Memo::new(move |_| members.with(|members| members.map(attribute_keys).unwrap_or_default()));
     view! {
@@ -318,7 +329,7 @@ fn CatalogueView(
             <Timeline members matching period selected/>
         </Show>
         <PeriodLine period order members/>
-        <Table members order sorting columns selected empty scroll_top/>
+        <Table members order sorting columns selected empty empty_link scroll_top/>
     }
 }
 

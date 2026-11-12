@@ -1320,3 +1320,61 @@ async fn the_author_hop_survives_deleting_the_authors_project_before_acceptance(
         (world.project.as_str(), "Lab")
     );
 }
+
+/// A public catalogue whose curator wrote `description`.
+async fn described(world: &World, description: &str) -> String {
+    let room = db::PublicRoom {
+        id: "public.described".to_owned(),
+        name: "Described".to_owned(),
+        folder: None,
+        source: None,
+        description: Some(description.to_owned()),
+        public_count: None,
+        counted_file: None,
+    };
+    assert!(
+        db::create_public_room(&world.state.pool, &room, Some(world.curator))
+            .await
+            .unwrap()
+    );
+    world
+        .edit(&room.id, world.curator, |txn| {
+            catalogue(txn, "pub", &["p1"])
+        })
+        .await;
+    room.id
+}
+
+fn description_of(doc: &yrs::Doc) -> Option<serde_json::Value> {
+    model::catalogue(&doc.transact(), "pub")
+        .unwrap()
+        .attributes
+        .get("description")
+        .cloned()
+}
+
+#[tokio::test]
+async fn a_copy_keeps_the_curators_description_and_a_proposal_does_not_add_it() {
+    let world = World::start().await;
+    let public = described(&world, "Found by eye; see the method paper.").await;
+
+    let (status, copied) = world.copy(world.author, &public, None).await;
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    let doc = world.doc(copied["room"].as_str().unwrap()).await;
+    assert_eq!(
+        description_of(&doc),
+        Some(json!("Found by eye; see the method paper."))
+    );
+
+    let path = format!("/api/public/{public}/proposals");
+    let (status, proposed) = world
+        .call(world.author, Method::POST, &path, Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{proposed}");
+    let doc = world.doc(proposed["room"].as_str().unwrap()).await;
+    assert_eq!(
+        description_of(&doc),
+        None,
+        "a proposal changes only what its author changes"
+    );
+}

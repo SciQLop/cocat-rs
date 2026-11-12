@@ -24,7 +24,7 @@ pub fn empty_text(shown: Shown, filtered: bool, can_write: bool) -> &'static str
         (_, true, _) => "No event matches the filter.",
         (Shown::NoProposal, _, _) => "Your proposal has no intervals yet.",
         (Shown::NoCatalogue, _, true) => {
-            "This project has no catalogue yet. Make one with the + next to Catalogues, or from SciQLop."
+            "This project has no catalogue yet. Make one with the + next to Catalogues or from SciQLop, or copy one of the public catalogues."
         }
         (Shown::NoCatalogue, _, false) => "This project has no catalogue yet.",
         (Shown::Catalogue { smart: true }, _, _) => "The rule picks no event right now.",
@@ -36,9 +36,15 @@ pub fn empty_text(shown: Shown, filtered: bool, can_write: bool) -> &'static str
     }
 }
 
+/// Whether the empty table also links to the public catalogues: a project with none yet,
+/// that the visitor can copy into.
+pub fn offers_public(shown: Shown, filtered: bool, can_write: bool) -> bool {
+    shown == Shown::NoCatalogue && !filtered && can_write
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Shown, empty_text, href};
+    use super::{Shown, empty_text, href, offers_public};
 
     #[test]
     fn a_section_link_climbs_out_of_the_app() {
@@ -79,5 +85,24 @@ mod tests {
             "The rule picks no event right now."
         );
         assert_eq!(empty_text(Shown::Trash, false, true), "The trash is empty.");
+    }
+
+    #[test]
+    fn an_empty_project_points_its_editor_to_the_public_catalogues() {
+        assert!(empty_text(Shown::NoCatalogue, false, true).contains("public catalogues"));
+        assert!(offers_public(Shown::NoCatalogue, false, true));
+        assert!(
+            !offers_public(Shown::NoCatalogue, false, false),
+            "a viewer cannot copy into it"
+        );
+        assert!(
+            !offers_public(Shown::NoCatalogue, true, true),
+            "the filter is why it is empty"
+        );
+        assert!(!offers_public(
+            Shown::Catalogue { smart: false },
+            false,
+            true
+        ));
     }
 }

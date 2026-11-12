@@ -470,7 +470,7 @@ async fn propose(
     let public = public_room(&state, &room_id).await?;
     lifecycle::refuse_relayed(&state, &room_id).await?;
     let name = body.name.unwrap_or_else(|| proposal_name(&public.name));
-    let (copied, base) = copy_public(&state, &user, &public, body.room, name).await?;
+    let (copied, base) = copy_public(&state, &user, &public, body.room, name, None).await?;
     submissions::link(
         &state.pool,
         &copied.room,
@@ -505,7 +505,8 @@ async fn copy(
 ) -> Result<(StatusCode, Json<Copied>), ApiError> {
     let public = public_room(&state, &room_id).await?;
     let name = public.name.chars().take(lifecycle::MAX_NAME).collect();
-    let (copied, _) = copy_public(&state, &user, &public, body.room, name).await?;
+    let curated = public.description.clone();
+    let (copied, _) = copy_public(&state, &user, &public, body.room, name, curated).await?;
     Ok((StatusCode::CREATED, Json(copied)))
 }
 
@@ -651,6 +652,7 @@ async fn public_copy(
     state: &AppState,
     public: &PublicRoom,
     by: &str,
+    curated: Option<String>,
 ) -> Result<(String, Vec<u8>, i64), ApiError> {
     let saved = saved(state, &public.id).await?;
     let (id, name, by) = (public.id.clone(), public.name.clone(), by.to_owned());
@@ -667,10 +669,29 @@ async fn public_copy(
                 by: &by,
             };
             record_copy(&alone, &source);
+            if let Some(text) = &curated {
+                describe_unless_described(&alone, &uuid, text);
+            }
             Some((uuid, encoded(&alone), count(records.len())))
         })
         .await?
         .ok_or_else(|| ApiError::Conflict(EMPTY_PUBLIC.to_owned()))
+}
+
+/// The catalogue's `description` attribute, the one the web app shows under its title.
+const DESCRIPTION: &str = "description";
+
+fn describe_unless_described(doc: &Doc, uuid: &str, text: &str) {
+    let mut txn = doc.transact_mut();
+    let described = model::catalogue(&txn, uuid)
+        .is_some_and(|catalogue| catalogue.attributes.contains_key(DESCRIPTION));
+    if described {
+        return;
+    }
+    let attributes = serde_json::Map::from_iter([(DESCRIPTION.to_owned(), text.into())]);
+    if let Err(error) = model::set_catalogue_attributes(&mut txn, uuid, &attributes) {
+        tracing::warn!(%error, "the copy could not take the public description");
+    }
 }
 
 async fn public_room(state: &AppState, room_id: &str) -> Result<PublicRoom, ApiError> {
@@ -680,15 +701,17 @@ async fn public_room(state: &AppState, room_id: &str) -> Result<PublicRoom, ApiE
 }
 
 /// Copies the public catalogue into `room`, or a new project named `name`; where it went
-/// and the copy's base.
+/// and the copy's base. `curated`, the curator's description, becomes the copy's own when
+/// its catalogue has none; a proposal passes `None`, since it holds only its author's changes.
 async fn copy_public(
     state: &AppState,
     user: &db::User,
     public: &PublicRoom,
     room: Option<String>,
     name: String,
+    curated: Option<String>,
 ) -> Result<(Copied, i64), ApiError> {
-    let (catalogue, update, base) = public_copy(state, public, &user.email).await?;
+    let (catalogue, update, base) = public_copy(state, public, &user.email, curated).await?;
     let (room, name) = match room {
         Some(room) => copy_into(state, &room, user.id, &catalogue, update).await?,
         None => {

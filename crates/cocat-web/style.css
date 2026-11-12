@@ -453,6 +453,7 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .small { font-size: 12px; }
 .quiet-cell { color: var(--muted); }
 .empty { padding: 24px 14px; }
+.empty-link { margin: -12px 0 0; padding: 0 14px 24px; }
 
 .tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .events .tags { flex-wrap: nowrap; max-width: 100%; }

@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::history::{Diff, browse_href};
+use crate::projects::Project;
 use crate::public::PublicCatalogue;
 
 /// A submission as `GET /api/public/submissions` lists it.
@@ -118,6 +119,21 @@ pub fn public_actions(
         (true, _, true) => &[(PublicAction::Copy, true)],
         (true, false, false) => &[(PublicAction::Copy, true), (PublicAction::Propose, false)],
         (true, true, false) => &[(PublicAction::Copy, false)],
+    }
+}
+
+/// The project a copy goes into unless the visitor picks another: the open one when they
+/// can write to it, else their only writable one; `None` leaves "A new project".
+pub fn copy_target(projects: &[Project], open: &str) -> Option<String> {
+    let mut writable = projects.iter().filter(|project| {
+        project.role.can_write() && !cocat_core::room_id::is_public_id(&project.id)
+    });
+    if let Some(open) = writable.clone().find(|project| project.id == open) {
+        return Some(open.id.clone());
+    }
+    match (writable.next(), writable.next()) {
+        (Some(only), None) => Some(only.id.clone()),
+        _ => None,
     }
 }
 
@@ -356,5 +372,41 @@ mod tests {
             Some("X")
         );
         assert_eq!(proposal_for(&proposals, "c2"), None);
+    }
+
+    fn project(id: &str, role: Role) -> Project {
+        Project {
+            id: id.into(),
+            name: id.into(),
+            role,
+            editors_can_share: true,
+            personal: false,
+            files: false,
+        }
+    }
+
+    #[test]
+    fn a_copy_goes_by_default_into_the_open_project_or_the_only_one() {
+        let mine = project("mine", Role::Owner);
+        let team = project("team", Role::Editor);
+        let read = project("read", Role::Viewer);
+        let all = [mine.clone(), team.clone(), read.clone()];
+        assert_eq!(
+            copy_target(&all, "team").as_deref(),
+            Some("team"),
+            "the project they came from"
+        );
+        assert_eq!(copy_target(&all, "read"), None, "one they cannot write to");
+        assert_eq!(
+            copy_target(&all, "public.shocks"),
+            None,
+            "two to choose from"
+        );
+        assert_eq!(
+            copy_target(&[mine.clone(), read], "public.shocks").as_deref(),
+            Some("mine"),
+            "the only one they can write to"
+        );
+        assert_eq!(copy_target(&[], "public.shocks"), None);
     }
 }
