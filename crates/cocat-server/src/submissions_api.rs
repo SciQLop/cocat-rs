@@ -594,9 +594,22 @@ fn extracted(doc: &Doc, catalogue: &str) -> Option<(String, Vec<u8>)> {
     Some((name, encoded(&alone)))
 }
 
+/// The catalogue, outside the trash, alone with its events, and its name. The events its
+/// project put in the trash are purged: whoever reads the copy (curators, the public, another
+/// project) must not get what the author threw away. Accepting moves what a submission
+/// leaves out to the public catalogue's trash, so an update still removes them there.
 pub(crate) fn extract_alone(doc: &Doc, catalogue: &str) -> Option<(String, Doc)> {
     let found = model::catalogue(&doc.transact(), catalogue).filter(|found| !found.deleted)?;
-    Some((found.name, model::extract(doc, catalogue)))
+    let alone = model::extract(doc, catalogue);
+    let trashed = model::trash(&alone.transact());
+    {
+        let mut txn = alone.transact_mut();
+        for event in trashed {
+            model::purge_event(&mut txn, &event.uuid);
+        }
+    }
+    // Purging leaves the purged events' keys as tombstones; a second copy holds none.
+    Some((found.name, model::extract(&alone, catalogue)))
 }
 
 fn fits(size: u64, room_limit: u64) -> Result<(), ApiError> {

@@ -73,13 +73,6 @@ pub(crate) async fn write(
 /// The catalogue alone without its events in the trash, and how many events it keeps.
 fn live_copy(doc: &Doc, catalogue: &str) -> Option<(Vec<u8>, i64)> {
     let (_, alone) = extract_alone(doc, catalogue)?;
-    let trashed = model::trash(&alone.transact());
-    let count = {
-        let mut txn = alone.transact_mut();
-        for event in trashed {
-            model::purge_event(&mut txn, &event.uuid);
-        }
-        model::live_event_count(&txn)
-    };
+    let count = model::live_event_count(&alone.transact());
     Some((encoded(&alone), i64::try_from(count).unwrap_or(i64::MAX)))
 }

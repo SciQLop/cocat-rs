@@ -549,6 +549,32 @@ async fn accepting_a_new_one_makes_a_public_catalogue_named_after_it() {
 }
 
 #[tokio::test]
+async fn events_the_author_trashed_never_reach_the_public_catalogue() {
+    let world = World::start().await;
+    world
+        .edit(&world.project, world.author, |txn| {
+            catalogue(txn, "mine", &["kept", "private-trashed"]);
+            assert!(model::delete_event(txn, "private-trashed"));
+        })
+        .await;
+    let (_, made) = world
+        .submit(json!({"room": world.project, "catalogue": "mine", "title": "Trash test"}))
+        .await;
+    let id = made["id"].as_i64().unwrap();
+    let (status, decided) = world
+        .review(world.curator, id, json!({"accept": true}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+
+    let doc = world.doc("public.trash-test").await;
+    let txn = doc.transact();
+    assert!(model::trash(&txn).is_empty(), "{:?}", model::trash(&txn));
+    let bytes = txn.encode_state_as_update_v1(&StateVector::default());
+    let leaked = bytes.windows(15).any(|window| window == b"private-trashed");
+    assert!(!leaked, "the trashed event is in the public catalogue's state");
+}
+
+#[tokio::test]
 async fn a_declined_submission_tells_its_author_why_and_is_decided_once() {
     let world = World::start().await;
     world
