@@ -1,0 +1,3 @@
+start_time_utc, stop_time_utc, start_time_local, stop_time_local, geo_latitude_deg, geo_longitude_deg, observatory, source, comments
+1859-09-02T23:10:52.800Z, 1859-09-03T02:10:52.800Z, 09/02 11:00pm, 09/03 02:00am,    53.77,    -2.72, Preston-England, "Loomis v29 pg 388.", ""
+1859-08-28T21:04:40.799Z, 1859-08-29T03:19:40.799Z, 08/28 09:00pm, 08/29 03:15am,    52.95,    -1.17, Nottingham-England, "Loomis v29 pg 389.", ""

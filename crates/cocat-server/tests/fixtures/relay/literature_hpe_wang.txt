@@ -1,0 +1,35 @@
+# EventTableVersion: 1.0.4
+# ListTitle: Yongli Wang Magnetopause Crossing Dataset
+# ListBeginDate: 1966-10-00T00:00:00.000Z
+# ListEndDate: 2008-10-00T00:00:00.000Z
+# Contact: Connor OBrien obrienco@bu.edu
+#
+# For selection criteria, see README
+# FieldNulls: 0001-01-01T00:00:00:00.000Z 0001-01-01T00:00:00:00.000Z NULL 999.9 999.9 999.9
+# FieldTypes: char char char float float float
+# FieldUnits: DateTime DateTime char radians radians Re
+# FieldNames: time_begin time_end sc_name lat_gsm lon_gsm r
+#
+# Description: Dataset of magnetopause crossings obtained with various spacecraft.# Missions: AMPTE CCE, AMPTE IRM, Cluster1, Explorer33, Geotail, HEOS2, Hawkeye, IMP3, IMP4, IMP6, IMP8, ISEE, Interball 1, Magion 4, OGO-5, Prognoz10, Prognoz7, Prognoz8, THEMIS-A, THEMIS-B, THEMIS-C, THEMIS-D, THEMIS-E
+#
+# PI/Provider name: Yongli Wang, Connor O'Brien
+#
+# Institute: Goddard Space Flight Center, Boston University
+#
+# Contact info: obrienco@bu.edu
+#
+# Data description: Times and positions of magnetopause crossings observed by 23 different satellite missions (See 'Missions'). For breakdown by spacecraft
+# and selection criteria, see paper at URL http://doi.wiley.com/10.1002/jgra.50226
+#
+# Acknowledgement: The providers would like to acknowledge significant contributions to the dataset by J. Å afrÃ¡nkovÃ¡ and K. JelÃ­nek.
+#
+# Related publications: Wang et al. [2013, Journal of Geophysical Research: Space Physics, 118 (5)]
+#
+# Paper DOI or DOI of dataset if available: 10.1002/jgra.50226
+#
+# Other relevant info:
+#
+# time_begin time_end sc_name lat_gsm lon_gsm r
+1966-11-17T03:00:00.000Z 1966-11-17T03:00:00.000Z IMP3 1.1755200000000001 1.00851 11.2039
+1966-11-17T17:40:00.000Z 1966-11-17T17:40:00.000Z IMP3 -1.08895 -1.65969 12.1538
+1966-11-22T22:35:00.000Z 1966-11-22T22:35:00.000Z IMP3 1.31243 0.633691 11.1708

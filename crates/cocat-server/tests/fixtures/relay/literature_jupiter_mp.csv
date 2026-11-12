@@ -1,0 +1,5 @@
+#;Day of Year;Date (year/month/day);Time (HH:MM);Boundary;In/Out;Notes;x (JSS);y (JSS);z (JSS);x (IAU);y(IAU);z (IAU);r (IAU);theta (IAU);phi (IAU);Dynamic Pressure (nPa);Magnetopause Standoff Distance (Jovian radius);Bow Shock Standoff Distance (Jovian radius)
+MP1;177;2016/06/25;21:20;magnetopause;in;;5.744;-110.859;25.498;-18.942;-109.380;25.498;113.899;1.345;-1.742;0.067;84.300;109.100
+MP2;180;2016/06/28;22:27;magnetopause;out;;3.907;-81.666;20.808;-51.758;63.291;20.808;84.366;1.322;2.256;0.267;64.900;77.300
+MP3;181;2016/06/29;08:40;magnetopause;in;;3.659;-77.352;20.096;-35.740;68.697;20.096;80.003;1.317;2.051;0.323;62.300;72.500
+MP98;354;2016/12/19;01:50;magnetopause;out;;-12.358;-67.450;-17.774;-31.570;-60.873;-17.774;70.838;1.824;-2.049;0.696;nan;nan

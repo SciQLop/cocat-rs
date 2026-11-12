@@ -1,0 +1,22 @@
+# EventTableVersion: HPEevent 1.0.3 http://spase-group.org/docs/conventions/HDMC-Event-List-Specification-v1.0.3.pdf
+# ListTitle: Interplanetary magnetic clouds 
+# ListID: spase://NASA/Catalog/ISTP/SWCAT 
+# CreationDate: 2024-03-12T11:21:07Z
+# ModifyDate: 2024-03-12T11:21:07Z
+# FieldNames: TIME_START TIME_END CATEGORY S_C COMMENTS
+# FieldUnits: DateTime DateTime text text text
+# FieldTypes: CHAR CHAR CHAR CHAR CHAR
+# FieldNulls: 0001-01-01T00:00:00.0Z 0001-01-01T00:00:00.0Z NULL NULL NULL
+# ListBeginDate: 1994-03-03T08:30:00.000Z
+# ListEndDate: 2000-11-06T23:00:00.000Z
+# Contact: Berdichevsky, Daniel
+# ContactID: spase://SMWG/Person/Daniel.Berdichevsky	
+# Description: a specific category for the main ISTP Solar Wind Catalog - spase://NASA/Catalog/ISTP/SWCAT 
+# Processed arrays IDL:  TIME_START TIME_END CATEGORY S_C COMMENTSTIME_START TIME_END CATEGORY S_C COMMENTSTIME_START TIME_END CATEGORY S_C COMMENTSTIME_START TIME_END CATEGORY S_C COMMENTSTIME_START TIME_END CATEGORY S_C COMMENTS
+# 
+# 
+# 
+# 
+1994-03-03T08:30:00.000Z 1994-03-03T19:00:00.000Z IMC 8 Likely_start_earlier_during_data_gap,
+1995-02-08T06:00:00.000Z 1995-02-08T22:00:00.000Z IMC/BzS/BzN W/8 |B|_peaks_at_15nT_near_noon,_(axis_in_ecliptic)
+1995-03-04T11:20:00.000Z 1995-03-05T00:00:00.000Z IMC/BzS W Bphi_changing_from_230_to_120_degrees,_with_B_field

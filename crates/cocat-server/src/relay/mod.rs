@@ -12,6 +12,7 @@ pub mod donki;
 pub mod grmb;
 pub mod helio4cast;
 pub mod icmecat;
+pub mod literature;
 pub mod onera;
 pub mod patient;
 pub mod pmod;
@@ -42,10 +43,14 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REDIRECTS: usize = 5;
 /// The other host a provider's host may redirect to: a data repository serving its files
 /// from its own storage, as Recherche Data Gouv sends ONERA's to an S3 bucket.
-const STORAGE: [(&str, &str); 1] = [(
-    "entrepot.recherche.data.gouv.fr",
-    "prod-onera.opens3r-tls.stockage.inrae.fr",
-)];
+const STORAGE: [(&str, &str); 2] = [
+    (
+        "entrepot.recherche.data.gouv.fr",
+        "prod-onera.opens3r-tls.stockage.inrae.fr",
+    ),
+    // Each file sits in a bucket of its own: any subdomain of the storage host.
+    ("ndownloader.figshare.com", "r2.cloudflarestorage.com"),
+];
 
 /// One list a provider publishes: a public catalogue `public.<provider>.<key>` holding one
 /// catalogue, uuid `catalogue`, and `events`, whose uuids stay the same across fetches.
@@ -108,6 +113,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(helio4cast::Helio4cast),
         Arc::new(pmod::Pmod),
         Arc::new(onera::Onera),
+        Arc::new(literature::Literature),
     ]
 }
 
@@ -155,7 +161,12 @@ pub fn http_client() -> Result<reqwest::Client, reqwest::Error> {
 fn follows(next: &reqwest::Url, previous: &[reqwest::Url]) -> bool {
     let asked = previous.first().and_then(reqwest::Url::host_str);
     let storage = STORAGE.iter().any(|&(repository, storage)| {
-        asked == Some(repository) && next.scheme() == "https" && next.host_str() == Some(storage)
+        let host = next.host_str().unwrap_or_default();
+        let in_storage = host == storage
+            || host
+                .strip_suffix(storage)
+                .is_some_and(|bucket| bucket.ends_with('.'));
+        asked == Some(repository) && next.scheme() == "https" && in_storage
     });
     previous.len() <= MAX_REDIRECTS && asked.is_some() && (asked == next.host_str() || storage)
 }
@@ -569,6 +580,24 @@ mod tests {
         assert!(!follows(
             &storage,
             &[url("https://cdaw.gsfc.nasa.gov/CME_list/a.txt")]
+        ));
+    }
+
+    #[test]
+    fn figshare_hands_its_downloads_to_any_bucket_of_its_r2_storage() {
+        let asked = url("https://ndownloader.figshare.com/files/7428409");
+        let bucket = url(
+            "https://44c1cec316ec56bca76dfd65d2882b20.r2.cloudflarestorage.com/figshare-com-storage/7428409/a.txt",
+        );
+
+        assert!(follows(&bucket, std::slice::from_ref(&asked)));
+        assert!(!follows(
+            &url("https://r2.cloudflarestorage.com.evil.example/a.txt"),
+            std::slice::from_ref(&asked)
+        ));
+        assert!(!follows(
+            &bucket,
+            &[url("https://zenodo.org/api/records/1/files/a/content")]
         ));
     }
 }

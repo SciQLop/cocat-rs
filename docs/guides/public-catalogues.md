@@ -25,6 +25,12 @@ you may find:
 - the Cluster **GRMB** and Solar Orbiter **PMOD** lists;
 - **ONERA**'s ICME, sheath and SIR lists from OMNI, their radiation belt electron
   enhancements back to 1868, and the detections of Nguyen et al. (2025).
+- **Published lists**, under *Literature*: event lists deposited with papers or by mission
+  teams. Boundary crossings at Mercury, Venus, Earth, Mars, Jupiter and Saturn; the SHARP and
+  Helsinki IPShocks shock databases; Wind AKR bursts; the CDAWeb event lists (ISTP Solar Wind
+  Catalog, magnetopause crossings since 1966, current sheet exhausts, the 1859 aurora
+  sightings); HELCATS HIGeoCAT and LINKCAT; MMS burst selections and magnetopause crossings.
+  Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA
 CCMC), refreshed 2026-11-11", with a link to the source. When the source corrects an event,
