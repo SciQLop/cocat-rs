@@ -67,22 +67,30 @@ pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
 }
 
 /// A catalogue's description, folded to a few lines; a button unfolds it when it holds
-/// more than those lines show.
+/// more than those lines show. Its code, links and citation are shown as such (see
+/// [`crate::prose`]).
 // simplify: whether it overflows is measured once, when it is shown; a window resized
 // afterwards keeps the button (or its absence). Measure again on resize if that matters.
 #[component]
 pub fn Description(text: String) -> impl IntoView {
-    let paragraph = NodeRef::<leptos::html::P>::new();
+    let body = NodeRef::<leptos::html::Div>::new();
     let long = RwSignal::new(false);
     let open = RwSignal::new(false);
     Effect::new(move |_| {
-        if let Some(paragraph) = paragraph.get() {
-            long.set(paragraph.scroll_height() > paragraph.client_height());
+        if let Some(body) = body.get() {
+            long.set(body.scroll_height() > body.client_height());
         }
     });
+    let paragraphs = crate::prose::paragraphs(&text)
+        .into_iter()
+        .map(|paragraph| {
+            let label = paragraph.cite.then(|| view! { <span class="cite-label">"Cite"</span> " " });
+            view! { <p class:cite=paragraph.cite>{label}{paragraph.spans.into_iter().map(span).collect_view()}</p> }
+        })
+        .collect_view();
     view! {
         <div class="catalogue-description" class:folded=move || !open.get()>
-            <p node_ref=paragraph>{text}</p>
+            <div class="prose" node_ref=body>{paragraphs}</div>
             <Show when=move || long.get()>
                 <button type="button" class="link-button" aria-expanded=move || open.get().to_string()
                     on:click=move |_| open.update(|open| *open = !*open)>
@@ -90,6 +98,17 @@ pub fn Description(text: String) -> impl IntoView {
                 </button>
             </Show>
         </div>
+    }
+}
+
+fn span(span: crate::prose::Span) -> AnyView {
+    use crate::prose::Span;
+    match span {
+        Span::Text(text) => text.into_any(),
+        Span::Code(code) => view! { <code>{code}</code> }.into_any(),
+        Span::Link { href, text } => {
+            view! { <a href=href target="_blank" rel="noopener">{text}</a> }.into_any()
+        }
     }
 }
 

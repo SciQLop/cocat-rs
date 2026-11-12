@@ -19,6 +19,7 @@ pub mod period;
 pub mod presence;
 pub mod preview;
 pub mod projects;
+pub mod prose;
 pub mod public;
 pub mod review;
 pub mod rounds;

@@ -275,13 +275,17 @@ a { color: var(--accent); text-underline-offset: 2px; }
   background: linear-gradient(to right, transparent, var(--fade, var(--page)) 2.5em);
 }
 .catalogue-description:not(.folded) .link-button { margin-left: -4px; }
-.catalogue-description p { white-space: pre-line; }
-.catalogue-description.folded p {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
+.catalogue-description { --lines: 3; }
+.catalogue-description p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.catalogue-description p + p { margin-top: 6px; }
+.catalogue-description.folded .prose { max-height: calc(var(--lines) * 1lh); overflow: hidden; }
+.catalogue-description code {
+  font-family: var(--mono); font-size: 0.92em;
+  padding: 0 3px; border-radius: 3px; background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+.catalogue-description .cite { color: var(--muted); font-size: 0.92em; }
+.catalogue-description .cite-label {
+  font-size: 0.85em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
 }
 .rule { margin: 4px 0 0; color: var(--muted); }
 .rule-error {
@@ -489,7 +493,7 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .about-head .tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .about-edit { margin-left: auto; }
 .about-box .catalogue-description { margin: 0; max-width: none; --fade: var(--surface); }
-.about-box .catalogue-description.folded p { -webkit-line-clamp: 2; line-clamp: 2; }
+.about-box .catalogue-description { --lines: 2; }
 .about-attributes {
   margin: 0; padding-top: 10px; border-top: 1px solid var(--rule);
   display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
@@ -1267,7 +1271,9 @@ select.role-picker[class*="role-"] {
 .public-open:focus-visible::after { box-shadow: var(--focus); }
 .public-row .catalogue-description { margin: 0; max-width: none; color: var(--muted); font-size: 13px; --fade: var(--surface); }
 .public-row .catalogue-description p { margin: 0; overflow-wrap: anywhere; }
-.public-row .catalogue-description.folded p { -webkit-line-clamp: 2; line-clamp: 2; }
+.public-row .catalogue-description { --lines: 2; }
+/* Links rise above the card's name, which is stretched over the whole card. */
+.public-row .catalogue-description a { position: relative; z-index: 1; }
 .public-row .catalogue-description .link-button { z-index: 1; font-size: 13px; }
 .public-row .catalogue-description:not(.folded) .link-button { position: relative; }
 .public-row .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
