@@ -572,12 +572,18 @@ mod tests {
 
         assert!(check_database(&db, &storage).is_ok(), "a first start");
         fs::write(storage.join("lab.y.h"), b"").unwrap();
-        assert!(check_database(&db, &storage).is_ok(), "side files are no projects");
+        assert!(
+            check_database(&db, &storage).is_ok(),
+            "side files are no projects"
+        );
         fs::write(storage.join("lab.y"), b"0.0.1\0").unwrap();
         let error = check_database(&db, &storage).unwrap_err();
         assert!(error.to_string().contains("cocat-rs.db"), "{error}");
         fs::write(&db, b"").unwrap();
-        assert!(check_database(&db, &storage).is_ok(), "the database is there");
+        assert!(
+            check_database(&db, &storage).is_ok(),
+            "the database is there"
+        );
     }
 
     #[test]

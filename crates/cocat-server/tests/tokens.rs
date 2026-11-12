@@ -236,7 +236,11 @@ async fn a_password_change_keeps_tokens_and_ends_browser_sessions() {
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(me_status(&fixture, &token).await, StatusCode::OK);
-    assert_eq!(ended.len(), 1, "the browser's sockets close, the token's stay");
+    assert_eq!(
+        ended.len(),
+        1,
+        "the browser's sockets close, the token's stay"
+    );
 }
 
 #[tokio::test]
@@ -249,7 +253,9 @@ async fn signing_out_closes_that_sessions_sockets_only() {
     let ended = fixture.state.rooms.ended_sessions();
 
     fixture.post("/ui/logout", Some(&browser), &form(&[])).await;
-    fixture.post("/auth/jwt/logout", Some(&api), &form(&[])).await;
+    fixture
+        .post("/auth/jwt/logout", Some(&api), &form(&[]))
+        .await;
 
     assert_eq!(ended.len(), 2, "each sign-out closes its own sockets");
     assert_eq!(me_status(&fixture, &other).await, StatusCode::OK);

@@ -94,7 +94,10 @@ fn a_data_folder_is_locked_by_one_process_at_a_time() {
 
     let held = cocat_core::store::lock_dir(dir.path()).unwrap();
     let error = cocat_core::store::lock_dir(dir.path()).unwrap_err();
-    assert!(error.to_string().contains("another cocat process"), "{error}");
+    assert!(
+        error.to_string().contains("another cocat process"),
+        "{error}"
+    );
     drop(held);
     assert!(cocat_core::store::lock_dir(dir.path()).is_ok());
 }

@@ -603,7 +603,10 @@ async fn an_import_refuses_a_data_folder_a_server_holds() {
     .await
     .unwrap_err();
 
-    assert!(error.to_string().contains("another cocat process"), "{error}");
+    assert!(
+        error.to_string().contains("another cocat process"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

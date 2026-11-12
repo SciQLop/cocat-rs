@@ -2005,7 +2005,10 @@ mod tests {
                 Message::decode_v1(&frame),
                 Ok(Message::Sync(SyncMessage::Update(_)))
             );
-            assert!(!relayed, "an update the disk refused reached another client");
+            assert!(
+                !relayed,
+                "an update the disk refused reached another client"
+            );
         }
     }
 
@@ -2015,8 +2018,14 @@ mod tests {
         let manager = RoomManager::new(dir.path().to_path_buf(), None);
         let room = manager.get_or_open("lab").unwrap();
         let (out, _client) = outbox();
-        room.attach(1, Uuid::new_v4(), "test@example.org".to_owned(), Role::Owner, out)
-            .unwrap();
+        room.attach(
+            1,
+            Uuid::new_v4(),
+            "test@example.org".to_owned(),
+            Role::Owner,
+            out,
+        )
+        .unwrap();
 
         room.fail_writes();
         let written = room.write_as(Author::Server, update_with("a", "1")).await;

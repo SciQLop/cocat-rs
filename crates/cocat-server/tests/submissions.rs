@@ -571,7 +571,10 @@ async fn events_the_author_trashed_never_reach_the_public_catalogue() {
     assert!(model::trash(&txn).is_empty(), "{:?}", model::trash(&txn));
     let bytes = txn.encode_state_as_update_v1(&StateVector::default());
     let leaked = bytes.windows(15).any(|window| window == b"private-trashed");
-    assert!(!leaked, "the trashed event is in the public catalogue's state");
+    assert!(
+        !leaked,
+        "the trashed event is in the public catalogue's state"
+    );
 }
 
 #[tokio::test]

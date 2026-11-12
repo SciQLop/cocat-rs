@@ -1245,9 +1245,12 @@ impl World {
                 json,
                 r#"{"token":"nope","password":"amber quiver tundra oak"}"#.to_owned(),
             ),
-            ("PATCH", "/users/me") => {
-                (json, format!(r#"{{"password":"amber quiver tundra oak","current_password":"{PASSWORD}"}}"#))
-            }
+            ("PATCH", "/users/me") => (
+                json,
+                format!(
+                    r#"{{"password":"amber quiver tundra oak","current_password":"{PASSWORD}"}}"#
+                ),
+            ),
             ("PATCH", "/users/{user}") => (json, r#"{"is_active":true}"#.to_owned()),
             ("POST", "/api/rooms" | "/api/groups" | "/api/public") => {
                 (json, r#"{"name":"another"}"#.to_owned())

@@ -367,7 +367,10 @@ async fn with_a_mailer_a_known_address_signs_up_like_a_new_one_and_its_owner_is_
     assert_eq!(user["email"], "known@example.org");
     assert_eq!(user["is_verified"], false, "as a fresh account answers");
     let mail = fixture.wait_for_mail("known@example.org").await;
-    assert!(mail.contains("Subject: A sign-up used your cocat address"), "{mail}");
+    assert!(
+        mail.contains("Subject: A sign-up used your cocat address"),
+        "{mail}"
+    );
 }
 
 #[tokio::test]
