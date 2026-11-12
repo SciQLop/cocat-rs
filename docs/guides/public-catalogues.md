@@ -27,9 +27,11 @@ you may find:
   enhancements back to 1868, and the detections of Nguyen et al. (2025).
 - **Published lists**, under *Literature*: event lists deposited with papers or by mission
   teams. Boundary crossings at Mercury, Venus, Earth, Mars, Jupiter and Saturn; the SHARP and
-  Helsinki IPShocks shock databases; Wind AKR bursts; the CDAWeb event lists (ISTP Solar Wind
-  Catalog, magnetopause crossings since 1966, current sheet exhausts, the 1859 aurora
-  sightings); HELCATS HIGeoCAT and LINKCAT; MMS burst selections and magnetopause crossings.
+  Helsinki IPShocks shock databases and the CfA's (Wind, ACE, DSCOVR); Wind AKR bursts; the
+  small-scale flux ropes of Hu et al. (Wind, ACE, Ulysses, Parker Solar Probe); the CDAWeb
+  event lists (ISTP Solar Wind Catalog, bow shock crossings since 1973, magnetopause crossings
+  since 1963, current sheet exhausts, the 1859 aurora sightings); HELCATS HIGeoCAT and LINKCAT;
+  MMS burst selections and magnetopause crossings.
   Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA

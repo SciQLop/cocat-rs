@@ -43,6 +43,12 @@ enum Files {
     Remote(&'static [&'static str]),
     /// A table converted once from a paper's supplement, kept in this crate.
     Kept(&'static str),
+    /// The pages an index links to whose link fits `pattern` (see [`linked`]): a year per
+    /// page, found again on each run, so a new year is read without a change here.
+    Linked {
+        index: &'static str,
+        pattern: &'static str,
+    },
 }
 
 struct List {
@@ -64,7 +70,7 @@ const JUNO: &str = "Louis, Hospodarsky, Jackman et al. (2022), Lists of magnetop
 const CASSINI: &str = "Jackman (2022), List of Saturn magnetopause and bow shock crossings by the Cassini spacecraft, Zenodo, https://doi.org/10.5281/zenodo.5913537, licence CC-BY-4.0; see Jackman et al. (2019), JGR, https://doi.org/10.1029/2019JA026628.";
 const MESSENGER: &str = "Sun (2026), Lists of Magnetopause and Bow Shock Crossings of Mercury by MESSENGER Spacecraft, Zenodo, https://doi.org/10.5281/zenodo.18236915, licence CC-BY-4.0; see Sun et al. (2020), GRL, https://doi.org/10.1029/2020GL089784.";
 
-const LISTS: [List; 34] = [
+const LISTS: [List; 43] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -492,6 +498,132 @@ const LISTS: [List; 34] = [
         url: "https://doi.org/10.6084/m9.figshare.5803176",
         files: Files::Remote(&["https://ndownloader.figshare.com/files/10257246"]),
         read: higeocat,
+        part: "",
+    },
+    List {
+        key: "cfa-wind",
+        folder: "Literature/Heliosphere",
+        name: "Interplanetary shocks, Wind (CfA)",
+        about: "Interplanetary shocks seen by Wind, 1995-2024: `type` is FF, FR, SF or SR (fast or slow, forward or reverse), the position is Wind's in GSE (Earth radii), and `page` is the shock's analysis at the CfA (asymptotic plasma, normals from eight methods, θBn, speed, Mach numbers).",
+        credit: "The Harvard-Smithsonian Center for Astrophysics Interplanetary Shock Database (Wind, ACE, DSCOVR), maintained by M. Stevens, https://lweb.cfa.harvard.edu/shocks/; it states no licence, cite the database.",
+        url: "https://lweb.cfa.harvard.edu/shocks/",
+        files: Files::Linked {
+            index: "https://lweb.cfa.harvard.edu/shocks/wi_data/",
+            pattern: "wi_####.html",
+        },
+        read: cfa_shocks,
+        part: "https://lweb.cfa.harvard.edu/shocks/wi_data/",
+    },
+    List {
+        key: "cfa-ace",
+        folder: "Literature/Heliosphere",
+        name: "Interplanetary shocks, ACE (CfA)",
+        about: "Interplanetary shocks seen by ACE, 1998-2014: `type` is FF, FR, SF or SR (fast or slow, forward or reverse), the position is ACE's in GSE (Earth radii), and `page` is the shock's analysis at the CfA (asymptotic plasma, normals from eight methods, θBn, speed, Mach numbers).",
+        credit: "The Harvard-Smithsonian Center for Astrophysics Interplanetary Shock Database (Wind, ACE, DSCOVR), maintained by M. Stevens, https://lweb.cfa.harvard.edu/shocks/; it states no licence, cite the database.",
+        url: "https://lweb.cfa.harvard.edu/shocks/",
+        files: Files::Linked {
+            index: "https://lweb.cfa.harvard.edu/shocks/ac_master_data/",
+            pattern: "ac_master_####.html",
+        },
+        read: cfa_shocks,
+        part: "https://lweb.cfa.harvard.edu/shocks/ac_master_data/",
+    },
+    List {
+        key: "cfa-dscovr",
+        folder: "Literature/Heliosphere",
+        name: "Interplanetary shocks, DSCOVR (CfA)",
+        about: "Interplanetary shocks seen by DSCOVR, 2016-2017: `type` is FF, FR, SF or SR (fast or slow, forward or reverse), the position is DSCOVR's in GSE (Earth radii), and `page` is the shock's analysis at the CfA (asymptotic plasma, normals from eight methods, θBn, speed, Mach numbers).",
+        credit: "The Harvard-Smithsonian Center for Astrophysics Interplanetary Shock Database (Wind, ACE, DSCOVR), maintained by M. Stevens, https://lweb.cfa.harvard.edu/shocks/; it states no licence, cite the database.",
+        url: "https://lweb.cfa.harvard.edu/shocks/",
+        files: Files::Linked {
+            index: "https://lweb.cfa.harvard.edu/shocks/dsc_data/",
+            pattern: "dsc_data_####.html",
+        },
+        read: cfa_shocks,
+        part: "https://lweb.cfa.harvard.edu/shocks/dsc_data/",
+    },
+    List {
+        key: "fluxropes-wind",
+        folder: "Literature/Heliosphere/Small-scale flux ropes",
+        name: "Small-scale flux ropes, Wind (Hu et al.)",
+        about: "Small-scale magnetic flux ropes in the solar wind found in Wind data by the Grad-Shafranov based detection of Hu et al., 1996-2016: duration, fit residue, mean and peak field, plasma beta, solar wind speed, proton temperature (MK) and the axis orientation (θ, φ in degrees).",
+        credit: "Hu, Zheng, Chen et al. (2018), Automated detection of small-scale magnetic flux ropes in the solar wind: first results from the Wind spacecraft measurements, ApJS 239, 12, https://doi.org/10.3847/1538-4365/aae57d; database at http://fluxrope.info/ (it states no licence).",
+        url: "http://fluxrope.info/",
+        files: Files::Linked {
+            index: "http://fluxrope.info/",
+            pattern: "####/year####.html",
+        },
+        read: flux_ropes,
+        part: "",
+    },
+    List {
+        key: "fluxropes-ace",
+        folder: "Literature/Heliosphere/Small-scale flux ropes",
+        name: "Small-scale flux ropes, ACE (Hu et al.)",
+        about: "Small-scale magnetic flux ropes in the solar wind found in ACE data by the Grad-Shafranov based detection of Hu et al., 1998-2018: duration, fit residue, mean and peak field, plasma beta, solar wind speed, proton temperature (MK) and the axis orientation (θ, φ in degrees).",
+        credit: "Hu, Zheng, Chen et al. (2018), Automated detection of small-scale magnetic flux ropes in the solar wind: first results from the Wind spacecraft measurements, ApJS 239, 12, https://doi.org/10.3847/1538-4365/aae57d; database at http://fluxrope.info/ (it states no licence).",
+        url: "http://fluxrope.info/",
+        files: Files::Linked {
+            index: "http://fluxrope.info/",
+            pattern: "ACE####/year####.html",
+        },
+        read: flux_ropes,
+        part: "",
+    },
+    List {
+        key: "fluxropes-ulysses",
+        folder: "Literature/Heliosphere/Small-scale flux ropes",
+        name: "Small-scale flux ropes, Ulysses (Hu et al.)",
+        about: "Small-scale magnetic flux ropes in the solar wind found in Ulysses data by the Grad-Shafranov based detection of Hu et al., 1991-2009: duration, fit residue, mean and peak field, plasma beta, solar wind speed, proton temperature (MK) and the axis orientation (θ, φ in degrees).",
+        credit: "Hu, Zheng, Chen et al. (2018), Automated detection of small-scale magnetic flux ropes in the solar wind: first results from the Wind spacecraft measurements, ApJS 239, 12, https://doi.org/10.3847/1538-4365/aae57d; database at http://fluxrope.info/ (it states no licence).",
+        url: "http://fluxrope.info/",
+        files: Files::Linked {
+            index: "http://fluxrope.info/",
+            pattern: "Ulysses####/year####.html",
+        },
+        read: flux_ropes,
+        part: "",
+    },
+    List {
+        key: "fluxropes-psp",
+        folder: "Literature/Heliosphere/Small-scale flux ropes",
+        name: "Small-scale flux ropes, Parker Solar Probe (Hu et al.)",
+        about: "Small-scale magnetic flux ropes in the solar wind found in Parker Solar Probe data by the Grad-Shafranov based detection of Hu et al., from 2018: duration, fit residue, mean and peak field, plasma beta, solar wind speed, proton temperature (MK) and the axis orientation (θ, φ in degrees). Durations are in seconds, `r_au` is the distance to the Sun.",
+        credit: "Hu, Zheng, Chen et al. (2018), Automated detection of small-scale magnetic flux ropes in the solar wind: first results from the Wind spacecraft measurements, ApJS 239, 12, https://doi.org/10.3847/1538-4365/aae57d; database at http://fluxrope.info/ (it states no licence).",
+        url: "http://fluxrope.info/",
+        files: Files::Linked {
+            index: "http://fluxrope.info/",
+            pattern: "PSP####/year####.html",
+        },
+        read: flux_ropes,
+        part: "",
+    },
+    List {
+        key: "cdaweb-bow-shocks",
+        folder: "Literature/Earth",
+        name: "Earth bow shock crossings, IMP 8, Geotail, Magion 4, Cluster (CDAWeb)",
+        about: "Crossings of Earth's bow shock by IMP 8 (1973-2000), Geotail (1995-1997), Magion 4 (1996-1997) and Cluster (2001-2002), with the spacecraft's position and the upstream solar wind (field, velocity given as its opposite, density, temperature, speeds, Mach numbers, β, pressure, IMF cone and clock angles); IMP 8 adds the downstream density, `shock_strength`, the crossing's `transition` and quality flags.",
+        credit: "IMP 8 magnetometer and plasma teams (GSFC: A. Szabo, J. Merka; MIT: J. Richardson, K. Paularena), R. Kessel (NSSDC) for Geotail and Cluster, J. Safrankova and Z. Nemecek for Magion 4; SPDF/GSFC CDAWeb event lists, https://cdaweb.gsfc.nasa.gov/pub/event_lists/other-event-lists/aaa_boundary_crossings/bowshock_crossings/.",
+        url: "https://omniweb.gsfc.nasa.gov/ftpbrowser/bowshock.html",
+        files: Files::Linked {
+            index: "https://cdaweb.gsfc.nasa.gov/pub/event_lists/other-event-lists/aaa_boundary_crossings/bowshock_crossings/",
+            pattern: "*_####.txt",
+        },
+        read: bow_shocks,
+        part: "",
+    },
+    List {
+        key: "cdaweb-magnetopause-omni",
+        folder: "Literature/Earth",
+        name: "Earth magnetopause crossings 1963-1994, with OMNI solar wind (CDAWeb)",
+        about: "Crossings of Earth's magnetopause by seventeen spacecraft from IMP 1 to Geotail, 1963-1994, each with its position and the solar wind of its hour from OMNI (field, velocity, density, temperature, pressure, Ey, β, Mach numbers, IMF angles) and the Kp, sunspot, Dst and AE indices.",
+        credit: "R. Kessel (NASA LWS TR&T) and SPDF/GSFC, CDAWeb event lists, https://cdaweb.gsfc.nasa.gov/pub/event_lists/other-event-lists/aaa_boundary_crossings/magnetopause_crossings/; solar wind from OMNI.",
+        url: "https://cdaweb.gsfc.nasa.gov/pub/event_lists/other-event-lists/aaa_boundary_crossings/magnetopause_crossings/",
+        files: Files::Linked {
+            index: "https://cdaweb.gsfc.nasa.gov/pub/event_lists/other-event-lists/aaa_boundary_crossings/magnetopause_crossings/",
+            pattern: "*_####.txt",
+        },
+        read: omni_magnetopause,
         part: "",
     },
 ];
@@ -1206,6 +1338,428 @@ fn higeocat(text: &str, _part: &str) -> Result<Vec<Item>, String> {
         .collect()
 }
 
+/// Whether link `href` fits `pattern`: `#` is a digit, `*` any run of characters, the
+/// rest itself. `wi_####.html` finds the CfA's yearly Wind pages.
+fn linked(pattern: &str, href: &str) -> bool {
+    match (pattern.chars().next(), href.chars().next()) {
+        (None, None) => true,
+        (Some('*'), _) => {
+            linked(&pattern[1..], href)
+                || href
+                    .chars()
+                    .next()
+                    .is_some_and(|c| linked(pattern, &href[c.len_utf8()..]))
+        }
+        (Some('#'), Some(c)) if c.is_ascii_digit() => linked(&pattern[1..], &href[1..]),
+        (Some(p), Some(c)) if p == c && p != '#' => {
+            linked(&pattern[p.len_utf8()..], &href[c.len_utf8()..])
+        }
+        _ => false,
+    }
+}
+
+/// The text of each row's cells, from an HTML page's tables.
+fn table_rows(html: &str) -> Vec<Vec<String>> {
+    let page = scraper::Html::parse_document(html);
+    let rows = scraper::Selector::parse("tr").expect("a valid selector");
+    let cells = scraper::Selector::parse("td, th").expect("a valid selector");
+    page.select(&rows)
+        .map(|row| {
+            row.select(&cells)
+                .map(|cell| {
+                    cell.text()
+                        .collect::<String>()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A day of the year with its fraction, as the CfA writes a shock's time.
+fn fractional_day(year: i32, day: f64) -> Option<Timestamp> {
+    let midnight = utc_doy(year, 1, 0, 0, 0.0)?;
+    let nanos = midnight.unix_nanos()? + ((day - 1.0) * 86_400e6).round() as i64 * 1_000;
+    Timestamp::from_unix_nanos(nanos)
+}
+
+/// A yearly page of the CfA shock database: rows of Year, Month, Day, DOY (with its
+/// fraction), UT, X, Y, Z (GSE, Earth radii), Type, a link to the shock's page and when it
+/// was updated. `part` is the page's directory, for the link.
+fn cfa_shocks(text: &str, part: &str) -> Result<Vec<Item>, String> {
+    let page = scraper::Html::parse_document(text);
+    let rows = scraper::Selector::parse("tr").expect("a valid selector");
+    let cells = scraper::Selector::parse("td").expect("a valid selector");
+    let links = scraper::Selector::parse("a").expect("a valid selector");
+    page.select(&rows)
+        .map(|row| row.select(&cells).collect::<Vec<_>>())
+        .filter(|row| row.len() == 11)
+        .filter(|row| {
+            let year = row[0].text().collect::<String>();
+            year.trim().len() == 4 && year.trim().parse::<i32>().is_ok()
+        })
+        .map(|row| {
+            let cell = |at: usize| row[at].text().collect::<String>().trim().to_owned();
+            let at = fractional_day(number(&cell(0), "year")?, number(&cell(3), "day")?)
+                .ok_or_else(|| format!("bad day {}", cell(3)))?;
+            let mut attributes = Map::new();
+            let position = [cell(5), cell(6), cell(7)];
+            keep(
+                &mut attributes,
+                [
+                    ("x_gse_re", position[0].as_str()),
+                    ("y_gse_re", position[1].as_str()),
+                    ("z_gse_re", position[2].as_str()),
+                    ("type", cell(8).as_str()),
+                ],
+            );
+            let page = row[9]
+                .select(&links)
+                .next()
+                .and_then(|link| link.value().attr("href"));
+            if let Some(page) = page {
+                let page = format!("{part}{}", page.trim().trim_start_matches("./"));
+                attributes.insert("page".to_owned(), Value::from(page));
+            }
+            let id = format!("{}-{}", cell(0), cell(3));
+            Ok(point(id, at, attributes))
+        })
+        .collect()
+}
+
+/// A flux rope page's time, `1996/01/01 02:01` or with seconds.
+fn slash_time(text: &str) -> Option<Timestamp> {
+    let iso = text.trim().replace('/', "-").replacen(' ', "T", 1);
+    let iso = match iso.len() {
+        16 => format!("{iso}:00Z"),
+        _ => format!("{iso}Z"),
+    };
+    Timestamp::parse(&iso)
+}
+
+/// What a fluxrope.info column holds, by its header: the attributes it fills, in order.
+fn flux_rope_names(header: &str) -> Vec<String> {
+    let names: &[&str] = match header {
+        "Duration" => &["duration_min"],
+        "Duration (s)" => &["duration_s"],
+        "Residue" => &["residue"],
+        "Rfit, Rdiff" => &["r_fit", "r_diff"],
+        "<B> (nT)" => &["b_mean_nt"],
+        "Bmax (nT)" => &["b_max_nt"],
+        "<β>, <βp>" => &["beta", "beta_p"],
+        "<βp>" => &["beta_p"],
+        "<Vsw> (km/s)" => &["vsw_km_s"],
+        "<Tp> (106K)" => &["tp_mk"],
+        "Orientation" => &["theta_deg", "phi_deg"],
+        "r (AU)" => &["r_au"],
+        other => return vec![slug(other)],
+    };
+    names.iter().map(|name| (*name).to_owned()).collect()
+}
+
+/// A yearly page of the small-scale flux rope database (Hu et al.): one table, a header
+/// row, then one rope per row: its number, `start ~ end`, and its parameters. A cell can
+/// hold two values (`nan, 1.01`, `θ=60, φ=340`), one per name.
+fn flux_ropes(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    let rows = table_rows(text);
+    let Some(header) = rows
+        .iter()
+        .position(|row| row.iter().any(|cell| cell == "Time Range"))
+    else {
+        return Err("no Time Range column".to_owned());
+    };
+    let headers = &rows[header];
+    let range = headers
+        .iter()
+        .position(|cell| cell == "Time Range")
+        .unwrap_or(1);
+    rows[header + 1..]
+        .iter()
+        .filter(|row| row.len() == headers.len())
+        .map(|row| {
+            let (first, last) = row[range]
+                .split_once('~')
+                .ok_or_else(|| format!("no range in {row:?}"))?;
+            let (start, stop) = (slash_time(first), slash_time(last));
+            let (Some(start), Some(stop)) = (start, stop) else {
+                return Err(format!("bad range {:?}", row[range]));
+            };
+            let mut attributes = Map::new();
+            for (header, cell) in headers.iter().zip(row) {
+                if header == "No." || header == "Time Range" {
+                    continue;
+                }
+                let names = flux_rope_names(header);
+                let values: Vec<&str> = match names.len() {
+                    1 => vec![cell.as_str()],
+                    _ => cell
+                        .split(',')
+                        .map(|part| part.rsplit('=').next().unwrap_or(part).trim())
+                        .collect(),
+                };
+                keep(
+                    &mut attributes,
+                    names.iter().map(String::as_str).zip(values),
+                );
+            }
+            Ok(Item {
+                id: row[range].clone(),
+                start,
+                stop: stop.max(start),
+                attributes,
+            })
+        })
+        .collect()
+}
+
+/// Whether a cell is one of the CDAWeb tables' fill values, a run of 9s: `999.9`, `9999999.`.
+fn nines(cell: &str) -> bool {
+    let digits: String = cell.chars().filter(|c| *c != '.').collect();
+    !digits.is_empty() && digits.chars().all(|c| c == '9')
+}
+
+fn keep_unless_nines<'a>(
+    attributes: &mut Map<String, Value>,
+    cells: impl IntoIterator<Item = (&'a str, &'a str)>,
+) {
+    keep(
+        attributes,
+        cells.into_iter().filter(|(_, cell)| !nines(cell.trim())),
+    );
+}
+
+const CROSSING_SPACECRAFT: [(&str, &str); 21] = [
+    ("I8", "IMP 8"),
+    ("GE", "Geotail"),
+    ("M4", "Magion 4"),
+    ("CL", "Cluster"),
+    ("A1", "AMPTE CCE"),
+    ("A2", "AMPTE IRM"),
+    ("E3", "Explorer 33"),
+    ("HW", "Hawkeye"),
+    ("H2", "HEOS 2"),
+    ("I1", "IMP 1"),
+    ("I2", "IMP 2"),
+    ("I3", "IMP 3"),
+    ("I4", "IMP 4"),
+    ("I6", "IMP 6"),
+    ("IS", "ISEE"),
+    ("O5", "OGO 5"),
+    ("P7", "Prognoz 7"),
+    ("P8", "Prognoz 8"),
+    ("P1", "Prognoz 10"),
+    ("I7", "IMP 7"),
+    ("E2", "Explorer 2"),
+];
+
+fn spacecraft(code: &str) -> String {
+    CROSSING_SPACECRAFT
+        .iter()
+        .find(|(known, _)| *known == code)
+        .map_or_else(|| code.to_owned(), |(_, name)| (*name).to_owned())
+}
+
+/// The bow shock records' 43 fixed-width fields (readme of CDAWeb's bowshock_crossings):
+/// width and attribute name; `""` for the time fields read apart.
+const BOW_SHOCK_FIELDS: [(usize, &str); 43] = [
+    (2, ""),
+    (5, ""),
+    (4, ""),
+    (3, ""),
+    (3, ""),
+    (3, ""),
+    (6, "x_gse_re"),
+    (6, "y_gse_re"),
+    (6, "z_gse_re"),
+    (6, "y_gsm_re"),
+    (6, "z_gsm_re"),
+    (6, "bx_gse_nt"),
+    (6, "by_gse_nt"),
+    (6, "bz_gse_nt"),
+    (6, "by_gsm_nt"),
+    (6, "bz_gsm_nt"),
+    (7, "minus_vx_gse_km_s"),
+    (7, "minus_vy_gse_km_s"),
+    (7, "minus_vz_gse_km_s"),
+    (6, "n_up_cm3"),
+    (6, "n_down_cm3"),
+    (8, "t_up_k"),
+    (5, "time_span_min"),
+    (6, "b_nt"),
+    (7, "flow_speed_km_s"),
+    (7, "sound_speed_km_s"),
+    (7, "alfven_speed_km_s"),
+    (7, "magnetosonic_speed_km_s"),
+    (5, "mach_sonic"),
+    (6, "mach_alfven"),
+    (5, "mach_magnetosonic"),
+    (8, "beta"),
+    (6, "flow_pressure_npa"),
+    (4, "shock_strength"),
+    (4, "imf_cone_deg"),
+    (4, "imf_clock_deg"),
+    (4, "orbit"),
+    (2, "leg"),
+    (3, "sequence"),
+    (2, ""),
+    (2, "flag_observation"),
+    (2, "flag_shock"),
+    (2, "flag_upstream"),
+];
+const BOW_SHOCK_TRANSITION: usize = 39;
+
+/// A record whose year has two digits or whose day is 0: the Geotail table of 1996 holds
+/// one (`GE   96   0 16 11`). Skipped, rather than losing the whole list over it; a record
+/// that does not read at all still fails the list, as a changed layout would.
+fn impossible_date(line: &str) -> bool {
+    let field = |range: std::ops::Range<usize>| {
+        line.get(range)
+            .map(str::trim)
+            .and_then(|cell| cell.parse::<i32>().ok())
+    };
+    field(2..7).is_some_and(|year| year < 1900) || field(7..11) == Some(0)
+}
+
+/// CDAWeb's yearly bow shock tables (IMP 8, Geotail, Magion 4, Cluster): fixed-width
+/// records, the shock's time then its position and the upstream solar wind; IMP 8 adds the
+/// downstream density, the crossing's direction and quality flags. Seconds of 99 are none.
+fn bow_shocks(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty() && !impossible_date(line))
+        .map(|line| {
+            let mut cells = Vec::with_capacity(BOW_SHOCK_FIELDS.len());
+            let mut at = 0;
+            for (width, _) in BOW_SHOCK_FIELDS {
+                cells.push(line.get(at..at + width).unwrap_or("").trim());
+                at += width;
+            }
+            let second = match cells[5] {
+                "99" | "" => 0.0,
+                second => number(second, "second")?,
+            };
+            let start = utc_doy(
+                number(cells[1], "year")?,
+                number(cells[2], "day")?,
+                number(cells[3], "hour")?,
+                number(cells[4], "minute")?,
+                second,
+            )
+            .ok_or_else(|| format!("bad time in {line:?}"))?;
+            let mut attributes = Map::new();
+            attributes.insert("spacecraft".to_owned(), Value::from(spacecraft(cells[0])));
+            keep_unless_nines(
+                &mut attributes,
+                BOW_SHOCK_FIELDS
+                    .iter()
+                    .zip(&cells)
+                    .filter(|((_, name), _)| !name.is_empty())
+                    .map(|((_, name), cell)| (*name, *cell)),
+            );
+            let transition = match cells[BOW_SHOCK_TRANSITION] {
+                "0" => Some("into solar wind"),
+                "1" => Some("into magnetosheath"),
+                "2" => Some("unresolved"),
+                _ => None,
+            };
+            if let Some(transition) = transition {
+                attributes.insert("transition".to_owned(), Value::from(transition));
+            }
+            let id = format!(
+                "{}-{}-{}-{}{}{}",
+                cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
+            );
+            Ok(point(id, start, attributes))
+        })
+        .collect()
+}
+
+/// The magnetopause records' 39 whitespace-separated fields (readme of CDAWeb's
+/// magnetopause_crossings); `""` for the time fields read apart.
+const MAGNETOPAUSE_FIELDS: [&str; 39] = [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "x_gse_re",
+    "y_gse_re",
+    "z_gse_re",
+    "y_gsm_re",
+    "z_gsm_re",
+    "b_avg_nt",
+    "b_nt",
+    "bx_gse_nt",
+    "by_gse_nt",
+    "bz_gse_nt",
+    "by_gsm_nt",
+    "bz_gsm_nt",
+    "flow_speed_km_s",
+    "minus_vx_gse_km_s",
+    "minus_vy_gse_km_s",
+    "minus_vz_gse_km_s",
+    "t_k",
+    "n_cm3",
+    "flow_pressure_npa",
+    "ey_mv_m",
+    "beta",
+    "alfven_speed_km_s",
+    "sound_speed_km_s",
+    "magnetosonic_speed_km_s",
+    "mach_alfven",
+    "mach_sonic",
+    "mach_magnetosonic",
+    "imf_cone_deg",
+    "imf_clock_deg",
+    "kp_x10",
+    "sunspot_number",
+    "dst_nt",
+    "ae_nt",
+    "source_code",
+];
+
+/// CDAWeb's yearly magnetopause tables, 1963-1994: the crossing's time and position, then
+/// the solar wind of its hour from OMNI and the geomagnetic indices.
+fn omni_magnetopause(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            if cells.len() != MAGNETOPAUSE_FIELDS.len() {
+                return Err(format!(
+                    "{} fields, not {}: {line:?}",
+                    cells.len(),
+                    MAGNETOPAUSE_FIELDS.len()
+                ));
+            }
+            let start = utc_doy(
+                number(cells[1], "year")?,
+                number(cells[2], "day")?,
+                number(cells[3], "hour")?,
+                number(cells[4], "minute")?,
+                0.0,
+            )
+            .ok_or_else(|| format!("bad time in {line:?}"))?;
+            let mut attributes = Map::new();
+            attributes.insert("spacecraft".to_owned(), Value::from(spacecraft(cells[0])));
+            keep_unless_nines(
+                &mut attributes,
+                MAGNETOPAUSE_FIELDS
+                    .iter()
+                    .zip(&cells)
+                    .filter(|(name, _)| !name.is_empty())
+                    .map(|(name, cell)| (*name, *cell)),
+            );
+            let id = format!(
+                "{}-{}-{}-{}{}",
+                cells[0], cells[1], cells[2], cells[3], cells[4]
+            );
+            Ok(point(id, start, attributes))
+        })
+        .collect()
+}
+
 fn event(list: &List, item: Item) -> EventRecord {
     let uuid = Uuid::new_v5(&NAMESPACE, format!("{}/{}", list.key, item.id).as_bytes());
     let mut event = EventRecord::new(uuid.to_string(), item.start, item.stop);
@@ -1246,6 +1800,28 @@ async fn download(http: &reqwest::Client, url: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// The pages `index` links to that fit `pattern`, as absolute URLs, each once, in order.
+fn linked_pages(index: &str, html: &str, pattern: &str) -> Result<Vec<String>, String> {
+    let base = reqwest::Url::parse(index).map_err(|error| format!("{index}: {error}"))?;
+    let page = scraper::Html::parse_document(html);
+    let anchors = scraper::Selector::parse("a[href]").expect("a valid selector");
+    let mut urls: Vec<String> = page
+        .select(&anchors)
+        .filter_map(|anchor| anchor.value().attr("href"))
+        .map(|href| href.trim().trim_start_matches("./"))
+        .filter(|href| linked(pattern, href))
+        .filter_map(|href| base.join(href).ok().map(String::from))
+        .collect();
+    urls.sort();
+    urls.dedup();
+    match urls.is_empty() {
+        true => Err(format!(
+            "{index} links to no page like {pattern}, has the site changed?"
+        )),
+        false => Ok(urls),
+    }
+}
+
 /// The list's files; a file several lists share (SHARP's) is downloaded once a run.
 async fn texts(
     http: &reqwest::Client,
@@ -1254,6 +1830,13 @@ async fn texts(
 ) -> Result<Vec<String>, String> {
     match files {
         Files::Kept(text) => Ok(vec![(*text).to_owned()]),
+        Files::Linked { index, pattern } => {
+            let mut texts = Vec::new();
+            for url in linked_pages(index, &download(http, index).await?, pattern)? {
+                texts.push(download(http, &url).await?);
+            }
+            Ok(texts)
+        }
         Files::Remote(urls) => {
             let mut texts = Vec::with_capacity(urls.len());
             for url in *urls {
@@ -1552,6 +2135,108 @@ mod tests {
         assert!(
             !first.attributes.contains_key("l_n"),
             "empty cells are left out"
+        );
+    }
+
+    #[test]
+    fn a_link_pattern_takes_digits_for_hashes_and_anything_for_stars() {
+        assert!(linked("wi_####.html", "wi_2000.html"));
+        assert!(!linked("wi_####.html", "wi_data.html"));
+        assert!(linked("ACE####/year####.html", "ACE1998/year1998.html"));
+        assert!(!linked("####/year####.html", "ACE1998/year1998.html"));
+        assert!(linked("*_####.txt", "ampte_cce_1984.txt"));
+        assert!(!linked("*_####.txt", "00readme.txt"));
+    }
+
+    #[test]
+    fn a_cfa_shock_is_at_its_fractional_day_with_its_page() {
+        let base = "https://lweb.cfa.harvard.edu/shocks/wi_data/";
+        let items = cfa_shocks(
+            include_str!("../../tests/fixtures/relay/literature_cfa_wind.html"),
+            base,
+        )
+        .unwrap();
+        assert_eq!(items.len(), 2);
+        let first = &items[0];
+        // Day 36.643385 of 2000: 5 February, 15:26:28.46.
+        assert_eq!(first.start, at("2000-02-05T15:26:28.464Z"));
+        assert_eq!(first.start, first.stop);
+        assert_eq!(first.attributes["type"], json!("FF"));
+        assert_eq!(first.attributes["x_gse_re"], json!(90.81));
+        assert_eq!(
+            first.attributes["page"],
+            json!("https://lweb.cfa.harvard.edu/shocks/wi_data/00152/wi_00152.html")
+        );
+    }
+
+    #[test]
+    fn a_flux_rope_spans_its_time_range_and_splits_paired_cells() {
+        let wind = flux_ropes(
+            include_str!("../../tests/fixtures/relay/literature_fluxropes_wind.html"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(wind.len(), 2);
+        assert_eq!(wind[0].start, at("1996-01-01T02:01:00Z"));
+        assert_eq!(wind[0].stop, at("1996-01-01T02:56:00Z"));
+        assert_eq!(wind[0].attributes["duration_min"], json!(56.0));
+        assert_eq!(wind[0].attributes["beta_p"], json!(1.01));
+        assert!(!wind[0].attributes.contains_key("beta"), "nan is missing");
+        assert_eq!(wind[0].attributes["theta_deg"], json!(60.0));
+        assert_eq!(wind[0].attributes["phi_deg"], json!(340.0));
+        assert_eq!(wind[0].attributes["vsw_km_s"], json!(388.0));
+        let psp = flux_ropes(
+            include_str!("../../tests/fixtures/relay/literature_fluxropes_psp.html"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(psp[0].start, at("2024-01-01T00:13:32Z"));
+        assert_eq!(psp[0].attributes["r_fit"], json!(0.0788));
+        assert_eq!(psp[0].attributes["r_au"], json!(0.17));
+    }
+
+    #[test]
+    fn a_bow_shock_record_is_cut_at_its_documented_widths() {
+        let items = bow_shocks(
+            include_str!("../../tests/fixtures/relay/literature_bowshocks.txt"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(items.len(), 3);
+        let cluster = &items[0];
+        assert_eq!(cluster.start, at("2001-02-02T20:34:00Z"), "day 33 of 2001");
+        assert_eq!(cluster.attributes["spacecraft"], json!("Cluster"));
+        assert_eq!(cluster.attributes["minus_vx_gse_km_s"], json!(378.7));
+        assert!(
+            !cluster.attributes.contains_key("n_down_cm3"),
+            "999.9 is a fill value"
+        );
+        let imp = &items[2];
+        assert_eq!(imp.attributes["spacecraft"], json!("IMP 8"));
+        assert_eq!(imp.attributes["time_span_min"], json!(6.0));
+        assert_eq!(imp.attributes["sequence"], json!(4.0));
+        assert_eq!(
+            imp.attributes["transition"],
+            json!("unresolved"),
+            "code 2: the same domain on both sides"
+        );
+    }
+
+    #[test]
+    fn an_omni_magnetopause_record_keeps_the_hour_of_solar_wind_around_it() {
+        let items = omni_magnetopause(
+            include_str!("../../tests/fixtures/relay/literature_omni_magnetopause.txt"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].start, at("1978-01-02T03:10:00Z"));
+        assert_eq!(items[0].attributes["spacecraft"], json!("ISEE"));
+        assert_eq!(items[0].attributes["x_gse_re"], json!(3.9));
+        assert_eq!(items[0].attributes["imf_cone_deg"], json!(65.0));
+        assert!(
+            !items[0].attributes.contains_key("flow_speed_km_s"),
+            "9999.9 is a fill value"
         );
     }
 
