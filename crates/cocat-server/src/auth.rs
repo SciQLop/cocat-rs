@@ -194,12 +194,13 @@ pub async fn revoke_token(
     Ok(Some(name))
 }
 
-/// End the session the request names, if it names one.
-pub async fn end_session(pool: &SqlitePool, headers: &HeaderMap) -> Result<(), AuthError> {
+/// End the session the request names, if it names one, and close the sockets it opened.
+pub async fn end_session(state: &AppState, headers: &HeaderMap) -> Result<(), AuthError> {
     let Some(hash) = request_token_hash(headers) else {
         return Ok(());
     };
-    db::delete_session(pool, &hash).await?;
+    db::delete_session(&state.pool, &hash).await?;
+    state.rooms.end_session(&hash);
     Ok(())
 }
 
@@ -439,7 +440,7 @@ pub async fn logout_handler(State(state): State<AppState>, headers: HeaderMap) -
             }
         }
     }
-    if let Err(error) = end_session(&state.pool, &headers).await {
+    if let Err(error) = end_session(&state, &headers).await {
         tracing::warn!(%error, "cannot end the session");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }

@@ -212,13 +212,13 @@ pub async fn change(state: &AppState, user: User, change: Change) -> Result<User
         db::save_user(&mut *tx, &updated)
             .await
             .map_err(account_error)?;
-        if deactivated {
-            let ended = db::end_sessions_of(&mut *tx, updated.id).await?;
-            ended.iter().for_each(|hash| state.rooms.end_session(hash));
+        let ended = if deactivated {
+            db::end_sessions_of(&mut *tx, updated.id).await?
         } else {
-            db::end_browser_sessions_of(&mut *tx, updated.id).await?;
-        }
+            db::end_browser_sessions_of(&mut *tx, updated.id).await?
+        };
         tx.commit().await.map_err(DbError::from)?;
+        ended.iter().for_each(|hash| state.rooms.end_session(hash));
     } else {
         db::save_user(&state.pool, &updated)
             .await

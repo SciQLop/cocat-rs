@@ -863,16 +863,18 @@ pub async fn end_sessions_of<'e, E: Executor<'e, Database = Sqlite>>(
 }
 
 /// Drop the account's browser sessions and keep its tokens: after a password change the
-/// person sees their signed-in apps and revokes them on purpose.
+/// person sees their signed-in apps and revokes them on purpose. Answers their hashes, so
+/// the caller can close what they opened.
 pub async fn end_browser_sessions_of<'e, E: Executor<'e, Database = Sqlite>>(
     executor: E,
     user_id: Uuid,
-) -> Result<(), DbError> {
-    sqlx::query("DELETE FROM session WHERE user_id = ? AND name IS NULL")
-        .bind(user_id.to_string())
-        .execute(executor)
-        .await?;
-    Ok(())
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "DELETE FROM session WHERE user_id = ? AND name IS NULL RETURNING token_hash",
+    )
+    .bind(user_id.to_string())
+    .fetch_all(executor)
+    .await?)
 }
 
 /// The address column is unique, case-insensitively: a second account for the same person is

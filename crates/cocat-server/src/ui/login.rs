@@ -108,7 +108,7 @@ pub(crate) async fn login(
 }
 
 pub(crate) async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Err(error) = auth::end_session(&state.pool, &headers).await {
+    if let Err(error) = auth::end_session(&state, &headers).await {
         tracing::warn!(%error, "cannot end the session");
     }
     (
