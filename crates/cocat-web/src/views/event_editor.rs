@@ -253,6 +253,12 @@ pub fn Attributes(
         }
     };
     let (new_key, new_value) = (NodeRef::<Input>::new(), NodeRef::<Input>::new());
+    let adding = RwSignal::new(false);
+    Effect::new(move |_| {
+        if let Some(input) = new_key.get() {
+            let _ = input.focus();
+        }
+    });
     let add = move |event: leptos::ev::SubmitEvent| {
         event.prevent_default();
         let value =
@@ -262,24 +268,28 @@ pub fn Attributes(
             (writes.set_attribute)(txn, uuid, &key, &value_text)
         });
         if error.with_untracked(Option::is_none) {
-            for input in [new_key, new_value] {
-                if let Some(input) = input.get() {
-                    input.set_value("");
-                }
-            }
+            adding.set(false);
         }
     };
+    let none = move || attributes.with(|listed| listed.as_ref().is_none_or(Vec::is_empty));
     view! {
         <section>
-            <h3 class="section-label">"Attributes"</h3>
-            <dl class="attributes">
-                <For each=move || attributes.get().unwrap_or_default() key=Clone::clone children=row/>
-            </dl>
-            <form class="add-attribute" on:submit=add>
-                <input type="text" placeholder="name" aria-label="New attribute name" node_ref=new_key/>
-                <input type="text" class="mono" placeholder="value" aria-label="New attribute value" node_ref=new_value/>
-                <button type="submit" class="button">"Add"</button>
-            </form>
+            <Show when=move || !none()>
+                <h3 class="section-label">"Attributes"</h3>
+                <dl class="attributes">
+                    <For each=move || attributes.get().unwrap_or_default() key=Clone::clone children=row/>
+                </dl>
+            </Show>
+            <Show when=move || adding.get()
+                fallback=move || view! {
+                    <button type="button" class="link-button add-link" on:click=move |_| adding.set(true)>"+ Add attribute"</button>
+                }>
+                <form class="add-attribute" on:submit=add>
+                    <input type="text" placeholder="name" aria-label="New attribute name" node_ref=new_key/>
+                    <input type="text" class="mono" placeholder="value" aria-label="New attribute value" node_ref=new_value/>
+                    <button type="submit" class="button">"Add"</button>
+                </form>
+            </Show>
             {error_line(error)}
         </section>
     }

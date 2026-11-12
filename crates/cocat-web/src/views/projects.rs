@@ -181,40 +181,22 @@ fn current_route() -> Route {
 }
 
 /// The open project's name, or "Public catalogues" on their pages, as a button that lists
-/// the projects and what can be done with the open one. The public index holds no project, so
-/// it offers no project actions.
+/// where to go: the public catalogues and the visitor's projects. What can be done with the
+/// open project is in [`ProjectActions`] beside it.
 #[component]
 pub fn ProjectMenu() -> impl IntoView {
     let projects = expect_context::<Projects>();
     let menu = NodeRef::<Details>::new();
     let dialog = RwSignal::new(None::<Dialog>);
-    let room = use_context::<Room>();
-    let held = room.is_some();
-    let editor = room.is_some_and(|room| room.can_write());
-    let importer = use_context::<Importer>();
     let open_id = move || projects.open.with(|config| config.room_id.clone());
-    let name = move || projects.open.with(|config| config.room_name.clone());
     let public = move || projects.in_public();
     let at_home = move || projects.route.with(|route| *route == Route::Home);
     let label = move || match (at_home(), public()) {
         (true, _) => "Projects".to_owned(),
         (false, true) => "Public catalogues".to_owned(),
-        (false, false) => name(),
+        (false, false) => projects.open.with(|config| config.room_name.clone()),
     };
-    let actions = move || {
-        projects
-            .open
-            .with(|config| Actions::on(&config.room_id, config.role))
-    };
-    let close = move || {
-        if let Some(menu) = menu.get_untracked() {
-            menu.set_open(false);
-        }
-    };
-    let pick = move |which: Dialog| {
-        close();
-        dialog.set(Some(which));
-    };
+    let close = move || close_menu(menu);
     let toggled = move |_| {
         if menu.get_untracked().is_some_and(|menu| menu.open()) {
             projects.reload();
@@ -237,7 +219,7 @@ pub fn ProjectMenu() -> impl IntoView {
     view! {
         <details class="project-menu" data-menu node_ref=menu on:toggle=toggled
             on:keydown=move |event| if event.key() == "Escape" { close(); }>
-            <summary class="project-switch" aria-label=move || format!("{}, open the project menu", label())>
+            <summary class="project-switch" aria-label=move || format!("{}, switch project", label())>
                 <Show when=public><PublicIcon size=16/></Show>
                 <span class="label">{label}</span>
                 <span class="caret" aria-hidden="true">"▾"</span>
@@ -253,30 +235,72 @@ pub fn ProjectMenu() -> impl IntoView {
                 <p class="eyebrow">"Projects"</p>
                 <For each=move || projects.list.get() key=|project| (project.id.clone(), project.name.clone(), project.role) children=entry/>
                 <hr/>
-                <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Create)>"+ New project"</button>
-                <Show when=move || held && actions().rename>
-                    <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Rename)>
-                        {move || format!("Rename “{}”…", name())}
-                    </button>
-                </Show>
-                <Show when=move || held && actions().leave>
-                    <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Leave)>"Leave project…"</button>
-                </Show>
-                <Show when=move || held && actions().delete>
-                    <button type="button" role="menuitem" class="danger" on:click=move |_| pick(Dialog::Delete)>"Delete project…"</button>
-                </Show>
-                {held.then(|| view! { <hr/> })}
-                {importer.filter(|_| editor).map(|importer| view! {
-                    <button type="button" role="menuitem" on:click=move |_| { close(); importer.open(None); }>"Import…"</button>
-                })}
-                {held.then(|| view! {
-                    <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Export)>"Export catalogues…"</button>
-                    <hr/>
-                })}
-                <button type="button" role="menuitem" on:click=move |_| { close(); go_to(&Route::Groups.hash()); }>"Groups…"</button>
+                <button type="button" role="menuitem" on:click=move |_| { close(); dialog.set(Some(Dialog::Create)); }>"+ New project"</button>
                 <Hint text="A project is a set of catalogues shared with the same people." anchor="projects" topic="projects"/>
             </div>
         </details>
         {move || dialog.get().map(|which| view! { <ProjectDialog which dialog/> })}
+    }
+}
+
+/// What can be done with the open project, beside its name: the everyday actions first, then
+/// leaving or deleting it, set apart at the end. Nothing on the public catalogues or at home.
+#[component]
+pub fn ProjectActions() -> impl IntoView {
+    let projects = expect_context::<Projects>();
+    let Some(room) = use_context::<Room>() else {
+        return ().into_any();
+    };
+    let editor = room.can_write();
+    let importer = use_context::<Importer>();
+    let menu = NodeRef::<Details>::new();
+    let dialog = RwSignal::new(None::<Dialog>);
+    let name = move || projects.open.with(|config| config.room_name.clone());
+    let elsewhere =
+        move || projects.in_public() || projects.route.with(|route| *route == Route::Home);
+    let actions = move || {
+        projects
+            .open
+            .with(|config| Actions::on(&config.room_id, config.role))
+    };
+    let pick = move |which: Dialog| {
+        close_menu(menu);
+        dialog.set(Some(which));
+    };
+    view! {
+        <Show when=move || !elsewhere()>
+            <details class="project-actions" data-menu node_ref=menu
+                on:keydown=move |event| if event.key() == "Escape" { close_menu(menu); }>
+                <summary class="icon-button" aria-label=move || format!("Actions on the project “{}”", name())
+                    title="Project actions">"⋯"</summary>
+                <div class="menu" role="menu" aria-label="Project actions">
+                    <Show when=move || actions().rename>
+                        <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Rename)>"Rename…"</button>
+                    </Show>
+                    {importer.filter(|_| editor).map(|importer| view! {
+                        <button type="button" role="menuitem"
+                            on:click=move |_| { close_menu(menu); importer.open(None); }>"Import catalogues…"</button>
+                    })}
+                    <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Export)>"Export catalogues…"</button>
+                    <Show when=move || actions().leave || actions().delete>
+                        <hr/>
+                    </Show>
+                    <Show when=move || actions().leave>
+                        <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Leave)>"Leave project…"</button>
+                    </Show>
+                    <Show when=move || actions().delete>
+                        <button type="button" role="menuitem" class="danger" on:click=move |_| pick(Dialog::Delete)>"Delete project…"</button>
+                    </Show>
+                </div>
+            </details>
+        </Show>
+        {move || dialog.get().map(|which| view! { <ProjectDialog which dialog/> })}
+    }
+    .into_any()
+}
+
+fn close_menu(menu: NodeRef<Details>) {
+    if let Some(menu) = menu.get_untracked() {
+        menu.set_open(false);
     }
 }

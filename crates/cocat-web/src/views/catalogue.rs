@@ -16,7 +16,7 @@ use crate::search::{self, Listing, Query, Side, listing};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::sync::Loading;
-use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
+use crate::views::actions::{Actions, Form, Freeze, PublicButtons, RenameForm};
 use crate::views::controls::Hint;
 use crate::views::rule::{Heading, live_about, live_counts};
 use crate::views::rule_editor::RuleEditor;
@@ -318,6 +318,7 @@ fn CatalogueView(
                 Some(view! { <CopyForm public=public_id.clone() close/> }.into_any())
             }
             (Form::Export, Route::Catalogue(uuid)) => Some(view! { <ExportForm uuid form/> }.into_any()),
+            (Form::Rename, Route::Catalogue(uuid)) => Some(view! { <RenameForm uuid form/> }.into_any()),
             _ => None,
         }}
         {move || (shown.get() == Route::Trash).then(|| view! {

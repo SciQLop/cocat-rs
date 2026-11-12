@@ -35,9 +35,11 @@ the same project. The project's History covers its catalogues; each file has its
 <a href="#workspaces">Files of a SciQLop workspace</a>).</p>
 <p>Your account starts with a project called “My catalogues”. It is private until you share
 it. Signing in opens it.</p>
-<p>The project's name at the top of the catalogues is a menu. It lists your projects: pick one
-to switch to it. It also creates, renames, leaves and deletes projects, and opens your
-groups.</p>
+<p>The project's name at the top of the page is a menu of where to go: the public
+catalogues and your projects. Pick one to switch to it, or create a project there. The
+<strong>⋯</strong> beside the name acts on the open project: rename it, import or export
+catalogues, and, set apart at the end, leave or delete it. Your groups are in the menu under
+your initials.</p>
 <p>To share only some catalogues, or catalogues without their notebooks, create a project
 for them with <strong>New project</strong>, and share that one.</p>
 <p>Only the server API, the websocket path and the command-line tool still call a project a
@@ -80,7 +82,8 @@ on purpose from SciQLop.</p>
 <section>
 <h2 id="catalogues">Catalogues and events</h2>
 <p>A catalogue is a named list of events. A project's catalogues are listed on the left; pick
-one to see its events on a timeline and in a table.</p>
+one to see its events on a timeline and in a table. The table leaves out the tags, confidence
+and author columns while no event it shows has one, unless you sort by them.</p>
 <p>An event is a time interval. It has:</p>
 <ul>
   <li><strong>Start</strong> and <strong>stop</strong>, in UTC.</li>
@@ -92,8 +95,8 @@ one to see its events on a timeline and in a table.</p>
 </ul>
 <p>Pick a row to open the event. Editors change it there. Its <strong>Listed in</strong> part
 shows its catalogues, and adds it to another one.</p>
-<p>To rename or delete a catalogue, use the <strong>⋯</strong> next to its name in the list,
-or right-click it. Deleting an event or a catalogue moves it to the <strong>Trash</strong>, at
+<p>To rename, export or delete a catalogue, open it and use <strong>More</strong> above its
+events. Deleting an event or a catalogue moves it to the <strong>Trash</strong>, at
 the bottom of the catalogue list; a deleted catalogue's events stay in the project. From there, <strong>Restore</strong> puts it back.
 <strong>Delete for good</strong> removes it, and cannot be undone.</p>
 <p>“My catalogues” can also show a catalogue of another of your projects, as a bookmark.
@@ -109,9 +112,9 @@ catalogue cannot use a linked catalogue in its rule yet.</p>
 
 <section>
 <h2 id="statistics">Statistics</h2>
-<p>While no event is open, the panel on the right starts with the open catalogue: its
-description, tags and attributes, which editors change there. The description also shows under
-the catalogue's title, folded when it is long. Below, the panel sums up the events the table
+<p>While no event is open, the panel on the right starts with the open catalogue: its tags and
+attributes, which editors change there, and <strong>Edit description</strong>. The description
+shows under the catalogue's title, folded when it is long. Below, the panel sums up the events the table
 shows: after the filter and the period picked on the timeline.</p>
 <ul>
   <li><strong>Coverage</strong> is the time at least one event covers. Where events overlap,
@@ -151,9 +154,9 @@ another quantity, such as pitch angle, the file is still written but is not stri
 the page says so.</p>
 <p>A smart catalogue is saved with the events it holds now, without its rule.</p>
 <p><strong>To export several catalogues</strong> in one VOTable or tscat JSON file, use
-<strong>Export catalogues…</strong> in the project menu and tick the ones you want. TFCat
+<strong>Export catalogues…</strong> in the project's <strong>⋯</strong> menu and tick the ones you want. TFCat
 makes one file per catalogue.</p>
-<p><strong>To import a file</strong>, use <strong>Import…</strong> in the project menu or
+<p><strong>To import a file</strong>, use <strong>Import catalogues…</strong> in the project's <strong>⋯</strong> menu or
 the <strong>+</strong> above the catalogues, or drop the file on the events. It takes a
 VOTable, a tscat JSON file, a TFCat file or a CSV file. The page reads it first and says what it will do, for example
 "Adds 2 catalogues and 300 events, updates 5 events (same ids)". Nothing changes until you
@@ -294,14 +297,14 @@ owner's role or remove the owner.</p>
 <p>The owner can keep this to themselves: untick <strong>Editors can change access and
 share</strong> in Share. Editors then see the lists without the controls, like viewers.
 Viewers never change who is in the project.</p>
-<p>Any member can <strong>Leave</strong> a project from the project menu. The owner cannot
+<p>Any member can <strong>Leave</strong> a project from the project's <strong>⋯</strong> menu. The owner cannot
 leave: they transfer ownership first. <strong>Transfer ownership…</strong>, at the bottom of
 Share, hands the project to another member, and the old owner stays as an editor. Only the
 owner can do that.</p>
 
 <h3 id="groups">Groups</h3>
 <p>A group is a set of people you share many projects with. Open
-<a href="{{ groups_href }}">Groups…</a> in the project menu, create one there, then invite
+<a href="{{ groups_href }}">Groups</a> in the menu under your initials, create one there, then invite
 people with a share link or by email.</p>
 <p>In Share, whoever shares the project adds a group they belong to, as editor or viewer.
 Everyone in the group gets the project, including people who join the group later. Someone

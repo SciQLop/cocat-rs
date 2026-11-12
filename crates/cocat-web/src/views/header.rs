@@ -8,7 +8,7 @@ use crate::projects::shareable;
 use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
-use crate::views::projects::{ProjectMenu, Projects};
+use crate::views::projects::{ProjectActions, ProjectMenu, Projects};
 use crate::views::share::ShareButton;
 
 #[component]
@@ -91,6 +91,7 @@ fn Crumbs(shown: Memo<Route>) -> impl IntoView {
         </a>
         <nav class="crumbs" aria-label="Breadcrumb">
             <ProjectMenu/>
+            <ProjectActions/>
             {move || shown.get().crumb().map(|here| view! {
                 <span aria-hidden="true">"/"</span>
                 <span class="here" aria-current="page">{here}</span>
@@ -159,8 +160,8 @@ fn UserMenu() -> impl IntoView {
             <div class="menu" role="menu" aria-label="Your account">
                 <p class="signed-in">"Signed in as"<strong>{email.clone()}</strong></p>
                 <hr/>
-                <a role="menuitem" href=Route::Home.href(&page)>"Home"</a>
                 <a role="menuitem" href="../account">"Account settings"</a>
+                <a role="menuitem" href=Route::Groups.href(&page)>"Groups"</a>
                 {admin.then(|| view! { <a role="menuitem" href="../admin">"Admin"</a> })}
                 <hr/>
                 <form method="post" action="../logout">

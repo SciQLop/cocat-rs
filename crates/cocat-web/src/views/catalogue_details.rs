@@ -47,14 +47,23 @@ fn Details(uuid: String) -> impl IntoView {
     }
 }
 
-/// Commits on change, like the event's comment; a blank one removes it.
+/// The description shows under the page's title, so here it is only a link that opens the
+/// text box. The box commits on change, like the event's comment, and closes; a blank text
+/// removes the description.
 #[component]
 fn DescriptionField(uuid: String, summary: Summary) -> impl IntoView {
     let room = StoredValue::new_local(expect_context::<Room>());
     let uuid = StoredValue::new_local(uuid);
     let error = RwSignal::new(None);
+    let editing = RwSignal::new(false);
+    let box_ref = NodeRef::<leptos::html::Textarea>::new();
     let text = Memo::new(move |_| {
         summary.with(|summary| summary.as_ref().and_then(|c| description(&c.attributes)))
+    });
+    Effect::new(move |_| {
+        if let Some(text_box) = box_ref.get() {
+            let _ = text_box.focus();
+        }
     });
     let save = move |event| {
         let typed = event_target_value(&event);
@@ -63,14 +72,26 @@ fn DescriptionField(uuid: String, summary: Summary) -> impl IntoView {
                 commit(room, error, |txn| edit::set_description(txn, uuid, &typed))
             })
         });
+        if error.with_untracked(Option::is_none) {
+            editing.set(false);
+        }
+    };
+    let label = move || match text.with(Option::is_some) {
+        true => "Edit description",
+        false => "+ Add a description",
     };
     view! {
         <section>
-            <label class="field">
-                <span class="section-label">"Description"</span>
-                <textarea rows="4" placeholder="What the catalogue holds, and where its events come from"
-                    prop:value=move || text.get().unwrap_or_default() on:change=save></textarea>
-            </label>
+            <Show when=move || editing.get()
+                fallback=move || view! {
+                    <button type="button" class="link-button add-link" on:click=move |_| editing.set(true)>{label}</button>
+                }>
+                <label class="field">
+                    <span class="section-label">"Description"</span>
+                    <textarea rows="6" node_ref=box_ref placeholder="What the catalogue holds, and where its events come from"
+                        prop:value=move || text.get().unwrap_or_default() on:change=save></textarea>
+                </label>
+            </Show>
             {error_line(error)}
         </section>
     }

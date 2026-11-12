@@ -948,7 +948,15 @@ a.button { text-decoration: none; }
 
 /* Project menu: the open project's name in the header lists the others. */
 
-.project-menu { position: relative; min-width: 0; }
+.project-menu, .project-actions { position: relative; min-width: 0; }
+.project-actions > summary {
+  list-style: none; display: grid; place-items: center; width: 34px; height: 34px;
+  border: 1px solid var(--rule); border-radius: var(--radius); color: var(--muted);
+  font-weight: 700; cursor: pointer;
+}
+.project-actions > summary::-webkit-details-marker { display: none; }
+.project-actions > summary:hover, .project-actions[open] > summary { background: var(--chip); color: var(--ink); }
+.project-actions[open] > summary::before { content: ""; position: fixed; inset: 0; z-index: 3; cursor: default; }
 .project-switch {
   list-style: none;
   display: flex;
@@ -975,7 +983,7 @@ a.button { text-decoration: none; }
   z-index: 3;
   cursor: default;
 }
-.project-menu .menu {
+:is(.project-menu, .project-actions) .menu {
   position: absolute;
   left: 0;
   z-index: 4;
@@ -992,9 +1000,9 @@ a.button { text-decoration: none; }
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
 }
-.project-menu .menu .eyebrow { padding: 4px 8px; }
-.project-menu .menu hr { width: 100%; border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
-.project-menu .menu > :is(button, a) {
+:is(.project-menu, .project-actions) .menu .eyebrow { padding: 4px 8px; }
+:is(.project-menu, .project-actions) .menu hr { width: 100%; border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
+:is(.project-menu, .project-actions) .menu > :is(button, a) {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1009,8 +1017,8 @@ a.button { text-decoration: none; }
   border-radius: var(--radius);
   cursor: pointer;
 }
-.project-menu .menu > :is(button, a):hover { background: var(--chip); }
-.project-menu .menu .danger { color: var(--danger); }
+:is(.project-menu, .project-actions) .menu > :is(button, a):hover { background: var(--chip); }
+:is(.project-menu, .project-actions) .menu .danger { color: var(--danger); }
 .project-entry .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-entry small { color: var(--muted); flex: none; }
 .project-entry[aria-current] { background: var(--accent-soft); font-weight: 600; }
@@ -1031,8 +1039,8 @@ a.button { text-decoration: none; }
 .project-dialog .name-form { gap: 12px; }
 
 @media (max-width: 480px) {
-  .project-menu { position: static; }
-  .project-menu .menu {
+  .project-menu, .project-actions { position: static; }
+  :is(.project-menu, .project-actions) .menu {
     position: fixed;
     left: 0;
     right: 0;
@@ -1071,6 +1079,7 @@ a.button { text-decoration: none; }
   white-space: nowrap;
 }
 .link-button:hover { text-decoration: underline; }
+.add-link { margin-left: -4px; align-self: flex-start; }
 .link-button.danger { color: var(--danger); }
 :is(.share-dialog, .groups-page) :is(input[type="text"], input[type="email"], select) {
   height: 34px;
@@ -1277,7 +1286,11 @@ select.role-picker[class*="role-"] {
 .import-summary { font-weight: 600; }
 
 /* The way to the public catalogues: the sidebar entry, the header's submit button, the empty index. */
-.catalogue.public-link { margin-top: 2px; }
+.catalogue.public-link { margin-top: 10px; position: relative; }
+/* The project's own places end above: the public catalogues belong to everyone. */
+.catalogue.public-link::before {
+  content: ""; position: absolute; top: -6px; left: 8px; right: 8px; border-top: 1px solid var(--rule);
+}
 .catalogue.public-link .name svg { color: var(--accent); flex: none; }
 .catalogue.public-link .count-badge { margin-left: 0; }
 .empty-state {

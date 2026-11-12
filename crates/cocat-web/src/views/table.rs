@@ -10,27 +10,29 @@ use crate::format::{duration_text, person_text, time_text, value_text};
 use crate::layout::{tags_that_fit, window};
 use crate::presence::{Peer, editing};
 use crate::preview::sort_hint;
-use crate::rows::{Row, SortKey};
+use crate::rows::{Row, SortKey, fixed_columns};
 use crate::state::Room;
 use crate::views::catalogue::Members;
 
 /// Every row's height in pixels; the stylesheet sets the same.
 const ROW: f64 = 40.0;
-/// The table's narrowest width: the stylesheet's fixed columns, the author column at 100 px
-/// (it takes whatever room is left), and 130 px per attribute column.
-const FIXED_WIDTH: f64 = 830.0;
+/// Each attribute column's width; the stylesheet sets the same.
 const ATTRIBUTE_WIDTH: f64 = 130.0;
 /// The tag cell's inner width: `.w-tags` less the cell's padding.
 const TAGS_WIDTH: f64 = 162.0;
 
-const FIXED: [(&str, SortKey); 6] = [
-    ("Start", SortKey::Start),
-    ("Duration", SortKey::Duration),
-    ("Tags", SortKey::Tags),
-    ("Confidence", SortKey::Confidence),
-    ("Status", SortKey::Status),
-    ("Author", SortKey::Author),
-];
+/// A fixed column's header, its `<col>` class and its width in pixels; the stylesheet sets
+/// the same widths, and the author column takes whatever room is left past its 100 px.
+fn fixed(key: &SortKey) -> (&'static str, &'static str, f64) {
+    match key {
+        SortKey::Start => ("Start", "w-start", 180.0),
+        SortKey::Duration => ("Duration", "w-duration", 110.0),
+        SortKey::Tags => ("Tags", "w-tags", 190.0),
+        SortKey::Confidence => ("Confidence", "w-confidence", 130.0),
+        SortKey::Status => ("Status", "w-status", 120.0),
+        _ => ("Author", "w-author", 100.0),
+    }
+}
 
 #[component]
 pub fn Table(
@@ -74,8 +76,16 @@ pub fn Table(
     if let Some(view_end) = view_end {
         Effect::new(move |_| view_end.set(range.get().end));
     }
+    let keys = Memo::new(move |_| {
+        let sorted = sorting.with(|(key, _)| key.clone());
+        members.with(|members| match members {
+            Ok(rows) => order.with(|order| fixed_columns(rows, order, &sorted)),
+            Err(_) => fixed_columns(&[], &[], &sorted),
+        })
+    });
     let body = move || {
         let range = range.get();
+        let keys = keys.get();
         let total = order.with(Vec::len);
         let columns = columns.get();
         let rows = members.with(|members| {
@@ -85,7 +95,7 @@ pub fn Table(
             order.with(|order| {
                 order[range.clone()]
                     .iter()
-                    .map(|&index| row(&rows[index], &columns, selected, editors))
+                    .map(|&index| row(&rows[index], &keys, &columns, selected, editors))
                     .collect::<Vec<_>>()
             })
         });
@@ -99,21 +109,25 @@ pub fn Table(
     view! {
         <div class="table-scroll" node_ref=scroller on:scroll=move |_| measure()>
             <table class="events" style=move || {
-                let width = FIXED_WIDTH + ATTRIBUTE_WIDTH * columns.with(Vec::len) as f64;
+                let fixed_width: f64 = keys.with(|keys| keys.iter().map(|key| fixed(key).2).sum());
+                let width = fixed_width + ATTRIBUTE_WIDTH * columns.with(Vec::len) as f64;
                 format!("min-width: {width}px")
             }>
                 <colgroup>
-                    <col class="w-start"/>
-                    <col class="w-duration"/>
-                    <col class="w-tags"/>
-                    <col class="w-confidence"/>
-                    <col class="w-status"/>
-                    <col class="w-author"/>
+                    {move || {
+                        // The last column takes the room left over, as the author column does.
+                        let keys = keys.get();
+                        let last = (keys.len() - 1, columns.with(Vec::is_empty));
+                        keys.iter().enumerate().map(|(index, key)| {
+                            let class = if last == (index, true) { "" } else { fixed(key).1 };
+                            view! { <col class=class/> }
+                        }).collect_view()
+                    }}
                     {move || columns.get().into_iter().map(|_| view! { <col class="w-attribute"/> }).collect_view()}
                 </colgroup>
                 <thead>
                     <tr>
-                        {FIXED.into_iter().map(|(label, key)| header(label, key, sorting, sortable)).collect_view()}
+                        {move || keys.get().into_iter().map(|key| header(fixed(&key).0, key, sorting, sortable)).collect_view()}
                         {move || columns.get().into_iter().map(|key| {
                             header_owned(key.clone(), SortKey::Attribute(key), sorting, sortable)
                         }).collect_view()}
@@ -173,6 +187,7 @@ fn header_owned(
 
 fn row(
     row: &Row,
+    keys: &[SortKey],
     columns: &[String],
     selected: RwSignal<Option<Row>>,
     editors: Memo<HashMap<String, Peer>>,
@@ -209,14 +224,30 @@ fn row(
             style=move || editor.with(|peer| peer.as_ref().map(|peer| format!("--peer: {}", peer.color)))
             title=move || editor.with(|peer| peer.as_ref().map(|peer| format!("{} is editing this event", peer.email)))
             on:click=move |_| selected.set(Some(picked.clone()))>
-            <td class="mono">{time_text(row.start)}</td>
-            <td class="mono">{duration_text(row.stop - row.start)}</td>
-            <td class="text">{tags(row)}</td>
-            <td>{confidence(row.confidence)}</td>
-            <td>{status(row)}</td>
-            <td class="text quiet-cell" title=row.author.clone()>{row.author.as_deref().map(person_text).unwrap_or_default().to_owned()}</td>
+            {keys.iter().map(|key| cell(row, key)).collect_view()}
             {attributes}
         </tr>
+    }
+}
+
+fn cell(row: &Row, key: &SortKey) -> AnyView {
+    match key {
+        SortKey::Start => view! { <td class="mono">{time_text(row.start)}</td> }.into_any(),
+        SortKey::Duration => {
+            view! { <td class="mono">{duration_text(row.stop - row.start)}</td> }.into_any()
+        }
+        SortKey::Tags => view! { <td class="text">{tags(row)}</td> }.into_any(),
+        SortKey::Confidence => view! { <td>{confidence(row.confidence)}</td> }.into_any(),
+        SortKey::Status => view! { <td>{status(row)}</td> }.into_any(),
+        _ => {
+            let author = row
+                .author
+                .as_deref()
+                .map(person_text)
+                .unwrap_or_default()
+                .to_owned();
+            view! { <td class="text quiet-cell" title=row.author.clone()>{author}</td> }.into_any()
+        }
     }
 }
 

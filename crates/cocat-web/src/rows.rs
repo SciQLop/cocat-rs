@@ -186,6 +186,30 @@ pub fn sort(rows: &[Row], order: &mut [usize], key: &SortKey, descending: bool) 
     });
 }
 
+/// The fixed columns the table shows for the rows in `order`, left to right. Tags,
+/// confidence and author go when no row there holds one, unless the table is sorted by
+/// them; an empty table keeps them all, so its header reads as usual.
+pub fn fixed_columns(rows: &[Row], order: &[usize], sorted: &SortKey) -> Vec<SortKey> {
+    let shown = || order.iter().map(|&index| &rows[index]);
+    let holds = |key: &SortKey| match key {
+        SortKey::Tags => shown().any(|row| !row.tags.is_empty() || row.uuid.is_none()),
+        SortKey::Confidence => shown().any(|row| row.confidence.is_some()),
+        SortKey::Author => shown().any(|row| row.author.is_some()),
+        _ => true,
+    };
+    [
+        SortKey::Start,
+        SortKey::Duration,
+        SortKey::Tags,
+        SortKey::Confidence,
+        SortKey::Status,
+        SortKey::Author,
+    ]
+    .into_iter()
+    .filter(|key| order.is_empty() || key == sorted || holds(key))
+    .collect()
+}
+
 /// Every attribute key the rows hold, sorted: the columns the table can show.
 pub fn attribute_keys(rows: &[Row]) -> Vec<String> {
     let keys: BTreeSet<&String> = rows.iter().flat_map(|row| row.attributes.keys()).collect();
@@ -481,5 +505,44 @@ mod tests {
     fn the_attribute_columns_are_every_key_the_rows_hold() {
         let rows = catalogue("c-smart");
         assert_eq!(attribute_keys(&rows), ["amplitude", "region", "spacecraft"]);
+    }
+
+    fn plain(uuid: &str) -> Row {
+        Row {
+            uuid: Some(uuid.into()),
+            start: 0,
+            stop: 1,
+            tags: Vec::new(),
+            confidence: None,
+            status: Status::Confirmed,
+            author: None,
+            attributes: serde_json::Map::new(),
+            sources: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_column_no_shown_event_fills_is_left_out_unless_it_sorts() {
+        let mut tagged = plain("a");
+        tagged.tags = vec!["mms".into()];
+        let rows = [plain("b"), tagged];
+        let shown = |order: &[usize], sorted: SortKey| fixed_columns(&rows, order, &sorted);
+        use SortKey::*;
+        assert_eq!(shown(&[0, 1], Start), [Start, Duration, Tags, Status]);
+        assert_eq!(
+            shown(&[0], Start),
+            [Start, Duration, Status],
+            "only what the view shows counts"
+        );
+        assert_eq!(
+            shown(&[0], Author),
+            [Start, Duration, Status, Author],
+            "the sorted column stays"
+        );
+        assert_eq!(
+            shown(&[], Start),
+            [Start, Duration, Tags, Confidence, Status, Author],
+            "an empty table keeps its header"
+        );
     }
 }

@@ -28,7 +28,21 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
     let public = page.clone();
     let rounds = project_rounds();
     let rounds_href = Route::Rounds.href(&page);
-    let can_start = crate::views::rounds::can_start_here();
+    // Read as the project list arrives: until then a personal project looks like any other.
+    let can_start = {
+        let (projects, writable) = (
+            expect_context::<crate::views::projects::Projects>(),
+            room.can_write(),
+        );
+        let id = room.config.room_id.clone();
+        move || {
+            crate::rounds::can_start(
+                writable,
+                crate::views::links::is_personal(projects, &id),
+                cocat_core::room_id::is_public_id(&id),
+            )
+        }
+    };
     let linked = page.clone();
     let entries = NodeRef::<leptos::html::Nav>::new();
     keep_current_in_view(entries, move || shown.track());
@@ -68,7 +82,7 @@ pub fn Sidebar(shown: Memo<Route>) -> impl IntoView {
                 </span>
                 <span class="count">{move || list.get().trash}</span>
             </a>
-            <Show when=move || can_start || rounds.with(|rounds| !rounds.is_empty())>
+            <Show when=move || can_start() || rounds.with(|rounds| !rounds.is_empty())>
                 <a class="catalogue" href=rounds_href.clone()
                     aria-current=move || current(shown.with(Route::in_rounds))>
                     <span class="name">"Rounds"</span>
@@ -161,50 +175,19 @@ fn NewCatalogue() -> impl IntoView {
     }
 }
 
+/// One catalogue of the list: a place to go. What can be done with it is in the More menu
+/// above its events, once it is open.
 #[component]
 fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView {
-    let room = expect_context::<Room>();
-    let editor = room.can_write();
     let route = Route::Catalogue(item.uuid.clone());
     let href = route.href(&page);
-    let here = route.clone();
     let count = item
         .count
         .map_or_else(|| "!".to_owned(), |count| count.to_string());
     let count_title = item.count.is_none().then_some("The rule does not evaluate");
-    let menu = NodeRef::<leptos::html::Details>::new();
-    let renaming = RwSignal::new(false);
-    let failure = RwSignal::new(None::<String>);
-    let close = move || {
-        if let Some(menu) = menu.get_untracked() {
-            menu.set_open(false);
-        }
-    };
-    let open_menu = move |event: leptos::ev::MouseEvent| {
-        if let Some(menu) = menu.get_untracked().filter(|_| editor) {
-            event.prevent_default();
-            menu.set_open(true);
-        }
-    };
-    let uuid = StoredValue::new(item.uuid.clone());
-    let deleter = room.clone();
-    let delete = move |_| {
-        close();
-        let shown_now = shown.get_untracked() == here;
-        let uuid = uuid.get_value();
-        failure.set(crate::views::actions::trash_catalogue(&deleter, &uuid, shown_now).err());
-    };
-    let renamer = room.clone();
-    let rename = move |name: String| {
-        let uuid = uuid.get_value();
-        renamer.write(|txn| edit::rename_catalogue(txn, &uuid, &name))
-    };
-    let rename = StoredValue::new_local(rename);
-    let name = item.name.clone();
     view! {
         <div class="entry">
-            <a class="catalogue" href=href aria-current=move || current(shown.get() == route)
-                on:contextmenu=open_menu>
+            <a class="catalogue" href=href aria-current=move || current(shown.get() == route)>
                 <span class="name">
                     <Show when=move || item.smart>
                         <SmartIcon/>
@@ -213,25 +196,7 @@ fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView
                 </span>
                 <span class="count" title=count_title>{count}</span>
             </a>
-            {editor.then(|| view! {
-                <details class="entry-menu" data-menu node_ref=menu
-                    on:keydown=move |event| if event.key() == "Escape" { close(); }>
-                    <summary aria-label=format!("Actions for “{}”", name)>"⋯"</summary>
-                    <div class="menu" role="menu">
-                        <button type="button" role="menuitem"
-                            on:click=move |_| { close(); renaming.set(true); }>"Rename…"</button>
-                        <button type="button" role="menuitem" class="danger" on:click=delete>"Delete…"</button>
-                    </div>
-                </details>
-            })}
         </div>
-        <Show when=move || renaming.get()>
-            <div class="sidebar-form">
-                <NameForm label="New name of the catalogue" action="Rename" initial=item.name.clone()
-                    open=renaming submit=move |name| rename.with_value(|rename| rename(name))/>
-            </div>
-        </Show>
-        {move || failure.get().map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
     }
 }
 

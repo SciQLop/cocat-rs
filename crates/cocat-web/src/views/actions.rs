@@ -24,6 +24,7 @@ pub enum Form {
     Propose,
     Copy,
     Export,
+    Rename,
 }
 
 #[component]
@@ -79,6 +80,7 @@ pub fn Actions(
                 <summary aria-label="More actions">"More"</summary>
                 <div class="menu">
                     {editor.then(|| view! {
+                        <button type="button" on:click=move |_| toggle(Form::Rename)>"Rename…"</button>
                         <button type="button" on:click=move |_| toggle(Form::Rule)>"Rule as JSON…"</button>
                         <Show when=move || smart.get() == Some(true)>
                             <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
@@ -104,6 +106,28 @@ pub fn Actions(
             })}
         </Show>
         {error_line(error)}
+    }
+}
+
+/// Renames the catalogue on screen, under its heading.
+#[component]
+pub fn RenameForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let initial = room
+        .read(|txn| model::catalogue(txn, &uuid))
+        .map(|catalogue| catalogue.name)
+        .unwrap_or_default();
+    let open = RwSignal::new(true);
+    Effect::new(move |_| {
+        if !open.get() {
+            form.set(Form::Closed);
+        }
+    });
+    let rename = move |name: String| room.write(|txn| edit::rename_catalogue(txn, &uuid, &name));
+    view! {
+        <div class="inline-form">
+            <NameForm label="New name of the catalogue" action="Rename" initial open submit=rename/>
+        </div>
     }
 }
 
