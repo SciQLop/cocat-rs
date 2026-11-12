@@ -87,3 +87,14 @@ fn append_after_a_truncated_tail_rewrites_from_the_good_offset() {
     assert_eq!(updates.len(), 2);
     assert_eq!(store.truncated_at(), None);
 }
+
+#[test]
+fn a_data_folder_is_locked_by_one_process_at_a_time() {
+    let dir = TempDir::new().unwrap();
+
+    let held = cocat_core::store::lock_dir(dir.path()).unwrap();
+    let error = cocat_core::store::lock_dir(dir.path()).unwrap_err();
+    assert!(error.to_string().contains("another cocat process"), "{error}");
+    drop(held);
+    assert!(cocat_core::store::lock_dir(dir.path()).is_ok());
+}

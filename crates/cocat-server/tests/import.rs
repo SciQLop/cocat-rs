@@ -560,6 +560,53 @@ async fn a_dry_run_leaves_a_v1_room_file_alone() {
 }
 
 #[tokio::test]
+async fn a_dry_run_leaves_a_torn_room_file_byte_for_byte() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let path = fixture.updates.join("lab.y");
+    let mut torn = V1_ROOM.to_vec();
+    torn.extend_from_slice(&[0x40, b't']);
+    std::fs::write(&path, &torn).unwrap();
+
+    import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), torn);
+    let files = std::fs::read_dir(&fixture.updates).unwrap().count();
+    assert_eq!(files, 1, "a dry run leaves no file behind");
+}
+
+#[tokio::test]
+async fn an_import_refuses_a_data_folder_a_server_holds() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)
+        .await
+        .unwrap();
+    let _server = cocat_core::store::lock_dir(&fixture.updates).unwrap();
+
+    let error = import::run(
+        &fixture.updates,
+        &fixture.db_path(),
+        None,
+        Some("owner@example.org"),
+        false,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("another cocat process"), "{error}");
+}
+
+#[tokio::test]
 async fn an_event_without_times_is_dropped_and_named_in_the_summary() {
     let fixture = Fixture::start().await;
     db::create_user(&fixture.pool, "owner@example.org", "hunter2", false, true)

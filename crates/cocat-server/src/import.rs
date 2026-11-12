@@ -53,6 +53,8 @@ pub enum ImportError {
     Conflicts(Vec<String>),
     #[error("cannot read the timestamp {text:?}: {reason}")]
     Timestamp { text: String, reason: String },
+    #[error(transparent)]
+    Store(#[from] cocat_core::store::StoreError),
 }
 
 /// Why one room file was not migrated; the import goes on without it.
@@ -125,6 +127,10 @@ pub async fn run(
     if users.is_none() && owner.is_none() {
         return Err(ImportError::NoOwner);
     }
+    let _held = match dry_run {
+        true => None,
+        false => Some(cocat_core::store::lock_dir(update_dir)?),
+    };
     let pool = db::open(db_path).await?;
     let mut summary = Summary::default();
     if let Some(users) = users {
@@ -166,7 +172,7 @@ fn migrate_room_file(
     room_id: &str,
     dry_run: bool,
 ) -> Result<Option<Vec<String>>, MigrateError> {
-    let (mut store, updates) = FileRoomStore::open(update_dir, room_id)?;
+    let updates = cocat_core::store::read_updates(update_dir, room_id)?;
     let doc = Doc::new();
     {
         let mut txn = doc.transact_mut();
@@ -178,6 +184,7 @@ fn migrate_room_file(
         return Ok(None);
     };
     if !dry_run {
+        let (mut store, _) = FileRoomStore::open(update_dir, room_id)?;
         store.append(Bytes::from(migration.update))?;
         store.flush()?;
     }
@@ -462,7 +469,7 @@ async fn import_room_files(
             ));
             continue;
         }
-        if let Err(error) = FileRoomStore::open(update_dir, &room_id) {
+        if let Err(error) = cocat_core::store::read_updates(update_dir, &room_id) {
             summary
                 .skipped
                 .push(format!("the room file {room_id}.y: {error}"));

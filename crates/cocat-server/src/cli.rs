@@ -168,6 +168,8 @@ pub enum CliError {
          the volume, or restore the database from a backup"
     )]
     MissingDatabase(PathBuf),
+    #[error(transparent)]
+    Store(#[from] cocat_core::store::StoreError),
 }
 
 pub async fn run() -> Result<(), CliError> {
@@ -364,6 +366,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     if !update_dir.as_os_str().is_empty() {
         fs::create_dir_all(update_dir)?;
     }
+    let _held = cocat_core::store::lock_dir(update_dir)?;
     check_database(db_path, update_dir)?;
     let pool = db::open(db_path).await?;
     db::refuse_reserved_ids(&pool).await?;

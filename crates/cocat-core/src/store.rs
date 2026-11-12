@@ -37,6 +37,32 @@ pub enum StoreError {
     },
     #[error("room file {path} does not start with the 0.0.1 header")]
     BadHeader { path: PathBuf },
+    #[error("{path} is held by another cocat process (a server or an import) on the same folder")]
+    Locked { path: PathBuf },
+}
+
+const LOCK_FILE: &str = ".cocat.lock";
+
+/// Holds the data folder for this process until the returned file is dropped: two writers on
+/// the same room files would cut each other's records. An empty path is the current folder.
+pub fn lock_dir(update_dir: &Path) -> Result<File, StoreError> {
+    let dir = if update_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        update_dir
+    };
+    let path = dir.join(LOCK_FILE);
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|source| io_error(&path, source))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(fs::TryLockError::WouldBlock) => Err(StoreError::Locked { path }),
+        Err(fs::TryLockError::Error(source)) => Err(io_error(&path, source)),
+    }
 }
 
 /// The open file plus what was already in it. `open` hands the records over once instead
