@@ -400,3 +400,28 @@ async fn a_room_larger_than_16_mib_opens() {
 
     assert!(model::event(&room.doc().transact(), E1).is_some());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_connection_gone_silent_is_dropped_and_opened_again() {
+    let server = Server::start().await;
+    let token = seeded(&server, ROOM, "owner@x.org").await;
+    let relay = Freezer::start(server.addr).await;
+    let dir = cache();
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    room.set_heartbeat(Duration::from_millis(200), Duration::from_millis(800));
+    room.connect(&relay.url(), &token).unwrap();
+    room.wait_synced(WAIT).unwrap();
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        relay.accepted.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a server that answers the pings keeps its connection"
+    );
+    assert_eq!(room.status(), Status::Synced);
+
+    relay.freeze();
+    room.wait_for(Status::Connecting, WAIT).unwrap();
+    room.wait_synced(WAIT).unwrap();
+    assert_eq!(relay.accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

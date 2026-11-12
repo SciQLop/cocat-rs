@@ -8,6 +8,7 @@ use std::time::Duration;
 use cocat_core::role::Role;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
+use tokio::time::{Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Error as SocketError;
 use tokio_tungstenite::tungstenite::Message as Frame;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -30,6 +31,27 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// The first wait after a dropped session, doubling up to [`MAX_BACKOFF`].
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+/// How often a session pings the server, and how long a synced session waits for any frame
+/// (a Pong at least) before it counts the connection as dead and reconnects. Nothing else
+/// notices a half-open connection, as after a laptop slept and woke up on another network:
+/// the socket just stops delivering, and only a write fails, after the kernel's minutes of
+/// retransmits.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Heartbeat {
+    pub every: Duration,
+    pub silence: Duration,
+}
+
+pub(crate) const HEARTBEAT: Heartbeat = Heartbeat {
+    every: Duration::from_secs(20),
+    silence: Duration::from_secs(45),
+};
+
+/// The silence allowed until the room's state has arrived. The server sends that state as
+/// one message, and nothing reaches the client before all of it has: a Pong waits behind it
+/// on the same stream. A big project (100 MB) on a slow link takes minutes.
+const FIRST_STATE_SILENCE: Duration = Duration::from_secs(300);
 
 /// The largest message the client reads. The server sends a room's whole state in one
 /// message, and a relayed catalogue (LASCO's CMEs) is ~20 MiB, past tungstenite's 16 MiB.
@@ -180,7 +202,10 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     if let Some(role) = role {
         inner.access.learn(role);
         if !role.can_write() {
-            let frame = socket.next().await;
+            let Ok(frame) = tokio::time::timeout(FIRST_STATE_SILENCE, socket.next()).await else {
+                tracing::warn!("the server sent nothing after the handshake");
+                return Ending::Lost { synced: false };
+            };
             if let Some(Ok(Frame::Binary(bytes))) = &frame
                 && let Err(error) = drop_unshared_changes(inner, bytes)
             {
@@ -198,11 +223,16 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     }
     inner.online.store(true, Ordering::Relaxed);
 
+    let heartbeat = *crate::room::lock(&inner.heartbeat);
+    let mut pings = tokio::time::interval_at(Instant::now() + heartbeat.every, heartbeat.every);
+    pings.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut heard = Instant::now();
     let mut synced = false;
     let mut awaiting_ack = false;
     loop {
         tokio::select! {
             frame = next_frame(&mut first, &mut socket) => {
+                heard = Instant::now();
                 let Some(frame) = frame else {
                     return Ending::Lost { synced };
                 };
@@ -240,6 +270,20 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                         tracing::warn!(%error, "the room could not send a local change");
                         return Ending::Lost { synced };
                     }
+                }
+            }
+            _ = pings.tick() => {
+                let silence = if synced { heartbeat.silence } else { FIRST_STATE_SILENCE };
+                if heard.elapsed() > silence {
+                    tracing::warn!(room = %inner.room_id, "the server went silent; reconnecting");
+                    return Ending::Lost { synced };
+                }
+                // A connection whose peer is gone stops taking bytes once the buffers fill:
+                // a send that hangs is a dead connection too.
+                let ping = socket.send(Frame::Ping(Default::default()));
+                if !matches!(tokio::time::timeout(heartbeat.silence, ping).await, Ok(Ok(()))) {
+                    tracing::warn!(room = %inner.room_id, "the server took no ping; reconnecting");
+                    return Ending::Lost { synced };
                 }
             }
         }

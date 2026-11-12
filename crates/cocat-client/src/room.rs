@@ -107,6 +107,8 @@ pub(crate) struct Inner {
     pub(crate) batched: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) status: StatusCell,
     pub(crate) ack: AckCell,
+    /// Read when a session starts; tests shorten it.
+    pub(crate) heartbeat: Mutex<crate::sync::Heartbeat>,
 }
 
 /// Every listener of a room's changes, called on the thread that applied them.
@@ -320,6 +322,7 @@ impl Room {
             batched: Arc::new(Mutex::new(Vec::new())),
             status: StatusCell::new(),
             ack: AckCell::new(),
+            heartbeat: Mutex::new(crate::sync::HEARTBEAT),
         });
         Room {
             inner,
@@ -430,6 +433,13 @@ impl Room {
         let generation = self.inner.ack.generation();
         self.inner.outbox.request_ack();
         self.inner.ack.wait(generation, timeout)
+    }
+
+    /// How often the next sessions ping the server, and how long a synced one waits for any
+    /// frame before it reconnects. For tests: the defaults suit every real network.
+    #[doc(hidden)]
+    pub fn set_heartbeat(&self, every: Duration, silence: Duration) {
+        *lock(&self.inner.heartbeat) = crate::sync::Heartbeat { every, silence };
     }
 
     /// Starts a session on a runtime the room owns and returns at once. A previous session is

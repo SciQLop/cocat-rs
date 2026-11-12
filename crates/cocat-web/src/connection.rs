@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use cocat_core::{STATE_BYTES_HEADER, SUBPROTOCOL};
-use js_sys::{ArrayBuffer, Promise, Reflect, Uint8Array};
+use js_sys::{ArrayBuffer, Date, Promise, Reflect, Uint8Array};
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -17,8 +17,8 @@ use crate::projects::api_url;
 use crate::session::login_url;
 use crate::state::Room;
 use crate::sync::{
-    AfterClose, Backoff, Loading, Status, after_close, apply_state, hello, is_remote, receive,
-    update_frame,
+    ASK_EVERY_MS, AfterClose, Backoff, Beat, Loading, Status, after_close, apply_state, beat,
+    hello, is_remote, receive, update_frame,
 };
 
 struct Handlers {
@@ -42,6 +42,10 @@ struct Link {
     stopped: Cell<bool>,
     /// How many times the socket closed, so a caller can tell a refusal happened.
     drops: Cell<u32>,
+    /// When a frame last came, and when the heartbeat last asked (`Date.now()`, ms).
+    heard: Cell<f64>,
+    asked: Cell<Option<f64>>,
+    heartbeat: RefCell<Option<IntervalHandle>>,
     handlers: Handlers,
 }
 
@@ -162,8 +166,23 @@ fn linked(room: Room) -> Result<Rc<Link>, TransactionAcqError> {
         render_queued: Rc::default(),
         stopped: Cell::new(false),
         drops: Cell::new(0),
+        heard: Cell::new(0.0),
+        asked: Cell::new(None),
+        heartbeat: RefCell::new(None),
         handlers: handlers(link),
     });
+    let ticker = Rc::downgrade(&link);
+    let every = std::time::Duration::from_millis(ASK_EVERY_MS.into());
+    if let Ok(handle) = set_interval_with_handle(
+        move || {
+            if let Some(link) = ticker.upgrade() {
+                link.heartbeat();
+            }
+        },
+        every,
+    ) {
+        link.heartbeat.replace(Some(handle));
+    }
     let observer = link.clone();
     room.doc.observe_update_v1("browser", move |txn, event| {
         if !is_remote(txn) {
@@ -218,6 +237,33 @@ impl Link {
         socket.set_onmessage(Some(self.handlers.message.as_ref().unchecked_ref()));
         socket.set_onclose(Some(self.handlers.close.as_ref().unchecked_ref()));
         self.socket.replace(Some(socket));
+        self.asked.set(None);
+    }
+
+    fn heartbeat(self: &Rc<Self>) {
+        if self.stopped.get() {
+            return;
+        }
+        let now = Date::now();
+        match beat(self.synced.get(), self.asked.get(), self.heard.get(), now) {
+            Beat::Wait => {}
+            Beat::Ask => {
+                self.asked.set(Some(now));
+                self.send(&hello(&self.room.doc));
+            }
+            Beat::Drop => self.drop_socket(),
+        }
+    }
+
+    /// A socket that stopped carrying frames may never close by itself: this one is let go,
+    /// and another opens after the backoff.
+    fn drop_socket(self: &Rc<Self>) {
+        if let Some(socket) = self.socket.take() {
+            socket.set_onclose(None);
+            socket.set_onmessage(None);
+            close_when_open(socket);
+        }
+        self.closed();
     }
 
     fn say_hello(&self) {
@@ -251,6 +297,7 @@ impl Link {
     }
 
     fn receive(&self, event: &MessageEvent) {
+        self.heard.set(Date::now());
         let Ok(buffer) = event.data().dyn_into::<ArrayBuffer>() else {
             return;
         };
@@ -294,6 +341,9 @@ impl Link {
 
     fn stop(&self) {
         self.stopped.set(true);
+        if let Some(heartbeat) = self.heartbeat.take() {
+            heartbeat.clear();
+        }
         let _ = self.room.doc.unobserve_update_v1("browser");
         if let Some(socket) = self.socket.take() {
             socket.set_onclose(None);

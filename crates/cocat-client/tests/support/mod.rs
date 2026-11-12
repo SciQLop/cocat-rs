@@ -343,3 +343,83 @@ pub async fn next_batch(changes: &mut broadcast::Receiver<Vec<Change>>) -> Vec<C
         .expect("no change batch arrived")
         .expect("the change channel closed")
 }
+
+/// A TCP relay to `upstream` that can make the connections it holds go silent: after
+/// [`Freezer::freeze`] they stay open but carry nothing more, as a connection does after a
+/// laptop slept and woke up on another network. Connections made later pass.
+pub struct Freezer {
+    pub addr: SocketAddr,
+    /// How many connections it accepted.
+    pub accepted: Arc<AtomicUsize>,
+    /// Connections numbered below this one are frozen.
+    frozen_below: Arc<AtomicUsize>,
+    task: JoinHandle<()>,
+}
+
+impl Freezer {
+    pub async fn start(upstream: SocketAddr) -> Freezer {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let frozen_below = Arc::new(AtomicUsize::new(0));
+        let (count, frozen) = (accepted.clone(), frozen_below.clone());
+        let task = tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let id = count.fetch_add(1, Ordering::SeqCst);
+                let Ok(server) = tokio::net::TcpStream::connect(upstream).await else {
+                    continue;
+                };
+                let (client_read, client_write) = client.into_split();
+                let (server_read, server_write) = server.into_split();
+                tokio::spawn(pump(client_read, server_write, id, frozen.clone()));
+                tokio::spawn(pump(server_read, client_write, id, frozen.clone()));
+            }
+        });
+        Self {
+            addr,
+            accepted,
+            frozen_below,
+            task,
+        }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Every connection open now goes silent.
+    pub fn freeze(&self) {
+        self.frozen_below
+            .store(self.accepted.load(Ordering::SeqCst), Ordering::SeqCst);
+    }
+}
+
+impl Drop for Freezer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Copies one direction until either side closes; a frozen connection keeps both ends open
+/// and copies nothing more.
+async fn pump(
+    mut from: tokio::net::tcp::OwnedReadHalf,
+    mut to: tokio::net::tcp::OwnedWriteHalf,
+    id: usize,
+    frozen_below: Arc<AtomicUsize>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let read = match from.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(read) => read,
+        };
+        if id < frozen_below.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        if to.write_all(&buffer[..read]).await.is_err() {
+            return;
+        }
+    }
+}

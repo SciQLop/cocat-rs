@@ -84,6 +84,36 @@ pub struct Reception {
 
 /// The first frame of a connection: the replica's state vector, so the server answers
 /// with what the page misses.
+/// How often a synced page asks the server for its state vector: the answer proves the
+/// socket still carries frames. A half-open socket (the laptop slept and woke up on another
+/// network) never closes on its own, and a browser cannot send a websocket ping.
+pub const ASK_EVERY_MS: u32 = 20_000;
+/// How long an ask may go unanswered before the socket counts as dead.
+pub const ANSWER_WITHIN_MS: f64 = 30_000.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Beat {
+    Wait,
+    /// Send the state vector, and remember when.
+    Ask,
+    /// Give up on this socket and open another.
+    Drop,
+}
+
+/// What the heartbeat does on a tick, from when it last asked and when a frame last came
+/// (milliseconds). It times one ask, never the gap between ticks: a hidden tab's timers run
+/// once a minute at most.
+pub fn beat(synced: bool, asked: Option<f64>, heard: f64, now: f64) -> Beat {
+    if !synced {
+        return Beat::Wait;
+    }
+    match asked.filter(|asked| heard < *asked) {
+        Some(asked) if now - asked > ANSWER_WITHIN_MS => Beat::Drop,
+        Some(_) => Beat::Wait,
+        None => Beat::Ask,
+    }
+}
+
 pub fn hello(doc: &Doc) -> Vec<u8> {
     Message::Sync(SyncMessage::SyncStep1(doc.transact().state_vector())).encode_v1()
 }
@@ -325,5 +355,33 @@ mod tests {
         assert_eq!(text(12 * MB, Some(105 * MB)), "Loading… 12 of 105 MB");
         assert_eq!(text(MB / 2, Some(MB / 2)), "Loading…");
         assert_eq!(Loading::Opening.text(), "Opening…");
+    }
+
+    #[test]
+    fn the_heartbeat_drops_a_socket_only_when_an_ask_goes_unanswered() {
+        let answer = ANSWER_WITHIN_MS;
+        assert_eq!(
+            beat(false, None, 0.0, 1e9),
+            Beat::Wait,
+            "nothing to ask before the state is in"
+        );
+        assert_eq!(
+            beat(true, None, 0.0, 1e9),
+            Beat::Ask,
+            "a hidden tab's late tick only asks"
+        );
+        assert_eq!(
+            beat(true, Some(100.0), 150.0, 1e9),
+            Beat::Ask,
+            "the last ask was answered"
+        );
+        assert_eq!(
+            beat(true, Some(100.0), 50.0, 100.0 + answer - 1.0),
+            Beat::Wait
+        );
+        assert_eq!(
+            beat(true, Some(100.0), 50.0, 100.0 + answer + 1.0),
+            Beat::Drop
+        );
     }
 }
