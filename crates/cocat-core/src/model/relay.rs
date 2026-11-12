@@ -141,8 +141,39 @@ fn update_event(
 }
 
 fn differs(wanted: &EventRecord, current: &EventRecord) -> bool {
-    (wanted.start, wanted.stop, &wanted.attributes)
-        != (current.start, current.stop, &current.attributes)
+    (wanted.start, wanted.stop) != (current.start, current.stop)
+        || wanted.attributes.len() != current.attributes.len()
+        || wanted.attributes.iter().any(|(key, value)| {
+            current
+                .attributes
+                .get(key)
+                .is_none_or(|stored| !same_value(value, stored))
+        })
+}
+
+/// JSON equality, but a number is its value: a provider reads `70.0` where the store gives
+/// back `70`, and that is no change.
+fn same_value(wanted: &serde_json::Value, stored: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (wanted, stored) {
+        (Value::Number(wanted), Value::Number(stored)) => wanted.as_f64() == stored.as_f64(),
+        (Value::Array(wanted), Value::Array(stored)) => {
+            wanted.len() == stored.len()
+                && wanted
+                    .iter()
+                    .zip(stored)
+                    .all(|(wanted, stored)| same_value(wanted, stored))
+        }
+        (Value::Object(wanted), Value::Object(stored)) => {
+            wanted.len() == stored.len()
+                && wanted.iter().all(|(key, value)| {
+                    stored
+                        .get(key)
+                        .is_some_and(|stored| same_value(value, stored))
+                })
+        }
+        _ => wanted == stored,
+    }
 }
 
 fn rewrite(

@@ -316,3 +316,17 @@ fn the_catalogue_follows_the_wanted_columns() {
         ["ratio"]
     );
 }
+
+#[test]
+fn a_whole_number_read_as_a_float_is_not_a_change() {
+    // Providers read numbers as floats; the store gives back 70.0 as 70.
+    let doc = Doc::new();
+    let mut segment = record("a", 0);
+    segment.attributes.insert("fom".into(), json!(70.0));
+    let list = wanted("Segments", vec![segment]);
+    run(&doc, &list);
+
+    let counts = run(&doc, &list);
+
+    assert_eq!(counts, Counts::default(), "a second run writes nothing");
+}
