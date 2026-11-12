@@ -169,12 +169,26 @@ a { color: var(--accent); text-underline-offset: 2px; }
 /* Once the sidebar and the page share a row, the window stops scrolling: the sidebar keeps the
    window's height under the header, its list scrolls by itself above the pinned entries, and the
    page scrolls in its pane. A new page gets a new pane, so it starts at the top. */
+/* Hidden while the panes stack; shown from 800 px, below. */
+.resizer { display: none; }
+
 @media (min-width: 800px) {
   body:has(> .browser) { height: 100dvh; }
   .browser { flex-wrap: nowrap; overflow: hidden; }
   .browser > .sidebar { overflow-y: auto; }
   .catalogue-list, .folder-tree { min-height: 8rem; overflow-y: auto; }
   .pane { overflow-y: auto; }
+  /* The side panes take the widths their handles set (see views/resize.rs). */
+  .browser > .sidebar { flex: 0 0 var(--sidebar-width, 260px); max-width: none; }
+  .pane > .panel { flex: 0 0 var(--panel-width, 320px); max-width: none; }
+  .resizer {
+    display: block; flex: 0 0 8px; margin: 0 -4px; position: relative; z-index: 2;
+    cursor: col-resize; touch-action: none;
+  }
+  .resizer.resizer-panel { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; margin: 0; }
+  .resizer:hover, .resizer:focus-visible {
+    outline: none; background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
 }
 
 .sidebar {
@@ -521,6 +535,8 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .panel h2 { font-variant-numeric: tabular-nums; }
 .stat-facts dd { font-variant-numeric: tabular-nums; }
 .stat-note { display: block; margin: 0; color: var(--muted); font-size: 12px; }
+.stat-warning { display: block; margin-top: 2px; color: var(--notice-ink); font-size: 13px; font-weight: 500; }
+.nowrap { white-space: nowrap; }
 .stat-line { margin: 0 0 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .stat-bars {
   display: grid;

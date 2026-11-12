@@ -19,10 +19,12 @@ const SECOND: i64 = 1_000_000_000;
 pub const LOG_BINS: usize = 12;
 const LOG_DECADES: f64 = 6.0;
 /// Where the log histograms mark familiar lengths.
-pub const LOG_TICKS: [(&str, i64); 3] = [
+pub const LOG_TICKS: [(&str, i64); 5] = [
+    ("1 s", SECOND),
     ("1 min", 60 * SECOND),
     ("1 h", 3_600 * SECOND),
     ("1 d", 86_400 * SECOND),
+    ("1 w", 7 * 86_400 * SECOND),
 ];
 pub const CONFIDENCE_BINS: usize = 10;
 pub const TOP_TAGS: usize = 5;

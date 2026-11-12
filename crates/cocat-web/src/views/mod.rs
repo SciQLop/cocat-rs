@@ -23,6 +23,7 @@ pub mod project_dialogs;
 pub mod projects;
 pub mod proposal;
 pub mod public;
+pub mod resize;
 pub mod review;
 pub mod round_form;
 pub mod rounds;

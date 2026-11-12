@@ -86,6 +86,19 @@ fn formatted(nanos: i64, format: &[BorrowedFormatItem<'_>]) -> String {
         .unwrap_or_else(|| nanos.to_string())
 }
 
+/// A count grouped by thousands with thin spaces, the SI way: "11\u{2009}898".
+pub fn grouped(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push('\u{2009}');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -135,5 +148,13 @@ mod tests {
         assert_eq!(value_text(&json!(2.4)), "2.4");
         assert_eq!(value_text(&json!(true)), "true");
         assert_eq!(value_text(&json!([1, 2])), "[1,2]");
+    }
+
+    #[test]
+    fn a_big_count_is_grouped_by_thousands() {
+        assert_eq!(grouped(7), "7");
+        assert_eq!(grouped(1174), "1\u{2009}174");
+        assert_eq!(grouped(11_898), "11\u{2009}898");
+        assert_eq!(grouped(1_234_567), "1\u{2009}234\u{2009}567");
     }
 }

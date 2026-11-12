@@ -138,6 +138,65 @@ pub fn ticks(first: i64, last: i64, count: usize) -> Vec<String> {
         .collect()
 }
 
+/// A side pane the visitor can widen or narrow: the catalogue list on the left, the
+/// statistics and event panel on the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Sidebar,
+    Panel,
+}
+
+impl Side {
+    /// Narrowest and widest, in pixels.
+    pub fn bounds(self) -> (f64, f64) {
+        match self {
+            Side::Sidebar => (180.0, 480.0),
+            Side::Panel => (260.0, 640.0),
+        }
+    }
+
+    pub fn default_width(self) -> f64 {
+        match self {
+            Side::Sidebar => 260.0,
+            Side::Panel => 320.0,
+        }
+    }
+
+    /// The CSS variable that sets its width, and where the width is remembered.
+    pub fn key(self) -> &'static str {
+        match self {
+            Side::Sidebar => "--sidebar-width",
+            Side::Panel => "--panel-width",
+        }
+    }
+
+    pub fn clamp(self, width: f64) -> f64 {
+        let (low, high) = self.bounds();
+        width.clamp(low, high)
+    }
+
+    /// The width after the pointer moved `dx` pixels from where the drag started: the list's
+    /// edge is on its right, the panel's on its left.
+    pub fn dragged(self, start: f64, dx: f64) -> f64 {
+        match self {
+            Side::Sidebar => self.clamp(start + dx),
+            Side::Panel => self.clamp(start - dx),
+        }
+    }
+
+    /// The width after a key on the separator: the arrows move its edge by 16 px, Home goes
+    /// back to the default; `None` for another key.
+    pub fn keyed(self, width: f64, key: &str) -> Option<f64> {
+        let step = match key {
+            "ArrowLeft" => -16.0,
+            "ArrowRight" => 16.0,
+            "Home" => return Some(self.default_width()),
+            _ => return None,
+        };
+        Some(self.dragged(width, step))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +346,29 @@ mod tests {
             ticks(DAY0, DAY0 + DAY / 4, 2),
             ["2019-11-03 00:00", "2019-11-03 06:00"]
         );
+    }
+
+    #[test]
+    fn a_side_pane_stays_within_its_bounds_and_steps_by_key() {
+        assert_eq!(Side::Sidebar.clamp(50.0), Side::Sidebar.bounds().0);
+        assert_eq!(Side::Panel.clamp(5_000.0), Side::Panel.bounds().1);
+        assert_eq!(Side::Panel.clamp(400.0), 400.0);
+        assert_eq!(
+            Side::Sidebar.dragged(260.0, 40.0),
+            300.0,
+            "the list grows to the right"
+        );
+        assert_eq!(
+            Side::Panel.dragged(320.0, 40.0),
+            280.0,
+            "the panel grows to the left"
+        );
+        assert_eq!(Side::Panel.keyed(320.0, "ArrowLeft"), Some(336.0));
+        assert_eq!(Side::Sidebar.keyed(260.0, "ArrowLeft"), Some(244.0));
+        assert_eq!(
+            Side::Sidebar.keyed(400.0, "Home"),
+            Some(Side::Sidebar.default_width())
+        );
+        assert_eq!(Side::Sidebar.keyed(260.0, "a"), None);
     }
 }

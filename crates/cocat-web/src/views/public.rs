@@ -39,6 +39,7 @@ pub fn PublicSpace() -> impl IntoView {
         <PublicHeader shown/>
         <div class="browser">
             <PublicSidebar current=None/>
+            <crate::views::resize::Resizer side=crate::layout::Side::Sidebar label="Width of the folder list"/>
             <div class="pane">{page}</div>
         </div>
     }

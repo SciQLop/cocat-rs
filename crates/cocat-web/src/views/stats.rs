@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlDetailsElement;
 
-use crate::format::duration_text;
+use crate::format::{duration_text, grouped};
 use crate::period::Period;
 use crate::stats::{
     self, CatalogueStats, Counted, LOG_TICKS, Spread, Values, log_position, number_text,
@@ -53,15 +53,32 @@ fn summary_view(stats: &CatalogueStats) -> impl IntoView + use<> {
     let percent = stats
         .coverage_percent()
         .map(|percent| format!("{} of the span", percent_text(percent)));
-    let overlaps = (pairs > 0).then(|| format!("{pairs} overlapping pair{}", plural(pairs)));
-    let note: Vec<String> = percent.into_iter().chain(overlaps).collect();
+    // Overlaps are often duplicates or a list merged twice: a line of its own, not a footnote.
+    let overlaps = (pairs > 0).then(|| {
+        let what = if pairs == 1 {
+            "pair of events overlaps"
+        } else {
+            "pairs of events overlap"
+        };
+        format!("{} {what}", grouped(pairs))
+    });
+    let span = span.map(|text| {
+        text.split(" → ")
+            .map(|end| view! { <span class="nowrap">{end.to_owned()}</span> })
+            .collect::<Vec<_>>()
+    });
     view! {
         <dl class="facts stat-facts">
-            <dt>"Span"</dt><dd>{span}</dd>
+            <dt>"Span"</dt>
+            <dd>{span.map(|mut ends| {
+                let last = ends.pop();
+                view! { {ends}" → "{last} }
+            })}</dd>
             <dt>"Coverage"</dt>
             <dd>
                 {format!("{} covered", duration_text(stats.covered))}
-                <span class="stat-note">{note.join(" · ")}</span>
+                {percent.map(|percent| view! { <span class="stat-note">{percent}</span> })}
+                {overlaps.map(|overlaps| view! { <span class="stat-warning">{overlaps}</span> })}
             </dd>
             <dt>"Duration"</dt><dd>{stats.duration.map(spread_view)}</dd>
         </dl>
@@ -128,7 +145,12 @@ fn Histogram(bins: Vec<u32>, ticks: Vec<(String, f64)>, label: &'static str) -> 
         .into_iter()
         .map(|count| {
             let height = f64::from(count) / f64::from(fullest) * 100.0;
-            view! { <span title=count.to_string() style=format!("height: {height:.1}%")></span> }
+            let title = format!(
+                "{} event{}",
+                grouped(count as usize),
+                plural(count as usize)
+            );
+            view! { <span title=title style=format!("height: {height:.1}%")></span> }
         })
         .collect_view();
     let ticks = ticks

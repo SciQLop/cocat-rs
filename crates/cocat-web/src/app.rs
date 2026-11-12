@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 
 use crate::connection;
+use crate::layout::Side;
 use crate::route::Route;
 use crate::rows::Row;
 use crate::session::{ConfigError, RoomConfig};
@@ -21,6 +22,7 @@ use crate::views::notice::{Notice, NoticeBar};
 use crate::views::projects::Projects;
 use crate::views::projects::set_title;
 use crate::views::public::{PublicSidebar, PublicSpace};
+use crate::views::resize::Resizer;
 use crate::views::rounds::RoundsPage;
 use crate::views::sidebar::Sidebar;
 use crate::views::transfer::{ImportDialog, Importer, drop_on};
@@ -30,6 +32,7 @@ use cocat_core::model;
 pub fn start() {
     console_error_panic_hook::set_once();
     crate::views::menus::close_menus_from_outside();
+    crate::views::resize::restore();
     match read_config() {
         Ok(config) => leptos::mount::mount_to_body(move || view! { <Shell config/> }),
         Err(error) => leptos::mount::mount_to_body(move || failure(error.to_string())),
@@ -186,6 +189,7 @@ fn App(config: RoomConfig) -> impl IntoView {
                         Some(current) => view! { <PublicSidebar current=Some(current)/> }.into_any(),
                         None => view! { <Sidebar shown/> }.into_any(),
                     }}
+                    <Resizer side=Side::Sidebar label="Width of the catalogue list"/>
                     <div class="pane">
                         {move || match (file_path.get(), link.get()) {
                             (_, Some(id)) => view! { <LinkedCatalogue id/> }.into_any(),

@@ -66,6 +66,7 @@ pub fn EventPanel(
             Shown::Nothing => "Statistics",
             _ => "Selected event",
         }>
+            <crate::views::resize::Resizer side=crate::layout::Side::Panel label="Width of the side panel"/>
             <Show when=move || shown.with(|shown| *shown != Shown::Nothing)>
                 <button type="button" class="close" aria-label="Close"
                     on:click=move |_| selected.set(None)>"×"</button>
