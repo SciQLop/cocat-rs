@@ -155,7 +155,7 @@ async fn password_change_ends_every_session() {
     let response = patch_me(
         &fixture,
         &first,
-        &format!(r#"{{"password":"{NEW_PASSWORD}"}}"#),
+        &format!(r#"{{"password":"{NEW_PASSWORD}","current_password":"{PASSWORD}"}}"#),
     )
     .await;
 

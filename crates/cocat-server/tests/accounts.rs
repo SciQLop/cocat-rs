@@ -222,6 +222,19 @@ impl Fixture {
         .await
     }
 
+    /// Mails are sent in the background, so a test waits for them, bounded.
+    async fn wait_for_mail(&self, to: &str) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let marker = format!("To: {to}");
+        loop {
+            if let Some(mail) = self.mails().into_iter().find(|mail| mail.contains(&marker)) {
+                return mail;
+            }
+            assert!(std::time::Instant::now() < deadline, "no mail to {to}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     fn mails(&self) -> Vec<String> {
         let Some(dir) = &self.mail_dir else {
             return Vec::new();
@@ -340,6 +353,21 @@ async fn a_duplicate_email_any_case_is_refused() {
         body(second).await,
         json!({ "detail": "REGISTER_USER_ALREADY_EXISTS" })
     );
+}
+
+#[tokio::test]
+async fn with_a_mailer_a_known_address_signs_up_like_a_new_one_and_its_owner_is_told() {
+    let fixture = Fixture::start_with_mail().await;
+    fixture.verified("known@example.org").await;
+
+    let response = fixture.register("known@example.org").await;
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let user = body(response).await;
+    assert_eq!(user["email"], "known@example.org");
+    assert_eq!(user["is_verified"], false, "as a fresh account answers");
+    let mail = fixture.wait_for_mail("known@example.org").await;
+    assert!(mail.contains("Subject: A sign-up used your cocat address"), "{mail}");
 }
 
 #[tokio::test]
@@ -593,6 +621,7 @@ async fn a_request_verify_token_mails_again_for_an_unverified_account() {
     let response = fixture.request_verify("new@example.org").await;
 
     assert_eq!(response.status(), StatusCode::ACCEPTED);
+    fixture.wait_for_mail("new@example.org").await;
     let mails = fixture.mails();
     assert_eq!(mails.len(), 1, "{mails:?}");
     let token = link_token(&mails, "/ui/verify#");
@@ -619,6 +648,7 @@ async fn forgot_password_answers_202_for_anyone() {
         let response = fixture.forgot(address).await;
         assert_eq!(response.status(), StatusCode::ACCEPTED, "{address}");
     }
+    fixture.wait_for_mail("known@example.org").await;
 
     let mails = fixture.mails();
     assert_eq!(
@@ -639,6 +669,7 @@ async fn reset_flow() {
     let fixture = Fixture::start_with_mail().await;
     fixture.verified("known@example.org").await;
     fixture.forgot("known@example.org").await;
+    fixture.wait_for_mail("known@example.org").await;
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
 
     let response = fixture.reset(&token, NEW_PASSWORD).await;
@@ -655,6 +686,7 @@ async fn a_reset_token_works_once() {
     let fixture = Fixture::start_with_mail().await;
     fixture.verified("known@example.org").await;
     fixture.forgot("known@example.org").await;
+    fixture.wait_for_mail("known@example.org").await;
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
     assert_eq!(
         fixture.reset(&token, NEW_PASSWORD).await.status(),
@@ -681,6 +713,7 @@ async fn two_resets_of_one_link_cannot_both_win() {
     let fixture = Fixture::start_with_mail().await;
     fixture.verified("known@example.org").await;
     fixture.forgot("known@example.org").await;
+    fixture.wait_for_mail("known@example.org").await;
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
 
     let (first, second) = tokio::join!(
@@ -780,6 +813,11 @@ async fn no_token_or_link_reaches_the_log() {
         fixture.forgot("known@example.org").await.status(),
         StatusCode::ACCEPTED
     );
+    // The reset mail fails in the background; its log line is what this test reads.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while log.text().is_empty() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 
     let text = log.text();
     assert!(
@@ -827,7 +865,7 @@ async fn users_me_reads_and_updates() {
             Method::PATCH,
             "/users/me",
             Some(&token),
-            json!({ "email": "moved@example.org", "password": NEW_PASSWORD }),
+            json!({ "email": "moved@example.org", "password": NEW_PASSWORD, "current_password": PASSWORD }),
         )
         .await;
     assert_eq!(updated.status(), StatusCode::OK);
@@ -849,6 +887,30 @@ async fn users_me_reads_and_updates() {
 }
 
 #[tokio::test]
+async fn changing_email_or_password_needs_the_current_password() {
+    let fixture = Fixture::start().await;
+    fixture.verified("known@example.org").await;
+    let token = fixture.session("known@example.org").await;
+
+    for change in [
+        json!({ "email": "thief@example.org" }),
+        json!({ "password": NEW_PASSWORD }),
+        json!({ "email": "thief@example.org", "current_password": "not-the-password" }),
+    ] {
+        let response = fixture
+            .json_request(Method::PATCH, "/users/me", Some(&token), change.clone())
+            .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{change}");
+        assert_eq!(
+            body(response).await["detail"],
+            "UPDATE_USER_INVALID_CURRENT_PASSWORD"
+        );
+    }
+    let me = body(fixture.get("/users/me", Some(&token)).await).await;
+    assert_eq!(me["email"], "known@example.org");
+}
+
+#[tokio::test]
 async fn a_user_cannot_raise_their_own_flags() {
     let fixture = Fixture::start().await;
     fixture.verified("known@example.org").await;
@@ -864,6 +926,7 @@ async fn a_user_cannot_raise_their_own_flags() {
                 "is_active": false,
                 "is_verified": false,
                 "password": NEW_PASSWORD,
+                "current_password": PASSWORD,
             }),
         )
         .await;
@@ -915,7 +978,7 @@ async fn changing_email_clears_verification() {
             Method::PATCH,
             "/users/me",
             Some(&token),
-            json!({ "email": "moved@example.org" }),
+            json!({ "email": "moved@example.org", "current_password": PASSWORD }),
         )
         .await;
 
@@ -952,7 +1015,7 @@ async fn an_existing_email_is_refused() {
             Method::PATCH,
             "/users/me",
             Some(&token),
-            json!({ "email": "SECOND@example.org" }),
+            json!({ "email": "SECOND@example.org", "current_password": PASSWORD }),
         )
         .await;
 
@@ -1173,6 +1236,7 @@ async fn reset_refuses_a_weak_password_and_keeps_the_link() {
     let fixture = Fixture::start_with_mail().await;
     fixture.verified("known@example.org").await;
     fixture.forgot("known@example.org").await;
+    fixture.wait_for_mail("known@example.org").await;
     let token = link_token(&fixture.mails(), "/ui/reset-password#");
 
     let weak = fixture.reset(&token, "known1234").await;
@@ -1201,7 +1265,7 @@ async fn a_profile_edit_refuses_a_weak_password() {
             Method::PATCH,
             "/users/me",
             Some(&token),
-            json!({ "password": "short" }),
+            json!({ "password": "short", "current_password": PASSWORD }),
         )
         .await;
 

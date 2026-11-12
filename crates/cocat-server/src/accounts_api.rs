@@ -14,7 +14,7 @@ use crate::api::{ApiError, CurrentUser, JsonBody, UserRead};
 use crate::mail::{self, Address};
 use crate::openapi::Detail;
 use crate::ratelimit::{self, LoginLimit};
-use crate::{AppState, accounts, db};
+use crate::{AppState, accounts, auth, db};
 
 /// The routes that cost a mail or a password hash share the login limiter, one budget per
 /// path; confirming a link and spending one are cheap and stay unlimited.
@@ -68,7 +68,7 @@ impl TryFrom<String> for RegisterEmail {
     request_body = RegisterBody,
     responses(
         (status = 201, description = "The new account, without a session", body = UserRead),
-        (status = 400, description = "The address is already registered", body = Detail),
+        (status = 400, description = "The address is already registered (only without a mailer: with one, a known address gets the 201 a new one gets and its owner a mail)", body = Detail),
         (status = 422, description = "The body is not an address and a password", body = Detail),
         (status = 429, description = "Too many attempts", body = Detail),
     )
@@ -77,7 +77,15 @@ async fn register(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<RegisterBody>,
 ) -> Result<(StatusCode, Json<UserRead>), ApiError> {
-    let id = accounts::register(&state, &body.email.0, &body.password).await?;
+    let id = match accounts::register(&state, &body.email.0, &body.password).await {
+        Err(accounts::AccountError::Duplicate) if state.mailer.is_some() => {
+            let (background, email) = (state.clone(), body.email.0.clone());
+            tokio::spawn(async move { accounts::notify_signup_attempt(&background, &email).await });
+            let reply = UserRead::unconfirmed(body.email.0);
+            return Ok((StatusCode::CREATED, Json(reply)));
+        }
+        registered => registered?,
+    };
     let user = db::user_by_id(&state.pool, id)
         .await?
         .ok_or(ApiError::Internal)?;
@@ -105,7 +113,8 @@ async fn request_verify_token(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<EmailBody>,
 ) -> StatusCode {
-    accounts::request_verification(&state, &body.email.0).await;
+    // In the background: a reply that waits for the mail would be slower for a member.
+    tokio::spawn(async move { accounts::request_verification(&state, &body.email.0).await });
     StatusCode::ACCEPTED
 }
 
@@ -123,7 +132,8 @@ async fn forgot_password(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<EmailBody>,
 ) -> StatusCode {
-    accounts::forgot_password(&state, &body.email.0).await;
+    // In the background: a reply that waits for the mail would be slower for a member.
+    tokio::spawn(async move { accounts::forgot_password(&state, &body.email.0).await });
     StatusCode::ACCEPTED
 }
 
@@ -194,6 +204,24 @@ struct ProfileBody {
     #[schema(value_type = Option<String>, format = Email)]
     email: Option<Address>,
     password: Option<String>,
+    /// Needed to change the email or the password: a stolen session or app token must not
+    /// be enough to take the account over.
+    current_password: Option<String>,
+}
+
+const INVALID_CURRENT_PASSWORD: &str = "UPDATE_USER_INVALID_CURRENT_PASSWORD";
+
+async fn check_current_password(given: Option<&str>, user: &db::User) -> Result<(), ApiError> {
+    let invalid = || ApiError::BadRequest(INVALID_CURRENT_PASSWORD.to_owned());
+    let given = given.ok_or_else(invalid)?;
+    match auth::verify_password(given, &user.hashed_password).await {
+        Ok(()) => Ok(()),
+        Err(auth::AuthError::BadCredentials) => Err(invalid()),
+        Err(error) => {
+            tracing::warn!(%error, "cannot check the current password");
+            Err(ApiError::Internal)
+        }
+    }
 }
 
 /// What a superuser edit may say, the same body with the flags this time.
@@ -226,6 +254,9 @@ async fn update_me(
     CurrentUser(user): CurrentUser,
     JsonBody(body): JsonBody<ProfileBody>,
 ) -> Result<Json<UserRead>, ApiError> {
+    if body.email.is_some() || body.password.is_some() {
+        check_current_password(body.current_password.as_deref(), &user).await?;
+    }
     let change = accounts::Change {
         email: body.email.map(|address| address.0),
         password: body.password,

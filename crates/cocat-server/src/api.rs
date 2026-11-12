@@ -54,6 +54,20 @@ pub(crate) struct UserRead {
     is_verified: bool,
 }
 
+impl UserRead {
+    /// What a fresh, unverified account answers: the API's reply to a sign-up with a known
+    /// address when the owner can be mailed, so the reply never tells which addresses exist.
+    pub(crate) fn unconfirmed(email: String) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            email,
+            is_active: true,
+            is_superuser: false,
+            is_verified: false,
+        }
+    }
+}
+
 impl From<db::User> for UserRead {
     fn from(user: db::User) -> Self {
         Self {
