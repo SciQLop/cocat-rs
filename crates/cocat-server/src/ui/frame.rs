@@ -376,11 +376,12 @@ fn login_redirect(links: &Links, path: &str) -> Response {
 /// that is a test client, SciQLop or the Python client, none of which send them, and the
 /// session cookie is `SameSite=Lax` besides. Python's `same_site` compares the Origin's
 /// netloc with the Host header and accepts only a same-origin or same-site `Sec-Fetch-Site`.
+/// A websocket handshake is a `GET` that opens a read-write channel, so it counts as a write.
 pub(crate) async fn same_site(request: Request, next: Next) -> Response {
     let safe = matches!(
         *request.method(),
         Method::GET | Method::HEAD | Method::OPTIONS
-    );
+    ) && !request.headers().contains_key(header::UPGRADE);
     if !safe && cross_site(request.headers()) {
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }

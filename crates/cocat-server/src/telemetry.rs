@@ -148,7 +148,7 @@ pub async fn track_http(request: Request, next: Next) -> Response {
         .extensions()
         .get::<MatchedPath>()
         .map_or_else(|| "unmatched".to_owned(), |path| path.as_str().to_owned());
-    let method = request.method().as_str().to_owned();
+    let method = method_label(request.method()).to_owned();
     let started = std::time::Instant::now();
     let response = next.run(request).await;
     counter!(
@@ -165,6 +165,27 @@ pub async fn track_http(request: Request, next: Next) -> Response {
     )
     .record(started.elapsed().as_secs_f64());
     response
+}
+
+/// The standard methods by name, any other as `other`: a label per invented method would
+/// grow the metrics without bound.
+fn method_label(method: &axum::http::Method) -> &'static str {
+    use axum::http::Method;
+    const KNOWN: [Method; 9] = [
+        Method::GET,
+        Method::HEAD,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::PATCH,
+        Method::OPTIONS,
+        Method::CONNECT,
+        Method::TRACE,
+    ];
+    KNOWN
+        .iter()
+        .find(|known| *known == method)
+        .map_or("other", |known| known.as_str())
 }
 
 pub fn spawn_sampler(state: AppState) -> JoinHandle<()> {
@@ -242,4 +263,17 @@ pub fn mail(outcome: &'static str) {
 
 pub fn rooms_open(count: usize) {
     gauge!("cocat_rooms_open").set(count as f64);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_made_up_method_shares_one_label() {
+        let invented = axum::http::Method::from_bytes(b"BREW").unwrap();
+
+        assert_eq!(method_label(&invented), "other");
+        assert_eq!(method_label(&axum::http::Method::PATCH), "PATCH");
+    }
 }

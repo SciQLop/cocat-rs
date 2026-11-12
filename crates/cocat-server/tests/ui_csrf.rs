@@ -187,3 +187,67 @@ fn cookie_token(response: &Response) -> String {
         .expect("a cookie value")
         .to_owned()
 }
+
+fn socket_request(headers: &[(&str, &str)]) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(Method::GET)
+        .uri("/room/lab")
+        .header(header::CONNECTION, "upgrade")
+        .header(header::UPGRADE, "websocket")
+        .header(header::SEC_WEBSOCKET_VERSION, "13")
+        .header(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn another_site_cannot_open_a_project_socket_with_the_visitors_cookie() {
+    let fixture = Fixture::start().await;
+
+    let foreign = &[
+        ("Origin", "https://evil.example.org"),
+        ("Host", "example.org"),
+    ];
+    let refused = send(&fixture, socket_request(foreign)).await;
+    let cross = send(
+        &fixture,
+        socket_request(&[("Sec-Fetch-Site", "cross-site")]),
+    )
+    .await;
+    let same = &[("Origin", "https://example.org"), ("Host", "example.org")];
+    let allowed = send(&fixture, socket_request(same)).await;
+    let python = send(&fixture, socket_request(&[])).await;
+
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(cross.status(), StatusCode::FORBIDDEN);
+    assert_ne!(allowed.status(), StatusCode::FORBIDDEN);
+    assert_ne!(
+        python.status(),
+        StatusCode::FORBIDDEN,
+        "no Origin: a script, not a page"
+    );
+}
+
+#[tokio::test]
+async fn private_answers_are_not_cached_by_others_nor_framed_by_another_site() {
+    let fixture = Fixture::start().await;
+    db::create_user(&fixture.state.pool, ADMIN, PASSWORD, true, true)
+        .await
+        .unwrap();
+    let token = cookie_token(&admin_login(&fixture, &[]).await);
+
+    let me = send(&fixture, admin_request(Method::GET, "/api/me", &token, &[])).await;
+    let page = send(
+        &fixture,
+        admin_request(Method::GET, "/ui/account", &token, &[]),
+    )
+    .await;
+
+    for response in [&me, &page] {
+        let header = |name| response.headers().get(name).map(|v| v.to_str().unwrap());
+        assert_eq!(header(header::CACHE_CONTROL), Some("private, no-cache"));
+        assert_eq!(header(header::X_FRAME_OPTIONS), Some("SAMEORIGIN"));
+    }
+}

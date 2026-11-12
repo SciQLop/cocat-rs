@@ -395,6 +395,8 @@ async fn foreign_next_refused() {
         "javascript:alert(1)",
         "/\t/evil.com",
         "/\n/evil.com",
+        "/.//evil.com",
+        "/x/..//evil.com",
     ] {
         let response = fixture
             .login("member@example.org", PASSWORD, Some(next))

@@ -35,7 +35,7 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate", "mac
 thiserror.workspace = true
 tikv-jemallocator = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "net", "time", "process", "fs"] }
-tower-http = { version = "0.6", features = ["compression-gzip", "compression-zstd", "fs"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "compression-zstd", "fs", "set-header"] }
 tungstenite = "0.30"
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

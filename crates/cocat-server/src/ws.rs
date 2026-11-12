@@ -20,6 +20,7 @@ use thiserror::Error;
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use uuid::Uuid;
 
 use crate::db::User;
@@ -72,6 +73,17 @@ pub fn router(state: AppState) -> Router {
         .route("/room/{room_id}", get(catalogues_socket))
         .route("/room/{room_id}/{doc_id}", get(document_socket))
         .merge(crate::openapi::router(&state.links, document))
+        // Defaults for what a route leaves unsaid: answers are per person, so no shared cache
+        // keeps one, and no other site frames a page (the account and connect pages have
+        // buttons worth clickjacking).
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-cache"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("SAMEORIGIN"),
+        ))
         .layer(CompressionLayer::new())
         .layer(middleware::from_fn(ui::same_site))
         .layer(middleware::from_fn(crate::telemetry::track_http))

@@ -170,6 +170,11 @@ pub(crate) fn safe_next(value: Option<&str>, links: &crate::links::Links) -> Str
         return default;
     }
     let mut target = joined.path().to_owned();
+    // Resolving dot segments can leave a path that starts with `//` (`/.//evil.com`), which a
+    // browser reads as another host.
+    if target.starts_with("//") {
+        return default;
+    }
     if let Some(query) = joined.query() {
         target.push('?');
         target.push_str(query);

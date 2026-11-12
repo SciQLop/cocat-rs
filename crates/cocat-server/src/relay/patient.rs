@@ -8,6 +8,12 @@ use reqwest::header::RETRY_AFTER;
 
 /// How many times a request is sent before a passing failure fails the run.
 const ATTEMPTS: u32 = 6;
+/// The longest pause between two tries, whatever the provider's `Retry-After` asks: six
+/// tries then end within half an hour.
+const MAX_WAIT: Duration = Duration::from_secs(300);
+/// The largest answer read: the biggest list today (LASCO, ~20 MB) with ample room, and a
+/// bound on what a misbehaving provider can make the server hold.
+const MAX_BODY: usize = 512 * 1024 * 1024;
 
 /// What one try gave: the answer (body or a lasting refusal), or a passing failure.
 enum Try {
@@ -21,14 +27,23 @@ enum Try {
 /// The body at `url`. A 429, a 5xx or a broken connection is asked again after the server's
 /// `Retry-After`, else after `pause` doubled each time; any other refusal fails at once.
 pub async fn fetch(http: &reqwest::Client, url: &str, pause: Duration) -> Result<Vec<u8>, String> {
-    let mut wait = pause;
+    fetch_within(http, url, pause, MAX_BODY).await
+}
+
+async fn fetch_within(
+    http: &reqwest::Client,
+    url: &str,
+    pause: Duration,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut pause = pause;
     let mut last = String::new();
     for _ in 0..ATTEMPTS {
-        match attempt(http, url).await {
+        match attempt(http, url, limit).await {
             Try::Done(answer) => return answer,
             Try::Again { error, wait: asked } => {
-                tokio::time::sleep(asked.unwrap_or(wait)).await;
-                wait *= 2;
+                tokio::time::sleep(wait(asked, pause)).await;
+                pause *= 2;
                 last = error;
             }
         }
@@ -36,7 +51,12 @@ pub async fn fetch(http: &reqwest::Client, url: &str, pause: Duration) -> Result
     Err(last)
 }
 
-async fn attempt(http: &reqwest::Client, url: &str) -> Try {
+/// The pause before the next try: what the provider asked, else ours, never over `MAX_WAIT`.
+fn wait(asked: Option<Duration>, pause: Duration) -> Duration {
+    asked.unwrap_or(pause).min(MAX_WAIT)
+}
+
+async fn attempt(http: &reqwest::Client, url: &str, limit: usize) -> Try {
     let response = match http.get(url).send().await {
         Ok(response) => response,
         Err(error) => return again(super::fetch_error(error), None),
@@ -48,10 +68,26 @@ async fn attempt(http: &reqwest::Client, url: &str) -> Try {
     }
     match response.error_for_status() {
         Err(refused) => Try::Done(Err(super::fetch_error(refused))),
-        Ok(response) => match response.bytes().await {
-            Ok(bytes) => Try::Done(Ok(bytes.to_vec())),
-            Err(error) => again(super::fetch_error(error), None),
-        },
+        Ok(response) => read_within(response, limit).await,
+    }
+}
+
+async fn read_within(mut response: reqwest::Response, limit: usize) -> Try {
+    let too_large = || Try::Done(Err(format!("the answer is larger than {limit} bytes")));
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return too_large();
+    }
+    let mut body = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if body.len() + chunk.len() > limit => return too_large(),
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            Ok(None) => return Try::Done(Ok(body)),
+            Err(error) => return again(super::fetch_error(error), None),
+        }
     }
 }
 
@@ -132,6 +168,37 @@ mod tests {
 
         assert_eq!(body.unwrap(), b"ok");
         assert_eq!(asked.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_provider_cannot_make_a_run_wait_for_hours() {
+        let asked = Some(Duration::from_secs(86_400));
+
+        assert_eq!(wait(asked, Duration::from_secs(30)), MAX_WAIT);
+        assert_eq!(wait(None, Duration::from_secs(30)), Duration::from_secs(30));
+        assert_eq!(
+            wait(Some(Duration::from_secs(5)), Duration::from_secs(30)),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_over_the_size_cap_fails_without_being_held_whole() {
+        let app = Router::new().route("/", get(|| async { "x".repeat(4096) }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let error = fetch_within(
+            &reqwest::Client::new(),
+            &url,
+            Duration::from_millis(1),
+            1024,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("larger than"), "{error}");
     }
 
     #[tokio::test]
