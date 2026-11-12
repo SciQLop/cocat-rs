@@ -52,6 +52,26 @@ fn flush_survives_a_reopen() {
 }
 
 #[test]
+fn a_damaged_length_mid_file_keeps_the_bytes_it_cuts_beside_the_file() {
+    let dir = TempDir::new().unwrap();
+    let mut damaged = FIXTURE.to_vec();
+    damaged[6] = 0x7f;
+    fs::write(dir.path().join("bad.y"), &damaged).unwrap();
+
+    let (store, updates) = FileRoomStore::open(dir.path(), "bad").unwrap();
+
+    assert!(updates.is_empty());
+    assert_eq!(store.truncated_at(), Some(6));
+    let kept: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("bad.y.cut-"))
+        .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(fs::read(dir.path().join(&kept[0])).unwrap(), &damaged[6..]);
+}
+
+#[test]
 fn append_after_a_truncated_tail_rewrites_from_the_good_offset() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("cut.y"), &FIXTURE[..FIXTURE.len() - 3]).unwrap();

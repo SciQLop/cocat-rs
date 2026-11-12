@@ -62,18 +62,18 @@ impl FileRoomStore {
             Err(source) => return Err(io_error(&path, source)),
         };
         let (updates, truncated_at) = parse_records(&path, &bytes)?;
-        if let Some(offset) = truncated_at {
-            tracing::warn!(
-                path = %path.display(),
-                offset,
-                "room file ends mid-record, rewriting from the last good offset"
-            );
-        }
-
         let mut file = append_handle(&path)?;
         if HEADER.starts_with(&bytes) {
             reset_to_header(&mut file, &path)?;
         } else if let Some(offset) = truncated_at {
+            let kept = keep_cut_bytes(&path, &bytes, offset)?;
+            tracing::error!(
+                path = %path.display(),
+                offset,
+                cut = bytes.len() as u64 - offset,
+                kept = %kept.display(),
+                "room file unreadable past this offset (a torn last write, or damage); the rest is kept aside"
+            );
             file.set_len(offset)
                 .map_err(|source| io_error(&path, source))?;
         }
@@ -255,6 +255,27 @@ fn append_handle(path: &Path) -> Result<File, StoreError> {
         .append(true)
         .open(path)
         .map_err(|source| io_error(path, source))
+}
+
+/// Saves what follows `offset` as `<file>.cut-<unix seconds>`, on the disk before the room
+/// file is shortened. A torn last write and a damaged length in the middle look the same to
+/// the parser; in the second case these bytes are every later record, recoverable by hand.
+fn keep_cut_bytes(path: &Path, bytes: &[u8], offset: u64) -> Result<PathBuf, StoreError> {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let mut kept = path.as_os_str().to_owned();
+    kept.push(format!(".cut-{seconds}"));
+    let kept = PathBuf::from(kept);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&kept)
+        .map_err(|source| io_error(&kept, source))?;
+    file.write_all(&bytes[offset as usize..])
+        .and_then(|()| file.sync_data())
+        .map_err(|source| io_error(&kept, source))?;
+    Ok(kept)
 }
 
 fn reset_to_header(file: &mut File, path: &Path) -> Result<(), StoreError> {
