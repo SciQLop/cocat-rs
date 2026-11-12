@@ -24,50 +24,70 @@ impl DetailsEditor {
 
 type Summary = Memo<Option<CatalogueSummary>>;
 
-/// The tags and attributes under the title, read-only: a long attribute list folds to a
-/// few, with a button for the rest. An editor gets Edit details.
+/// What the catalogue is, framed under its title: a titled box with its tags, its
+/// description and its attributes as a table of names and values, two pairs per row. A long
+/// table folds to three rows. An editor gets Edit details in the box's corner, or a link to
+/// add details when there are none.
 #[component]
-pub fn CatalogueFacts(tags: Vec<String>, attributes: Vec<(String, String)>) -> impl IntoView {
+pub fn AboutBox(
+    description: Option<String>,
+    tags: Vec<String>,
+    attributes: Vec<(String, String)>,
+) -> impl IntoView {
     let editor = use_context::<DetailsEditor>()
         .filter(|_| use_context::<Room>().is_some_and(|room| room.can_write()));
+    let empty = description.is_none() && tags.is_empty() && attributes.is_empty();
+    if empty {
+        return editor
+            .map(|editor| view! {
+                <button type="button" class="link-button add-link about-add" on:click=move |_| editor.open()>
+                    "+ Add a description or attributes"
+                </button>
+            })
+            .into_any();
+    }
     let open = RwSignal::new(false);
     let count = attributes.len();
-    let listed = move || {
+    let rows = move || {
         let (shown, _) = listed_attributes(count, open.get());
         attributes[..shown]
             .iter()
-            .map(|(key, value)| view! {
-                <div class="fact"><dt>{key.clone()}</dt><dd title=value.clone()>{value.clone()}</dd></div>
+            .map(|(key, value)| {
+                view! {
+                    <dt>{key.clone()}</dt><dd title=value.clone()>{value.clone()}</dd>
+                }
             })
             .collect_view()
     };
     let toggle = move || match listed_attributes(count, open.get()) {
-        (_, Some(total)) => Some(format!("Show all {total}")),
-        _ if open.get() => Some("Show fewer".to_owned()),
+        (_, Some(more)) => Some(format!("+ {more} more ▾")),
+        _ if open.get() => Some("Show fewer ▴".to_owned()),
         _ => None,
     };
-    let empty = tags.is_empty() && count == 0;
     view! {
-        <div class="catalogue-facts">
-            {(!tags.is_empty()).then(|| view! {
-                <div class="tags">
-                    {tags.into_iter().map(|tag| view! { <span class="tag">{tag}</span> }).collect_view()}
-                </div>
-            })}
-            {(count > 0).then(|| view! { <dl class="facts-grid" class:open=move || open.get()>{listed}</dl> })}
-            <div class="facts-actions">
-                {move || toggle().map(|label| view! {
-                    <button type="button" class="link-button" aria-expanded=move || open.get().to_string()
-                        on:click=move |_| open.update(|open| *open = !*open)>{label}</button>
+        <section class="about-box" aria-labelledby="about-title">
+            <header class="about-head">
+                <h2 id="about-title" class="eyebrow">"About this catalogue"</h2>
+                {(!tags.is_empty()).then(|| view! {
+                    <div class="tags">
+                        {tags.into_iter().map(|tag| view! { <span class="tag">{tag}</span> }).collect_view()}
+                    </div>
                 })}
                 {editor.map(|editor| view! {
-                    <button type="button" class="link-button" on:click=move |_| editor.open()>
-                        {if empty { "+ Add tags or attributes" } else { "Edit details" }}
-                    </button>
+                    <button type="button" class="link-button about-edit" on:click=move |_| editor.open()>"Edit details"</button>
                 })}
-            </div>
-        </div>
+            </header>
+            {description.map(|text| view! { <crate::views::public::Description text/> })}
+            {(count > 0).then(|| view! {
+                <dl class="about-attributes" aria-label="Attributes">{rows}</dl>
+                {move || toggle().map(|label| view! {
+                    <button type="button" class="link-button about-more" aria-expanded=move || open.get().to_string()
+                        on:click=move |_| open.update(|open| *open = !*open)>{label}</button>
+                })}
+            })}
+        </section>
     }
+    .into_any()
 }
 
 /// The side panel while an editor changes the open catalogue's details; Done brings the

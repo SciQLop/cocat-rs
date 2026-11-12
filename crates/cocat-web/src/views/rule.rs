@@ -131,14 +131,16 @@ pub fn Heading(
             })}
             {move || {
                 let curated = listed().and_then(|listed| listed.description);
-                curated
-                    .or_else(|| about.with(|about| about.description.clone()))
-                    .map(|text| view! { <crate::views::public::Description text/> })
+                let description = curated.or_else(|| about.with(|about| about.description.clone()));
+                match about.with(|about| about.catalogue.then(|| (about.tags.clone(), about.attributes.clone()))) {
+                    Some((tags, attributes)) => view! {
+                        <crate::views::catalogue_details::AboutBox description tags attributes/>
+                    }.into_any(),
+                    None => description
+                        .map(|text| view! { <crate::views::public::Description text/> })
+                        .into_any(),
+                }
             }}
-            {move || about.with(|about| about.catalogue.then(|| (about.tags.clone(), about.attributes.clone())))
-                .map(|(tags, attributes)| view! {
-                    <crate::views::catalogue_details::CatalogueFacts tags attributes/>
-                })}
             {move || about.with(|about| about.decided_in.clone()).map(|(id, name)| view! {
                 <p class="quiet">"Decided in round "<a href=Route::Round(id).href(&page())>{name}</a></p>
             })}
