@@ -453,6 +453,7 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .small { font-size: 12px; }
 .quiet-cell { color: var(--muted); }
 .empty { padding: 24px 14px; }
+.columns-note { margin: 0 0 6px; font-size: 13px; }
 .empty-link { margin: -12px 0 0; padding: 0 14px 24px; }
 
 .tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
@@ -975,6 +976,7 @@ a.button { text-decoration: none; }
 .project-switch:hover { background: var(--chip); }
 .project-switch .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-switch .caret { color: var(--muted); font-weight: 400; }
+.catalogue-menu .caret { margin-left: 6px; color: var(--muted); font-weight: 400; }
 /* A click outside the open menu lands on this layer, which is part of the summary: it closes. */
 .project-menu[open] > .project-switch::before {
   content: "";

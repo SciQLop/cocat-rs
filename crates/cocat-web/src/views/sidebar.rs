@@ -175,8 +175,8 @@ fn NewCatalogue() -> impl IntoView {
     }
 }
 
-/// One catalogue of the list: a place to go. What can be done with it is in the More menu
-/// above its events, once it is open.
+/// One catalogue of the list: a place to go. What can be done with it is in the Catalogue
+/// menu above its events; a right-click opens the catalogue with that menu open.
 #[component]
 fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView {
     let route = Route::Catalogue(item.uuid.clone());
@@ -185,9 +185,19 @@ fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView
         .count
         .map_or_else(|| "!".to_owned(), |count| count.to_string());
     let count_title = item.count.is_none().then_some("The rule does not evaluate");
+    let request = use_context::<crate::views::actions::CatalogueMenuRequest>();
+    let target = route.hash();
+    let open_menu = move |event: leptos::ev::MouseEvent| {
+        if let Some(crate::views::actions::CatalogueMenuRequest(requested)) = request {
+            event.prevent_default();
+            go_to(&target);
+            requested.set(true);
+        }
+    };
     view! {
         <div class="entry">
-            <a class="catalogue" href=href aria-current=move || current(shown.get() == route)>
+            <a class="catalogue" href=href aria-current=move || current(shown.get() == route)
+                on:contextmenu=open_menu>
                 <span class="name">
                     <Show when=move || item.smart>
                         <SmartIcon/>

@@ -210,6 +210,26 @@ pub fn fixed_columns(rows: &[Row], order: &[usize], sorted: &SortKey) -> Vec<Sor
     .collect()
 }
 
+/// What the table says of the fixed columns [`fixed_columns`] left out, so nobody looks for
+/// them: "No tags or author in these events."
+pub fn left_out(shown: &[SortKey]) -> Option<String> {
+    let missing: Vec<&str> = [
+        (SortKey::Tags, "tags"),
+        (SortKey::Confidence, "confidence"),
+        (SortKey::Author, "author"),
+    ]
+    .into_iter()
+    .filter(|(key, _)| !shown.contains(key))
+    .map(|(_, word)| word)
+    .collect();
+    let list = match missing.as_slice() {
+        [] => return None,
+        [only] => (*only).to_owned(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    };
+    Some(format!("No {list} in these events."))
+}
+
 /// Every attribute key the rows hold, sorted: the columns the table can show.
 pub fn attribute_keys(rows: &[Row]) -> Vec<String> {
     let keys: BTreeSet<&String> = rows.iter().flat_map(|row| row.attributes.keys()).collect();
@@ -543,6 +563,27 @@ mod tests {
             shown(&[], Start),
             [Start, Duration, Tags, Confidence, Status, Author],
             "an empty table keeps its header"
+        );
+    }
+
+    #[test]
+    fn the_table_says_which_columns_it_left_out() {
+        use SortKey::*;
+        assert_eq!(
+            left_out(&[Start, Duration, Tags, Confidence, Status, Author]),
+            None
+        );
+        assert_eq!(
+            left_out(&[Start, Duration, Status]).as_deref(),
+            Some("No tags, confidence or author in these events.")
+        );
+        assert_eq!(
+            left_out(&[Start, Duration, Tags, Status, Author]).as_deref(),
+            Some("No confidence in these events.")
+        );
+        assert_eq!(
+            left_out(&[Start, Duration, Status, Author]).as_deref(),
+            Some("No tags or confidence in these events.")
         );
     }
 }

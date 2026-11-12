@@ -10,7 +10,7 @@ use crate::format::{duration_text, person_text, time_text, value_text};
 use crate::layout::{tags_that_fit, window};
 use crate::presence::{Peer, editing};
 use crate::preview::sort_hint;
-use crate::rows::{Row, SortKey, fixed_columns};
+use crate::rows::{Row, SortKey, fixed_columns, left_out};
 use crate::state::Room;
 use crate::views::catalogue::Members;
 
@@ -107,6 +107,7 @@ pub fn Table(
     };
     let none_shown = move || order.with(Vec::is_empty);
     view! {
+        {move || keys.with(|keys| left_out(keys)).map(|note| view! { <p class="quiet columns-note">{note}</p> })}
         <div class="table-scroll" node_ref=scroller on:scroll=move |_| measure()>
             <table class="events" style=move || {
                 let fixed_width: f64 = keys.with(|keys| keys.iter().map(|key| fixed(key).2).sum());

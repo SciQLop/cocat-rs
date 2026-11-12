@@ -10,8 +10,14 @@ use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
 use crate::submissions::{Proposal, PublicAction, menu_proposes, proposal_for, public_actions};
-use crate::views::controls::{Error, NameForm, confirm, error_line, go_to, now};
+use crate::views::controls::{Error, NameForm, error_line, go_to, now};
+use crate::views::notice::{Notice, Undo};
+use crate::views::projects::Projects;
 use cocat_core::room_id::is_public_id;
+
+/// Set by a right-click on a catalogue in the list: its menu opens once it is on screen.
+#[derive(Clone, Copy)]
+pub struct CatalogueMenuRequest(pub RwSignal<bool>);
 
 /// Which form under the heading is open.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,13 +60,17 @@ pub fn Actions(
             room.with_value(|room| add_event(room, &uuid, now, selected, error));
         }
     };
+    let notice = expect_context::<Projects>().notice;
     let trash = move |_| {
         if let Some(uuid) = catalogue.get_untracked() {
-            room.with_value(|room| {
-                if let Err(failure) = trash_catalogue(room, &uuid, true) {
-                    error.set(Some(failure));
-                }
-            });
+            match room.with_value(|room| trash_catalogue(room, &uuid)) {
+                Ok(name) => notice.set(Some(Notice {
+                    text: format!("“{name}” moved to the trash."),
+                    link: None,
+                    undo: Some(Undo::Trashed(uuid)),
+                })),
+                Err(failure) => error.set(Some(failure)),
+            }
         }
     };
     let linked = move || {
@@ -68,6 +78,16 @@ pub fn Actions(
         proposals.with(|listed| proposal_for(listed, &uuid).map(|proposal| proposal.name.clone()))
     };
     let menu = NodeRef::<leptos::html::Details>::new();
+    if let Some(CatalogueMenuRequest(requested)) = use_context::<CatalogueMenuRequest>() {
+        Effect::new(move |_| {
+            if let Some(menu) = menu.get()
+                && requested.get()
+            {
+                menu.set_open(true);
+                requested.set(false);
+            }
+        });
+    }
     let toggle = move |which: Form| {
         form.update(|open| *open = if *open == which { Form::Closed } else { which });
         if let Some(menu) = menu.get_untracked() {
@@ -76,12 +96,12 @@ pub fn Actions(
     };
     view! {
         <Show when=move || smart.get().is_some()>
-            <details class="menu-button" data-menu node_ref=menu>
-                <summary aria-label="More actions">"More"</summary>
+            <details class="menu-button catalogue-menu" data-menu node_ref=menu>
+                <summary aria-label="Catalogue actions">"Catalogue"<span class="caret" aria-hidden="true">"▾"</span></summary>
                 <div class="menu">
                     {editor.then(|| view! {
                         <button type="button" on:click=move |_| toggle(Form::Rename)>"Rename…"</button>
-                        <button type="button" on:click=move |_| toggle(Form::Rule)>"Rule as JSON…"</button>
+                        <button type="button" on:click=move |_| toggle(Form::Rule)>"Edit rule as JSON…"</button>
                         <Show when=move || smart.get() == Some(true)>
                             <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
                         </Show>
@@ -97,7 +117,7 @@ pub fn Actions(
                         <button type="button" on:click=move |_| toggle(Form::Update)>{format!("Submit as an update to “{name}”…")}</button>
                     })}
                     {editor.then(|| view! {
-                        <button type="button" class="danger" on:click=trash>"Delete catalogue…"</button>
+                        <button type="button" class="danger" on:click=trash>"Move to trash"</button>
                     })}
                 </div>
             </details>
@@ -172,25 +192,17 @@ fn add_event(
     }
 }
 
-/// Asks, then moves the catalogue to the trash; `shown`: it is the one on screen, so the page
-/// moves on to the first catalogue.
-pub fn trash_catalogue(room: &Room, uuid: &str, shown: bool) -> Result<(), String> {
+/// Moves the catalogue on screen to the trash, without asking: the notice that follows
+/// takes it back. The page moves on to the first catalogue. Answers the catalogue's name.
+fn trash_catalogue(room: &Room, uuid: &str) -> Result<String, String> {
     let name = room
         .read_untracked(|txn| model::catalogue(txn, uuid))
         .map(|found| found.name)
         .unwrap_or_default();
-    if !confirm(&format!(
-        "Delete the catalogue “{name}”? Its events stay in the project. The catalogue waits in \
-         the trash, where it can be restored."
-    )) {
-        return Ok(());
-    }
     room.write(|txn| edit::trash_catalogue(txn, uuid))
         .map_err(|failure| failure.to_string())?;
-    if shown {
-        go_to("");
-    }
-    Ok(())
+    go_to("");
+    Ok(name)
 }
 
 /// Asks the name of the normal catalogue to freeze the smart one on screen into, then shows it.

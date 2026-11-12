@@ -7,7 +7,7 @@ use web_sys::HtmlDetailsElement;
 use crate::format::duration_text;
 use crate::period::Period;
 use crate::stats::{
-    self, CatalogueStats, Counted, LOG_TICKS, Spread, Values, heading, log_position, number_text,
+    self, CatalogueStats, Counted, LOG_TICKS, Spread, Values, log_position, number_text,
     percent_text,
 };
 use crate::views::catalogue::OnScreen;
@@ -23,11 +23,10 @@ pub fn Statistics(screen: RwSignal<Option<OnScreen>>) -> impl IntoView {
 
 #[component]
 fn Summary(on_screen: OnScreen) -> impl IntoView {
-    let counted = Memo::new(move |_| {
-        on_screen.with(|rows, total| (stats::summary(rows), heading(rows.len(), total)))
-    });
+    // No heading of its own: the line under the page's title already counts what is shown.
+    let counted = Memo::new(move |_| on_screen.with(|rows, _| stats::summary(rows)));
     let body = move || {
-        counted.with(|(stats, _)| match stats.count {
+        counted.with(|stats| match stats.count {
             0 => view! { <p class="quiet">"Statistics show once the table lists events."</p> }
                 .into_any(),
             _ => summary_view(stats).into_any(),
@@ -36,10 +35,9 @@ fn Summary(on_screen: OnScreen) -> impl IntoView {
     view! {
         <div class="panel-head">
             <span class="eyebrow">"Statistics"</span>
-            <h2>{move || counted.with(|(_, heading)| heading.clone())}</h2>
         </div>
         {body}
-        <Show when=move || counted.with(|(stats, _)| stats.count > 0)>
+        <Show when=move || counted.with(|stats| stats.count > 0)>
             <More on_screen/>
             <Hint anchor="statistics" topic="statistics"
                 text="Coverage counts overlapping time once; gaps are the waits between events."/>
@@ -69,7 +67,7 @@ fn summary_view(stats: &CatalogueStats) -> impl IntoView + use<> {
         </dl>
         <Histogram bins=stats.durations.clone() ticks=log_ticks() label="Durations"/>
         <section>
-            <h3 class="section-label">"Tags"</h3>
+            <h3 class="section-label">"Event tags"</h3>
             <Shares counted=stats.tags.clone() total=stats.count missing="untagged"/>
         </section>
     }
@@ -184,8 +182,8 @@ impl Section {
         match self {
             Section::Gaps => "Gaps between events",
             Section::Status => "Status and confidence",
-            Section::Attributes => "Attributes",
-            Section::Tags => "Tags (all)",
+            Section::Attributes => "Event attributes",
+            Section::Tags => "All event tags",
             Section::Authors => "Authors",
         }
     }

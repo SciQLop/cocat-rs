@@ -7,6 +7,7 @@ use crate::route::Route;
 use crate::rows::Row;
 use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
+use crate::views::actions::CatalogueMenuRequest;
 use crate::views::catalogue::CataloguePage;
 use crate::views::event_panel::{EventPanel, Shown};
 use crate::views::files::{FilePane, FilesLoader, FilesState, ProjectFiles};
@@ -52,6 +53,7 @@ fn read_notice() -> Option<Notice> {
     Some(Notice {
         text: meta("cocat-flash")?,
         link: meta("cocat-share-link"),
+        undo: None,
     })
 }
 
@@ -122,6 +124,7 @@ fn App(config: RoomConfig) -> impl IntoView {
     let screen = RwSignal::new(None);
     let importer = Importer::new();
     provide_context(importer);
+    provide_context(CatalogueMenuRequest(RwSignal::new(false)));
     let (drag_over, drop) = drop_on(importer, editor);
     let panel = Memo::new(move |_| selected.with(Shown::of));
     Effect::new(move |_| {
