@@ -17,6 +17,7 @@ use cocat_core::store::escaped_room_id;
 use data_encoding::HEXLOWER;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use tokio::io::AsyncWriteExt;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -83,11 +84,12 @@ async fn is_stored(pool: &SqlitePool, room_id: &str, hash: &str) -> Result<bool,
     Ok(found.is_some())
 }
 
-/// Writes next to the final name and renames, so a reader never sees half a file.
+/// Writes next to the final name, on the disk, and renames, so a reader never sees half a
+/// file, and a crash never leaves the final name on an empty one.
 async fn write_file(dir: &Path, hash: &str, content: &[u8]) -> io::Result<()> {
     tokio::fs::create_dir_all(dir).await?;
     let temporary = dir.join(format!(".{}.tmp", Uuid::new_v4().simple()));
-    let written = tokio::fs::write(&temporary, content).await;
+    let written = write_synced(&temporary, content).await;
     let renamed = match written {
         Ok(()) => tokio::fs::rename(&temporary, dir.join(hash)).await,
         Err(error) => Err(error),
@@ -96,6 +98,18 @@ async fn write_file(dir: &Path, hash: &str, content: &[u8]) -> io::Result<()> {
         let _ = tokio::fs::remove_file(&temporary).await;
     }
     renamed
+}
+
+async fn write_synced(path: &Path, content: &[u8]) -> io::Result<()> {
+    let mut file = tokio::fs::File::create(path).await?;
+    file.write_all(content).await?;
+    file.sync_all().await
+}
+
+/// The stored file's bytes when they still hash to `hash`; `None` when it is lost or damaged.
+async fn intact(path: &Path, hash: &str) -> Option<Vec<u8>> {
+    let content = tokio::fs::read(path).await.ok()?;
+    (HEXLOWER.encode(&Sha256::digest(&content)) == hash).then_some(content)
 }
 
 async fn record(
@@ -170,7 +184,15 @@ async fn put_blob(
             "The body does not match the SHA-256 in the path".to_owned(),
         ));
     }
+    let dir = folder(state.rooms.update_dir(), &room_id);
     if is_stored(&state.pool, &room_id, &hash).await? {
+        if intact(&dir.join(&hash), &hash).await.is_none() {
+            tracing::warn!(room = %room_id, %hash, "a stored file was lost or damaged; repaired");
+            write_file(&dir, &hash, &content).await.map_err(|error| {
+                tracing::error!(%error, room = %room_id, "cannot store a file");
+                ApiError::Internal
+            })?;
+        }
         return Ok(StatusCode::OK);
     }
     let size = content.len() as u64;
@@ -178,12 +200,10 @@ async fn put_blob(
     // file each. Upgrade path: reserve the bytes under a lock or in a database counter.
     let left = owner_left(&state, &room_id).await?;
     within_quota(size, left, "The project owner's", "file")?;
-    write_file(&folder(state.rooms.update_dir(), &room_id), &hash, &content)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, room = %room_id, "cannot store a file");
-            ApiError::Internal
-        })?;
+    write_file(&dir, &hash, &content).await.map_err(|error| {
+        tracing::error!(%error, room = %room_id, "cannot store a file");
+        ApiError::Internal
+    })?;
     record(&state.pool, &room_id, &hash, size, user.id).await?;
     Ok(StatusCode::CREATED)
 }
@@ -217,10 +237,15 @@ async fn get_blob(
         return Err(missing());
     }
     let path = folder(state.rooms.update_dir(), &room_id).join(&hash);
-    let content = tokio::fs::read(&path).await.map_err(|error| {
-        tracing::error!(%error, path = %path.display(), "cannot read a stored file");
-        ApiError::Internal
-    })?;
-    let headers = [(header::CONTENT_TYPE, "application/octet-stream")];
+    let Some(content) = intact(&path, &hash).await else {
+        tracing::error!(path = %path.display(), "a stored file is lost or damaged; uploading it again repairs it");
+        return Err(ApiError::Internal);
+    };
+    let headers = [
+        (header::CONTENT_TYPE, "application/octet-stream"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::CONTENT_DISPOSITION, "attachment"),
+        (header::CACHE_CONTROL, "private"),
+    ];
     Ok((headers, content).into_response())
 }

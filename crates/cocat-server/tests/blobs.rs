@@ -23,6 +23,7 @@ struct Fixture {
 struct Reply {
     status: StatusCode,
     content_type: Option<String>,
+    headers: axum::http::HeaderMap,
     body: Vec<u8>,
 }
 
@@ -101,6 +102,7 @@ impl Fixture {
                 .headers()
                 .get(header::CONTENT_TYPE)
                 .map(|value| value.to_str().unwrap().to_owned()),
+            headers: response.headers().clone(),
             body: to_bytes(response.into_body(), 64 * 1024 * 1024)
                 .await
                 .unwrap()
@@ -195,6 +197,48 @@ async fn an_editor_stores_and_a_viewer_reads_a_file() {
         fixture.get(&viewer, &room, &sha(b"other")).await.status,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn a_file_downloads_as_an_attachment_the_browser_does_not_sniff() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user("owner@example.org").await;
+    let room = fixture.project(&owner, "workspace").await;
+    let content = b"<html><script>alert(1)</script></html>";
+    let hash = sha(content);
+    fixture.put(&owner, &room, &hash, content).await;
+
+    let read = fixture.get(&owner, &room, &hash).await;
+
+    let header = |name: &str| read.headers.get(name).map(|value| value.to_str().unwrap());
+    assert_eq!(header("x-content-type-options"), Some("nosniff"));
+    assert_eq!(header("content-disposition"), Some("attachment"));
+    assert_eq!(header("cache-control"), Some("private"));
+}
+
+#[tokio::test]
+async fn a_damaged_or_lost_file_is_never_served_and_uploading_it_again_repairs_it() {
+    let fixture = Fixture::start().await;
+    let (_, owner) = fixture.user("owner@example.org").await;
+    let room = fixture.project(&owner, "workspace").await;
+    let content = b"time,flux\n1,2\n";
+    let hash = sha(content);
+    fixture.put(&owner, &room, &hash, content).await;
+    let file = fixture.files().pop().unwrap();
+
+    for damage in [Some(&b"garbage"[..]), Some(&b""[..]), None] {
+        match damage {
+            Some(bytes) => fs::write(&file, bytes).unwrap(),
+            None => fs::remove_file(&file).unwrap(),
+        }
+        let read = fixture.get(&owner, &room, &hash).await;
+        assert_eq!(read.status, StatusCode::INTERNAL_SERVER_ERROR, "{damage:?}");
+
+        let again = fixture.put(&owner, &room, &hash, content).await;
+        assert_eq!(again.status, StatusCode::OK, "{damage:?}");
+        assert_eq!(fixture.get(&owner, &room, &hash).await.body, content);
+    }
+    assert_eq!(rows(&fixture).await, 1, "a repair records nothing new");
 }
 
 #[tokio::test]
