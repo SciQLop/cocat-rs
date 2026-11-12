@@ -70,7 +70,7 @@ const JUNO: &str = "Louis, Hospodarsky, Jackman et al. (2022), Lists of magnetop
 const CASSINI: &str = "Jackman (2022), List of Saturn magnetopause and bow shock crossings by the Cassini spacecraft, Zenodo, https://doi.org/10.5281/zenodo.5913537, licence CC-BY-4.0; see Jackman et al. (2019), JGR, https://doi.org/10.1029/2019JA026628.";
 const MESSENGER: &str = "Sun (2026), Lists of Magnetopause and Bow Shock Crossings of Mercury by MESSENGER Spacecraft, Zenodo, https://doi.org/10.5281/zenodo.18236915, licence CC-BY-4.0; see Sun et al. (2020), GRL, https://doi.org/10.1029/2020GL089784.";
 
-const LISTS: [List; 47] = [
+const LISTS: [List; 53] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -678,6 +678,72 @@ const LISTS: [List; 47] = [
         read: hpevent,
         part: "",
     },
+    List {
+        key: "icme-multicatalog",
+        folder: "Literature/Heliosphere",
+        name: "ICME multi-catalogue, 0.25-5 AU (Larrodera & Temmer)",
+        about: "About 2000 ICMEs from 1975 to 2022 seen by 13 spacecraft, gathered from 12 published catalogues: the event runs from the ICME's start to the end of its magnetic obstacle, `mo_start` is where the obstacle begins (the same as the start when there is no sheath), `source` names the catalogue the dates come from, with the spacecraft's distance (km) and HCI longitude and latitude. Only the dates come from the source catalogues; the file's 150 columns of plasma averages are left out.",
+        credit: "Larrodera, C. & Temmer, M., Interplanetary Coronal Mass ejections multi-catalog, e-cienciaDatos, https://doi.org/10.21950/XGUIYX, licence CC-BY-NC-4.0.",
+        url: "https://doi.org/10.21950/XGUIYX",
+        files: Files::Remote(&["https://edatos.consorciomadrono.es/api/access/datafile/50182"]),
+        read: icme_multicatalog,
+        part: "",
+    },
+    List {
+        key: "intense-storms-ji",
+        folder: "Literature/Earth",
+        name: "Intense geomagnetic storms 1998-2006 (Ji et al. 2012)",
+        about: "The 63 storms with Dst at or below -100 nT from 1998 to 2006 used to compare Dst forecast models: `dst_min_nt` is the storm's lowest Dst and `structure` the interplanetary driver (sMC magnetic cloud, SH sheath, nonMC ICME without a cloud, CIR).",
+        credit: "Ji, E.-Y., Moon, Y.-J., Gopalswamy, N. & Lee, D.-H. (2012), J. Geophys. Res. 117(A3), https://doi.org/10.1029/2011JA016872 (table sent by Vincent Génot).",
+        url: "https://doi.org/10.1029/2011JA016872",
+        files: Files::Kept(include_str!("data/ji_2012_intense_storms.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "solo-mirror-mode-storms",
+        folder: "Literature/Heliosphere",
+        name: "Mirror mode storms at Solar Orbiter (Dimmock et al. 2022)",
+        about: "25 trains of mirror mode structures Solar Orbiter saw from April 2020 to August 2021, each at the time it starts: `mm_type` 1 for short bursts of peaks or dips, 2 for extended trains of magnetic holes; the ion speed, density, temperature, anisotropy and beta are means over the event with their standard deviations, `structure` is where it sat (SW-CS solar wind current sheet, SBC sector boundary crossing, SIR), `pas_quality` the PAS quality factor (lower is better).",
+        credit: "Dimmock, A. P. et al. (2022), J. Geophys. Res. 127, e2022JA030754, https://doi.org/10.1029/2022JA030754, licence CC-BY-4.0 (Table 1).",
+        url: "https://doi.org/10.1029/2022JA030754",
+        files: Files::Kept(include_str!("data/dimmock_2022_mirror_mode_storms.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "psp-hcs-crossings",
+        folder: "Literature/Heliosphere/PSP heliospheric current sheet (Fargette)",
+        name: "Heliospheric current sheet crossings by PSP below 50 Rs (Fargette et al. 2026)",
+        about: "The 39 full crossings of the heliospheric current sheet by Parker Solar Probe in encounters 6 to 21 while below 50 solar radii: `jet` is the reconnection outflow seen (outward or inward), `side_jet` marks a smaller jet also seen at a B_R reversal beside the crossing.",
+        credit: "Fargette et al. (2026), ApJ 997, 174, https://doi.org/10.3847/1538-4357/ae2601, licence CC-BY-4.0. (Table 1)",
+        url: "https://doi.org/10.3847/1538-4357/ae2601",
+        files: Files::Kept(include_str!("data/fargette_2026_hcs_crossings.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "psp-hcs-partial-crossings",
+        folder: "Literature/Heliosphere/PSP heliospheric current sheet (Fargette)",
+        name: "Partial heliospheric current sheet crossings by PSP (Fargette et al. 2026)",
+        about: "29 partial crossings of the heliospheric current sheet by Parker Solar Probe in encounters 6 to 21 while below 50 solar radii.",
+        credit: "Fargette et al. (2026), ApJ 997, 174, https://doi.org/10.3847/1538-4357/ae2601, licence CC-BY-4.0. (Table 2)",
+        url: "https://doi.org/10.3847/1538-4357/ae2601",
+        files: Files::Kept(include_str!("data/fargette_2026_hcs_partial_crossings.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "psp-hcs-side-jets",
+        folder: "Literature/Heliosphere/PSP heliospheric current sheet (Fargette)",
+        name: "Small ion jets beside heliospheric current sheet crossings (Fargette et al. 2026)",
+        about: "4 small ion jets Parker Solar Probe saw at B_R reversals on the side of a heliospheric current sheet crossing; `jet` is outward or inward.",
+        credit: "Fargette et al. (2026), ApJ 997, 174, https://doi.org/10.3847/1538-4357/ae2601, licence CC-BY-4.0. (Table 3)",
+        url: "https://doi.org/10.3847/1538-4357/ae2601",
+        files: Files::Kept(include_str!("data/fargette_2026_hcs_side_jets.csv")),
+        read: kept_table,
+        part: "",
+    },
 ];
 
 /// A UTC time from its calendar parts; the second may carry a fraction.
@@ -1014,6 +1080,79 @@ fn timed_csv(text: &str, start: &str, stop: &str) -> Result<Vec<Item>, String> {
             })
         })
         .collect()
+}
+
+/// The ICME multi-catalogue (e-cienciaDatos): a CSV whose events run from `icme_start` to
+/// `mo_end`. Of its 160 columns, the ones that place and source the event are kept.
+fn icme_multicatalog(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    let mut items = timed_csv(text, "icme_start", "mo_end")?;
+    for item in &mut items {
+        let row = std::mem::take(&mut item.attributes);
+        let cell = |column: &str| row.get(column).and_then(Value::as_str).unwrap_or_default();
+        let number = |column: &str| row.get(column).filter(|value| value.is_number()).cloned();
+        // Some ICMEs come from two source catalogues, with slightly different ends: both stay.
+        item.id = format!(
+            "{}|{}|{}",
+            item.start.rfc3339().unwrap_or_default(),
+            cell("spacecraft"),
+            cell("cat_source")
+        );
+        let sheath = row.get("flg_sheath").and_then(Value::as_f64);
+        let fields = [
+            (
+                "spacecraft",
+                Some(icme_spacecraft(cell("spacecraft")).into()),
+            ),
+            ("source", Some(icme_source(cell("cat_source")).into())),
+            (
+                "mo_start",
+                Timestamp::parse(cell("mo_start"))
+                    .and_then(|at| at.rfc3339().ok())
+                    .map(Value::from),
+            ),
+            ("r_km", number("r_heliodist")),
+            ("longitude_hci_deg", number("theta")),
+            ("latitude_hci_deg", number("lati")),
+            (
+                "sheath",
+                sheath.map(|flag| (if flag > 0.0 { "yes" } else { "no" }).into()),
+            ),
+        ];
+        item.attributes = fields
+            .into_iter()
+            .filter_map(|(name, value)| Some((name.to_owned(), value?)))
+            .collect();
+    }
+    Ok(items)
+}
+
+/// The multi-catalogue spells some spacecraft two ways.
+fn icme_spacecraft(name: &str) -> &str {
+    match name {
+        "SO" | "SolarOrbiter" => "Solar Orbiter",
+        "helios" => "Helios",
+        "ULYSSES" => "Ulysses",
+        other => other,
+    }
+}
+
+/// The catalogue behind each `cat_N` code, from the multi-catalogue's readme.
+fn icme_source(code: &str) -> &str {
+    match code {
+        "cat_1" => "Möstl et al. (2020), doi:10.3847/1538-4357/abb9a1",
+        "cat_2" => "Nieves-Chinchilla et al. (2018), doi:10.1007/s11207-018-1247-z",
+        "cat_3" => "STEREO ICME list, https://parker.gsfc.nasa.gov/ICME_catalogs/STEREO/",
+        "cat_5" => "Helios ICME list, https://parker.gsfc.nasa.gov/ICME_catalogs/Helios/",
+        "cat_6" => "Solar Orbiter ICME list, https://parker.gsfc.nasa.gov/ICME_catalogs/SO/",
+        "cat_7" => "Parker Solar Probe ICME list, https://parker.gsfc.nasa.gov/ICME_catalogs/PSP/",
+        "cat_8" => "Commission et al. (2014), doi:10.2769/88565",
+        "cat_9" => "Regnault et al. (2020), doi:10.1029/2020JA028150",
+        "cat_10" => "Richardson & Cane (2010), doi:10.1007/s11207-010-9568-6",
+        "cat_11" => "Jian et al. (2018), doi:10.3847/1538-4357/aab189",
+        "cat_12" => "Jian et al. (2006), doi:10.1007/s11207-006-0133-2",
+        "cat_13" => "Du et al. (2010), doi:10.1007/s11207-009-9505-8",
+        other => other,
+    }
 }
 
 /// The SITL segments: no header, `, ` between 25 cells (the last, the discussion, may hold
@@ -1940,6 +2079,8 @@ mod tests {
     const AKR: &str = include_str!("../../tests/fixtures/relay/literature_akr.json");
     const SITL: &str = include_str!("../../tests/fixtures/relay/literature_sitl.csv");
     const LINKCAT: &str = include_str!("../../tests/fixtures/relay/literature_linkcat.txt");
+    const ICME_MULTI: &str =
+        include_str!("../../tests/fixtures/relay/literature_icme_multicatalog.csv");
 
     fn at(text: &str) -> Timestamp {
         Timestamp::parse(text).unwrap()
@@ -2298,6 +2439,54 @@ mod tests {
             items[0].attributes["ptmax_time"],
             json!("2007-02-26T02:15:00.000Z")
         );
+    }
+
+    #[test]
+    fn the_lists_vincent_sent_read_whole_from_their_kept_tables() {
+        let count = |key: &str| {
+            let list = LISTS.iter().find(|list| list.key == key).unwrap();
+            let Files::Kept(text) = list.files else {
+                panic!("{key} is not kept")
+            };
+            (list.read)(text, list.part).unwrap()
+        };
+        let storms = count("intense-storms-ji");
+        assert_eq!(storms.len(), 63);
+        assert_eq!(storms[0].attributes["dst_min_nt"], json!(-100.0));
+        assert_eq!(storms[0].attributes["structure"], json!("nonMC"));
+        let mirror = count("solo-mirror-mode-storms");
+        assert_eq!(mirror.len(), 25);
+        assert_eq!(mirror[0].start, mirror[0].stop);
+        assert_eq!(mirror[7].attributes["mm_type"], json!("1, 2"));
+        assert_eq!(mirror[24].attributes["speed_km_s"], json!(286.0));
+        let crossings = count("psp-hcs-crossings");
+        assert_eq!(crossings.len(), 39);
+        assert_eq!(crossings[30].stop, at("2024-06-30T00:42:00Z"));
+        assert_eq!(crossings[30].attributes["jet"], json!("inward"));
+        assert_eq!(count("psp-hcs-partial-crossings").len(), 29);
+        assert_eq!(count("psp-hcs-side-jets").len(), 4);
+    }
+
+    #[test]
+    fn an_icme_of_the_multi_catalogue_names_the_catalogue_it_came_from() {
+        let items = icme_multicatalog(ICME_MULTI, "").unwrap();
+        assert_eq!(items.len(), 3);
+        let first = &items[0];
+        assert_eq!(first.id, "2022-09-30T04:50:00Z|Wind|cat_1");
+        assert_eq!(first.start, at("2022-09-30T04:50:00Z"));
+        assert_eq!(first.stop, at("2022-10-01T14:04:00Z"));
+        assert_eq!(first.attributes["mo_start"], json!("2022-09-30T08:28:00Z"));
+        assert_eq!(first.attributes["spacecraft"], json!("Wind"));
+        assert_eq!(first.attributes["sheath"], json!("yes"));
+        assert_eq!(first.attributes["r_km"], json!(148950000.0));
+        assert_eq!(
+            first.attributes["source"],
+            json!("Möstl et al. (2020), doi:10.3847/1538-4357/abb9a1")
+        );
+        assert!(!first.attributes.contains_key("v_aver_downS_48"));
+        assert_eq!(items[1].attributes["spacecraft"], json!("Helios"));
+        assert_eq!(items[2].attributes["spacecraft"], json!("Solar Orbiter"));
+        assert_eq!(items[2].attributes["sheath"], json!("no"));
     }
 
     #[test]

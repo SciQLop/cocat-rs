@@ -32,7 +32,9 @@ you may find:
   event lists (ISTP Solar Wind Catalog, bow shock crossings since 1973, magnetopause crossings
   since 1963, current sheet exhausts, the 1859 aurora sightings); HELCATS HIGeoCAT and LINKCAT;
   MMS burst selections and magnetopause crossings; Lan Jian's STEREO ICME, SIR, shock and SEP
-  lists.
+  lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
+  ICME comes from; the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms;
+  and Parker Solar Probe's heliospheric current sheet crossings (Fargette et al. 2026).
   Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA
