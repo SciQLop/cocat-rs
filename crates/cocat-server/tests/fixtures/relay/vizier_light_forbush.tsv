@@ -1,0 +1,30 @@
+#RESOURCE=yCat_18960133
+#Name: J/ApJ/896/133
+#Title: 2001-2019 ICME associated Forbush decrease events (Light+, 2020)
+#Table	J_ApJ_896_133_table3:
+#Name: J/ApJ/896/133/table3
+#Title: Dip size for Interplanetary coronal mass ejection (ICME) associated FD events
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	Obs	(A10)	Year of the Forbush Decrease (1)	[ucd=time.epoch]
+#Column	INK	(F11.8)	[0/0.126] Dip size from Inuvik neutron monitor (2)	[ucd=phys.size.radius]
+#Column	NAN	(F10.7)	[0/0.129] Dip size from Nain neutron monitor (2)	[ucd=phys.size.radius]
+#Column	THL	(F10.7)	[0/0.126] Dip size from Thule neutron monitor (2)	[ucd=phys.size.radius]
+#Column	ATY	(F11.8)	[0/0.120] Dip size from Apatity neutron monitor (2)	[ucd=phys.size.radius]
+#Column	OLU	(F11.8)	[0/0.127] Dip size from Oulu neutron monitor (2)	[ucd=phys.size.radius]
+#Column	KGN	(F10.7)	[0/0.123] Dip size from Kerguelen neutron monitor (2)	[ucd=phys.size.radius]
+#Column	MCW	(F11.8)	[0/0.118] Dip size from Moscow neutron monitor (2)	[ucd=phys.size.radius]
+#Column	JGY	(F10.7)	[0/0.135] Dip size from JungfraujochIGY neutron monitor (2)	[ucd=phys.size.radius]
+#Column	J64	(F11.8)	[0/0.134] Dip size from JungfraujochNM64 neutron monitor (2)	[ucd=phys.size.radius]
+#Column	HMN	(F11.8)	[0/0.103] Dip size from Hermanus neutron monitor (2)	[ucd=phys.size.radius]
+#Column	AAB	(F11.8)	[0/0.098] Dip size from AlmaAtaB neutron monitor (2)	[ucd=phys.size.radius]
+#Column	ATH	(F12.9)	[0/0.084] Dip size from Athens neutron monitor (2)	[ucd=phys.size.radius]
+#Column	Nev	(I2)	[5/12] Number of neutron monitors event found in	[ucd=meta.number]
+#Column	Shock	(I10)	[0/1557788400] Shock arrival time (3)	[ucd=time.epoch]
+#Column	Start	(I10)	[0/1557820800] ICME cloud start time (3)	[ucd=time.epoch]
+#Column	End	(I10)	[0/1557968400] ICME cloud end time (3)	[ucd=time.epoch]
+recno	Obs	INK	NAN	THL	ATY	OLU	KGN	MCW	JGY	J64	HMN	AAB	ATH	Nev	Shock	Start	End
+ 	"Y:M:D"	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	
+--------	----------	-----------	----------	----------	-----------	-----------	----------	-----------	----------	-----------	-----------	-----------	------------	--	----------	----------	----------
+       1	2001-01-24	 0.00000000	 0.0000000	 0.0278058	 0.02473360	 0.03326170	 0.0000000	 0.02335970	 0.0350148	 0.00000000	 0.00000000	 0.03067410	 0.000000000	 6	 980247600	 980305200	 980373600
+       2	2001-03-03	 0.00000000	 0.0000000	 0.0000000	 0.02522800	 0.02441680	 0.0286796	 0.02242610	 0.0242672	 0.02198380	 0.02309740	 0.01180660	 0.000000000	 8	         0	 983674800	 983761200
+      12	2001-09-25	 0.07092560	 0.0762729	 0.0750136	 0.07321710	 0.08077780	 0.0759177	 0.07396380	 0.0808933	 0.08567990	 0.06447750	 0.06644930	 0.051932000	12	1001451600	         0	         0

@@ -1,0 +1,34 @@
+
+#RESOURCE=yCat_17590069
+#Name: J/ApJ/759/69
+#Title: Solar electron events from 1995 to 2005 with WIND/3DP (Wang+, 2012)
+#Table	J_ApJ_759_69_table2:
+#Name: J/ApJ/759/69/table2
+#Title: The list of solar energetic electron events
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	Date	(A10)	Date of the observation	[ucd=time.epoch]
+#Column	DOY	(I3)	Day of the year	[ucd=time.epoch]
+#Column	Obs.h	(F5.2)	Hour of electron solar injection (1)	[ucd=time.epoch]
+#Column	Emin	(F6.3)	[0.04/66] Lowest energy	[ucd=instr.bandpass]
+#Column	Emax	(F6.2)	[1.1/520] Highest energy	[ucd=instr.bandpass]
+#Column	3He/4He	(a12)	He description ("3He rich" or "not 3He rich" or "n/a")	[ucd=meta.note]
+#Column	T-III	(A3)	[yes/no ] Type III event?	[ucd=meta.note]
+#Column	T-II	(A3)	[yes/no ] Type II event?	[ucd=meta.note]
+#Column	PA	(I3)	? Coronal mass ejection (CME) position angle (2)	[ucd=pos.posAng]
+#Column	f_PA	(A1)	[nha] Flag on PA: n=no event, h=halo, a=no data)	[ucd=meta.code]
+#Column	CME-W	(I3)	? CME width (2)	[ucd=phys.angSize;src]
+#Column	f_CME-W	(A1)	[nha] Flag on CME-W (n=no event, h=halo, a=no data)	[ucd=meta.code]
+#Column	CME-V	(I4)	[46/2861]? CME speed (2)	[ucd=phys.veloc]
+#Column	f_CME-V	(A1)	[na] Flag on CME-V (n=no event, a=no data)	[ucd=meta.code]
+#Column	Time	(A8)	GOES soft X-ray (SXR) start time; UT (3)	[ucd=time.epoch]
+#Column	Dur	(I5)	[-1429/430]? GOES SXR duration (3)	[ucd=time.interval]
+#Column	Class	(A4)	Geostationary Operational Environmental Satellite (GOES) SXR class (B1.2-X28) (3)	[ucd=src.class]
+#Column	Floc	(A6)	Flare location (3)	[ucd=meta.note]
+#Column	p10M	(a7)	GOES >10MeV proton event? ("no", "yes", or "no data") (4)	[ucd=meta.note]
+recno	Date	DOY	Obs.h	Emin	Emax	3He/4He	T-III	T-II	PA	f_PA	CME-W	f_CME-W	CME-V	f_CME-V	Time	Dur	Class	Floc	p10M
+ 	"Y:M:D"	d	h	keV	keV	 	 	 	deg	 	deg	 	km/s	 	"h:m:s"	min	 	 	
+--------	----------	---	-----	------	------	------------	---	---	---	-	---	-	----	-	--------	-----	----	------	-------
+       1	1995-01-02	  2	16.60	 0.600	  4.20	            	yes	no 	   	a	   	a	    	a	        	     	    	      	
+       2	1995-01-23	 23	15.85	27.000	 66.00	            	yes	no 	   	a	   	a	    	a	        	     	    	      	
+       3	1995-02-07	 38	22.80	 1.340	  2.80	            	no 	no 	   	a	   	a	    	a	22:02:40	   84	B3.3	      	
+

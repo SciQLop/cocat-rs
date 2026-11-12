@@ -1,0 +1,22 @@
+
+#RESOURCE=yCat_19360155
+#Name: J/ApJ/936/155
+#Title: 1963/2021 extremely slow solar wind events (Tsurutani+, 2022)
+#Table	J_ApJ_936_155_tables1:
+#Name: J/ApJ/936/155/tables1
+#Title: List of ESSW events during 1963-2021
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	Num	(I3)	[1/297] ESSW number in this work	[ucd=meta.id;meta.number]
+#Column	Obs.Y-s	(I4)	[1963/2021] Year of ESSW start	[ucd=time.epoch]
+#Column	Obs.d-s	(I3)	[3/366] Day of the year of ESSW start	[ucd=time.epoch]
+#Column	Obs.H-S	(I2)	[0/23] Hour of ESSW start	[ucd=time.epoch]
+#Column	Obs.Y-e	(I4)	[1963/2021] Year of ESSW end	[ucd=time.epoch]
+#Column	Obs.d-e	(I3)	[1/365] Day of the year of ESSW end	[ucd=time.epoch]
+#Column	Obs.H-e	(I2)	[0/23] Hour of ESSW end	[ucd=time.epoch]
+recno	Num	Obs.Y-s	Obs.d-s	Obs.H-S	Obs.Y-e	Obs.d-e	Obs.H-e
+ 	 	yr	d	h	yr	d	h
+--------	---	----	---	--	----	---	--
+       1	  1	1963	331	12	1963	333	23
+       2	  2	1963	344	 3	1963	345	11
+       3	  3	1963	351	 0	1963	353	14
+

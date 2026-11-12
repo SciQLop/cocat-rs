@@ -1,0 +1,35 @@
+
+#RESOURCE=yCat_19500089
+#Name: J/ApJ/950/89
+#Title: >40MeV proton intensities from 43yr near Earth obs. (Lario+, 2023)
+#Table	J_ApJ_950_89_table1:
+#Name: J/ApJ/950/89/table1
+#Title: *Selected shock passages occurring during enhanced ~40MeV proton intensities
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	ID	(A5)	Solar cycle shock number (21-00 to 24-30)	[ucd=meta.id;meta.main]
+#Column	Time	(A14)	Shock time; YYYY/DOY/hh:mm format	[ucd=time.epoch]
+#Column	Inst	(A3)	Spacecraft identifier (1)	[ucd=meta.id;instr]
+#Column	Parent	(a42)	Parent Solar eruption time (2)	[ucd=time.epoch]
+#Column	f_Parent	(A1)	Flag on Parent (3)	[ucd=meta.code]
+#Column	VT	(I4)	[474/2109]? Average transit speed of the shock to travel from the Sun to 1au	[ucd=phys.veloc]
+#Column	Theta	(I2)	[17/89]? Angle between upstream B field and shock normal	[ucd=pos.posAng]
+#Column	e_Theta	(I2)	[0/39]? Uncertainty in Theta	[ucd=stat.error;pos.posAng]
+#Column	Vsc	(I4)	[278/1106]? Shock speed in spacecraft reference frame	[ucd=phys.veloc;pos.frame]
+#Column	e_Vsc	(I4)	[1/2357]? Uncertainty in Vsc	[ucd=stat.error;phys.veloc;pos.frame]
+#Column	f_Vsc	(A1)	Flag on Vsc (3)	[ucd=meta.code]
+#Column	Vsh	(I3)	[65/577]? Shock speed with respect to upstream solar wind	[ucd=phys.veloc;arith.ratio]
+#Column	e_Vsh	(I4)	[3/2358]? Uncertainty in Vsh	[ucd=stat.error;phys.veloc;arith.ratio]
+#Column	rn	(F5.2)	[1.4/7.9]? Density compression ratio	[ucd=phys.density;arith.ratio]
+#Column	e_rn	(F5.2)	[0.01/2.5]? Uncertainty in rn	[ucd=stat.error;phys.density;arith.ratio]
+#Column	Mms	(F5.2)	[0.4/6.2]? Magnetosonic Mach number	[ucd=phys.veloc;arith.diff]
+#Column	e_Mms	(F5.2)	[0.03/1.3]? Uncertainty in Mms	[ucd=stat.error;phys.veloc;arith.diff]
+#Column	MA	(F5.2)	[0.4/9.6]? Alfven Mach number	[ucd=phys.veloc;arith.diff]
+#Column	e_MA	(F5.2)	[0.1/99]? Uncertainty in MA	[ucd=stat.error;phys.veloc;arith.diff]
+#Column	n_MA	(A4)	Flag on MA (4)	[ucd=meta.note]
+recno	ID	Time	Inst	Parent	f_Parent	VT	Theta	e_Theta	Vsc	e_Vsc	f_Vsc	Vsh	e_Vsh	rn	e_rn	Mms	e_Mms	MA	e_MA	n_MA
+ 	 	 	 	 	 	km/s	deg	deg	km/s	km/s	 	km/s	km/s	 	 	 	 	 	 	
+--------	-----	--------------	---	------------------------------------------	-	----	--	--	----	----	-	---	----	-----	-----	-----	-----	-----	-----	----
+       1	21-00	1974/187/03:14	I  	185/13:21 S16W07 2B (plage 13043)         	 	1096	88	16	 650	  27	 	158	  29	 2.51	 0.24	 1.87	 0.14	 3.25	 0.69	
+       2	21-01	1974/264/12:43	I  	262/22:20 N09W62 2B (plage 13225)         	 	1083	52	 6	 749	  39	 	192	  41	 2.47	 0.34	 2.13	 0.19	 2.72	 0.60	
+       3	21-02	1974/312/14:14	I  	309/15:38 S12W78 (plage 13310)            	 	 589	61	11	 491	  23	 	103	  23	 3.14	 0.55	 1.50	 0.10	 1.91	 0.46	
+

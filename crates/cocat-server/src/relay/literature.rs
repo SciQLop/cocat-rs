@@ -18,10 +18,14 @@ use uuid::Uuid;
 use super::catcsv;
 use super::{Fetched, Provider};
 
+mod vizier;
+
 pub struct Literature;
 
 const NAMESPACE: Uuid = Uuid::from_u128(0x9d4e2a71_3c58_4b0f_a6e1_52f7c8d3b194);
 const BUSY_PAUSE: Duration = Duration::from_secs(30);
+const MIRROR_ROUNDS: usize = 3;
+const MIRROR_PAUSE: Duration = Duration::from_secs(10);
 const SHARP_FILE: &str = "https://sharp.fmi.fi/wp-content/All_shocks.csv";
 const CARRINGTON_FILE: &str = "https://cdaweb.gsfc.nasa.gov/pub/event_lists/carrington_event_1859_auroral_sightings/Great_Magnetic_Storm_of_1859_List_of_Auroral_Sightings.csv";
 
@@ -48,6 +52,13 @@ enum Files {
     Linked {
         index: &'static str,
         pattern: &'static str,
+    },
+    /// One file served by several mirrors: the first answer `answered` accepts. A mirror can
+    /// answer with an error page that is not an HTTP error (VizieR when its database is down),
+    /// so the mirrors are tried again, a few times, after a pause.
+    Mirrored {
+        urls: &'static [&'static str],
+        answered: fn(&str) -> Result<(), String>,
     },
 }
 
@@ -745,6 +756,11 @@ const LISTS: [List; 53] = [
         part: "",
     },
 ];
+
+/// Every list: those read from their own sources, then those VizieR keeps.
+fn lists() -> impl Iterator<Item = &'static List> {
+    LISTS.iter().chain(&vizier::LISTS)
+}
 
 /// A UTC time from its calendar parts; the second may carry a fraction.
 fn utc(year: i32, month: u8, day: u8, hour: u8, minute: u8, second: f64) -> Option<Timestamp> {
@@ -2020,6 +2036,9 @@ async fn texts(
             }
             Ok(texts)
         }
+        Files::Mirrored { urls, answered } => {
+            mirrored(http, urls, *answered).await.map(|text| vec![text])
+        }
         Files::Remote(urls) => {
             let mut texts = Vec::with_capacity(urls.len());
             for url in *urls {
@@ -2031,6 +2050,32 @@ async fn texts(
             Ok(texts)
         }
     }
+}
+
+/// The first answer from `urls` that `answered` accepts, trying them all again after a pause
+/// when none does; the last round's failures when none ever does.
+async fn mirrored(
+    http: &reqwest::Client,
+    urls: &[&str],
+    answered: fn(&str) -> Result<(), String>,
+) -> Result<String, String> {
+    let mut failures = Vec::new();
+    for round in 0..MIRROR_ROUNDS {
+        if round > 0 {
+            tokio::time::sleep(MIRROR_PAUSE).await;
+        }
+        failures.clear();
+        for url in urls {
+            match download(http, url).await {
+                Ok(text) => match answered(&text) {
+                    Ok(()) => return Ok(text),
+                    Err(error) => failures.push(format!("{url}: {error}")),
+                },
+                Err(error) => failures.push(format!("{url}: {error}")),
+            }
+        }
+    }
+    Err(failures.join("; "))
 }
 
 #[async_trait]
@@ -2053,16 +2098,16 @@ impl Provider for Literature {
         _settings: &Value,
         _refreshed: &HashMap<String, Timestamp>,
     ) -> Result<Vec<Fetched>, String> {
-        let mut lists = Vec::with_capacity(LISTS.len());
+        let mut fetched_lists = Vec::new();
         let mut downloaded = HashMap::new();
-        for list in &LISTS {
+        for list in lists() {
             let events = match texts(http, &list.files, &mut downloaded).await {
                 Ok(texts) => events(list, &texts),
                 Err(error) => Err(error),
             };
-            lists.push(fetched(list, events));
+            fetched_lists.push(fetched(list, events));
         }
-        Ok(lists)
+        Ok(fetched_lists)
     }
 }
 
@@ -2491,14 +2536,12 @@ mod tests {
 
     #[test]
     fn every_list_has_a_unique_key_and_says_whom_to_cite() {
-        let mut keys: Vec<_> = LISTS.iter().map(|list| list.key).collect();
+        let mut keys: Vec<_> = lists().map(|list| list.key).collect();
         keys.sort_unstable();
         keys.dedup();
-        assert_eq!(keys.len(), LISTS.len());
+        assert_eq!(keys.len(), lists().count());
         assert!(
-            LISTS
-                .iter()
-                .all(|list| list.credit.contains("doi.org") || list.credit.contains("http"))
+            lists().all(|list| list.credit.contains("doi.org") || list.credit.contains("http"))
         );
     }
 }

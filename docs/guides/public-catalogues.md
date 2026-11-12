@@ -35,6 +35,10 @@ you may find:
   lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
   ICME comes from; the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms;
   and Parker Solar Probe's heliospheric current sheet crossings (Fargette et al. 2026).
+- **VizieR**, under the same *Literature* folders: 27 event tables published with papers and
+  kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
+  Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar
+  wind, and pickup-ion waves at the Voyagers.
   Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA

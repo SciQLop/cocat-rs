@@ -1,0 +1,29 @@
+
+#RESOURCE=yCat_17109058
+#Name: J/ApJ/710/L58
+#Title: Coronal type II radio bursts in 2002 (Lobzin+, 2010)
+#Table	J_ApJ_710_L58_table1:
+#Name: J/ApJ/710/L58/table1
+#Title: Type II radio bursts observed at Learmonth observatory in 2002
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	Seq	(I2)	? Event number (1)	[ucd=meta.id]
+#Column	m_Seq	(A1)	[ab] Combined events have the same "Seq" number followed by letters a and b	[ucd=meta.code.multip]
+#Column	Obs	(A10)	Date of the observation	[ucd=time.epoch]
+#Column	Stime	(A8)	UT start time	[ucd=time.epoch]
+#Column	Etime	(A8)	UT end time	[ucd=time.epoch]
+#Column	Int	(I1)	[1,3] Intensity	[ucd=meta.code]
+#Column	Sfreq	(I3)	Start frequency	[ucd=time.start;em.freq]
+#Column	u_Sfreq	(A1)	[:] Uncertainty flag on Sfreq	[ucd=meta.code.error]
+#Column	Efreq	(I3)	End frequency	[ucd=time.end;em.freq]
+#Column	u_Efreq	(A1)	[:] Uncertainty flag on Efreq	[ucd=meta.code.error]
+#Column	True	(I1)	[0/1]? Number of true positives in daily spectra	[ucd=meta.number]
+#Column	f_True	(A1)	[dn] event not taken into account (2)	[ucd=meta.code]
+#Column	False	(I1)	[0,3]? Number of false alarms in daily spectra	[ucd=meta.number]
+#Column	f_False	(A1)	[dn] event not taken into account (2)	[ucd=meta.code]
+recno	Seq	m_Seq	Obs	Stime	Etime	Int	Sfreq	u_Sfreq	Efreq	u_Efreq	True	f_True	False	f_False
+ 	 	 	"Y:M:D"	"h:m:s"	"h:m:s"	 	MHz	 	MHz	 	 	 	 	
+--------	--	-	----------	--------	--------	-	---	-	---	-	-	-	-	-
+       1	 1	 	2002-01-03	02:21:00	02:29:00	1	 31	 	137	 	1	 	0	
+       2	 2	 	2002-01-04	09:34:00	09:43:00	1	 25	 	115	 	1	 	0	
+       3	 3	 	2002-01-22	07:58:00	07:59:00	2	 50	 	 62	 	0	 	0	
+

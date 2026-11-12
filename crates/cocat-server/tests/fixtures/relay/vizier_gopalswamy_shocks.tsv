@@ -1,0 +1,40 @@
+
+#RESOURCE=yCat_17101111
+#Name: J/ApJ/710/1111
+#Title: Observations of interplanetary shocks (Gopalswamy+, 2010)
+#Table	J_ApJ_710_1111_table1:
+#Name: J/ApJ/710/1111/table1
+#Title: List of IP shocks observed during solar cycle 23 and their source information
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	IP	(A16)	Interplanetary shock arrival date	[ucd=time.epoch]
+#Column	Inst	(A5)	[WAS, ] shock observing spacecrafts (Wind, ACE or SOHO)	[ucd=meta.id;instr]
+#Column	IP-Vel	(F7.2)	Interplanetary shock speed	[ucd=phys.veloc;arith.ratio]
+#Column	Ma	(F5.2)	Interplanetary shock Alfvenic Mach number (M_A_; Eq. 1 and section 3.1)	[ucd=phys.veloc;arith.diff]
+#Column	r_Ma	(I1)	Source of Mach number computation (2)	[ucd=meta.ref;pos.frame]
+#Column	CMEt	(A2)	Coronal Mass Ejection (CME) type (3)	[ucd=meta.code.class]
+#Column	Tstd	(F4.1)	? IP CME shock standoff distance expressed as arrival time difference	[ucd=time;arith.diff]
+#Column	f_CMEtime	(A1)	[*] Flag indicating CMEtime was the next day	[ucd=meta.code]
+#Column	CMEtime	(A8)	IP CME arrival time	[ucd=time.epoch]
+#Column	CME-Vel	(I4)	? IP CME shock speed	[ucd=phys.veloc;arith.ratio]
+#Column	CME	(A16)	Coronal Mass Ejection white-light date	[ucd=phys.mass]
+#Column	PA	(I3)	? Coronal Mass Ejection white-light central position angle	[ucd=pos.posAng]
+#Column	f_PA	(A1)	[H/D]? H: Halo ; D: DG (4)	[ucd=meta.code]
+#Column	l_CME-W	(A1)	Limit flag on CME-W	[ucd=meta.code.error]
+#Column	CME-W	(I3)	? Coronal Mass Ejection white-light width	[ucd=phys.angSize;src]
+#Column	CME-V	(I4)	? Coronal Mass Ejection white-light speed	[ucd=phys.veloc]
+#Column	CME-a	(F6.1)	? Coronal Mass Ejection white-light acceleration	[ucd=phys.mass]
+#Column	SF-Loc	(A6)	Solar Flare location	[ucd=meta.note]
+#Column	SF-Dur	(A9)	Solar Flare duration (hhmm-hhmm)	[ucd=time.interval]
+#Column	SF-Size	(A5)	Solar Flare size in soft X-rays (5)	[ucd=src.morph.scLength]
+#Column	MC	(I1)	[0/1]? Type II Burst metric type II code (1: metric emission or 0: no metric)	[ucd=meta.code]
+#Column	IIBtime	(A8)	Type II Burst metric onset time	[ucd=time.epoch]
+#Column	DH	(I1)	[0,3]? Type II Burst decameter-hectometric type II code (6)	[ucd=meta.code]
+#Column	DHtime	(A8)	Type II Burst decameter-hectometric onset time	[ucd=time.epoch]
+#Column	Note	(a5)	Comment number(s) (see notes.dat file)	[ucd=meta.note]
+recno	IP	Inst	IP-Vel	Ma	r_Ma	CMEt	Tstd	f_CMEtime	CMEtime	CME-Vel	CME	PA	f_PA	l_CME-W	CME-W	CME-V	CME-a	SF-Loc	SF-Dur	SF-Size	MC	IIBtime	DH	DHtime	Note
+ 	s	 	km/s	 	 	 	h	 	"h:m:s"	km/s	s	deg	 	 	deg	km/s	m/s2	 	 	 	 	"h:m:s"	 	"h:m:s"	
+--------	----------------	-----	-------	-----	-	--	----	-	--------	----	----------------	---	-	-	---	----	------	------	---------	-----	-	--------	-	--------	-----
+       1	1996-08-16T07:45	W    	 390.50	 3.44	1	S 	    	 	        	    	1996-08-14T19:30	229	 	 	235	 691	      	S05W80	1820-1907	A3.0 	0	        	0	        	
+       2	1996-11-11T15:12	W    	 358.20	 3.43	1	S 	    	 	        	    	1996-11-07T23:20	   	H	 	360	 497	   8.7	SElimb	2252-----	DIM  	0	        	0	        	
+       3	1996-12-02T10:00	W    	 329.30	 5.23	1	S 	    	 	        	    	1996-11-28T16:50	267	 	 	101	 984	  27.5	N06W90	1535-1902	C1.3 	0	        	0	        	
+
