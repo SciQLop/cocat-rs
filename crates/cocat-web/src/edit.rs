@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 use yrs::TransactionMut;
 
+use crate::catalogues::DESCRIPTION;
 use crate::format::time_text;
 use crate::rule_text::describe;
 use crate::session::RoomConfig;
@@ -102,13 +103,16 @@ pub fn set_range(
 /// Adds the tags of a comma-separated list the event does not carry yet.
 pub fn add_tags(txn: &mut TransactionMut<'_>, uuid: &str, list: &str) -> Result<(), EditError> {
     let mut tags = existing(txn, uuid)?.tags;
-    tags.extend(
-        list.split(',')
-            .map(str::trim)
-            .filter(|tag| !tag.is_empty())
-            .map(str::to_owned),
-    );
+    tags.extend(tag_list(list));
     set_field(txn, uuid, &EventField::Tags(tags))
+}
+
+/// The tags of a comma-separated list, blanks dropped.
+fn tag_list(list: &str) -> impl Iterator<Item = String> + '_ {
+    list.split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
 }
 
 pub fn remove_tag(txn: &mut TransactionMut<'_>, uuid: &str, tag: &str) -> Result<(), EditError> {
@@ -391,6 +395,83 @@ pub fn rename_catalogue(
     }
     found(
         model::rename_catalogue(txn, uuid, name),
+        EditError::NoCatalogue,
+    )
+}
+
+fn catalogue_tags(txn: &TransactionMut<'_>, uuid: &str) -> Result<Vec<String>, EditError> {
+    model::catalogue(txn, uuid)
+        .map(|catalogue| catalogue.tags)
+        .ok_or(EditError::NoCatalogue)
+}
+
+pub fn add_catalogue_tags(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    list: &str,
+) -> Result<(), EditError> {
+    let mut tags = catalogue_tags(txn, uuid)?;
+    tags.extend(tag_list(list));
+    found(
+        model::set_catalogue_tags(txn, uuid, &tags),
+        EditError::NoCatalogue,
+    )
+}
+
+pub fn remove_catalogue_tag(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    tag: &str,
+) -> Result<(), EditError> {
+    let mut tags = catalogue_tags(txn, uuid)?;
+    tags.retain(|kept| kept != tag);
+    found(
+        model::set_catalogue_tags(txn, uuid, &tags),
+        EditError::NoCatalogue,
+    )
+}
+
+pub fn set_catalogue_attribute(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    key: &str,
+    value: &str,
+) -> Result<(), EditError> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(EditError::NoKey);
+    }
+    let attributes = Map::from_iter([(key.to_owned(), attribute_value(value))]);
+    found(
+        model::set_catalogue_attributes(txn, uuid, &attributes)?,
+        EditError::NoCatalogue,
+    )
+}
+
+pub fn remove_catalogue_attribute(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    key: &str,
+) -> Result<(), EditError> {
+    found(
+        model::remove_catalogue_attributes(txn, uuid, &[key.to_owned()]),
+        EditError::NoCatalogue,
+    )
+}
+
+/// The catalogue's `description` attribute, always kept as text; a blank one removes it.
+pub fn set_description(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    text: &str,
+) -> Result<(), EditError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return remove_catalogue_attribute(txn, uuid, DESCRIPTION);
+    }
+    let attributes = Map::from_iter([(DESCRIPTION.to_owned(), Value::String(text.to_owned()))]);
+    found(
+        model::set_catalogue_attributes(txn, uuid, &attributes)?,
         EditError::NoCatalogue,
     )
 }
@@ -823,6 +904,54 @@ mod tests {
         assert_eq!(hop.version, None);
         assert!(hop.at > 0);
         assert_eq!(hop.by.as_deref(), Some("ann@example.org"));
+    }
+
+    #[test]
+    fn a_catalogue_gets_tags_attributes_and_a_description_of_its_own() {
+        let doc = room();
+        let read = || model::catalogue(&doc.transact(), "c-static").unwrap();
+        edited(&doc, |txn| {
+            add_catalogue_tags(txn, "c-static", "mms, bow shock")
+        })
+        .unwrap();
+        edited(&doc, |txn| remove_catalogue_tag(txn, "c-static", "mms")).unwrap();
+        edited(&doc, |txn| {
+            set_catalogue_attribute(txn, "c-static", "mission", "MMS")
+        })
+        .unwrap();
+        edited(&doc, |txn| {
+            set_description(txn, "c-static", "  2.5\nSeen by MMS1. ")
+        })
+        .unwrap();
+        let catalogue = read();
+        assert_eq!(catalogue.tags, ["bow shock"]);
+        assert_eq!(catalogue.attributes["mission"], json!("MMS"));
+        assert_eq!(
+            crate::catalogues::description(&catalogue.attributes).as_deref(),
+            Some("2.5\nSeen by MMS1."),
+            "a description stays text, even when it reads as a number"
+        );
+        assert_eq!(
+            crate::catalogues::attribute_rows(&catalogue.attributes),
+            [("mission".to_owned(), "MMS".to_owned())],
+            "the description has a field of its own"
+        );
+        edited(&doc, |txn| set_description(txn, "c-static", "  ")).unwrap();
+        edited(&doc, |txn| {
+            remove_catalogue_attribute(txn, "c-static", "mission")
+        })
+        .unwrap();
+        assert!(read().attributes.is_empty());
+        assert!(matches!(
+            edited(&doc, |txn| set_catalogue_attribute(
+                txn, "c-static", " ", "x"
+            )),
+            Err(EditError::NoKey)
+        ));
+        assert!(matches!(
+            edited(&doc, |txn| add_catalogue_tags(txn, "missing", "x")),
+            Err(EditError::NoCatalogue)
+        ));
     }
 
     #[test]

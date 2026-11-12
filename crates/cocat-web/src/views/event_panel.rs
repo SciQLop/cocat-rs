@@ -8,6 +8,7 @@ use crate::route::Route;
 use crate::rows::Row;
 use crate::state::Room;
 use crate::views::catalogue::OnScreen;
+use crate::views::catalogue_details::CatalogueDetails;
 use crate::views::event_editor::{Editor, TrashActions};
 use crate::views::history::LastChanges;
 use crate::views::stats::Statistics;
@@ -48,7 +49,11 @@ pub fn EventPanel(
     screen: RwSignal<Option<OnScreen>>,
 ) -> impl IntoView {
     let content = move || match shown.get() {
-        Shown::Nothing => view! { <Statistics screen/> }.into_any(),
+        Shown::Nothing => view! {
+            <CatalogueDetails route/>
+            <Statistics screen/>
+        }
+        .into_any(),
         Shown::Derived(row) => derived(&row).into_any(),
         Shown::Event(uuid) => view! {
             <Event uuid=uuid.clone() selected/>

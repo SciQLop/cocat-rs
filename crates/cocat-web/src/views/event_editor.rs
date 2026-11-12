@@ -15,18 +15,46 @@ use crate::views::event_panel::head;
 
 type Detail = Memo<Option<EventDetail>>;
 
-/// The event the controls write to.
+type Write = fn(&mut TransactionMut<'_>, &str, &str) -> Result<(), EditError>;
+type SetAttribute = fn(&mut TransactionMut<'_>, &str, &str, &str) -> Result<(), EditError>;
+
+/// How the tag and attribute controls write: to an event or to a catalogue.
 #[derive(Clone, Copy)]
-struct Target {
+pub struct Writes {
+    add_tags: Write,
+    remove_tag: Write,
+    set_attribute: SetAttribute,
+    remove_attribute: Write,
+}
+
+const EVENT: Writes = Writes {
+    add_tags: edit::add_tags,
+    remove_tag: edit::remove_tag,
+    set_attribute: edit::set_attribute,
+    remove_attribute: edit::remove_attribute,
+};
+
+pub const CATALOGUE: Writes = Writes {
+    add_tags: edit::add_catalogue_tags,
+    remove_tag: edit::remove_catalogue_tag,
+    set_attribute: edit::set_catalogue_attribute,
+    remove_attribute: edit::remove_catalogue_attribute,
+};
+
+/// The event or catalogue the controls write to.
+#[derive(Clone, Copy)]
+pub struct Target {
     room: StoredValue<Room, LocalStorage>,
     uuid: StoredValue<String, LocalStorage>,
+    writes: Writes,
 }
 
 impl Target {
-    fn new(uuid: String) -> Self {
+    pub fn new(uuid: String, writes: Writes) -> Self {
         Self {
             room: StoredValue::new_local(expect_context::<Room>()),
             uuid: StoredValue::new_local(uuid),
+            writes,
         }
     }
 
@@ -55,7 +83,9 @@ fn new_error() -> Error {
 
 #[component]
 pub fn Editor(uuid: String, detail: Detail) -> impl IntoView {
-    let target = Target::new(uuid);
+    let target = Target::new(uuid, EVENT);
+    let tags = field(detail, |detail| detail.tags.clone());
+    let attributes = field(detail, |detail| detail.attributes.clone());
     view! {
         {move || detail.with(|detail| detail.as_ref().map(head))}
         <Range target detail/>
@@ -63,8 +93,8 @@ pub fn Editor(uuid: String, detail: Detail) -> impl IntoView {
             <Status target detail/>
             <Confidence target detail/>
         </div>
-        <Tags target detail/>
-        <Attributes target detail/>
+        <Tags target tags/>
+        <Attributes target attributes/>
         <Comment target detail/>
         <Listing target detail/>
         <Facts detail/>
@@ -153,12 +183,12 @@ fn Confidence(target: Target, detail: Detail) -> impl IntoView {
 }
 
 #[component]
-fn Tags(target: Target, detail: Detail) -> impl IntoView {
+pub fn Tags(target: Target, tags: Memo<Option<Vec<String>>>) -> impl IntoView {
     let error = new_error();
-    let tags = field(detail, |detail| detail.tags.clone());
+    let writes = target.writes;
     let add = move |event: leptos::ev::Event| {
         let list = event_target_value(&event);
-        target.edit(error, |txn, uuid| edit::add_tags(txn, uuid, &list));
+        target.edit(error, |txn, uuid| (writes.add_tags)(txn, uuid, &list));
         if error.with_untracked(Option::is_none) {
             event_target::<web_sys::HtmlInputElement>(&event).set_value("");
         }
@@ -167,7 +197,7 @@ fn Tags(target: Target, detail: Detail) -> impl IntoView {
         let label = format!("Remove tag {tag}");
         let removed = tag.clone();
         let remove = move |_| {
-            target.edit(error, |txn, uuid| edit::remove_tag(txn, uuid, &removed));
+            target.edit(error, |txn, uuid| (writes.remove_tag)(txn, uuid, &removed));
         };
         view! {
             <span class="tag editable">
@@ -190,22 +220,29 @@ fn Tags(target: Target, detail: Detail) -> impl IntoView {
 }
 
 #[component]
-fn Attributes(target: Target, detail: Detail) -> impl IntoView {
+pub fn Attributes(
+    target: Target,
+    attributes: Memo<Option<Vec<(String, String)>>>,
+) -> impl IntoView {
     let error = new_error();
-    let attributes = field(detail, |detail| detail.attributes.clone());
+    let writes = target.writes;
     let row = move |(key, value): (String, String)| {
         let change = {
             let key = key.clone();
             move |event| {
                 let value = event_target_value(&event);
                 target.edit(error, |txn, uuid| {
-                    edit::set_attribute(txn, uuid, &key, &value)
+                    (writes.set_attribute)(txn, uuid, &key, &value)
                 });
             }
         };
         let remove = {
             let key = key.clone();
-            move |_| target.edit(error, |txn, uuid| edit::remove_attribute(txn, uuid, &key))
+            move |_| {
+                target.edit(error, |txn, uuid| {
+                    (writes.remove_attribute)(txn, uuid, &key)
+                })
+            }
         };
         view! {
             <dt>{key.clone()}</dt>
@@ -222,7 +259,7 @@ fn Attributes(target: Target, detail: Detail) -> impl IntoView {
             |input: NodeRef<Input>| input.get().map(|input| input.value()).unwrap_or_default();
         let (key, value_text) = (value(new_key), value(new_value));
         target.edit(error, |txn, uuid| {
-            edit::set_attribute(txn, uuid, &key, &value_text)
+            (writes.set_attribute)(txn, uuid, &key, &value_text)
         });
         if error.with_untracked(Option::is_none) {
             for input in [new_key, new_value] {
@@ -344,7 +381,7 @@ fn TrashButton(target: Target) -> impl IntoView {
 /// Restore or purge an event in the trash; purging asks first.
 #[component]
 pub fn TrashActions(uuid: String, selected: RwSignal<Option<Row>>) -> impl IntoView {
-    let target = Target::new(uuid);
+    let target = Target::new(uuid, EVENT);
     let error = new_error();
     let purge = move |_| {
         if confirm("Delete this event for good? This cannot be undone.") {

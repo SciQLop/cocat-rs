@@ -24,6 +24,8 @@ pub struct About {
     copied: Option<(String, String)>,
     /// The round (id, name) that decided this catalogue.
     decided_in: Option<(String, String)>,
+    /// Its `description` attribute.
+    description: Option<String>,
 }
 
 impl About {
@@ -35,6 +37,7 @@ impl About {
             rule: None,
             copied: None,
             decided_in: None,
+            description: None,
         }
     }
 }
@@ -113,9 +116,12 @@ pub fn Heading(
             {move || listed().and_then(|listed| listed.relay).map(|relay| view! {
                 <p class="quiet">{crate::views::public::relay_line(&relay)}</p>
             })}
-            {move || listed().and_then(|listed| listed.description).map(|text| view! {
-                <crate::views::public::Description text/>
-            })}
+            {move || {
+                let curated = listed().and_then(|listed| listed.description);
+                curated
+                    .or_else(|| about.with(|about| about.description.clone()))
+                    .map(|text| view! { <crate::views::public::Description text/> })
+            }}
             {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
                 <p class="quiet copied" title=chain>{line}</p>
             })}
@@ -148,6 +154,7 @@ pub fn catalogue_about(
             .and_then(|rule| describe(&rule, name).ok()),
         copied: copied_text(&catalogue.copied_from),
         decided_in: decided_in(&catalogue.attributes),
+        description: crate::catalogues::description(&catalogue.attributes),
     }
 }
 

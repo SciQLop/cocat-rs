@@ -1,7 +1,31 @@
 //! The sidebar's list: the room's catalogues with their member counts, and the trash.
 
 use cocat_core::model;
+use serde_json::{Map, Value};
 use yrs::{Map as _, ReadTxn};
+
+use crate::format::value_text;
+
+/// The catalogue attribute its page shows under the title, and edits as text.
+pub const DESCRIPTION: &str = "description";
+
+/// A catalogue's description: its `description` attribute, when it holds text.
+pub fn description(attributes: &Map<String, Value>) -> Option<String> {
+    attributes
+        .get(DESCRIPTION)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_owned)
+}
+
+/// Its other attributes as the editor lists them, name and value text.
+pub fn attribute_rows(attributes: &Map<String, Value>) -> Vec<(String, String)> {
+    attributes
+        .iter()
+        .filter(|(key, _)| key.as_str() != DESCRIPTION)
+        .map(|(key, value)| (key.clone(), value_text(value)))
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogueItem {

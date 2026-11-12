@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod catalogue;
+pub mod catalogue_details;
 pub mod controls;
 pub mod decide;
 pub mod event_editor;
