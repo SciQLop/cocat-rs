@@ -441,3 +441,16 @@ fn an_hpevent_export_is_a_list_titled_after_its_catalogue() {
         "Shocks_at_STEREO_A.txt"
     );
 }
+
+#[test]
+fn the_import_picker_offers_a_file_of_every_format() {
+    let accepted = Format::accept();
+    for format in Format::ALL {
+        assert!(
+            accepted
+                .split(',')
+                .any(|kind| kind == format!(".{}", format.extension())),
+            "{format:?} files are greyed out in the picker: {accepted}"
+        );
+    }
+}

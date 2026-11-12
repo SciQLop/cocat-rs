@@ -76,6 +76,22 @@ impl Format {
         }
     }
 
+    /// The file picker's filter: every format's extension and type, and VOTable's other
+    /// spellings.
+    pub fn accept() -> String {
+        let kinds = Format::ALL
+            .iter()
+            .flat_map(|format| [format!(".{}", format.extension()), format.mime().to_owned()])
+            .chain([".vot", ".votable", ".tsv", "text/xml"].map(str::to_owned));
+        let mut seen = Vec::new();
+        for kind in kinds {
+            if !seen.contains(&kind) {
+                seen.push(kind);
+            }
+        }
+        seen.join(",")
+    }
+
     pub fn mime(self) -> &'static str {
         match self {
             Format::Votable => "application/x-votable+xml",

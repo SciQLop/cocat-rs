@@ -296,7 +296,7 @@ pub fn ExportDialog(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
             <RangeBoxes axis range/>
             <Notes notes/>
             <Hint anchor="import-export" topic="import and export"
-                text="VOTable and tscat JSON put them all in one file; TFCat makes one file per catalogue. For CSV, export one catalogue from its More menu."/>
+                text="VOTable and tscat JSON put them all in one file; TFCat makes one file per catalogue. For CSV or HPEvent, export one catalogue from its Catalogue menu."/>
             {error_line(error)}
             <div class="row-buttons">
                 <button type="submit" class="button primary"
@@ -428,7 +428,7 @@ pub fn ImportDialog() -> impl IntoView {
         Stage::Pick => view! {
             <label class="drop-zone" on:dragover=|event: DragEvent| event.prevent_default() on:drop=dropped>
                 <span>"Drop a file here, or"</span>
-                <input type="file" accept=".xml,.vot,.votable,.json,.csv,.tsv,application/json,text/xml,text/csv"
+                <input type="file" accept=Format::accept()
                     on:change=picked/>
             </label>
         }
@@ -454,7 +454,7 @@ pub fn ImportDialog() -> impl IntoView {
             <form class="name-form import-form" on:submit=import>
                 <h2>"Import a file"</h2>
                 <Hint anchor="import-export" topic="import and export"
-                    text="A VOTable (.xml), a tscat JSON file or a TFCat file (.json). Events whose id the project already holds are updated."/>
+                    text="A VOTable (.xml), a tscat JSON or TFCat file (.json), a CSV file, or an HPEvent list (.txt, as CDAWeb and SPASE publish them). Events whose id the project already holds are updated."/>
                 {body}
                 {error_line(error)}
                 <div class="row-buttons">
