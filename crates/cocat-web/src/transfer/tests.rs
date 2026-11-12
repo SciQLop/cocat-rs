@@ -399,3 +399,45 @@ fn a_csv_file_says_what_it_adds_and_writes_one_catalogue() {
         "picked"
     );
 }
+
+const HPEVENT: &str = "#EventTableVersion: HPEvent 1.0\n\
+#ListTitle: Shocks at STEREO A\n\
+#FieldNames: start_time stop_time shock_normal_angle comment\n\
+#FieldUnits: DateTime DateTime degree None\n\
+#FieldNulls: 0001-01-01T00:00:00.000Z 0001-01-01T00:00:00.000Z -1 None\n\
+2007-01-14T19:35:08.000Z\t2007-01-14T19:35:08.000Z\t67.6\t\"F\"\n";
+
+#[test]
+fn an_hpevent_list_is_read_as_one_and_named_after_its_title() {
+    let doc = room();
+    let incoming = read(HPEVENT, "shocks.txt").unwrap();
+    assert!(matches!(incoming, Incoming::HpEvent(_)));
+    assert_eq!(
+        summary(&doc.transact(), &incoming).text(),
+        "Adds 1 catalogue and 1 event."
+    );
+    let written = write(&mut doc.transact_mut(), &incoming, at(DAY0)).unwrap();
+    let txn = doc.transact();
+    assert_eq!(
+        model::catalogue(&txn, &written.catalogues[0]).unwrap().name,
+        "Shocks at STEREO A"
+    );
+}
+
+#[test]
+fn an_hpevent_export_is_a_list_titled_after_its_catalogue() {
+    let doc = room();
+    let incoming = read(HPEVENT, "shocks.txt").unwrap();
+    let written = write(&mut doc.transact_mut(), &incoming, at(DAY0)).unwrap();
+    let text = exported(&doc, &[written.catalogues[0].as_str()], Format::HpEvent);
+    assert!(text.starts_with("#EventTableVersion: HPEvent"), "{text}");
+    assert!(text.contains("#ListTitle: Shocks at STEREO A"), "{text}");
+    assert!(
+        text.contains("#FieldUnits: DateTime DateTime None degree"),
+        "{text}"
+    );
+    assert_eq!(
+        file_name(&["Shocks at STEREO A".to_owned()], Format::HpEvent),
+        "Shocks_at_STEREO_A.txt"
+    );
+}

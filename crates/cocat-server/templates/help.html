@@ -140,7 +140,7 @@ you keep open, in this browser.</p>
 <section>
 <h2 id="import-export">Import and export</h2>
 <p>A catalogue can leave the project as a file, and a file can bring catalogues in.</p>
-<p><strong>To export one catalogue</strong>, open it and use <strong>More → Export…</strong>.
+<p><strong>To export one catalogue</strong>, open it and use <strong>Catalogue → Export…</strong>.
 Pick a format:</p>
 <ul>
   <li><strong>VOTable (.xml)</strong>: the astronomy table format. AMDA, TOPCAT and Python
@@ -153,6 +153,9 @@ Pick a format:</p>
   event without one becomes a rectangle from its start to its stop. When no event of the
   catalogue says where it sits in frequency (or in the catalogue's other quantity, such as
   energy), the page asks for the range to draw them over.</li>
+  <li><strong>HPEvent list (.txt)</strong>: SPASE's Heliophysics Event List, the format of
+  CDAWeb's and the STEREO Science Center's event lists: start, stop, then one field per
+  attribute, with its unit when the project's attribute registry gives one.</li>
   <li><strong>CSV (.csv)</strong>: for a spreadsheet. One row per event: start, stop, tags,
   status, confidence, author, comment, uuid, then one column per attribute. Times are UTC.</li>
 </ul>
@@ -166,7 +169,7 @@ the page says so.</p>
 makes one file per catalogue.</p>
 <p><strong>To import a file</strong>, use <strong>Import catalogues…</strong> in the project's <strong>⋯</strong> menu or
 the <strong>+</strong> above the catalogues, or drop the file on the events. It takes a
-VOTable, a tscat JSON file, a TFCat file or a CSV file. The page reads it first and says what it will do, for example
+VOTable, a tscat JSON file, a TFCat file, an HPEvent list or a CSV file. The page reads it first and says what it will do, for example
 "Adds 2 catalogues and 300 events, updates 5 events (same ids)". Nothing changes until you
 press <strong>Import</strong>.</p>
 <ul>
@@ -174,6 +177,9 @@ press <strong>Import</strong>.</p>
   <li>A VOTable always makes new catalogues. A tscat JSON file updates a catalogue with the
   same id. A TFCat file makes one new catalogue, named by the file's title, else by the file's
   name.</li>
+  <li>An HPEvent list makes one new catalogue, named after its title (else the file), with
+  the list's description as its own; each field's unit goes to the attribute registry. A
+  value equal to the field's null is left out.</li>
   <li>A CSV file makes one new catalogue, named after the file. It needs a start and a stop
   (or end) column; the separator can be a comma, a semicolon or a tab. The columns tags
   (separated by ; or ,), status, confidence, author, comment and uuid fill those fields;

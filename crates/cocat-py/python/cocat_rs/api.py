@@ -19,7 +19,13 @@ from urllib.parse import urlparse
 import keyring
 
 from . import Project
-from ._native import ProjectInfo, export_csv as _export_csv, export_votable as _export_votable, tfcat_json
+from ._native import (
+    ProjectInfo,
+    export_csv as _export_csv,
+    export_hpevent as _export_hpevent,
+    export_votable as _export_votable,
+    tfcat_json,
+)
 from ._native import account_id as _account_id
 from ._native import login as _login
 from ._native import projects as _projects
@@ -251,6 +257,12 @@ def export_votable(catalogues, file_path: str | Path) -> None:
 def export_csv(catalogues, file_path: str | Path) -> None:
     """Writes the catalogues to one CSV file, a row per event, as the web app exports them."""
     Path(file_path).write_text(_export_csv(catalogues), encoding="utf-8")
+
+
+def export_hpevent(catalogues, file_path: str | Path) -> None:
+    """Writes the catalogues to one SPASE HPEvent list (the format of CDAWeb's event lists),
+    each attribute with its unit from the project's attribute registry."""
+    Path(file_path).write_text(_export_hpevent(catalogues), encoding="utf-8")
 
 
 def export_tfcat(

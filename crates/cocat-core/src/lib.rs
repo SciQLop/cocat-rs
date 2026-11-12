@@ -2,6 +2,7 @@
 
 pub mod csv_table;
 pub mod files;
+pub mod hpevent;
 pub mod model;
 pub mod person;
 pub mod query;

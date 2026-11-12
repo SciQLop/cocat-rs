@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 
 use cocat_core::csv_table::{self, CsvError, CsvImport};
+use cocat_core::hpevent::{self, HpEventError, HpEventImport};
 use cocat_core::model::{
     self, CatalogueSummary, EventRecord, Member, ShapeAxis, WriteError, Written,
 };
@@ -29,6 +30,8 @@ pub enum TransferError {
     Tfcat(#[from] TfcatError),
     #[error(transparent)]
     Csv(#[from] CsvError),
+    #[error(transparent)]
+    HpEvent(#[from] HpEventError),
     #[error("cannot write the file: {0}")]
     Encoding(String),
 }
@@ -39,14 +42,17 @@ pub enum Format {
     TscatJson,
     Tfcat,
     Csv,
+    /// SPASE's Heliophysics Event List: CDAWeb's and the STEREO Science Center's lists.
+    HpEvent,
 }
 
 impl Format {
-    pub const ALL: [Format; 4] = [
+    pub const ALL: [Format; 5] = [
         Format::Votable,
         Format::TscatJson,
         Format::Tfcat,
         Format::Csv,
+        Format::HpEvent,
     ];
     /// The formats the project's export offers for several catalogues.
     pub const MANY: [Format; 3] = [Format::Votable, Format::TscatJson, Format::Tfcat];
@@ -57,6 +63,7 @@ impl Format {
             Format::TscatJson => "tscat JSON (.json)",
             Format::Tfcat => "TFCat, radio time–frequency (.json)",
             Format::Csv => "CSV (.csv)",
+            Format::HpEvent => "HPEvent list, SPASE (.txt)",
         }
     }
 
@@ -65,6 +72,7 @@ impl Format {
             Format::Votable => "xml",
             Format::TscatJson | Format::Tfcat => "json",
             Format::Csv => "csv",
+            Format::HpEvent => "txt",
         }
     }
 
@@ -73,6 +81,7 @@ impl Format {
             Format::Votable => "application/x-votable+xml",
             Format::TscatJson | Format::Tfcat => "application/json",
             Format::Csv => "text/csv",
+            Format::HpEvent => "text/plain",
         }
     }
 }
@@ -168,6 +177,14 @@ pub fn export<T: ReadTxn>(
             let members = exported.iter().flat_map(|(_, members)| members.iter());
             Ok(csv_table::export(txn, members)?)
         }
+        Format::HpEvent => {
+            let members = exported.iter().flat_map(|(_, members)| members.iter());
+            let title = match exported.as_slice() {
+                [(catalogue, _)] => catalogue.name.clone(),
+                _ => "Catalogues".to_owned(),
+            };
+            Ok(hpevent::export(txn, members, &title))
+        }
     }
 }
 
@@ -221,10 +238,11 @@ pub enum Incoming {
     /// A TFCat file, with the name of the catalogue it makes.
     Tfcat(TfcatImport, String),
     Csv(CsvImport),
+    HpEvent(HpEventImport),
 }
 
 /// Reads a file by what it holds, whatever its name says: XML is a VOTable, JSON is TFCat or
-/// tscat, anything else a CSV table. A TFCat file without a title, or a CSV file, names its
+/// tscat, `#` header lines naming `FieldNames` an HPEvent list, anything else a CSV table. A TFCat file without a title, or a CSV file, names its
 /// catalogue after `file_name`.
 pub fn read(text: &str, file_name: &str) -> Result<Incoming, TransferError> {
     let text = text.trim_start_matches('\u{feff}').trim_start();
@@ -236,8 +254,20 @@ pub fn read(text: &str, file_name: &str) -> Result<Incoming, TransferError> {
             Ok(Incoming::Tfcat(import, name))
         }
         Some('{') => Ok(Incoming::Tscat(tscat_json::parse(text)?)),
+        Some('#') if is_hpevent(text) => Ok(Incoming::HpEvent(hpevent::parse(text, file_name)?)),
         _ => Ok(Incoming::Csv(csv_table::parse(text, file_name)?)),
     }
+}
+
+/// An HPEvent list names its fields in a `#FieldNames:` header line.
+fn is_hpevent(text: &str) -> bool {
+    text.lines()
+        .take_while(|line| line.starts_with('#'))
+        .any(|line| {
+            line.trim_start_matches('#')
+                .trim_start()
+                .starts_with("FieldNames")
+        })
 }
 
 /// TFCat is GeoJSON: a `FeatureCollection`. tscat's JSON has no `type`.
@@ -280,6 +310,7 @@ pub fn summary<T: ReadTxn>(txn: &T, incoming: &Incoming) -> Summary {
         ),
         Incoming::Tfcat(import, _) => (vec![None], import.events.iter().collect()),
         Incoming::Csv(import) => (vec![None], import.events.iter().collect()),
+        Incoming::HpEvent(import) => (vec![None], import.events.iter().collect()),
     };
     let uuids: BTreeSet<&str> = events.iter().map(|event| event.uuid.as_str()).collect();
     let updated_events = uuids
@@ -334,6 +365,7 @@ pub fn warnings(incoming: &Incoming) -> &[String] {
         Incoming::Tscat(import) => &import.warnings,
         Incoming::Tfcat(import, _) => &import.warnings,
         Incoming::Csv(import) => &import.warnings,
+        Incoming::HpEvent(_) => &[],
     }
 }
 
@@ -348,6 +380,7 @@ pub fn write(
         Incoming::Tscat(import) => tscat_json::write(txn, import, now),
         Incoming::Tfcat(import, name) => tfcat::write(txn, import, name, now),
         Incoming::Csv(import) => csv_table::write(txn, import, None),
+        Incoming::HpEvent(import) => hpevent::write(txn, import, None),
     }
 }
 

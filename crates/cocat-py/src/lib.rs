@@ -22,7 +22,7 @@ use cocat_core::model::{
     Status, Used, Vertex,
 };
 use cocat_core::time::Timestamp;
-use cocat_core::{csv_table, query, tfcat, tscat_json, votable};
+use cocat_core::{csv_table, hpevent, query, tfcat, tscat_json, votable};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -1860,6 +1860,30 @@ impl Project {
         Py::new(py, Catalogue::of(&self.room, &self.identity, uuid))
     }
 
+    /// Imports a SPASE HPEvent list (CDAWeb's, the STEREO Science Center's) as a new catalogue
+    /// and returns it, named `name`, else after the list's title, else after the file. Its
+    /// fields' units go to the attribute registry, its description to the catalogue's.
+    #[pyo3(signature = (path, name=None))]
+    fn import_hpevent(
+        &self,
+        py: Python<'_>,
+        path: String,
+        name: Option<String>,
+    ) -> Result<Py<Catalogue>> {
+        let text = std::fs::read_to_string(&path).map_err(value_error)?;
+        let import = hpevent::parse(&text, &path).map_err(value_error)?;
+        let written = write(&self.room, |txn| {
+            hpevent::write(txn, &import, name.as_deref())
+        })?
+        .map_err(value_error)?;
+        warn(py, &written.warnings)?;
+        let uuid = written
+            .catalogues
+            .first()
+            .ok_or_else(|| unknown("catalogue"))?;
+        Py::new(py, Catalogue::of(&self.room, &self.identity, uuid))
+    }
+
     /// Imports a file in tscat's JSON format and returns the uuids of its catalogues, in the
     /// file's order. What could not come across as it was is said as warnings.
     fn import_tscat_json(&self, py: Python<'_>, text: &str) -> Result<Vec<String>> {
@@ -1885,6 +1909,27 @@ fn export_csv(catalogues: &Bound<'_, PyAny>) -> Result<String> {
         members.extend(listed.map_err(value_error)?);
     }
     csv_table::export(&txn, members.iter()).map_err(value_error)
+}
+
+/// The catalogues as one SPASE HPEvent list, titled after the catalogue when there is one:
+/// what the web app's export writes.
+#[pyfunction]
+fn export_hpevent(catalogues: &Bound<'_, PyAny>) -> Result<String> {
+    let (room, uuids) = catalogues_of(catalogues)?;
+    let doc = room.doc();
+    let txn = doc.transact();
+    let mut members = Vec::new();
+    let mut names = Vec::new();
+    for uuid in &uuids {
+        let listed = model::catalogue_members(&txn, uuid).ok_or_else(|| unknown("catalogue"))?;
+        members.extend(listed.map_err(value_error)?);
+        names.extend(model::catalogue(&txn, uuid).map(|catalogue| catalogue.name));
+    }
+    let title = match names.as_slice() {
+        [one] => one.clone(),
+        _ => "Catalogues".to_owned(),
+    };
+    Ok(hpevent::export(&txn, members.iter(), &title))
 }
 
 /// The VOTable a set of catalogues exports to, the file Python cocat's exporter writes.
@@ -2319,6 +2364,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(commit, module)?)?;
     module.add_function(wrap_pyfunction!(copy_version, module)?)?;
     module.add_function(wrap_pyfunction!(export_csv, module)?)?;
+    module.add_function(wrap_pyfunction!(export_hpevent, module)?)?;
     module.add_function(wrap_pyfunction!(export_votable, module)?)?;
     module.add_function(wrap_pyfunction!(tfcat_json, module)?)?;
     module.add_function(wrap_pyfunction!(export_tscat_json, module)?)?;
