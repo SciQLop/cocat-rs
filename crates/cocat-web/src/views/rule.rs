@@ -26,6 +26,11 @@ pub struct About {
     decided_in: Option<(String, String)>,
     /// Its `description` attribute.
     description: Option<String>,
+    /// A catalogue's heading, which lists its details; not the trash or every event.
+    catalogue: bool,
+    /// Its tags and other attributes, shown read-only under the title.
+    tags: Vec<String>,
+    attributes: Vec<(String, String)>,
 }
 
 impl About {
@@ -38,6 +43,9 @@ impl About {
             copied: None,
             decided_in: None,
             description: None,
+            catalogue: false,
+            tags: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 }
@@ -122,6 +130,10 @@ pub fn Heading(
                     .or_else(|| about.with(|about| about.description.clone()))
                     .map(|text| view! { <crate::views::public::Description text/> })
             }}
+            {move || about.with(|about| about.catalogue.then(|| (about.tags.clone(), about.attributes.clone())))
+                .map(|(tags, attributes)| view! {
+                    <crate::views::catalogue_details::CatalogueFacts tags attributes/>
+                })}
             {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
                 <p class="quiet copied" title=chain>{line}</p>
             })}
@@ -155,6 +167,9 @@ pub fn catalogue_about(
         copied: copied_text(&catalogue.copied_from),
         decided_in: decided_in(&catalogue.attributes),
         description: crate::catalogues::description(&catalogue.attributes),
+        attributes: crate::catalogues::attribute_rows(&catalogue.attributes),
+        catalogue: true,
+        tags: catalogue.tags,
     }
 }
 

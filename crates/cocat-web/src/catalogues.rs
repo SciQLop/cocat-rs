@@ -9,6 +9,18 @@ use crate::format::value_text;
 /// The catalogue attribute its page shows under the title, and edits as text.
 pub const DESCRIPTION: &str = "description";
 
+/// How many attributes the heading lists while folded.
+const FOLDED_ATTRIBUTES: usize = 4;
+
+/// How many of `count` attributes the heading lists, and the total its "Show all" button
+/// names while some stay hidden. Hiding a single one is not worth the button.
+pub fn listed_attributes(count: usize, open: bool) -> (usize, Option<usize>) {
+    if open || count <= FOLDED_ATTRIBUTES + 1 {
+        return (count, None);
+    }
+    (FOLDED_ATTRIBUTES, Some(count))
+}
+
 /// A catalogue's description: its `description` attribute, when it holds text.
 pub fn description(attributes: &Map<String, Value>) -> Option<String> {
     attributes
@@ -194,5 +206,17 @@ mod tests {
         let list = catalogue_list(&Doc::new().transact());
         assert!(list.catalogues.is_empty());
         assert_eq!(list.trash, 0);
+    }
+
+    #[test]
+    fn the_heading_folds_a_long_attribute_list_but_never_hides_just_one() {
+        assert_eq!(listed_attributes(3, false), (3, None));
+        assert_eq!(
+            listed_attributes(5, false),
+            (5, None),
+            "one hidden is not worth a button"
+        );
+        assert_eq!(listed_attributes(20, false), (4, Some(20)));
+        assert_eq!(listed_attributes(20, true), (20, None));
     }
 }

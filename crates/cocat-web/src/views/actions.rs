@@ -10,6 +10,7 @@ use crate::route::Route;
 use crate::rows::{self, Row};
 use crate::state::Room;
 use crate::submissions::{Proposal, PublicAction, menu_proposes, proposal_for, public_actions};
+use crate::views::catalogue_details::DetailsEditor;
 use crate::views::controls::{Error, NameForm, error_line, go_to, now};
 use crate::views::notice::{Notice, Undo};
 use crate::views::projects::Projects;
@@ -88,6 +89,12 @@ pub fn Actions(
             }
         });
     }
+    let details = use_context::<DetailsEditor>();
+    let close_menu = move || {
+        if let Some(menu) = menu.get_untracked() {
+            menu.set_open(false);
+        }
+    };
     let toggle = move |which: Form| {
         form.update(|open| *open = if *open == which { Form::Closed } else { which });
         if let Some(menu) = menu.get_untracked() {
@@ -101,6 +108,9 @@ pub fn Actions(
                 <div class="menu">
                     {editor.then(|| view! {
                         <button type="button" on:click=move |_| toggle(Form::Rename)>"Rename…"</button>
+                        {details.map(|details| view! {
+                            <button type="button" on:click=move |_| { close_menu(); details.open(); }>"Edit details…"</button>
+                        })}
                         <button type="button" on:click=move |_| toggle(Form::Rule)>"Edit rule as JSON…"</button>
                         <Show when=move || smart.get() == Some(true)>
                             <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>

@@ -9,6 +9,7 @@ use crate::session::{ConfigError, RoomConfig};
 use crate::state::Room;
 use crate::views::actions::CatalogueMenuRequest;
 use crate::views::catalogue::CataloguePage;
+use crate::views::catalogue_details::DetailsEditor;
 use crate::views::event_panel::{EventPanel, Shown};
 use crate::views::files::{FilePane, FilesLoader, FilesState, ProjectFiles};
 use crate::views::groups::GroupsPage;
@@ -116,15 +117,25 @@ fn App(config: RoomConfig) -> impl IntoView {
     });
     let (editor, published) = (room.can_write(), room.editing);
     let route = expect_context::<Projects>().route;
+    let editing_details = RwSignal::new(false);
     let shown = Memo::new(move |_| {
         let first = room.read(|txn| model::catalogues(txn).into_iter().next().map(|c| c.uuid));
         route.get().or_first(first.as_deref())
+    });
+    // The details editor belongs to the catalogue it opened on.
+    Effect::new(move |seen: Option<Route>| {
+        let now = shown.get();
+        if seen.is_some_and(|seen| seen != now) {
+            editing_details.set(false);
+        }
+        now
     });
     let selected = RwSignal::new(None::<Row>);
     let screen = RwSignal::new(None);
     let importer = Importer::new();
     provide_context(importer);
     provide_context(CatalogueMenuRequest(RwSignal::new(false)));
+    provide_context(DetailsEditor(editing_details));
     let (drag_over, drop) = drop_on(importer, editor);
     let panel = Memo::new(move |_| selected.with(Shown::of));
     Effect::new(move |_| {

@@ -454,6 +454,17 @@ a { color: var(--accent); text-underline-offset: 2px; }
 .quiet-cell { color: var(--muted); }
 .empty { padding: 24px 14px; }
 .columns-note { margin: 0 0 6px; font-size: 13px; }
+.catalogue-facts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.catalogue-facts .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.facts-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 20px;
+  margin: 0; font-size: 13px;
+}
+.fact { display: flex; gap: 8px; min-width: 0; }
+.fact dt { color: var(--muted); flex: none; }
+.fact dd { margin: 0; min-width: 0; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facts-actions { display: flex; gap: 12px; margin-left: -4px; }
+.editor-head { display: flex; align-items: center; justify-content: space-between; }
 .empty-link { margin: -12px 0 0; padding: 0 14px 24px; }
 
 .tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
