@@ -54,7 +54,7 @@ pub fn CatalogueFacts(tags: Vec<String>, attributes: Vec<(String, String)>) -> i
                     {tags.into_iter().map(|tag| view! { <span class="tag">{tag}</span> }).collect_view()}
                 </div>
             })}
-            {(count > 0).then(|| view! { <dl class="facts-grid">{listed}</dl> })}
+            {(count > 0).then(|| view! { <dl class="facts-grid" class:open=move || open.get()>{listed}</dl> })}
             <div class="facts-actions">
                 {move || toggle().map(|label| view! {
                     <button type="button" class="link-button" aria-expanded=move || open.get().to_string()

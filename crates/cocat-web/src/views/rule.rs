@@ -120,7 +120,12 @@ pub fn Heading(
     view! {
         <div class="heading">
             <h1>{move || about.with(|about| about.title.clone())}</h1>
-            <p class="quiet">{counts}</p>
+            <p class="quiet meta-line">
+                {counts}
+                {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
+                    " · "<span class="copied" title=chain>{line.replacen("Copied from", "copied from", 1)}</span>
+                })}
+            </p>
             {move || listed().and_then(|listed| listed.relay).map(|relay| view! {
                 <p class="quiet">{crate::views::public::relay_line(&relay)}</p>
             })}
@@ -134,9 +139,6 @@ pub fn Heading(
                 .map(|(tags, attributes)| view! {
                     <crate::views::catalogue_details::CatalogueFacts tags attributes/>
                 })}
-            {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
-                <p class="quiet copied" title=chain>{line}</p>
-            })}
             {move || about.with(|about| about.decided_in.clone()).map(|(id, name)| view! {
                 <p class="quiet">"Decided in round "<a href=Route::Round(id).href(&page())>{name}</a></p>
             })}

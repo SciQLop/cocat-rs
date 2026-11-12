@@ -151,7 +151,11 @@ pub fn SearchLine(
             _ => None,
         })}
         <div class="search-line">
-            <Show when=move || own.with(Option::is_some)>
+            // At rest on a plain catalogue the switch only adds a row: it shows while a search
+            // is typed, on its other side, or on a smart catalogue, whose search is its rule.
+            <Show when=move || own.with(Option::is_some) && (typed()
+                || own.with(|own| matches!(own, Some(Some(_))))
+                || boxed.side.get() == Side::Search)>
                 <SideSwitch boxed disabled/>
             </Show>
             <Show when=move || boxed.searching()>

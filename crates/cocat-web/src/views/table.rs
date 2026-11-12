@@ -107,8 +107,8 @@ pub fn Table(
     };
     let none_shown = move || order.with(Vec::is_empty);
     view! {
-        {move || keys.with(|keys| left_out(keys)).map(|note| view! { <p class="quiet columns-note">{note}</p> })}
         <div class="table-scroll" node_ref=scroller on:scroll=move |_| measure()>
+            {move || keys.with(|keys| left_out(keys)).map(|note| view! { <p class="quiet columns-note">{note}</p> })}
             <table class="events" style=move || {
                 let fixed_width: f64 = keys.with(|keys| keys.iter().map(|key| fixed(key).2).sum());
                 let width = fixed_width + ATTRIBUTE_WIDTH * columns.with(Vec::len) as f64;
