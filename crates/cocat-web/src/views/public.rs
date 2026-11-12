@@ -65,20 +65,29 @@ pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
     Memo::new(move |_| listed.get().and_then(|listed| listed.relay))
 }
 
-/// The curator's description on the catalogue's page; a long one starts folded.
+/// A catalogue's description, folded to a few lines; a button unfolds it when it holds
+/// more than those lines show.
+// simplify: whether it overflows is measured once, when it is shown; a window resized
+// afterwards keeps the button (or its absence). Measure again on resize if that matters.
 #[component]
 pub fn Description(text: String) -> impl IntoView {
-    let long = crate::public::folds(&text);
+    let paragraph = NodeRef::<leptos::html::P>::new();
+    let long = RwSignal::new(false);
     let open = RwSignal::new(false);
+    Effect::new(move |_| {
+        if let Some(paragraph) = paragraph.get() {
+            long.set(paragraph.scroll_height() > paragraph.client_height());
+        }
+    });
     view! {
-        <div class="catalogue-description" class:folded=move || long && !open.get()>
-            <p>{text}</p>
-            {long.then(|| view! {
+        <div class="catalogue-description" class:folded=move || !open.get()>
+            <p node_ref=paragraph>{text}</p>
+            <Show when=move || long.get()>
                 <button type="button" class="link-button" aria-expanded=move || open.get().to_string()
                     on:click=move |_| open.update(|open| *open = !*open)>
                     {move || if open.get() { "Show less" } else { "Show all" }}
                 </button>
-            })}
+            </Show>
         </div>
     }
 }
@@ -358,9 +367,11 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
     let public = catalogue.id.clone();
     view! {
         <li class="public-item">
-            <button type="button" class="public-row" on:click=move |_| projects.switch(&project)>
-                <span class="name">{catalogue.name.clone()}</span>
-                {catalogue.description.clone().map(|text| view! { <span class="description" title=text.clone()>{text.clone()}</span> })}
+            <div class="public-row">
+                <button type="button" class="public-open name" on:click=move |_| projects.switch(&project)>
+                    {catalogue.name.clone()}
+                </button>
+                {catalogue.description.clone().map(|text| view! { <Description text/> })}
                 <span class="meta">
                     {match catalogue.relay.as_ref() {
                         Some(relay) => view! { <span class="source">{relay.text()}</span> }.into_any(),
@@ -369,7 +380,7 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
                     {catalogue.events().map(|events| view! { <span>{events}</span> })}
                     {day.map(|day| view! { <span>{day}</span> })}
                 </span>
-            </button>
+            </div>
             <button type="button" class="button copy-button" aria-expanded=move || copying.get().to_string()
                 aria-label=format!("Copy “{}” to a project", catalogue.name)
                 on:click=move |_| copying.update(|open| *open = !*open)>"Copy…"</button>

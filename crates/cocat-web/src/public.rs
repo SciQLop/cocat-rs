@@ -101,12 +101,6 @@ impl PublicCatalogue {
     }
 }
 
-/// A description that the catalogue's page shows folded to three lines, with a button to
-/// unfold it: more than three lines, or more than about three lines of text.
-pub fn folds(description: &str) -> bool {
-    description.lines().count() > 3 || description.chars().count() > 280
-}
-
 /// The catalogues of one folder (by its path, `AMDA/EARTH`); `None` holds those filed nowhere.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shelf {
@@ -468,13 +462,5 @@ mod tests {
                 ("Other".to_owned(), vec!["c"]),
             ]
         );
-    }
-
-    #[test]
-    fn only_a_description_longer_than_a_few_lines_folds() {
-        assert!(!folds("Interplanetary CMEs seen at L1."));
-        assert!(folds(&"word ".repeat(80)));
-        assert!(folds("one\ntwo\nthree\nfour"));
-        assert!(!folds("one\ntwo\nthree"));
     }
 }
