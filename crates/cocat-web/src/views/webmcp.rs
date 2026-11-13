@@ -33,6 +33,7 @@ pub fn offer_tools(projects: Projects) {
         let Some(tool) = to_js(&definition) else {
             continue;
         };
+        let tool_name = name.clone();
         let execute = Closure::<dyn Fn(JsValue) -> Promise>::new(move |input: JsValue| {
             let (input, name) = (from_js(&input), name.clone());
             future_to_promise(async move {
@@ -48,8 +49,25 @@ pub fn offer_tools(projects: Projects) {
         let _ = Reflect::set(&tool, &"execute".into(), execute.as_ref());
         // The tools live as long as the page: nothing to unregister them for.
         execute.forget();
-        let _ = register.call1(&context, &tool);
+        match register.call1(&context, &tool) {
+            Err(error) => refused(&tool_name, &error),
+            Ok(answer) => {
+                if let Ok(registering) = answer.dyn_into::<Promise>() {
+                    let on_refusal =
+                        Closure::once(move |error: JsValue| refused(&tool_name, &error));
+                    let _ = registering.catch(&on_refusal);
+                    on_refusal.forget();
+                }
+            }
+        }
     }
+}
+
+/// Says in the console why the browser would not take a tool, which it otherwise keeps to
+/// itself.
+fn refused(name: &str, error: &JsValue) {
+    let message = format!("cocat: the browser refused the WebMCP tool {name}:");
+    web_sys::console::warn_2(&message.into(), error);
 }
 
 async fn run(projects: Projects, name: &str, input: &Value) -> Result<Value, String> {
