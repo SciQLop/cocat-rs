@@ -1,0 +1,585 @@
+[
+ {
+  "query": "10.1051/0004-6361/202346043",
+  "why": "a paper's DOI: is its list already here?",
+  "relevant": [
+   "public.amda.sharedtimeTable_209",
+   "public.literature.solo-reconnection-exhausts"
+  ]
+ },
+ {
+  "query": "https://iopscience.iop.org/article/10.3847/2041-8213/ab4429/pdf",
+  "why": "a paper's link pasted whole",
+  "relevant": [
+   "public.literature.cassini-long-standing-reconnection"
+  ]
+ },
+ {
+  "query": "10.1029/2025SW004753",
+  "why": "a paper behind several lists",
+  "relevant": [
+   "public.literature.llamaice",
+   "public.literature.llamaice-cdaw",
+   "public.literature.llamaice-dreams",
+   "public.literature.llamaice-jian",
+   "public.literature.llamaice-lepping",
+   "public.literature.llamaice-richardson-cane",
+   "public.literature.llamaice-wind"
+  ]
+ },
+ {
+  "query": "Clustering of magnetic reconnection exhausts in the solar wind",
+  "why": "a paper's title",
+  "relevant": [
+   "public.amda.sharedtimeTable_209",
+   "public.literature.solo-reconnection-exhausts"
+  ]
+ },
+ {
+  "query": "solar orbiter",
+  "why": "a mission",
+  "relevant": [
+   "public.amda.sharedcatalog_63",
+   "public.amda.sharedtimeTable_174",
+   "public.amda.sharedtimeTable_178",
+   "public.amda.sharedtimeTable_209",
+   "public.helio4cast.arrcat.solarorbiter",
+   "public.icmecat.solarorbiter",
+   "public.literature.solo-mirror-mode-storms",
+   "public.literature.solo-reconnection-exhausts",
+   "public.pmod.eui_events",
+   "public.pmod.hinode_coordination",
+   "public.pmod.iris_coordination",
+   "public.pmod.spice_events",
+   "public.stix.flares"
+  ]
+ },
+ {
+  "query": "SolO",
+  "why": "a mission's acronym",
+  "relevant": [
+   "public.amda.sharedcatalog_63",
+   "public.amda.sharedtimeTable_174",
+   "public.amda.sharedtimeTable_178",
+   "public.amda.sharedtimeTable_209",
+   "public.helio4cast.arrcat.solarorbiter",
+   "public.icmecat.solarorbiter",
+   "public.literature.solo-mirror-mode-storms",
+   "public.literature.solo-reconnection-exhausts",
+   "public.pmod.eui_events",
+   "public.pmod.hinode_coordination",
+   "public.pmod.iris_coordination",
+   "public.pmod.spice_events",
+   "public.stix.flares"
+  ]
+ },
+ {
+  "query": "reconnection",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedcatalog_40",
+   "public.amda.sharedtimeTable_209",
+   "public.amda.sharedtimeTable_26",
+   "public.amda.sharedtimeTable_4",
+   "public.amda.sharedtimeTable_43",
+   "public.amda.sharedtimeTable_45",
+   "public.amda.sharedtimeTable_5",
+   "public.literature.cassini-long-standing-reconnection",
+   "public.literature.solo-reconnection-exhausts",
+   "public.literature.wind-current-sheet-exhausts"
+  ]
+ },
+ {
+  "query": "magnetic reconnection exhausts",
+  "why": "a topic in several words",
+  "relevant": [
+   "public.amda.sharedtimeTable_209",
+   "public.amda.sharedtimeTable_26",
+   "public.literature.solo-reconnection-exhausts",
+   "public.literature.wind-current-sheet-exhausts"
+  ]
+ },
+ {
+  "query": "solar orbiter reconnection",
+  "why": "mission and topic",
+  "relevant": [
+   "public.amda.sharedtimeTable_209",
+   "public.literature.solo-reconnection-exhausts"
+  ]
+ },
+ {
+  "query": "CME",
+  "why": "a topic's acronym",
+  "relevant": [
+   "public.cactus.lz",
+   "public.cactus.qkl",
+   "public.cdaw.lasco",
+   "public.donki.cme",
+   "public.literature.helcats-higeocat",
+   "public.literature.helcats-linkcat",
+   "public.literature.llamaice",
+   "public.literature.vizier-halo-cmes-dagnew",
+   "public.literature.vizier-limb-cmes-23-dagnew",
+   "public.literature.vizier-limb-cmes-24-dagnew"
+  ]
+ },
+ {
+  "query": "coronal mass ejections",
+  "why": "the same topic spelled out",
+  "relevant": [
+   "public.cactus.lz",
+   "public.cactus.qkl",
+   "public.cdaw.lasco",
+   "public.donki.cme",
+   "public.literature.helcats-higeocat",
+   "public.literature.helcats-linkcat",
+   "public.literature.llamaice",
+   "public.literature.vizier-halo-cmes-dagnew",
+   "public.literature.vizier-limb-cmes-23-dagnew",
+   "public.literature.vizier-limb-cmes-24-dagnew"
+  ]
+ },
+ {
+  "query": "ICME",
+  "why": "interplanetary CMEs",
+  "relevant": [
+   "public.amda.sharedcatalog_33",
+   "public.amda.sharedcatalog_41",
+   "public.amda.sharedtimeTable_22",
+   "public.amda.sharedtimeTable_28",
+   "public.amda.sharedtimeTable_33",
+   "public.icmecat.bepicolombo",
+   "public.icmecat.juno",
+   "public.icmecat.maven",
+   "public.icmecat.messenger",
+   "public.icmecat.psp",
+   "public.icmecat.solarorbiter",
+   "public.icmecat.stereo-a",
+   "public.icmecat.stereo-b",
+   "public.icmecat.ulysses",
+   "public.icmecat.vex",
+   "public.icmecat.wind",
+   "public.literature.icme-multicatalog",
+   "public.literature.istp-clouds",
+   "public.literature.llamaice",
+   "public.literature.llamaice-cdaw",
+   "public.literature.llamaice-dreams",
+   "public.literature.llamaice-jian",
+   "public.literature.llamaice-lepping",
+   "public.literature.llamaice-richardson-cane",
+   "public.literature.llamaice-wind",
+   "public.literature.stereo-icmes",
+   "public.literature.vizier-icme-heavy-ions-gu",
+   "public.literature.vizier-icmes-ace-wind-feng",
+   "public.literature.vizier-icmes-juno-davies",
+   "public.literature.vizier-multi-spacecraft-icmes-davies",
+   "public.onera.icme",
+   "public.onera.icme-resunet",
+   "public.onera.icme-spodify",
+   "public.onera.icme-thresholds"
+  ]
+ },
+ {
+  "query": "interplanetary coronal mass ejection",
+  "why": "the same spelled out",
+  "relevant": [
+   "public.amda.sharedcatalog_33",
+   "public.amda.sharedcatalog_41",
+   "public.amda.sharedtimeTable_22",
+   "public.amda.sharedtimeTable_28",
+   "public.amda.sharedtimeTable_33",
+   "public.icmecat.bepicolombo",
+   "public.icmecat.juno",
+   "public.icmecat.maven",
+   "public.icmecat.messenger",
+   "public.icmecat.psp",
+   "public.icmecat.solarorbiter",
+   "public.icmecat.stereo-a",
+   "public.icmecat.stereo-b",
+   "public.icmecat.ulysses",
+   "public.icmecat.vex",
+   "public.icmecat.wind",
+   "public.literature.icme-multicatalog",
+   "public.literature.istp-clouds",
+   "public.literature.llamaice",
+   "public.literature.llamaice-cdaw",
+   "public.literature.llamaice-dreams",
+   "public.literature.llamaice-jian",
+   "public.literature.llamaice-lepping",
+   "public.literature.llamaice-richardson-cane",
+   "public.literature.llamaice-wind",
+   "public.literature.stereo-icmes",
+   "public.literature.vizier-icme-heavy-ions-gu",
+   "public.literature.vizier-icmes-ace-wind-feng",
+   "public.literature.vizier-icmes-juno-davies",
+   "public.literature.vizier-multi-spacecraft-icmes-davies",
+   "public.onera.icme",
+   "public.onera.icme-resunet",
+   "public.onera.icme-spodify",
+   "public.onera.icme-thresholds"
+  ]
+ },
+ {
+  "query": "magnetic clouds",
+  "why": "a kind of ICME",
+  "relevant": [
+   "public.amda.sharedtimeTable_22",
+   "public.literature.istp-clouds",
+   "public.literature.llamaice-lepping"
+  ]
+ },
+ {
+  "query": "magnetopause crossings",
+  "why": "a boundary",
+  "relevant": [
+   "public.amda.sharedcatalog_39",
+   "public.amda.sharedcatalog_45",
+   "public.amda.sharedtimeTable_3",
+   "public.amda.sharedtimeTable_48",
+   "public.donki.mpc",
+   "public.literature.artemis-magnetopause",
+   "public.literature.cassini-magnetopause",
+   "public.literature.cdaweb-magnetopause-omni",
+   "public.literature.juno-magnetopause",
+   "public.literature.magnetopause-wang",
+   "public.literature.messenger-magnetopause-in",
+   "public.literature.messenger-magnetopause-out",
+   "public.literature.mms-magnetopause-ballerini"
+  ]
+ },
+ {
+  "query": "bow shock",
+  "why": "another boundary",
+  "relevant": [
+   "public.amda.sharedcatalog_30",
+   "public.amda.sharedcatalog_31",
+   "public.amda.sharedcatalog_32",
+   "public.amda.sharedcatalog_43",
+   "public.amda.sharedcatalog_44",
+   "public.amda.sharedtimeTable_155",
+   "public.amda.sharedtimeTable_2",
+   "public.literature.cassini-bow-shock",
+   "public.literature.cdaweb-bow-shocks",
+   "public.literature.juno-bow-shock",
+   "public.literature.messenger-bow-shock-in",
+   "public.literature.messenger-bow-shock-out",
+   "public.literature.sharp-cluster",
+   "public.literature.sharp-maven",
+   "public.literature.sharp-mms",
+   "public.literature.sharp-vex"
+  ]
+ },
+ {
+  "query": "interplanetary shocks",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedtimeTable_174",
+   "public.amda.sharedtimeTable_175",
+   "public.amda.sharedtimeTable_176",
+   "public.amda.sharedtimeTable_29",
+   "public.amda.sharedtimeTable_35",
+   "public.amda.sharedtimeTable_36",
+   "public.donki.ips",
+   "public.literature.cfa-ace",
+   "public.literature.cfa-dscovr",
+   "public.literature.cfa-wind",
+   "public.literature.ipshocks",
+   "public.literature.istp-shocks",
+   "public.literature.sharp-themis-b",
+   "public.literature.sharp-themis-c",
+   "public.literature.stereo-shocks",
+   "public.literature.vizier-ip-shocks-gopalswamy",
+   "public.literature.vizier-shocks-high-energy-protons-lario"
+  ]
+ },
+ {
+  "query": "flux ropes",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedtimeTable_34",
+   "public.literature.fluxropes-ace",
+   "public.literature.fluxropes-psp",
+   "public.literature.fluxropes-ulysses",
+   "public.literature.fluxropes-wind",
+   "public.literature.llamaice-cdaw"
+  ]
+ },
+ {
+  "query": "heliospheric current sheet",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedtimeTable_208",
+   "public.literature.psp-hcs-crossings",
+   "public.literature.psp-hcs-partial-crossings",
+   "public.literature.psp-hcs-side-jets"
+  ]
+ },
+ {
+  "query": "HCS",
+  "why": "its acronym",
+  "relevant": [
+   "public.amda.sharedtimeTable_208",
+   "public.literature.psp-hcs-crossings",
+   "public.literature.psp-hcs-partial-crossings",
+   "public.literature.psp-hcs-side-jets"
+  ]
+ },
+ {
+  "query": "Parker Solar Probe",
+  "why": "a mission",
+  "relevant": [
+   "public.amda.sharedcatalog_62",
+   "public.amda.sharedtimeTable_208",
+   "public.helio4cast.arrcat.psp",
+   "public.icmecat.psp",
+   "public.literature.fluxropes-psp",
+   "public.literature.psp-hcs-crossings",
+   "public.literature.psp-hcs-partial-crossings",
+   "public.literature.psp-hcs-side-jets"
+  ]
+ },
+ {
+  "query": "PSP",
+  "why": "its acronym",
+  "relevant": [
+   "public.amda.sharedcatalog_62",
+   "public.amda.sharedtimeTable_208",
+   "public.helio4cast.arrcat.psp",
+   "public.icmecat.psp",
+   "public.literature.fluxropes-psp",
+   "public.literature.psp-hcs-crossings",
+   "public.literature.psp-hcs-partial-crossings",
+   "public.literature.psp-hcs-side-jets"
+  ]
+ },
+ {
+  "query": "solar flares",
+  "why": "a topic",
+  "relevant": [
+   "public.donki.flr",
+   "public.literature.vizier-flare-qpp-inglis",
+   "public.literature.vizier-flares-aia-aschwanden",
+   "public.literature.vizier-flares-cmes-seps-ling",
+   "public.literature.vizier-lyman-alpha-flares-lu",
+   "public.literature.vizier-white-light-flares-namekata",
+   "public.stix.flares"
+  ]
+ },
+ {
+  "query": "SEP",
+  "why": "an acronym",
+  "relevant": [
+   "public.amda.sharedtimeTable_177",
+   "public.amda.sharedtimeTable_178",
+   "public.amda.sharedtimeTable_179",
+   "public.amda.sharedtimeTable_18",
+   "public.amda.sharedtimeTable_180",
+   "public.donki.sep",
+   "public.literature.stereo-seps",
+   "public.literature.vizier-electron-events-wang",
+   "public.literature.vizier-flares-cmes-seps-ling"
+  ]
+ },
+ {
+  "query": "solar energetic particles",
+  "why": "spelled out",
+  "relevant": [
+   "public.amda.sharedtimeTable_177",
+   "public.amda.sharedtimeTable_178",
+   "public.amda.sharedtimeTable_179",
+   "public.amda.sharedtimeTable_18",
+   "public.amda.sharedtimeTable_180",
+   "public.donki.sep",
+   "public.literature.stereo-seps",
+   "public.literature.vizier-electron-events-wang",
+   "public.literature.vizier-flares-cmes-seps-ling"
+  ]
+ },
+ {
+  "query": "geomagnetic storms",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedcatalog_36",
+   "public.amda.sharedcatalog_38",
+   "public.amda.sharedtimeTable_6",
+   "public.amda.sharedtimeTable_7",
+   "public.donki.gst",
+   "public.literature.intense-storms-ji"
+  ]
+ },
+ {
+  "query": "substorms",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedtimeTable_10",
+   "public.amda.sharedtimeTable_11",
+   "public.amda.sharedtimeTable_12",
+   "public.amda.sharedtimeTable_13",
+   "public.amda.sharedtimeTable_14",
+   "public.amda.sharedtimeTable_15",
+   "public.amda.sharedtimeTable_16",
+   "public.amda.sharedtimeTable_17",
+   "public.amda.sharedtimeTable_8",
+   "public.amda.sharedtimeTable_9"
+  ]
+ },
+ {
+  "query": "Cassini",
+  "why": "a mission",
+  "relevant": [
+   "public.amda.sharedcatalog_56",
+   "public.amda.sharedtimeTable_40",
+   "public.amda.sharedtimeTable_42",
+   "public.amda.sharedtimeTable_43",
+   "public.amda.sharedtimeTable_44",
+   "public.amda.sharedtimeTable_45",
+   "public.amda.sharedtimeTable_48",
+   "public.literature.cassini-bow-shock",
+   "public.literature.cassini-long-standing-reconnection",
+   "public.literature.cassini-magnetopause"
+  ]
+ },
+ {
+  "query": "cassini magnetopause",
+  "why": "mission and boundary",
+  "relevant": [
+   "public.amda.sharedtimeTable_48",
+   "public.literature.cassini-magnetopause"
+  ]
+ },
+ {
+  "query": "Juno",
+  "why": "a mission",
+  "relevant": [
+   "public.amda.sharedcatalog_58",
+   "public.amda.sharedtimeTable_53",
+   "public.helio4cast.arrcat.juno",
+   "public.icmecat.juno",
+   "public.literature.juno-bow-shock",
+   "public.literature.juno-magnetopause",
+   "public.literature.vizier-icmes-juno-davies",
+   "public.literature.vizier-multi-spacecraft-icmes-davies"
+  ]
+ },
+ {
+  "query": "Jupiter bow shock",
+  "why": "planet and boundary",
+  "relevant": [
+   "public.literature.juno-bow-shock"
+  ]
+ },
+ {
+  "query": "STEREO ICME",
+  "why": "mission and topic",
+  "relevant": [
+   "public.icmecat.stereo-a",
+   "public.icmecat.stereo-b",
+   "public.literature.stereo-icmes"
+  ]
+ },
+ {
+  "query": "stream interaction regions",
+  "why": "a topic",
+  "relevant": [
+   "public.amda.sharedtimeTable_23",
+   "public.amda.sharedtimeTable_27",
+   "public.amda.sharedtimeTable_30",
+   "public.amda.sharedtimeTable_31",
+   "public.helio4cast.sircat.maven",
+   "public.helio4cast.sircat.stereo-a",
+   "public.helio4cast.sircat.stereo-b",
+   "public.helio4cast.sircat.wind",
+   "public.literature.stereo-sirs",
+   "public.onera.sir",
+   "public.onera.sir-resunet",
+   "public.onera.sir-spodify",
+   "public.onera.sir-thresholds"
+  ]
+ },
+ {
+  "query": "CIR",
+  "why": "a related acronym",
+  "relevant": [
+   "public.amda.sharedtimeTable_23",
+   "public.amda.sharedtimeTable_27",
+   "public.amda.sharedtimeTable_30",
+   "public.amda.sharedtimeTable_31",
+   "public.helio4cast.sircat.maven",
+   "public.helio4cast.sircat.stereo-a",
+   "public.helio4cast.sircat.stereo-b",
+   "public.helio4cast.sircat.wind",
+   "public.literature.stereo-sirs",
+   "public.onera.sir",
+   "public.onera.sir-resunet",
+   "public.onera.sir-spodify",
+   "public.onera.sir-thresholds"
+  ]
+ },
+ {
+  "query": "Jian",
+  "why": "an author",
+  "relevant": [
+   "public.amda.sharedtimeTable_30",
+   "public.amda.sharedtimeTable_31",
+   "public.amda.sharedtimeTable_32",
+   "public.amda.sharedtimeTable_33",
+   "public.literature.llamaice-jian",
+   "public.literature.stereo-icmes",
+   "public.literature.stereo-seps",
+   "public.literature.stereo-shocks",
+   "public.literature.stereo-sirs"
+  ]
+ },
+ {
+  "query": "Richardson Cane",
+  "why": "authors",
+  "relevant": [
+   "public.amda.sharedtimeTable_28",
+   "public.literature.llamaice-richardson-cane"
+  ]
+ },
+ {
+  "query": "Fargette",
+  "why": "an author",
+  "relevant": [
+   "public.amda.sharedtimeTable_208",
+   "public.amda.sharedtimeTable_209",
+   "public.literature.psp-hcs-crossings",
+   "public.literature.psp-hcs-partial-crossings",
+   "public.literature.psp-hcs-side-jets",
+   "public.literature.solo-reconnection-exhausts"
+  ]
+ },
+ {
+  "query": "mirror mode",
+  "why": "a topic",
+  "relevant": [
+   "public.literature.solo-mirror-mode-storms"
+  ]
+ },
+ {
+  "query": "Mars bow shock",
+  "why": "planet and boundary",
+  "relevant": [
+   "public.amda.sharedcatalog_30",
+   "public.amda.sharedcatalog_31",
+   "public.amda.sharedcatalog_32",
+   "public.literature.sharp-maven"
+  ]
+ },
+ {
+  "query": "Forbush decreases",
+  "why": "a topic",
+  "relevant": [
+   "public.literature.vizier-forbush-ephin-belov",
+   "public.literature.vizier-forbush-icme-light"
+  ]
+ },
+ {
+  "query": "type II radio bursts",
+  "why": "a topic",
+  "relevant": [
+   "public.cdaw.type2"
+  ]
+ }
+]

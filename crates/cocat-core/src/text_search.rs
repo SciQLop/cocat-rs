@@ -77,6 +77,51 @@ impl TextIndex {
     }
 }
 
+/// A catalogue as the search reads it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Catalogue<'a> {
+    pub name: &'a str,
+    pub folder: Option<&'a str>,
+    pub source: Option<&'a str>,
+    pub description: Option<&'a str>,
+}
+
+impl Catalogue<'_> {
+    /// What names it: name, folder and source.
+    fn title(&self) -> String {
+        [Some(self.name), self.folder, self.source]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Holds every one of `words` (lowercase), whole or as the start of a longer word.
+    fn holds(&self, words: &[String]) -> bool {
+        let text =
+            format!("{} {}", self.title(), self.description.unwrap_or_default()).to_lowercase();
+        words.iter().all(|word| text.contains(word.as_str()))
+    }
+}
+
+/// The catalogues that answer `query`, by their position in `all`, best first: those BM25
+/// ranks, then those holding every word only inside longer ones (`reconn`, being typed).
+// simplify: the index is rebuilt for each query, fine for the few hundred public catalogues;
+// past a few thousand, keep a `TextIndex` of the list and query it instead.
+pub fn rank_catalogues(all: &[Catalogue<'_>], query: &str) -> Vec<usize> {
+    let titles: Vec<String> = all.iter().map(Catalogue::title).collect();
+    let index = TextIndex::new(all.iter().zip(&titles).map(|(catalogue, title)| Fields {
+        title,
+        body: catalogue.description.unwrap_or_default(),
+    }));
+    let ranked: Vec<usize> = index.search(query).into_iter().map(|(at, _)| at).collect();
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let typed: Vec<usize> = (0..all.len())
+        .filter(|at| !ranked.contains(at) && all[*at].holds(&words))
+        .collect();
+    ranked.into_iter().chain(typed).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Fields, TextIndex};

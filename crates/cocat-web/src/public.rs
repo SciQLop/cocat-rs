@@ -1,7 +1,7 @@
 //! The public catalogues' index: a folder tree, and shelves by folder narrowed by a search.
 
 use cocat_core::role::Role;
-use cocat_core::text_search::{Fields, TextIndex};
+use cocat_core::text_search::{Catalogue, rank_catalogues};
 use serde::Deserialize;
 
 use crate::projects::{Project, role};
@@ -86,32 +86,14 @@ impl PublicCatalogue {
         })
     }
 
-    /// What names it, for the search: its name, folder and source.
-    fn title(&self) -> String {
-        [
-            Some(self.name.as_str()),
-            self.folder.as_deref(),
-            self.source.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" ")
-    }
-
-    fn matches(&self, words: &[String]) -> bool {
-        let text = [
-            Some(self.name.as_str()),
-            self.description.as_deref(),
-            self.source.as_deref(),
-            self.folder.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-        words.iter().all(|word| text.contains(word.as_str()))
+    /// What the search reads of it.
+    fn searched(&self) -> Catalogue<'_> {
+        Catalogue {
+            name: &self.name,
+            folder: self.folder.as_deref(),
+            source: self.source.as_deref(),
+            description: self.description.as_deref(),
+        }
     }
 }
 
@@ -222,7 +204,7 @@ pub fn folder_label(path: &str) -> String {
 /// The catalogues that answer `search`, shelved by folder. Without a search: every one, shelves
 /// by folder (unfiled last), each by name. With one: those ranked by BM25 (see
 /// [`cocat_core::text_search`]) best first, a shelf where its best catalogue ranks; then those
-/// holding a word only as the start of a longer one (`reconn`), while it is being typed.
+/// holding a word only inside a longer one (`reconn`), while it is being typed.
 pub fn shelves(all: &[PublicCatalogue], search: &str) -> Vec<Shelf> {
     let kept = if search.trim().is_empty() {
         by_folder(all)
@@ -256,22 +238,10 @@ fn by_folder(all: &[PublicCatalogue]) -> Vec<&PublicCatalogue> {
     kept
 }
 
-// simplify: the index is rebuilt on every keystroke, fine for the few hundred public
-// catalogues there are; past a few thousand, keep it in a memo of the list instead.
 fn ranked<'a>(all: &'a [PublicCatalogue], search: &str) -> Vec<&'a PublicCatalogue> {
-    let titles: Vec<String> = all.iter().map(PublicCatalogue::title).collect();
-    let index = TextIndex::new(all.iter().zip(&titles).map(|(catalogue, title)| Fields {
-        title,
-        body: catalogue.description.as_deref().unwrap_or_default(),
-    }));
-    let found = index.search(search);
-    let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
-    let typed = (0..all.len())
-        .filter(|at| !found.iter().any(|(hit, _)| hit == at) && all[*at].matches(&words));
-    found
-        .iter()
-        .map(|(at, _)| *at)
-        .chain(typed)
+    let searched: Vec<Catalogue> = all.iter().map(PublicCatalogue::searched).collect();
+    rank_catalogues(&searched, search)
+        .into_iter()
         .map(|at| &all[at])
         .collect()
 }
