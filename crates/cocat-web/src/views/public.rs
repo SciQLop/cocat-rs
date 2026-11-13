@@ -74,7 +74,13 @@ pub fn relay_of(id: String) -> Memo<Option<crate::public::Relay>> {
 // simplify: whether it overflows is measured once, when it is shown; a window resized
 // afterwards keeps the button (or its absence). Measure again on resize if that matters.
 #[component]
-pub fn Description(text: String) -> impl IntoView {
+pub fn Description(
+    text: String,
+    /// A search whose words are marked in the text.
+    #[prop(optional)]
+    words: String,
+) -> impl IntoView {
+    let hits = Hits::words(&words);
     let body = NodeRef::<leptos::html::Div>::new();
     let long = RwSignal::new(false);
     let open = RwSignal::new(false);
@@ -87,7 +93,7 @@ pub fn Description(text: String) -> impl IntoView {
         .into_iter()
         .map(|paragraph| {
             let label = paragraph.cite.then(|| view! { <span class="cite-label">"Cite"</span> " " });
-            view! { <p class:cite=paragraph.cite>{label}{paragraph.spans.into_iter().map(span).collect_view()}</p> }
+            view! { <p class:cite=paragraph.cite>{label}{paragraph.spans.into_iter().map(|piece| span(piece, &hits)).collect_view()}</p> }
         })
         .collect_view();
     view! {
@@ -103,16 +109,20 @@ pub fn Description(text: String) -> impl IntoView {
     }
 }
 
-fn span(span: crate::prose::Span) -> AnyView {
+fn span(span: crate::prose::Span, hits: &Hits) -> AnyView {
     use crate::prose::Span;
     match span {
-        Span::Text(text) => text.into_any(),
-        Span::Code(code) => view! { <code>{code}</code> }.into_any(),
+        Span::Text(text) => marked(hits, DESCRIPTION, &text),
+        Span::Code(code) => view! { <code>{marked(hits, DESCRIPTION, &code)}</code> }.into_any(),
         Span::Link { href, text } => {
+            let text = marked(hits, DESCRIPTION, &text);
             view! { <a href=href target="_blank" rel="noopener">{text}</a> }.into_any()
         }
     }
 }
+
+/// The column name `Hits::words` marks any text under.
+const DESCRIPTION: &str = "description";
 
 /// "From DONKI (NASA CCMC), refreshed 2026-11-11", with a link to the list at its source.
 pub fn relay_line(relay: &crate::public::Relay) -> impl IntoView + use<> {
@@ -361,7 +371,7 @@ fn NoneYet() -> impl IntoView {
 /// is already the page's title.
 #[component]
 fn PublicShelf(shelf: Shelf, titled: bool, words: String) -> impl IntoView {
-    let label = shelf.label();
+    let label = marked(&Hits::words(&words), "folder", &shelf.label());
     let count = shelf.catalogues.len();
     let list = view! {
         <ul class="plain-list">
@@ -381,8 +391,10 @@ fn PublicShelf(shelf: Shelf, titled: bool, words: String) -> impl IntoView {
 }
 
 #[component]
-/// `words`: the page's search, marked in the catalogue's name.
+/// `words`: the page's search, marked in what the row shows of the catalogue.
 fn PublicRow(catalogue: PublicCatalogue, words: String) -> impl IntoView {
+    let hits = Hits::words(&words);
+    let mark = |text: &str| marked(&hits, "text", text);
     let projects = expect_context::<Projects>();
     let project = catalogue.project();
     let day = catalogue.day().map(|day| format!("changed {day}"));
@@ -393,13 +405,13 @@ fn PublicRow(catalogue: PublicCatalogue, words: String) -> impl IntoView {
         <li class="public-item">
             <div class="public-row">
                 <button type="button" class="public-open name" on:click=move |_| projects.switch(&project)>
-                    {marked(&Hits::words(&words), "name", &catalogue.name)}
+                    {mark(&catalogue.name)}
                 </button>
-                {catalogue.description.clone().map(|text| view! { <Description text/> })}
+                {catalogue.description.clone().map(|text| view! { <Description text words=words.clone()/> })}
                 <span class="meta">
                     {match catalogue.relay.as_ref() {
-                        Some(relay) => view! { <span class="source">{relay.text()}</span> }.into_any(),
-                        None => catalogue.source.clone().map(|source| view! { <span class="source">{source}</span> }).into_any(),
+                        Some(relay) => view! { <span class="source">{mark(&relay.text())}</span> }.into_any(),
+                        None => catalogue.source.as_deref().map(|source| view! { <span class="source">{mark(source)}</span> }).into_any(),
                     }}
                     {catalogue.events().map(|events| view! { <span>{events}</span> })}
                     {day.map(|day| view! { <span>{day}</span> })}
