@@ -2,8 +2,8 @@
 //! (<https://webmachinelearning.github.io/webmcp/>). What the tools answer is in
 //! [`crate::agent_tools`]; this only bridges to JavaScript.
 //!
-//! The API is `document.modelContext`; early Chrome builds and the `@mcp-b/global` polyfill put
-//! it on `navigator`, so both are tried. Without either, nothing happens.
+//! The API is `document.modelContext`; early Chrome builds, Brave and the `@mcp-b/global`
+//! polyfill put it on `navigator`, so both are tried. Without either, nothing happens.
 
 use js_sys::{Function, JSON, Object, Promise, Reflect};
 use serde_json::Value;
@@ -40,9 +40,9 @@ pub fn offer_tools(projects: Projects) {
                 let answer = run(projects, &name, &input)
                     .await
                     .unwrap_or_else(|error| serde_json::json!({ "error": error }));
-                to_js(&answer)
-                    .map(JsValue::from)
-                    .ok_or_else(|| JsValue::from_str("the answer is not JSON"))
+                // A string of JSON: Brave's Leo reads a tool's result as text, and the spec
+                // serializes whatever it gets, so text works for both.
+                Ok(JsValue::from_str(&answer.to_string()))
             })
         });
         let _ = Reflect::set(&tool, &"execute".into(), execute.as_ref());
