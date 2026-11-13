@@ -7,6 +7,10 @@
 //! found is kept per catalogue: when one catalogue changes, a search seen before scans only
 //! that one again. A version tag over the catalogues' stamps lets a client that holds the
 //! answer skip it.
+//!
+//! Snapshots are written in the background, one at a time: loading the largest room takes
+//! minutes and gigabytes. A search never waits long for them: it answers from the snapshots
+//! there are, an out-of-date one included, and says how many catalogues are not indexed yet.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
@@ -20,9 +24,11 @@ use axum::response::{IntoResponse, Response};
 use cocat_core::model::{self, EventRecord};
 use cocat_core::rules::{Lookups, Predicate, relative};
 use cocat_core::time::Timestamp;
-use futures_util::{StreamExt, stream};
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::{Semaphore, watch};
+use tokio::task::JoinHandle;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use yrs::Transact;
@@ -35,9 +41,10 @@ use crate::public_api::file_stamp;
 
 const DEFAULT_LIMIT: usize = 1000;
 const MAX_LIMIT: usize = 10_000;
-/// How many snapshots are rewritten at once. One: a big room loaded weighs gigabytes, and
-/// snapshots are only rewritten when their catalogue changed.
-const LOADS: usize = 1;
+/// How long a search waits for the snapshots it lacks before it answers without them.
+const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often the server looks for public catalogues whose snapshot is out of date.
+const INDEX_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
 /// At most this many threads scan the snapshots.
 const SCANNERS: usize = 8;
 /// What the kept answers may weigh, in bytes of JSON; the least recent searches go first.
@@ -49,9 +56,25 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(events))
 }
 
-/// The answers kept, by search.
-#[derive(Debug, Clone, Default)]
-pub struct PublicIndex(Arc<Mutex<Kept>>);
+/// The answers kept, by search, and the snapshots being rewritten.
+#[derive(Debug, Clone)]
+pub struct PublicIndex {
+    kept: Arc<Mutex<Kept>>,
+    /// Each room whose snapshot is being rewritten, and what turns true when it is done.
+    building: Arc<Mutex<HashMap<String, watch::Receiver<bool>>>>,
+    /// One rewrite at a time.
+    builds: Arc<Semaphore>,
+}
+
+impl Default for PublicIndex {
+    fn default() -> Self {
+        Self {
+            kept: Arc::default(),
+            building: Arc::default(),
+            builds: Arc::new(Semaphore::new(1)),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct Kept {
@@ -89,7 +112,7 @@ impl Matches {
 
 impl PublicIndex {
     fn kept(&self, key: &str, room_id: &str, stamp: &str) -> Option<Arc<Matches>> {
-        let mut kept = self.0.lock().ok()?;
+        let mut kept = self.kept.lock().ok()?;
         kept.clock += 1;
         let clock = kept.clock;
         let search = kept.searches.get_mut(key)?;
@@ -98,10 +121,38 @@ impl PublicIndex {
         (matches.stamp == stamp).then(|| Arc::clone(matches))
     }
 
+    /// Rewrites the snapshot of `room_id` in the background, unless that is under way; what
+    /// it answers turns true when the rewrite is done. The rewrite does not end with the
+    /// search that asked for it.
+    fn rebuild(&self, state: &AppState, room_id: &str) -> watch::Receiver<bool> {
+        let Ok(mut building) = self.building.lock() else {
+            return watch::channel(true).1;
+        };
+        if let Some(done) = building.get(room_id) {
+            return done.clone();
+        }
+        let (sender, done) = watch::channel(false);
+        building.insert(room_id.to_owned(), done.clone());
+        let (index, state, room_id) = (self.clone(), state.clone(), room_id.to_owned());
+        tokio::spawn(async move {
+            let permit = index.builds.acquire().await;
+            let stamp = file_stamp(&state, &room_id);
+            if let Err(error) = snapshot(&state, &room_id, &stamp).await {
+                tracing::warn!(room = %room_id, %error, "a public catalogue could not be indexed");
+            }
+            drop(permit);
+            if let Ok(mut building) = index.building.lock() {
+                building.remove(&room_id);
+            }
+            let _ = sender.send(true);
+        });
+        done
+    }
+
     /// Keeps what was found, then forgets the catalogues that are no longer public and the
     /// least recent searches past the budget.
     fn keep(&self, key: &str, found: &[(String, Arc<Matches>)], public: &HashSet<&str>) {
-        let Ok(mut kept) = self.0.lock() else {
+        let Ok(mut kept) = self.kept.lock() else {
             return;
         };
         kept.clock += 1;
@@ -152,6 +203,8 @@ struct EventsQuery {
 struct Found {
     events: Vec<PublicEvent>,
     total: usize,
+    /// How many public catalogues were left out: their index is still being written.
+    indexing: usize,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -191,9 +244,14 @@ async fn events(
         .collect();
     let predicate = asked(&query, &names)?;
     lookups(&predicate)?;
-    let stamps: Vec<(String, String)> = names
+    let snapshots = current_snapshots(&state, &names).await;
+    let indexing = snapshots
         .iter()
-        .map(|(id, _)| (id.clone(), file_stamp(&state, id)))
+        .filter(|(_, stamp)| stamp.is_none())
+        .count();
+    let stamps: Vec<(String, String)> = snapshots
+        .into_iter()
+        .filter_map(|(id, stamp)| Some((id, stamp?)))
         .collect();
     let key = serde_json::to_string(&predicate).map_err(|_| ApiError::Internal)?;
     let tag = HeaderValue::from_str(&version_tag(&key, limit, &stamps))
@@ -206,7 +264,7 @@ async fn events(
     let json = HeaderValue::from_static("application/json");
     Ok((
         [(header::CONTENT_TYPE, json), (header::ETAG, tag)],
-        answer(&found, limit),
+        answer(&found, limit, indexing),
     )
         .into_response())
 }
@@ -270,7 +328,74 @@ fn uses_now(predicate: &Predicate) -> bool {
     }
 }
 
-/// What the search finds in each catalogue: kept, or scanned from its snapshot.
+/// The stamp each catalogue's snapshot was written at, `None` while it has none. Snapshots
+/// that are missing or out of date are rewritten in the background, and waited for at most
+/// `WAIT`: a small catalogue's change shows at once, a big one answers as it was.
+async fn current_snapshots(
+    state: &AppState,
+    rooms: &[(String, String)],
+) -> Vec<(String, Option<String>)> {
+    let read = || -> Vec<(String, Option<String>)> {
+        rooms
+            .iter()
+            .map(|(id, _)| (id.clone(), snapshot_stamp(&snapshot_path(state, id))))
+            .collect()
+    };
+    let first = read();
+    let index = state.rooms.public_index();
+    let rewriting: Vec<_> = first
+        .iter()
+        .filter(|(room_id, stamp)| stamp.as_deref() != Some(file_stamp(state, room_id).as_str()))
+        .map(|(room_id, _)| index.rebuild(state, room_id))
+        .collect();
+    if rewriting.is_empty() {
+        return first;
+    }
+    let written = rewriting.into_iter().map(|mut done| async move {
+        let _ = done.wait_for(|done| *done).await;
+    });
+    let _ = tokio::time::timeout(WAIT, join_all(written)).await;
+    read()
+}
+
+/// Looks for out-of-date snapshots when the server starts, then every `INDEX_EVERY`, so the
+/// first search after a deploy or a relay refresh rarely waits.
+pub fn spawn_indexer(state: AppState) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(INDEX_EVERY);
+        loop {
+            ticker.tick().await;
+            match db::public_rooms(&state.pool).await {
+                Ok(rooms) => {
+                    let names: Vec<(String, String)> =
+                        rooms.into_iter().map(|room| (room.id, room.name)).collect();
+                    for (room_id, stamp) in names.iter().map(|(id, _)| (id, file_stamp(&state, id)))
+                    {
+                        if snapshot_stamp(&snapshot_path(&state, room_id)).as_deref()
+                            != Some(stamp.as_str())
+                        {
+                            state.rooms.public_index().rebuild(&state, room_id);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "the public catalogues could not be listed for indexing")
+                }
+            }
+        }
+    })
+}
+
+fn snapshot_path(state: &AppState, room_id: &str) -> PathBuf {
+    state
+        .rooms
+        .update_dir()
+        .join(SNAPSHOTS)
+        .join(format!("{room_id}.jsonl"))
+}
+
+/// What the search finds in each catalogue: kept, or scanned from its snapshot as `stamps`
+/// names it.
 async fn found(
     state: &AppState,
     predicate: &Predicate,
@@ -284,12 +409,11 @@ async fn found(
     for (room_id, stamp) in stamps {
         match index.kept(key, room_id, stamp).filter(|_| keeps) {
             Some(matches) => found.push((room_id.clone(), matches)),
-            None => missing.push((room_id.clone(), stamp.clone())),
+            None => missing.push((room_id.clone(), snapshot_path(state, room_id))),
         }
     }
-    let snapshots = snapshots(state, missing).await;
     let predicate = predicate.clone();
-    let scanned = tokio::task::spawn_blocking(move || scan_all(&snapshots, &predicate))
+    let scanned = tokio::task::spawn_blocking(move || scan_all(&missing, &predicate))
         .await
         .map_err(|_| ApiError::Internal)??;
     if keeps {
@@ -298,36 +422,6 @@ async fn found(
     }
     found.extend(scanned);
     Ok(found)
-}
-
-/// The snapshot of each catalogue, rewritten where its room file changed; one that cannot be
-/// read is left out and logged.
-async fn snapshots(
-    state: &AppState,
-    rooms: Vec<(String, String)>,
-) -> Vec<(String, String, PathBuf)> {
-    let loads: Vec<_> = rooms
-        .into_iter()
-        .map(|(room_id, stamp)| {
-            // Owned, so the futures name no borrowed lifetime the handler would have to be
-            // general over.
-            let state = state.clone();
-            async move {
-                match snapshot(&state, &room_id, &stamp).await {
-                    Ok(path) => Some((room_id, stamp, path)),
-                    Err(error) => {
-                        tracing::warn!(room = %room_id, %error, "a public catalogue was left out of a search");
-                        None
-                    }
-                }
-            }
-        })
-        .collect();
-    stream::iter(loads)
-        .buffer_unordered(LOADS)
-        .filter_map(std::future::ready)
-        .collect()
-        .await
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -342,7 +436,7 @@ enum SnapshotError {
 /// stamp, each other line is one live event.
 async fn snapshot(state: &AppState, room_id: &str, stamp: &str) -> Result<PathBuf, SnapshotError> {
     let folder = state.rooms.update_dir().join(SNAPSHOTS);
-    let path = folder.join(format!("{room_id}.jsonl"));
+    let path = snapshot_path(state, room_id);
     if snapshot_stamp(&path).as_deref() == Some(stamp) {
         return Ok(path);
     }
@@ -398,7 +492,7 @@ fn write_snapshot(folder: &Path, path: &Path, text: &[u8]) -> std::io::Result<()
 
 /// Scans the snapshots on a few threads.
 fn scan_all(
-    snapshots: &[(String, String, PathBuf)],
+    snapshots: &[(String, PathBuf)],
     predicate: &Predicate,
 ) -> Result<Vec<(String, Arc<Matches>)>, ApiError> {
     let lookups = lookups(predicate)?;
@@ -411,10 +505,10 @@ fn scan_all(
     std::thread::scope(|scope| {
         for _ in 0..threads {
             scope.spawn(|| {
-                while let Some((room_id, stamp, path)) =
+                while let Some((room_id, path)) =
                     snapshots.get(next.fetch_add(1, Ordering::Relaxed))
                 {
-                    match scan(path, &in_room(predicate, room_id), &lookups, stamp) {
+                    match scan(path, &in_room(predicate, room_id), &lookups) {
                         Ok(matches) => {
                             if let Ok(mut found) = found.lock() {
                                 found.push((room_id.clone(), Arc::new(matches)));
@@ -431,16 +525,17 @@ fn scan_all(
     found.into_inner().map_err(|_| ApiError::Internal)
 }
 
-fn scan(
-    path: &Path,
-    predicate: &Predicate,
-    lookups: &Lookups,
-    stamp: &str,
-) -> std::io::Result<Matches> {
+/// One snapshot, its stamp read from its own first line: it may have been rewritten since
+/// the search looked.
+fn scan(path: &Path, predicate: &Predicate, lookups: &Lookups) -> std::io::Result<Matches> {
     let text = std::fs::read_to_string(path)?;
-    let mut first: Vec<Line> = text
-        .lines()
-        .skip(1)
+    let mut lines = text.lines();
+    let stamp = lines
+        .next()
+        .and_then(|line| serde_json::from_str::<Header>(line).ok())
+        .map(|header| header.stamp)
+        .ok_or_else(|| std::io::Error::other("a snapshot without its stamp"))?;
+    let mut first: Vec<Line> = lines
         .filter_map(|line| Some((line, serde_json::from_str::<EventRecord>(line).ok()?)))
         .filter(|(_, event)| model::record_matches(predicate, lookups, event))
         .map(|(line, event)| Line {
@@ -453,14 +548,15 @@ fn scan(
     first.sort();
     first.truncate(MAX_LIMIT);
     Ok(Matches {
-        stamp: stamp.to_owned(),
+        stamp,
         total,
         first,
     })
 }
 
-/// The answer's JSON, the events written as their snapshot holds them.
-fn answer(found: &[(String, Arc<Matches>)], limit: usize) -> String {
+/// The answer's JSON, the events written as their snapshot holds them; `indexing` counts the
+/// catalogues not searched yet.
+fn answer(found: &[(String, Arc<Matches>)], limit: usize, indexing: usize) -> String {
     let total: usize = found.iter().map(|(_, matches)| matches.total).sum();
     let mut lines: Vec<(&Line, &str)> = found
         .iter()
@@ -480,7 +576,10 @@ fn answer(found: &[(String, Arc<Matches>)], limit: usize) -> String {
             format!("{{\"catalogue\":{catalogue},\"event\":{}}}", line.json)
         })
         .collect();
-    format!("{{\"total\":{total},\"events\":[{}]}}", events.join(","))
+    format!(
+        "{{\"total\":{total},\"indexing\":{indexing},\"events\":[{}]}}",
+        events.join(",")
+    )
 }
 
 /// `predicate` for the events of one public catalogue: `catalogue:"…"` asks whether it is

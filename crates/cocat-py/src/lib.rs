@@ -1279,10 +1279,18 @@ fn public_events(
     query: PublicQuery<'_>,
 ) -> Result<Vec<PublicEvent>> {
     let found = py.detach(|| block_on(room.search_public(query)))?;
-    match found {
-        None => Ok(Vec::new()),
-        Some(found) => Ok(found.map_err(http_error)?.events),
+    let Some(found) = found else {
+        return Ok(Vec::new());
+    };
+    let found = found.map_err(http_error)?;
+    if found.indexing > 0 {
+        let note = format!(
+            "{} public catalogues are still being indexed on the server and were not searched",
+            found.indexing
+        );
+        warn(py, &[note])?;
     }
+    Ok(found.events)
 }
 
 /// An event's attributes; a derived interval has none.

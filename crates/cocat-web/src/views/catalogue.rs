@@ -441,6 +441,18 @@ fn found_note(asked: bool, found: &Option<Result<Found, String>>) -> Option<AnyV
             view! { <p class="quiet search-note" role="status">"Searching the public catalogues…"</p> }
                 .into_any(),
         ),
+        Some(Ok(found)) if found.indexing > 0 => {
+            let plural = if found.indexing == 1 { " is" } else { "s are" };
+            Some(
+                view! {
+                    <p class="quiet search-note" role="status">{format!(
+                        "{} public catalogue{plural} still being indexed on the server and not searched yet: search again in a few minutes.",
+                        found.indexing
+                    )}</p>
+                }
+                .into_any(),
+            )
+        }
         Some(Ok(found)) if found.total > found.events.len() => Some(
             view! {
                 <p class="quiet search-note">{format!(

@@ -1007,15 +1007,25 @@ async fn a_search_seen_before_scans_only_the_catalogues_that_changed() {
     let (_, _, found) = search_held(&world, "tag:shock", None).await;
     assert_eq!(found["total"], 2);
 
-    let snapshots = world.update_dir.join("public-index");
-    assert!(snapshots.join(format!("{shocks}.jsonl")).exists());
-    fs::remove_dir_all(&snapshots).unwrap();
+    // Shocks' snapshot keeps its stamp but loses its events: only a kept answer still has s1.
+    let snapshot = world
+        .update_dir
+        .join("public-index")
+        .join(format!("{shocks}.jsonl"));
+    let header = fs::read_to_string(&snapshot)
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+    fs::write(&snapshot, header).unwrap();
     append_events(&world, &cmes, &[("c2", "2020-01-03T00:00:00Z", &["shock"])]);
     let (_, _, found) = search_held(&world, "tag:shock", None).await;
-    assert_eq!(found["total"], 3, "Shocks answered from what was kept");
-    assert!(!snapshots.join(format!("{shocks}.jsonl")).exists());
-    assert!(
-        snapshots.join(format!("{cmes}.jsonl")).exists(),
-        "CMEs scanned again"
+    assert_eq!(found["total"], 3, "Shocks as kept, CMEs scanned again");
+    let (_, _, other) = search_held(&world, "tag:shock OR tag:none", None).await;
+    assert_eq!(
+        other["total"], 2,
+        "a new search scans the snapshot as it is"
     );
+    assert_eq!(other["indexing"], 0);
 }

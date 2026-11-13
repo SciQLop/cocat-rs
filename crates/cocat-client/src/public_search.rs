@@ -22,6 +22,9 @@ const ANSWERS: &str = "public-searches";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublicSearch {
     pub total: usize,
+    /// How many public catalogues the server left out: their index is still being written.
+    #[serde(default)]
+    pub indexing: usize,
     pub events: Vec<PublicEvent>,
 }
 

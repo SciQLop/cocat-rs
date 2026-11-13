@@ -15,6 +15,9 @@ pub const LIMIT: usize = 10_000;
 pub struct Found {
     pub events: Vec<PublicEvent>,
     pub total: usize,
+    /// How many public catalogues the server left out: their index is still being written.
+    #[serde(default)]
+    pub indexing: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
