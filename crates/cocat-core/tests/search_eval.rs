@@ -11,10 +11,11 @@ use std::collections::HashSet;
 use cocat_core::text_search::{Catalogue, rank_catalogues};
 use serde::Deserialize;
 
-/// The averages the search reached when the floors were last set (BM25F, 2026-11-13; the
-/// "every word" filter it replaced scored 0.669 and 0.752).
-const RECALL_FLOOR: f64 = 0.78;
-const MRR_FLOOR: f64 = 0.96;
+/// The averages the search reached when the floors were last set: 0.903 and 1.000 with BM25F,
+/// acronyms and DOIs (2026-11-13). BM25F alone scored 0.781 and 0.963, and the "every word"
+/// filter before it 0.669 and 0.752.
+const RECALL_FLOOR: f64 = 0.90;
+const MRR_FLOOR: f64 = 0.99;
 
 #[derive(Deserialize)]
 struct Row {

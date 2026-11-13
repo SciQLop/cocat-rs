@@ -29,11 +29,55 @@ struct Words;
 
 impl Tokenizer for Words {
     fn tokenize(&self, text: &str) -> Vec<String> {
-        text.split(|c: char| !c.is_alphanumeric())
+        let words: Vec<String> = text
+            .split(|c: char| !c.is_alphanumeric())
             .filter(|word| !word.is_empty())
             .map(|word| singular(&word.to_lowercase()).to_owned())
-            .collect()
+            .collect();
+        let acronyms = acronyms(&words);
+        words.into_iter().chain(acronyms).collect()
     }
+}
+
+/// Names the field writes both in full and as an acronym, in words as the tokenizer leaves them
+/// (lowercase, singular), and other spellings of one acronym. Text holding a name also gets
+/// its acronym, so either finds both, while the words written out still count on their own.
+const ACRONYMS: &[(&[&str], &str)] = &[
+    (&["interplanetary", "coronal", "mass", "ejection"], "icme"),
+    (&["coronal", "mass", "ejection"], "cme"),
+    (&["icmecat"], "icme"),
+    (&["solar", "orbiter"], "solo"),
+    (&["parker", "solar", "probe"], "psp"),
+    (&["heliospheric", "current", "sheet"], "hcs"),
+    (&["solar", "energetic", "particle"], "sep"),
+    (&["stream", "interaction", "region"], "sir"),
+    (&["corotating", "interaction", "region"], "sir"),
+    (&["cir"], "sir"),
+    (&["sircat"], "sir"),
+];
+
+/// The acronyms of the names `words` hold. A name inside a longer one counts once, as the
+/// longer one: an interplanetary CME is an ICME, not also a CME.
+fn acronyms(words: &[String]) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut covered = 0;
+    for at in 0..words.len() {
+        if at < covered {
+            continue;
+        }
+        let names = |phrase: &[&str]| {
+            words.len() >= at + phrase.len()
+                && phrase
+                    .iter()
+                    .zip(&words[at..])
+                    .all(|(name, word)| name == word)
+        };
+        if let Some((phrase, acronym)) = ACRONYMS.iter().find(|(phrase, _)| names(phrase)) {
+            found.push((*acronym).to_owned());
+            covered = at + phrase.len();
+        }
+    }
+    found
 }
 
 // simplify: a final `s` dropped is all the stemming there is (`icmes` → `icme`, `mass` kept);
@@ -104,8 +148,9 @@ impl Catalogue<'_> {
     }
 }
 
-/// The catalogues that answer `query`, by their position in `all`, best first: those BM25
-/// ranks, then those holding every word only inside longer ones (`reconn`, being typed).
+/// The catalogues that answer `query`, by their position in `all`, best first: those citing
+/// the DOI it holds, if any, then those BM25 ranks, then those holding every word only inside
+/// longer ones (`reconn`, being typed).
 // simplify: the index is rebuilt for each query, fine for the few hundred public catalogues;
 // past a few thousand, keep a `TextIndex` of the list and query it instead.
 pub fn rank_catalogues(all: &[Catalogue<'_>], query: &str) -> Vec<usize> {
@@ -119,12 +164,60 @@ pub fn rank_catalogues(all: &[Catalogue<'_>], query: &str) -> Vec<usize> {
     let typed: Vec<usize> = (0..all.len())
         .filter(|at| !ranked.contains(at) && all[*at].holds(&words))
         .collect();
-    ranked.into_iter().chain(typed).collect()
+    let found: Vec<usize> = ranked.into_iter().chain(typed).collect();
+    let citing = doi(query).map_or_else(Vec::new, |doi| citing(all, doi));
+    let (cited, others): (Vec<usize>, Vec<usize>) =
+        found.into_iter().partition(|at| citing.contains(at));
+    let unranked: Vec<usize> = citing
+        .into_iter()
+        .filter(|at| !cited.contains(at))
+        .collect();
+    cited.into_iter().chain(unranked).chain(others).collect()
+}
+
+/// The DOI a query holds, `10.3847/2041-8213/ab4429`, up to the next space: pasted alone or
+/// inside a link to the paper.
+fn doi(query: &str) -> Option<&str> {
+    let start = query.find("10.")?;
+    let doi = query[start..].split_whitespace().next()?;
+    let (registrant, suffix) = doi.split_once('/')?;
+    let numbered =
+        registrant[3..].len() >= 4 && registrant[3..].chars().all(|c| c.is_ascii_digit());
+    (numbered && !suffix.is_empty()).then_some(doi)
+}
+
+/// The catalogues whose text cites `doi`. A link may run past the DOI (`.../ab4429/pdf`): its
+/// last parts are dropped one at a time until some catalogue cites what is left.
+fn citing(all: &[Catalogue<'_>], doi: &str) -> Vec<usize> {
+    let texts: Vec<String> = all
+        .iter()
+        .map(|catalogue| {
+            format!(
+                "{} {}",
+                catalogue.title(),
+                catalogue.description.unwrap_or_default()
+            )
+            .to_lowercase()
+        })
+        .collect();
+    let mut doi = doi.to_lowercase();
+    loop {
+        let citing: Vec<usize> = (0..all.len())
+            .filter(|at| texts[*at].contains(&doi))
+            .collect();
+        if !citing.is_empty() {
+            return citing;
+        }
+        match doi.rsplit_once('/') {
+            Some((shorter, _)) if shorter.contains('/') => doi = shorter.to_owned(),
+            _ => return Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Fields, TextIndex};
+    use super::{Catalogue, Fields, TextIndex, rank_catalogues};
 
     fn ranked(documents: &[(&str, &str)], query: &str) -> Vec<usize> {
         let index = TextIndex::new(documents.iter().map(|(title, body)| Fields { title, body }));
@@ -180,6 +273,57 @@ mod tests {
         assert_eq!(ranked(&documents, "icme"), [0]);
         assert_eq!(ranked(&documents, "exhausts"), [1]);
         assert_eq!(ranked(&documents, "mass"), [2], "a double s stays");
+    }
+
+    #[test]
+    fn an_acronym_finds_the_name_written_out_and_the_other_way_round() {
+        let documents = [
+            ("Solar Orbiter exhausts", ""),
+            ("SolO EUI events", ""),
+            ("Coronal mass ejections", ""),
+            ("Solar wind", ""),
+            ("Solar flares", ""),
+            ("Solar radio bursts", ""),
+        ];
+        assert_eq!(sorted(ranked(&documents, "SolO")), [0, 1]);
+        let written_out = ranked(&documents, "solar orbiter");
+        assert_eq!(
+            sorted(written_out[..2].to_vec()),
+            [0, 1],
+            "then those only solar"
+        );
+        assert_eq!(ranked(&documents, "CME"), [2]);
+        assert!(
+            ranked(&documents, "solar").contains(&0),
+            "the words written out still count"
+        );
+    }
+
+    fn sorted(mut found: Vec<usize>) -> Vec<usize> {
+        found.sort_unstable();
+        found
+    }
+
+    #[test]
+    fn a_doi_or_a_paper_link_puts_the_catalogues_citing_it_first() {
+        let all = [
+            Catalogue {
+                name: "Saturn reconnection",
+                description: Some("Cite: https://doi.org/10.3847/2041-8213/ab4429 (Table 1)."),
+                ..Catalogue::default()
+            },
+            Catalogue {
+                name: "Article pdf from iopscience",
+                description: Some(
+                    "https://iopscience.iop.org/article/10.3847/2041-8213/pdf, \
+                     https://iopscience.iop.org/article/10.3847/1538-4357/ae2601/pdf",
+                ),
+                ..Catalogue::default()
+            },
+        ];
+        let link = "https://iopscience.iop.org/article/10.3847/2041-8213/ab4429/pdf";
+        assert_eq!(rank_catalogues(&all, link)[0], 0);
+        assert_eq!(rank_catalogues(&all, "10.3847/2041-8213/AB4429")[0], 0);
     }
 
     #[test]
