@@ -9,6 +9,7 @@ publish.workspace = true
 cocat-core = { path = "../cocat-core" }
 base64 = "0.22"
 percent-encoding = "2"
+regex = "1"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 serde.workspace = true
 strip-ansi-escapes = "0.2"

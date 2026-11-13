@@ -11,6 +11,12 @@ description, best answer first: a word in the name counts more than the same wor
 description, and a rare word more than a common one, as in SciQLop's product search. Paste a
 DOI to see whether a paper's list is already there.
 
+To look for events rather than catalogues, search them all at once: on **All events**, or on
+one of your catalogues, choose **Search in › Public catalogues** under the search box. A
+search such as `tag:shock #speed:>800` then lists the matching events of every public
+catalogue, and **Save as new smart catalogue…** keeps it up to date as the lists change. See
+[Search](../reference/search.md#filter-search-the-whole-project-or-the-public-catalogues).
+
 Some are kept by **curators**, people the server's administrators trust to accept and edit
 them.
 

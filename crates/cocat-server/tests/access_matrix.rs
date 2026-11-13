@@ -166,6 +166,7 @@ const ROWS: &[Row] = &[
     row("GET", "/api/rooms", Guard::SignedIn, Style::Api),
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
     row("GET", "/api/public", Guard::SignedIn, Style::Api),
+    row("GET", "/api/public/events", Guard::SignedIn, Style::Api),
     row("POST", "/api/public", Guard::Curator, Style::Api),
     row("PATCH", "/api/public/{public}", Guard::Curator, Style::Api),
     row(

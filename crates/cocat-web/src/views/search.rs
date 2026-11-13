@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use serde_json::Value;
 
 use crate::edit;
+use crate::public_events::names;
 use crate::route::Route;
 use crate::search::{
     Choice, Completion, Piece, Query, Side, Vocabulary, accept, choices, clause, complete, label,
@@ -14,24 +15,52 @@ use crate::search::{
 };
 use crate::state::Room;
 use crate::views::controls::{Error, commit, error_line};
+use crate::views::projects::Projects;
 
-/// The shown catalogue's own search: `None` when the box cannot edit it (not a catalogue,
-/// or a rule with time operations), `Some(None)` when it has none yet.
-pub fn own_search(room: &Room, shown: &Route) -> Option<Option<String>> {
+/// A catalogue's own search: its text, and whether it searches the public catalogues rather
+/// than the project.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OwnSearch {
+    pub text: String,
+    pub public: bool,
+}
+
+/// `None` when the box cannot edit the search (not a catalogue, or a rule with time
+/// operations), `Some(None)` when there is none yet.
+pub type Own = Option<Option<OwnSearch>>;
+
+/// The shown catalogue's own search; `public` names the public catalogues.
+pub fn own_search(room: &Room, shown: &Route, public: &[(String, String)]) -> Own {
     let Route::Catalogue(uuid) = shown else {
         return None;
     };
     room.read(|txn| {
         let rule = model::catalogue(txn, uuid)?.rule;
-        own_of(rule.as_ref(), &model::catalogue_names(txn))
+        own_of(rule.as_ref(), &model::catalogue_names(txn), public)
     })
 }
 
-/// A catalogue's own search: `Some(None)` when it has none, `None` when its rule is no search.
-pub fn own_of(rule: Option<&Value>, names: &[(String, String)]) -> Option<Option<String>> {
-    match rule {
-        None => Some(None),
-        Some(rule) => query::rule_search(rule, names).map(Some),
+/// A catalogue's own search, from its rule.
+pub fn own_of(
+    rule: Option<&Value>,
+    names: &[(String, String)],
+    public: &[(String, String)],
+) -> Own {
+    let Some(rule) = rule else {
+        return Some(None);
+    };
+    let own = |text, public| Some(OwnSearch { text, public });
+    query::rule_search(rule, names)
+        .map(|text| own(text, false))
+        .or_else(|| query::public_search(rule, public).map(|text| own(text, true)))
+}
+
+/// The side the box opens on for a catalogue's own search.
+fn side_of(own: &Own) -> Side {
+    match own {
+        Some(Some(own)) if own.public => Side::Public,
+        Some(Some(_)) => Side::Search,
+        _ => Side::Filter,
     }
 }
 
@@ -53,29 +82,28 @@ impl Boxed {
     }
 
     /// Opens a page: on its own search when it has one, else on an empty filter.
-    pub fn open(&self, own: Option<Option<String>>) {
-        let (side, text) = match own {
-            Some(Some(text)) => (Side::Search, text),
-            _ => (Side::Filter, String::new()),
-        };
-        self.side.set(side);
-        self.query.set(text);
+    pub fn open(&self, own: Own) {
+        self.side.set(side_of(&own));
+        self.query
+            .set(own.flatten().map(|own| own.text).unwrap_or_default());
         self.other.set(String::new());
     }
 
+    /// The search keeps its text from the project to the public catalogues and back; the
+    /// filter keeps its own.
     fn turn(&self, side: Side) {
-        if self.side.get_untracked() == side {
-            return;
+        let was = self.side.get_untracked();
+        if was.searches() != side.searches() {
+            let shown = self.query.get_untracked();
+            self.query.set(self.other.get_untracked());
+            self.other.set(shown);
         }
-        let shown = self.query.get_untracked();
-        self.query.set(self.other.get_untracked());
-        self.other.set(shown);
         self.side.set(side);
     }
 
     /// Whether the box edits the catalogue's own search.
     pub fn searching(&self) -> bool {
-        self.side.get() == Side::Search
+        self.side.get().searches()
     }
 }
 
@@ -86,7 +114,7 @@ pub fn SearchLine(
     shown: Memo<Route>,
     boxed: Boxed,
     parsed: Memo<Query>,
-    own: Memo<Option<Option<String>>>,
+    own: Memo<Own>,
     /// In the preview: the catalogue's name, and every control disabled.
     #[prop(optional)]
     frozen: Option<Signal<String>>,
@@ -107,17 +135,26 @@ pub fn SearchLine(
         _ => String::new(),
     });
     let saved = move || own.get().flatten();
+    let saved_text = move || saved().map(|own| own.text).unwrap_or_default();
+    let public = move || boxed.side.get() == Side::Public;
     let typed = move || query.with(|text| !text.trim().is_empty());
     let readable = move || parsed.with(|parsed| matches!(parsed, Query::Words | Query::Rule(_)));
     let edited = move || {
+        let scope_changed = saved().is_some_and(|own| own.public != public());
         boxed.searching()
             && own.with(Option::is_some)
-            && query.with(|text| text.trim() != saved().unwrap_or_default())
+            && (scope_changed || query.with(|text| text.trim() != saved_text()))
     };
     let savable = move || can_write && (readable() || !typed());
     let source = move || match (shown.get(), boxed.side.get()) {
         (Route::Catalogue(uuid), Side::Filter) => Some(uuid),
         _ => None,
+    };
+    let projects = expect_context::<Projects>();
+    let public_names = move || {
+        projects
+            .public
+            .with(|all| all.as_deref().map(names).unwrap_or_default())
     };
     let offer_new = move || can_write && readable() && shown.get() != Route::Trash;
     let writer = room.clone();
@@ -126,25 +163,51 @@ pub fn SearchLine(
             return;
         };
         let text = query.get_untracked();
+        let public = boxed.side.get_untracked() == Side::Public;
+        let public_names = public_names();
         commit(&writer, error, |txn| {
-            let names = model::catalogue_names(txn);
-            edit::save_search(txn, &uuid, &text, &names)
+            let names = match public {
+                true => public_names,
+                false => model::catalogue_names(txn),
+            };
+            edit::save_search(txn, &uuid, &text, &names, public)
         });
     };
     let save_into = StoredValue::new_local(save_into);
-    let revert = move |_| query.set(saved().unwrap_or_default());
+    let revert = move |_| boxed.open(own.get_untracked());
     let hint = move || {
         let name = name.get();
-        match (edited(), saved().is_some()) {
-            (true, _) => format!("The table shows what “{name}” would hold."),
-            (false, true) => {
-                format!("“{name}” holds its picked events and every event this search finds.")
-            }
-            (false, false) => format!(
-                "Type a search: “{name}” will also hold every event of the project it finds."
+        let found = match public() {
+            true => "of the public catalogues",
+            false => "of the project",
+        };
+        match (shown.get(), edited(), saved().is_some()) {
+            (Route::Catalogue(_), true, _) => format!("The table shows what “{name}” would hold."),
+            (Route::Catalogue(_), false, true) => format!(
+                "“{name}” holds its picked events and every event {found} this search finds."
             ),
+            (Route::Catalogue(_), false, false) => {
+                format!("Type a search: “{name}” will also hold every event {found} it finds.")
+            }
+            _ => {
+                "The table shows the events of every public catalogue this search finds.".to_owned()
+            }
         }
     };
+    let switch = move || match shown.get() {
+        Route::Catalogue(_) => {
+            own.with(Option::is_some)
+                && (typed()
+                    || own.with(|own| matches!(own, Some(Some(_))))
+                    || boxed.side.get().searches())
+        }
+        Route::AllEvents => typed() || public(),
+        _ => false,
+    };
+    let scopes = Signal::derive(move || match shown.get() {
+        Route::AllEvents => ALL_EVENTS_SCOPES,
+        _ => CATALOGUE_SCOPES,
+    });
     view! {
         {move || parsed.with(|parsed| match parsed {
             Query::Broken(why) => Some(view! { <p class="field-error search-error" role="alert">{why.clone()}</p> }),
@@ -153,10 +216,8 @@ pub fn SearchLine(
         <div class="search-line">
             // At rest on a plain catalogue the switch only adds a row: it shows while a search
             // is typed, on its other side, or on a smart catalogue, whose search is its rule.
-            <Show when=move || own.with(Option::is_some) && (typed()
-                || own.with(|own| matches!(own, Some(Some(_))))
-                || boxed.side.get() == Side::Search)>
-                <SideSwitch boxed disabled/>
+            <Show when=switch>
+                <SideSwitch boxed scopes disabled/>
             </Show>
             <Show when=move || boxed.searching()>
                 <span class="quiet">{hint}</span>
@@ -177,7 +238,7 @@ pub fn SearchLine(
             </Show>
         </div>
         <Show when=move || saving.get()>
-            <SaveSearch query source=Signal::derive(source) saving/>
+            <SaveSearch query source=Signal::derive(source) public=Signal::derive(public) saving/>
         </Show>
         {error_line(error)}
     }
@@ -188,13 +249,20 @@ pub fn SearchLine(
 fn SaveSearch(
     query: RwSignal<String>,
     source: Signal<Option<String>>,
+    /// It searches the public catalogues.
+    public: Signal<bool>,
     saving: RwSignal<bool>,
 ) -> impl IntoView {
+    let projects = expect_context::<Projects>();
     let room = expect_context::<Room>();
     let name = RwSignal::new(String::new());
     let error: Error = RwSignal::new(None);
     let reader = room.clone();
     let keeps = move || match source.get() {
+        _ if public.get() => {
+            "It keeps every event of the public catalogues that matches the search, as they change."
+                .to_owned()
+        }
         Some(uuid) => {
             let name = reader
                 .read(|txn| model::catalogue(txn, &uuid))
@@ -214,10 +282,18 @@ fn SaveSearch(
         let name = name.get_untracked();
         let source = source.get_untracked();
         let author = room.config.user_email.clone();
+        let public = public.get_untracked();
+        let public_names = projects
+            .public
+            .with_untracked(|all| all.as_deref().map(names).unwrap_or_default());
         let made = room.write(|txn| {
-            let names = model::catalogue_names(txn);
-            let predicate = query::parse(&text, &names)?;
-            let rule = query::rule(&predicate, source.as_deref());
+            let rule = match public {
+                true => query::public_rule(&query::parse(&text, &public_names)?),
+                false => {
+                    let predicate = query::parse(&text, &model::catalogue_names(txn))?;
+                    query::rule(&predicate, source.as_deref())
+                }
+            };
             edit::new_smart_catalogue(txn, &name, &author, &rule)
         });
         match made {
@@ -245,17 +321,32 @@ fn SaveSearch(
     }
 }
 
-/// Filter what the catalogue holds, or edit the search that brings events into it.
+type Scopes = &'static [(Side, &'static str)];
+
+const CATALOGUE_SCOPES: Scopes = &[
+    (Side::Filter, "This catalogue"),
+    (Side::Search, "All events"),
+    (Side::Public, "Public catalogues"),
+];
+
+/// On "All events" the filter is the project's search.
+const ALL_EVENTS_SCOPES: Scopes = &[
+    (Side::Filter, "This project"),
+    (Side::Public, "Public catalogues"),
+];
+
+/// Filter what the catalogue holds, or edit the search that brings events into it, from the
+/// project or from the public catalogues.
 #[component]
-fn SideSwitch(boxed: Boxed, disabled: bool) -> impl IntoView {
+fn SideSwitch(boxed: Boxed, scopes: Signal<Scopes>, disabled: bool) -> impl IntoView {
     let on = move |side: Side| move || (boxed.side.get() == side).to_string();
     view! {
         <div class="scope" role="group" aria-label="Search in">
             <span class="quiet">"Search in"</span>
-            <button type="button" class="scope-option" aria-pressed=on(Side::Filter) disabled=disabled
-                on:click=move |_| boxed.turn(Side::Filter)>"This catalogue"</button>
-            <button type="button" class="scope-option" aria-pressed=on(Side::Search) disabled=disabled
-                on:click=move |_| boxed.turn(Side::Search)>"All events"</button>
+            {move || scopes.get().iter().map(|&(side, label)| view! {
+                <button type="button" class="scope-option" aria-pressed=on(side) disabled=disabled
+                    on:click=move |_| boxed.turn(side)>{label}</button>
+            }).collect_view()}
         </div>
     }
 }

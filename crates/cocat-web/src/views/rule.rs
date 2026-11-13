@@ -83,9 +83,10 @@ pub fn live_counts(
         _ => 0,
     };
     Signal::derive(move || {
-        let (total, picked) = members.with(|members| {
+        let (total, picked, public) = members.with(|members| {
             let rows = members.ok()?;
-            Some((rows.len(), with_search.get().then(|| picked(rows))))
+            let public = rows.iter().any(|row| row.catalogue.is_some());
+            Some((rows.len(), with_search.get().then(|| picked(rows)), public))
         })?;
         let visible = order.with(Vec::len);
         let smart = about.with(|about| about.smart) && picked.is_none_or(|picked| picked == 0);
@@ -97,6 +98,7 @@ pub fn live_counts(
         }
         let (kind, unit) = match (shown.get(), smart) {
             (Route::Trash, _) => ("In the trash", "event"),
+            (Route::AllEvents, _) if public => ("In the public catalogues", "event"),
             (Route::AllEvents, _) => ("Every event of the project", "event"),
             (_, true) => ("Smart catalogue", "event"),
             _ => ("Catalogue", "event"),

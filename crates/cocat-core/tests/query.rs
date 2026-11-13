@@ -479,3 +479,30 @@ fn a_search_rule_with_nothing_but_its_source_reads_as_that_catalogue() {
         Some(r#"catalogue:"Bow shocks""#)
     );
 }
+
+#[test]
+fn a_search_of_the_public_catalogues_reads_back_and_no_other_rule_does() {
+    let public = [("public.donki.cme".to_owned(), "DONKI CMEs".to_owned())];
+    let predicate = query::parse("tag:shock catalogue:\"DONKI CMEs\"", &public).unwrap();
+    let rule = query::public_rule(&predicate);
+    assert_eq!(rule["filter"], json!({"public": true}));
+    assert_eq!(
+        query::public_search(&rule, &public).as_deref(),
+        Some("tag:shock catalogue:\"DONKI CMEs\"")
+    );
+    assert_eq!(
+        query::rule_search(&rule, &public),
+        None,
+        "not a search of the project"
+    );
+    let project = query::rule(&predicate, None);
+    assert_eq!(query::public_search(&project, &public), None);
+    let refused =
+        cocat_core::rules::parse(&json!({"filter": {"public": false}, "where": {"text": "x"}}));
+    assert!(
+        refused
+            .unwrap_err()
+            .to_string()
+            .contains("\"public\" must be true")
+    );
+}

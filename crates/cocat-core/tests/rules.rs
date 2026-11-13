@@ -112,7 +112,7 @@ fn a_missing_option_names_its_set() {
 fn a_misspelt_set_lists_the_known_ones() {
     assert_eq!(
         message(json!({"subtract": [{"all": true}, {"catalog": "c"}]})),
-        "rule.subtract[1]: not a set: expected one of all, catalogue, filter, merge, \
+        "rule.subtract[1]: not a set: expected one of all, public, catalogue, filter, merge, \
          intersect, subtract, union, shift, tile, window, closest"
     );
 }
@@ -195,4 +195,18 @@ fn validation_reaches_nested_sets() {
         "rule.union[1].subtract[1].where.not.match: [ is not a regular expression"
     );
     assert!(matches!(problem(rule), Problem::Regex { .. }));
+}
+
+#[test]
+fn a_rule_says_whether_it_takes_events_from_the_public_catalogues() {
+    let reaches = |rule: Value| rules::parse(&rule).unwrap().reaches_public();
+    assert!(reaches(
+        json!({"filter": {"public": true}, "where": {"text": "x"}})
+    ));
+    assert!(reaches(
+        json!({"union": [{"all": true}, {"merge": {"public": true}, "gap": 60}]})
+    ));
+    assert!(!reaches(
+        json!({"filter": {"all": true}, "where": {"text": "x"}})
+    ));
 }

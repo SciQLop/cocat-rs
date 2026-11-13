@@ -6,6 +6,7 @@ use leptos::prelude::*;
 
 use crate::help;
 use crate::history::browse_href;
+use crate::hits::Hits;
 use crate::public::{
     Folder, PublicCatalogue, Shelf, folder_label, folder_tree, index, open_folders,
 };
@@ -17,6 +18,7 @@ use crate::views::sidebar::{PublicIcon, keep_current_in_view};
 use crate::views::submissions::{
     CopyForm, MySubmissionsPage, SubmissionPage, SubmissionsPage, waiting_submissions,
 };
+use crate::views::table::marked;
 
 /// The index and the submissions pages. No project is open here, so no connection either.
 #[component]
@@ -332,7 +334,8 @@ fn PublicPage(folder: Option<String>, error: Error) -> impl IntoView {
                 (false, true) => view! { <p class="quiet">"No public catalogue matches."</p> }.into_any(),
                 (false, false) => shelves.into_iter().map(|shelf| {
                     let titled = shelf.folder != here;
-                    view! { <PublicShelf shelf titled/> }
+                    let words = search.get_untracked();
+                    view! { <PublicShelf shelf titled words/> }
                 }).collect_view().into_any(),
             })}
         </main>
@@ -357,12 +360,12 @@ fn NoneYet() -> impl IntoView {
 /// One folder's catalogues; `titled` is false for the folder the page is about, whose name
 /// is already the page's title.
 #[component]
-fn PublicShelf(shelf: Shelf, titled: bool) -> impl IntoView {
+fn PublicShelf(shelf: Shelf, titled: bool, words: String) -> impl IntoView {
     let label = shelf.label();
     let count = shelf.catalogues.len();
     let list = view! {
         <ul class="plain-list">
-            {shelf.catalogues.into_iter().map(|catalogue| view! { <PublicRow catalogue/> }).collect_view()}
+            {shelf.catalogues.into_iter().map(|catalogue| view! { <PublicRow catalogue words=words.clone()/> }).collect_view()}
         </ul>
     };
     match titled {
@@ -378,7 +381,8 @@ fn PublicShelf(shelf: Shelf, titled: bool) -> impl IntoView {
 }
 
 #[component]
-fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
+/// `words`: the page's search, marked in the catalogue's name.
+fn PublicRow(catalogue: PublicCatalogue, words: String) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let project = catalogue.project();
     let day = catalogue.day().map(|day| format!("changed {day}"));
@@ -389,7 +393,7 @@ fn PublicRow(catalogue: PublicCatalogue) -> impl IntoView {
         <li class="public-item">
             <div class="public-row">
                 <button type="button" class="public-open name" on:click=move |_| projects.switch(&project)>
-                    {catalogue.name.clone()}
+                    {marked(&Hits::words(&words), "name", &catalogue.name)}
                 </button>
                 {catalogue.description.clone().map(|text| view! { <Description text/> })}
                 <span class="meta">

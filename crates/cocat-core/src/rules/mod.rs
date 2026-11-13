@@ -47,6 +47,12 @@ pub enum Set {
     Catalogue {
         catalogue: String,
     },
+    /// The events of every public catalogue on the server. A room does not hold them, so it
+    /// evaluates this as nothing; the clients that show them ask the server
+    /// (`GET /api/public/events`).
+    Public {
+        public: bool,
+    },
     Filter {
         filter: Box<Set>,
         #[serde(rename = "where")]
@@ -80,6 +86,25 @@ pub enum Set {
     Closest {
         closest: (Box<Set>, Box<Set>),
     },
+}
+
+impl Set {
+    /// Whether it takes events from the public catalogues, which a room does not hold.
+    pub fn reaches_public(&self) -> bool {
+        match self {
+            Set::Public { .. } => true,
+            Set::All { .. } | Set::Catalogue { .. } => false,
+            Set::Filter { filter: one, .. }
+            | Set::Merge { merge: one, .. }
+            | Set::Shift { shift: one, .. }
+            | Set::Tile { tile: one, .. } => one.reaches_public(),
+            Set::Intersect { intersect: (a, b) }
+            | Set::Subtract { subtract: (a, b) }
+            | Set::Window { window: (a, b), .. }
+            | Set::Closest { closest: (a, b) } => a.reaches_public() || b.reaches_public(),
+            Set::Union { union } => union.iter().any(Set::reaches_public),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -132,6 +157,8 @@ pub enum Problem {
     Format(String),
     #[error("\"all\" must be true")]
     All,
+    #[error("\"public\" must be true")]
+    Public,
     #[error("{0} is neither an event field nor an attribute (#key)")]
     Field(String),
     #[error("{pattern} is not a regular expression")]

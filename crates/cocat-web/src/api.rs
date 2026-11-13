@@ -241,6 +241,15 @@ pub async fn read<T: DeserializeOwned>(api: &str, segments: &[&str]) -> Result<T
     json(Request::get(&at(api, segments)?)).await
 }
 
+/// One search through every public catalogue.
+pub async fn public_events(
+    api: &str,
+    query: &str,
+) -> Result<crate::public_events::Found, ApiError> {
+    let url = crate::public_events::url(api, query).ok_or(ApiError::Url)?;
+    json(Request::get(&url)).await
+}
+
 /// A DELETE of `<api>/<segments…>`.
 pub async fn remove(api: &str, segments: &[&str]) -> Result<(), ApiError> {
     send(Request::delete(&at(api, segments)?)).await

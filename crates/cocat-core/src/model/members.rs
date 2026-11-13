@@ -127,6 +127,7 @@ impl<'t, T: ReadTxn> Evaluator<'t, T> {
     fn set(&mut self, set: &Set) -> Result<Vec<Item>, RuleError> {
         Ok(match set {
             Set::All { .. } => all(self.txn),
+            Set::Public { .. } => Vec::new(),
             Set::Catalogue { catalogue } => self.catalogue(catalogue)?,
             Set::Filter { filter, predicate } => match filter.as_ref() {
                 Set::All { .. } => self.filter_all(predicate)?,

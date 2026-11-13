@@ -280,7 +280,7 @@ async fn counted(state: &AppState, room: &PublicRoom) -> Option<i64> {
 
 /// Names the room file as it is now. The file only grows between compactions, so its size
 /// tells two writes apart even when the clock gives them the same modification time.
-fn file_stamp(state: &AppState, room_id: &str) -> String {
+pub(crate) fn file_stamp(state: &AppState, room_id: &str) -> String {
     let modified = state
         .rooms
         .room_changed(room_id)

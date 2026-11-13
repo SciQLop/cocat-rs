@@ -424,6 +424,7 @@ mod tests {
             author: None,
             attributes: Map::new(),
             sources: Vec::new(),
+            catalogue: None,
         }
     }
 

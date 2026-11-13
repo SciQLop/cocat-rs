@@ -181,10 +181,14 @@ fn NewCatalogue() -> impl IntoView {
 fn Entry(item: CatalogueItem, shown: Memo<Route>, page: String) -> impl IntoView {
     let route = Route::Catalogue(item.uuid.clone());
     let href = route.href(&page);
-    let count = item
-        .count
-        .map_or_else(|| "!".to_owned(), |count| count.to_string());
-    let count_title = item.count.is_none().then_some("The rule does not evaluate");
+    let (count, count_title) = match item.count {
+        _ if item.public => (
+            String::new(),
+            Some("Open it to count what the public catalogues add"),
+        ),
+        Some(count) => (count.to_string(), None),
+        None => ("!".to_owned(), Some("The rule does not evaluate")),
+    };
     let request = use_context::<crate::views::actions::CatalogueMenuRequest>();
     let target = route.hash();
     let open_menu = move |event: leptos::ev::MouseEvent| {

@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 
 use crate::detail::{EventDetail, event_detail, range_text};
-use crate::format::duration_text;
+use crate::format::{duration_text, value_text};
 use crate::route::Route;
 use crate::rows::Row;
 use crate::state::Room;
@@ -11,6 +11,7 @@ use crate::views::catalogue::OnScreen;
 use crate::views::catalogue_details::{CatalogueEditor, DetailsEditor};
 use crate::views::event_editor::{Editor, TrashActions};
 use crate::views::history::LastChanges;
+use crate::views::projects::Projects;
 use crate::views::stats::Statistics;
 
 /// What the panel shows. Built from the selection so that the editor of one event stays put
@@ -19,6 +20,8 @@ use crate::views::stats::Statistics;
 pub enum Shown {
     Nothing,
     Derived(Row),
+    /// An event of a public catalogue, found by a search: not an event of the project.
+    Public(Row),
     Event(String),
 }
 
@@ -26,6 +29,7 @@ impl Shown {
     pub fn of(selected: &Option<Row>) -> Self {
         match selected {
             None => Shown::Nothing,
+            Some(row) if row.catalogue.is_some() => Shown::Public(row.clone()),
             Some(row) => match &row.uuid {
                 Some(uuid) => Shown::Event(uuid.clone()),
                 None => Shown::Derived(row.clone()),
@@ -54,6 +58,7 @@ pub fn EventPanel(
         Shown::Nothing if editing_details() => view! { <CatalogueEditor route/> }.into_any(),
         Shown::Nothing => view! { <Statistics screen/> }.into_any(),
         Shown::Derived(row) => derived(&row).into_any(),
+        Shown::Public(row) => public(&row).into_any(),
         Shown::Event(uuid) => view! {
             <Event uuid=uuid.clone() selected/>
             <LastChanges uuid shown=route/>
@@ -181,6 +186,54 @@ pub fn head(detail: &EventDetail) -> impl IntoView + use<> {
             <h2 class="mono">{detail.start.clone()}</h2>
             <p class="quiet mono">{range}</p>
         </div>
+    }
+}
+
+/// An event the public catalogues' search found: what the table shows of it, and the way to
+/// its catalogue.
+fn public(row: &Row) -> impl IntoView + use<> {
+    let (start, stop) = range_text(row.start, row.stop);
+    let name = row.catalogue.clone().unwrap_or_default();
+    let projects = expect_context::<Projects>();
+    let catalogue = projects.public.with_untracked(|all| {
+        all.iter()
+            .flatten()
+            .find(|catalogue| catalogue.name == name)
+            .cloned()
+    });
+    let fact = |label: String, value: String| view! { <dt>{label}</dt><dd>{value}</dd> };
+    let tags = (!row.tags.is_empty()).then(|| fact("Tags".into(), row.tags.join(", ")));
+    let author = row
+        .author
+        .clone()
+        .map(|author| fact("Author".into(), author));
+    let attributes = row
+        .attributes
+        .iter()
+        .map(|(key, value)| fact(key.clone(), value_text(value)))
+        .collect_view();
+    view! {
+        <div class="panel-head">
+            <span class="eyebrow">"Public catalogue event"</span>
+            <h2 class="mono">{start}</h2>
+            <p class="quiet mono">{format!("→ {stop}")}</p>
+        </div>
+        <dl class="facts">
+            <dt>"Catalogue"</dt><dd>{name.clone()}</dd>
+            <dt>"Duration"</dt><dd>{duration_text(row.stop - row.start)}</dd>
+            {tags}
+            {author}
+            {attributes}
+        </dl>
+        <p class="quiet">"It belongs to a public catalogue, not to this project."</p>
+        {catalogue.map(|catalogue| {
+            let project = catalogue.project();
+            view! {
+                <button type="button" class="button" on:click=move |_| projects.switch(&project)>
+                    {format!("Open “{}”", catalogue.name)}
+                </button>
+            }
+        })}
     }
 }
 

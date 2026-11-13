@@ -7,6 +7,7 @@ use leptos::html::Div;
 use leptos::prelude::*;
 
 use crate::format::{duration_text, person_text, time_text, value_text};
+use crate::hits::{AUTHOR, Hits, START, STATUS, TAGS};
 use crate::layout::{tags_that_fit, window};
 use crate::presence::{Peer, editing};
 use crate::preview::sort_hint;
@@ -27,6 +28,7 @@ fn fixed(key: &SortKey) -> (&'static str, &'static str, f64) {
     match key {
         SortKey::Start => ("Start", "w-start", 180.0),
         SortKey::Duration => ("Duration", "w-duration", 110.0),
+        SortKey::Catalogue => ("Catalogue", "w-catalogue", 220.0),
         SortKey::Tags => ("Tags", "w-tags", 190.0),
         SortKey::Confidence => ("Confidence", "w-confidence", 130.0),
         SortKey::Status => ("Status", "w-status", 120.0),
@@ -53,6 +55,9 @@ pub fn Table(
     /// Told where the view ends, as a position in `order`.
     #[prop(optional)]
     view_end: Option<RwSignal<usize>>,
+    /// What the search found, marked in the cells.
+    #[prop(optional, into)]
+    hits: Option<Signal<Hits>>,
 ) -> impl IntoView {
     let peers = expect_context::<Room>().peers;
     let editors = Memo::new(move |_| peers.with(|peers| editing(peers)));
@@ -88,16 +93,23 @@ pub fn Table(
         let keys = keys.get();
         let total = order.with(Vec::len);
         let columns = columns.get();
+        let none = Hits::default();
         let rows = members.with(|members| {
             let Ok(rows) = members else {
                 return Vec::new();
             };
-            order.with(|order| {
-                order[range.clone()]
-                    .iter()
-                    .map(|&index| row(&rows[index], &keys, &columns, selected, editors))
-                    .collect::<Vec<_>>()
-            })
+            let shown = |hits: &Hits| {
+                order.with(|order| {
+                    order[range.clone()]
+                        .iter()
+                        .map(|&index| row(&rows[index], &keys, &columns, selected, editors, hits))
+                        .collect::<Vec<_>>()
+                })
+            };
+            match hits {
+                Some(hits) => hits.with(shown),
+                None => shown(&none),
+            }
         });
         view! {
             <tr class="spacer" style=format!("height: {}px", range.start as f64 * ROW)></tr>
@@ -192,6 +204,7 @@ fn row(
     columns: &[String],
     selected: RwSignal<Option<Row>>,
     editors: Memo<HashMap<String, Peer>>,
+    hits: &Hits,
 ) -> impl IntoView + use<> {
     let editor = {
         let uuid = row.uuid.clone();
@@ -216,7 +229,7 @@ fn row(
         .iter()
         .map(|key| {
             let text = row.attributes.get(key).map(value_text).unwrap_or_default();
-            view! { <td class="text">{text}</td> }
+            view! { <td class="text">{marked(hits, &format!("#{key}"), &text)}</td> }
         })
         .collect_view();
     view! {
@@ -225,21 +238,28 @@ fn row(
             style=move || editor.with(|peer| peer.as_ref().map(|peer| format!("--peer: {}", peer.color)))
             title=move || editor.with(|peer| peer.as_ref().map(|peer| format!("{} is editing this event", peer.email)))
             on:click=move |_| selected.set(Some(picked.clone()))>
-            {keys.iter().map(|key| cell(row, key)).collect_view()}
+            {keys.iter().map(|key| cell(row, key, hits)).collect_view()}
             {attributes}
         </tr>
     }
 }
 
-fn cell(row: &Row, key: &SortKey) -> AnyView {
+fn cell(row: &Row, key: &SortKey, hits: &Hits) -> AnyView {
     match key {
-        SortKey::Start => view! { <td class="mono">{time_text(row.start)}</td> }.into_any(),
+        SortKey::Start => {
+            view! { <td class="mono">{marked(hits, START, &time_text(row.start))}</td> }.into_any()
+        }
         SortKey::Duration => {
             view! { <td class="mono">{duration_text(row.stop - row.start)}</td> }.into_any()
         }
-        SortKey::Tags => view! { <td class="text">{tags(row)}</td> }.into_any(),
+        SortKey::Tags => view! { <td class="text">{tags(row, hits)}</td> }.into_any(),
+        SortKey::Catalogue => {
+            let name = row.catalogue.clone().unwrap_or_default();
+            // Unmarked: a search's words never match the catalogue's name.
+            view! { <td class="text" title=name.clone()>{name.clone()}</td> }.into_any()
+        }
         SortKey::Confidence => view! { <td>{confidence(row.confidence)}</td> }.into_any(),
-        SortKey::Status => view! { <td>{status(row)}</td> }.into_any(),
+        SortKey::Status => view! { <td>{status(row, hits)}</td> }.into_any(),
         _ => {
             let author = row
                 .author
@@ -247,12 +267,28 @@ fn cell(row: &Row, key: &SortKey) -> AnyView {
                 .map(person_text)
                 .unwrap_or_default()
                 .to_owned();
+            let author = marked(hits, AUTHOR, &author);
             view! { <td class="text quiet-cell" title=row.author.clone()>{author}</td> }.into_any()
         }
     }
 }
 
-fn tags(row: &Row) -> impl IntoView + use<> {
+/// `text` with what the search found in it, in the column of `field`, inside `<mark>`.
+pub fn marked(hits: &Hits, field: &str, text: &str) -> AnyView {
+    if hits.is_empty() {
+        return text.to_owned().into_any();
+    }
+    hits.runs(field, text)
+        .into_iter()
+        .map(|(run, hit)| match hit {
+            true => view! { <mark>{run.to_owned()}</mark> }.into_any(),
+            false => run.to_owned().into_any(),
+        })
+        .collect_view()
+        .into_any()
+}
+
+fn tags(row: &Row, hits: &Hits) -> impl IntoView + use<> {
     if row.uuid.is_none() {
         let count = row.sources.len();
         let plural = if count == 1 { "" } else { "s" };
@@ -263,7 +299,7 @@ fn tags(row: &Row) -> impl IntoView + use<> {
     let hidden = row.tags.len() - shown;
     view! {
         <span class="tags" title=(hidden > 0).then(|| row.tags.join(", "))>
-            {row.tags[..shown].iter().map(|tag| view! { <span class="tag">{tag.clone()}</span> }).collect_view()}
+            {row.tags[..shown].iter().map(|tag| view! { <span class="tag">{marked(hits, TAGS, tag)}</span> }).collect_view()}
             {(hidden > 0).then(|| view! { <span class="tag more">{format!("+{hidden}")}</span> })}
         </span>
     }
@@ -282,11 +318,11 @@ fn confidence(confidence: Option<f64>) -> impl IntoView + use<> {
     })
 }
 
-fn status(row: &Row) -> impl IntoView + use<> {
+fn status(row: &Row, hits: &Hits) -> impl IntoView + use<> {
     let name = if row.uuid.is_none() {
         "derived"
     } else {
         row.status.name()
     };
-    view! { <span class=format!("badge {name}")>{name}</span> }
+    view! { <span class=format!("badge {name}")>{marked(hits, STATUS, name)}</span> }
 }

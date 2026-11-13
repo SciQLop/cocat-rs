@@ -6,18 +6,21 @@ use crate::views::preview::{PreviewView, load_preview};
 use crate::views::proposal::InProposal;
 
 use crate::help::{Shown, empty_text, offers_public};
+use crate::hits::Hits;
 use crate::period::Period;
 use crate::preview::{PreviewState, Stage, TableState, stage, switch_state};
+use crate::public_events::{self, Found};
 use crate::route::Route;
 use crate::rows::{
     Row, SortKey, all_rows, attribute_keys, filter, matching, preview_rows, rows, sort, trash_rows,
 };
-use crate::search::{self, Listing, Query, Side, listing};
+use crate::search::{self, Listing, Query, Side, listing, public_query};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::sync::Loading;
 use crate::views::actions::{Actions, Form, Freeze, PublicButtons, RenameForm};
 use crate::views::controls::Hint;
+use crate::views::projects::Projects;
 use crate::views::rule::{Heading, live_about, live_counts};
 use crate::views::rule_editor::RuleEditor;
 use crate::views::search::{Boxed, SearchBox, SearchBuilder, SearchLine, own_search};
@@ -136,22 +139,51 @@ fn CatalogueView(
     let boxed = Boxed::new();
     let query = boxed.query;
     let building = RwSignal::new(false);
+    let projects = expect_context::<Projects>();
+    if projects.public.with_untracked(Option::is_none) {
+        projects.reload_public(|_| {});
+    }
+    let public_names = Memo::new(move |_| {
+        projects
+            .public
+            .with(|all| all.as_deref().map(public_events::names).unwrap_or_default())
+    });
     let reader = room.clone();
-    let own = Memo::new(move |_| own_search(&reader, &shown.get()));
+    let own =
+        Memo::new(move |_| public_names.with(|public| own_search(&reader, &shown.get(), public)));
     let reader = room.clone();
     let parsed = Memo::new(move |_| {
-        let names = reader.read(|txn| cocat_core::model::catalogue_names(txn));
+        let names = match boxed.side.get() {
+            Side::Public => public_names.get(),
+            _ => reader.read(|txn| cocat_core::model::catalogue_names(txn)),
+        };
         query.with(|text| search::read(text, &names))
     });
+    let hits = Memo::new(move |_| parsed.with(|parsed| query.with(|text| Hits::of(parsed, text))));
+    let saved = Memo::new(move |_| own.get().flatten().map(|own| (own.text, own.public)));
     let how = Memo::new(move |_| {
-        let saved = own.get().flatten();
-        query.with(|text| listing(boxed.side.get(), saved.as_deref(), text))
+        saved.with(|saved| {
+            let saved = saved
+                .as_ref()
+                .map(|(text, public)| (text.as_str(), *public));
+            query.with(|text| listing(boxed.side.get(), saved, text))
+        })
     });
+    let asked = Memo::new(move |_| {
+        saved.with(|saved| {
+            let saved = saved
+                .as_ref()
+                .map(|(text, public)| (text.as_str(), *public));
+            query.with(|text| public_query(boxed.side.get(), saved, text))
+        })
+    });
+    let found = fetch_public(asked);
     let reader = room.clone();
-    let members = Members::Live(Memo::new(move |_| match shown.get() {
+    let project = Memo::new(move |_| match shown.get() {
+        _ if how.get() == Listing::Picked && shown.get() == Route::AllEvents => Ok(Vec::new()),
         Route::Catalogue(uuid) => reader.read(|txn| {
             let previewed = match (how.get(), parsed.get()) {
-                (Listing::Preview, Query::Empty) => Some(None),
+                (Listing::Picked, _) | (Listing::Preview, Query::Empty) => Some(None),
                 (Listing::Preview, Query::Words | Query::Rule(_)) => {
                     let names = cocat_core::model::catalogue_names(txn);
                     query
@@ -172,10 +204,17 @@ fn CatalogueView(
             .read(|txn| all_rows(txn))
             .map_err(|error| error.to_string()),
         _ => Ok(Vec::new()),
+    });
+    let members = Members::Live(Memo::new(move |_| {
+        let project = project.get()?;
+        match asked.get() {
+            None => Ok(project),
+            Some(_) => found.with(|found| with_public(project, found)),
+        }
     }));
     let with_search = Signal::derive(move || match how.get() {
         Listing::Members => own.with(|own| matches!(own, Some(Some(_)))),
-        Listing::Preview => query.with(|text| !text.trim().is_empty()),
+        Listing::Preview | Listing::Picked => query.with(|text| !text.trim().is_empty()),
     });
     let period = RwSignal::new(kept.period);
     let sorting = RwSignal::new((SortKey::Start, false));
@@ -186,7 +225,7 @@ fn CatalogueView(
                 return Vec::new();
             };
             let everything = || (0..rows.len()).collect();
-            if boxed.side.get() == Side::Search {
+            if boxed.side.get().searches() {
                 return everything();
             }
             parsed.with(|parsed| match parsed {
@@ -253,12 +292,16 @@ fn CatalogueView(
     });
     Effect::new(move |_| {
         let saved = own.get().flatten();
-        if boxed.side.get_untracked() == Side::Search {
-            query.set(saved.unwrap_or_default());
+        if boxed.side.get_untracked().searches() {
+            query.set(saved.map(|own| own.text).unwrap_or_default());
         }
     });
     let placeholder = Signal::derive(move || match (shown.get(), boxed.side.get()) {
         (Route::Catalogue(_), Side::Search) => "Search all events for this catalogue".to_owned(),
+        (Route::Catalogue(_), Side::Public) => {
+            "Search the public catalogues for this catalogue".to_owned()
+        }
+        (_, Side::Public) => "Search every public catalogue".to_owned(),
         (Route::Catalogue(_), Side::Filter) => {
             let held = members.with(|members| members.map_or(0, <[Row]>::len));
             format!("Filter these {held} events")
@@ -302,6 +345,7 @@ fn CatalogueView(
             </div>
         </div>
         <SearchLine shown boxed parsed own/>
+        {move || found.with(|found| found_note(asked.get().is_some(), found))}
         <Show when=move || building.get()>
             <SearchBuilder query building keys/>
         </Show>
@@ -330,7 +374,83 @@ fn CatalogueView(
             <Timeline members matching period selected/>
         </Show>
         <PeriodLine period order members/>
-        <Table members order sorting columns selected empty empty_link scroll_top/>
+        <Table members order sorting columns selected empty empty_link scroll_top hits/>
+    }
+}
+
+/// What the server answered for the public catalogues' search: `None` while it searches.
+type PublicFound = RwSignal<Option<Result<Found, String>>>;
+
+/// Asks the server for each search `asked` names, once typing pauses; a late answer to an
+/// older search is dropped.
+fn fetch_public(asked: Memo<Option<String>>) -> PublicFound {
+    let found: PublicFound = RwSignal::new(None);
+    let api = expect_context::<Projects>().api();
+    Effect::new(move |_| {
+        let Some(text) = asked.get() else {
+            found.set(None);
+            return;
+        };
+        found.set(None);
+        let api = api.clone();
+        set_timeout(
+            move || {
+                if asked.get_untracked().as_deref() != Some(text.as_str()) {
+                    return;
+                }
+                spawn_local(async move {
+                    let answer = crate::api::public_events(&api, &text)
+                        .await
+                        .map_err(|error| error.to_string());
+                    if asked.get_untracked().as_deref() == Some(text.as_str()) {
+                        found.try_set(Some(answer));
+                    }
+                });
+            },
+            SEARCH_PAUSE,
+        );
+    });
+    found
+}
+
+/// How long typing pauses before the server searches the public catalogues.
+const SEARCH_PAUSE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// The project's rows and the public catalogues' in time order; an error of the server's
+/// search stands for both, as a rule's would.
+fn with_public(
+    mut rows: Vec<Row>,
+    found: &Option<Result<Found, String>>,
+) -> Result<Vec<Row>, String> {
+    let Some(found) = found else {
+        return Ok(rows);
+    };
+    let found = found.clone()?;
+    let public = expect_context::<Projects>().public;
+    rows.extend(
+        public.with_untracked(|all| public_events::rows(found, all.as_deref().unwrap_or_default())),
+    );
+    rows.sort_by_key(|row| (row.start, row.stop));
+    Ok(rows)
+}
+
+/// While the server searches, and when it found more than the page shows.
+fn found_note(asked: bool, found: &Option<Result<Found, String>>) -> Option<AnyView> {
+    match found {
+        None if asked => Some(
+            view! { <p class="quiet search-note" role="status">"Searching the public catalogues…"</p> }
+                .into_any(),
+        ),
+        Some(Ok(found)) if found.total > found.events.len() => Some(
+            view! {
+                <p class="quiet search-note">{format!(
+                    "The public catalogues hold {} matching events: the first {} by start time are shown. Narrow the search to see the others.",
+                    found.total, found.events.len()
+                )}</p>
+            }
+            .into_any(),
+        ),
+        _ => None,
     }
 }
 

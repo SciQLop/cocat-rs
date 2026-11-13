@@ -45,7 +45,7 @@ pub use read::{
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
 pub use relay::{Counts, Wanted, hold};
 pub use restore::restore;
-pub use search::{Search, search};
+pub use search::{Search, record_matches, search};
 pub use submission::{adopt, extract};
 pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,

@@ -166,6 +166,22 @@ pub fn rule_search(rule: &Value, catalogues: &[(String, String)]) -> Option<Stri
     print(&canonical(predicate), catalogues)
 }
 
+/// The search of a rule over the public catalogues (see [`public_rule`]), or `None` for any
+/// other rule. `catalogues` are the public catalogues' (id, name).
+pub fn public_search(rule: &Value, catalogues: &[(String, String)]) -> Option<String> {
+    match rules::parse(rule) {
+        Ok(Set::Filter { filter, predicate }) if matches!(*filter, Set::Public { .. }) => {
+            print(&canonical(predicate), catalogues)
+        }
+        _ => None,
+    }
+}
+
+/// The rule that searches the events of every public catalogue with `predicate`.
+pub fn public_rule(predicate: &Predicate) -> Value {
+    json!({"filter": {"public": true}, "where": predicate})
+}
+
 /// The rule that searches `source` (`None`: all events) with `predicate`.
 pub fn rule(predicate: &Predicate, source: Option<&str>) -> Value {
     let filter = match source {

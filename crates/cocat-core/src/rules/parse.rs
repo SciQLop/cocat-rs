@@ -12,8 +12,9 @@ type SetReader = fn(&Node) -> Result<Set>;
 type PredicateReader = fn(&Node) -> Result<Predicate>;
 
 /// The forms of a set, each with the options it takes besides its own key.
-const SETS: [(&str, &[&str], SetReader); 11] = [
+const SETS: [(&str, &[&str], SetReader); 12] = [
     ("all", &[], all),
+    ("public", &[], public),
     ("catalogue", &[], catalogue),
     ("filter", &["where"], filter),
     ("merge", &["gap"], merge),
@@ -146,6 +147,14 @@ fn all(node: &Node) -> Result<Set> {
     match all.value {
         Value::Bool(true) => Ok(Set::All { all: true }),
         _ => Err(all.invalid(Problem::All)),
+    }
+}
+
+fn public(node: &Node) -> Result<Set> {
+    let public = node.needs("public", "public")?;
+    match public.value {
+        Value::Bool(true) => Ok(Set::Public { public: true }),
+        _ => Err(public.invalid(Problem::Public)),
     }
 }
 

@@ -222,6 +222,7 @@ pub struct RoomManager {
     ended_sessions: broadcast::Sender<String>,
     versions: VersionCache,
     diffs: DiffCache,
+    public_events: crate::public_search::PublicEvents,
 }
 
 impl RoomManager {
@@ -240,6 +241,7 @@ impl RoomManager {
             ended_sessions: broadcast::channel(ENDED_SESSIONS_BACKLOG).0,
             versions: VersionCache::default(),
             diffs: DiffCache::default(),
+            public_events: crate::public_search::PublicEvents::default(),
         }
     }
 
@@ -262,6 +264,11 @@ impl RoomManager {
     /// The diffs the history computed last, dropped with the room.
     pub fn diff_cache(&self) -> &DiffCache {
         &self.diffs
+    }
+
+    /// The public catalogues' events as last searched.
+    pub fn public_events(&self) -> &crate::public_search::PublicEvents {
+        &self.public_events
     }
 
     pub fn with_storage(mut self, storage: StorageLimits) -> Self {

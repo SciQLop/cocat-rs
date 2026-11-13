@@ -207,7 +207,7 @@ pub fn PreviewView(
         state.with(|state| {
             state
                 .as_ref()
-                .and_then(|state| own_of(state.catalogue.rule.as_ref(), &state.names))
+                .and_then(|state| own_of(state.catalogue.rule.as_ref(), &state.names, &[]))
         })
     });
     let name = Signal::derive(move || {
@@ -245,6 +245,7 @@ pub fn PreviewView(
     });
     let placeholder = Signal::derive(move || match boxed.side.get() {
         Side::Search => "Search all events for this catalogue".to_owned(),
+        Side::Public => "Search the public catalogues for this catalogue".to_owned(),
         Side::Filter => "Filter once the project has loaded".to_owned(),
     });
     let building = RwSignal::new(false);

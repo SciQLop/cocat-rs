@@ -819,3 +819,98 @@ async fn a_curator_unmarked_from_the_command_line_is_cut_off_at_the_next_role_ch
     };
     assert_eq!(close.map(|frame| u16::from(frame.code)), Some(4403));
 }
+
+/// Events with `tags` written straight into `room`'s file, as the relay leaves them.
+fn append_events(world: &World, room: &str, events: &[(&str, &str, &[&str])]) {
+    let doc = Doc::new();
+    let update = {
+        let mut txn = doc.transact_mut();
+        for (uuid, start, tags) in events {
+            let at = Timestamp::parse(start).unwrap();
+            let mut record = EventRecord::new(*uuid, at, at);
+            record.tags = tags.iter().map(|tag| (*tag).to_owned()).collect();
+            model::create_event(&mut txn, &record).unwrap();
+        }
+        txn.encode_update_v1()
+    };
+    let (mut store, _) = FileRoomStore::open(&world.update_dir, room).unwrap();
+    store.append(bytes::Bytes::from(update)).unwrap();
+    store.flush().unwrap();
+}
+
+#[tokio::test]
+async fn one_search_finds_events_in_every_public_catalogue() {
+    let world = World::start().await;
+    let shocks = world.public(json!({"name": "Shocks"})).await;
+    let cmes = world.public(json!({"name": "CMEs"})).await;
+    append_events(
+        &world,
+        &shocks,
+        &[
+            ("s1", "2020-01-02T00:00:00Z", &["shock"]),
+            ("s2", "2020-01-04T00:00:00Z", &["wave"]),
+        ],
+    );
+    append_events(
+        &world,
+        &cmes,
+        &[("c1", "2020-01-01T00:00:00Z", &["shock", "cme"])],
+    );
+    let search = |query: &str| {
+        let encoded: String = form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let path = format!("/api/public/events?q={encoded}");
+        let world = &world;
+        async move {
+            world
+                .call(Some(world.reader), Method::GET, &path, None)
+                .await
+        }
+    };
+    let uuids = |found: &Value| -> Vec<String> {
+        found["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["uuid"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let (status, found) = search("tag:shock").await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(
+        uuids(&found),
+        ["c1", "s1"],
+        "in time order, across catalogues"
+    );
+    assert_eq!(found["total"], 2);
+    assert_eq!(found["events"][0]["catalogue"], cmes.as_str());
+    assert_eq!(found["events"][1]["tags"], json!(["shock"]));
+
+    let (_, found) = search("shock catalogue:Shocks").await;
+    assert_eq!(uuids(&found), ["s1"], "catalogue: names a public catalogue");
+
+    append_events(&world, &cmes, &[("c2", "2020-01-03T00:00:00Z", &["shock"])]);
+    let (_, found) = search("tag:shock").await;
+    assert_eq!(
+        uuids(&found),
+        ["c1", "s1", "c2"],
+        "a changed catalogue is read again"
+    );
+
+    let (_, found) = world
+        .call(
+            Some(world.reader),
+            Method::GET,
+            "/api/public/events?q=tag:shock&limit=1",
+            None,
+        )
+        .await;
+    assert_eq!((uuids(&found).len(), found["total"].clone()), (1, json!(3)));
+
+    let (status, _) = search("auhtor:x").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = world
+        .call(None, Method::GET, "/api/public/events?q=shock", None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use cocat_core::model::{self, EventRecord, Member, Status};
-use cocat_core::rules::{Predicate, RuleError};
+use cocat_core::rules::{Lookups, Predicate, RuleError};
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value};
 use yrs::ReadTxn;
@@ -27,12 +27,17 @@ pub struct Row {
     pub attributes: Map<String, Value>,
     /// The events a derived interval came from.
     pub sources: Vec<String>,
+    /// The public catalogue holding it, by name, for an event found in the public
+    /// catalogues: it is not an event of the project.
+    pub catalogue: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SortKey {
     Start,
     Duration,
+    /// The public catalogue an event was found in.
+    Catalogue,
     Tags,
     Confidence,
     Status,
@@ -64,6 +69,7 @@ pub fn rows<T: ReadTxn>(txn: &T, catalogue: &str) -> Result<Vec<Row>, RuleError>
                 author: None,
                 attributes: Map::new(),
                 sources,
+                catalogue: None,
             },
         })
         .collect())
@@ -88,19 +94,41 @@ pub fn all_rows<T: ReadTxn>(txn: &T) -> Result<Vec<Row>, RuleError> {
     search_rows(txn, &Predicate::And(Vec::new()), None)
 }
 
-/// The positions of the rows a search keeps, tested as a smart catalogue would test them.
+/// The positions of the rows a search keeps, tested as a smart catalogue would test them;
+/// an event of a public catalogue is tested as the row shows it, being in no catalogue here.
 pub fn matching<T: ReadTxn>(
     txn: &T,
     rows: &[Row],
     predicate: &Predicate,
 ) -> Result<Vec<usize>, RuleError> {
-    let search = model::Search::new(txn, predicate, Timestamp::now())?;
+    let now = Timestamp::now();
+    let search = model::Search::new(txn, predicate, now)?;
+    let outside = Lookups::new(predicate, now, &mut |_| Ok(HashSet::new()))?;
     Ok((0..rows.len())
         .filter(|&index| {
             let row = &rows[index];
-            search.matches(txn, row.uuid.as_deref(), row.start, row.stop)
+            match row.catalogue {
+                Some(_) => model::record_matches(predicate, &outside, &row_record(row)),
+                None => search.matches(txn, row.uuid.as_deref(), row.start, row.stop),
+            }
         })
         .collect())
+}
+
+/// What a row shows, as an event record.
+fn row_record(row: &Row) -> EventRecord {
+    let time = |nanos| Timestamp::from_unix_nanos(nanos).unwrap_or_else(Timestamp::now);
+    let mut record = EventRecord::new(
+        row.uuid.clone().unwrap_or_default(),
+        time(row.start),
+        time(row.stop),
+    );
+    record.tags = row.tags.clone();
+    record.confidence = row.confidence;
+    record.status = row.status;
+    record.author = row.author.clone();
+    record.attributes = row.attributes.clone();
+    record
 }
 
 /// The events a search finds, in all of the project or among one catalogue's members: what a
@@ -195,18 +223,25 @@ pub fn fixed_columns(rows: &[Row], order: &[usize], sorted: &SortKey) -> Vec<Sor
         SortKey::Tags => shown().any(|row| !row.tags.is_empty() || row.uuid.is_none()),
         SortKey::Confidence => shown().any(|row| row.confidence.is_some()),
         SortKey::Author => shown().any(|row| row.author.is_some()),
+        SortKey::Catalogue => shown().any(|row| row.catalogue.is_some()),
         _ => true,
+    };
+    let shows = |key: &SortKey| match key {
+        // Only public events have one: the column never says it is missing.
+        SortKey::Catalogue => holds(key),
+        _ => order.is_empty() || key == sorted || holds(key),
     };
     [
         SortKey::Start,
         SortKey::Duration,
+        SortKey::Catalogue,
         SortKey::Tags,
         SortKey::Confidence,
         SortKey::Status,
         SortKey::Author,
     ]
     .into_iter()
-    .filter(|key| order.is_empty() || key == sorted || holds(key))
+    .filter(|key| shows(key))
     .collect()
 }
 
@@ -269,6 +304,7 @@ fn sort_value(row: &Row, key: &SortKey) -> Option<SortValue> {
         SortKey::Confidence => row.confidence.map(SortValue::Number),
         SortKey::Status => position(row.status).map(|index| SortValue::Number(index as f64)),
         SortKey::Author => row.author.clone().map(SortValue::Text),
+        SortKey::Catalogue => row.catalogue.clone().map(SortValue::Text),
         SortKey::Attribute(key) => row.attributes.get(key).map(|value| match value {
             Value::Number(number) => SortValue::Number(number.as_f64().unwrap_or_default()),
             other => SortValue::Text(value_text(other)),
@@ -299,6 +335,15 @@ pub fn record_row(record: EventRecord) -> Row {
         author: record.author,
         attributes: record.attributes,
         sources: Vec::new(),
+        catalogue: None,
+    }
+}
+
+/// An event found in the public catalogue named `catalogue`.
+pub fn public_row(record: EventRecord, catalogue: String) -> Row {
+    Row {
+        catalogue: Some(catalogue),
+        ..record_row(record)
     }
 }
 
@@ -416,6 +461,7 @@ mod tests {
                     .cloned()
                     .unwrap(),
                 sources: Vec::new(),
+                catalogue: None,
             }
         );
     }
@@ -538,6 +584,7 @@ mod tests {
             author: None,
             attributes: serde_json::Map::new(),
             sources: Vec::new(),
+            catalogue: None,
         }
     }
 
@@ -563,6 +610,38 @@ mod tests {
             shown(&[], Start),
             [Start, Duration, Tags, Confidence, Status, Author],
             "an empty table keeps its header"
+        );
+    }
+
+    #[test]
+    fn a_search_filters_public_rows_by_what_they_show() {
+        let doc = room();
+        let at = Timestamp::from_unix_nanos(0).unwrap();
+        let mut shock = EventRecord::new("p1", at, at);
+        shock.tags = vec!["shock".into()];
+        let rows = [
+            public_row(shock, "Shocks".into()),
+            public_row(EventRecord::new("p2", at, at), "Shocks".into()),
+        ];
+        let kept = matching(&doc.transact(), &rows, &search("tag:shock")).unwrap();
+        assert_eq!(kept, [0]);
+    }
+
+    #[test]
+    fn events_found_in_the_public_catalogues_name_theirs_in_a_column() {
+        let at = Timestamp::from_unix_nanos(0).unwrap();
+        let mut found = public_row(EventRecord::new("p", at, at), "DONKI CMEs".into());
+        found.tags = vec!["cme".into()];
+        let rows = [found];
+        let columns = fixed_columns(&rows, &[0], &SortKey::Start);
+        assert_eq!(
+            columns[..3],
+            [SortKey::Start, SortKey::Duration, SortKey::Catalogue]
+        );
+        assert!(!fixed_columns(&rows, &[], &SortKey::Catalogue).contains(&SortKey::Catalogue));
+        assert_eq!(
+            left_out(&columns).as_deref(),
+            Some("No confidence or author in these events.")
         );
     }
 

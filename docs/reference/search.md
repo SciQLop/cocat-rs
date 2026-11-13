@@ -54,7 +54,7 @@ plain message: `there is no field "auhtor": did you mean "author"?`.
 Not sure how to write it? **Build a search**, at the right of the box, writes it for you from
 rows of field, test and value.
 
-## Filter or search the whole project
+## Filter, search the whole project, or the public catalogues
 
 On a catalogue, **Search in** under the box says what the search does:
 
@@ -62,9 +62,21 @@ On a catalogue, **Search in** under the box says what the search does:
 - **All events** searches the whole project, and becomes the catalogue's own search: besides
   the events picked into it, the catalogue then holds every event the search finds. Press
   **Save** to keep it.
+- **Public catalogues** searches every public catalogue on the server at once, and becomes the
+  catalogue's own search the same way. `catalogue:"DONKI CMEs"` then names a public catalogue.
+  The table names the public catalogue each event comes from; select one to see it and open
+  its catalogue.
 
 To search the whole project without touching any catalogue, open **All events** at the top of
-the catalogue list.
+the catalogue list. Its **Public catalogues** switch searches them all instead.
+
+What the search found is marked in the table, and in the names of the public catalogues when
+you search their list.
+
+!!! note "Public events stay on the server"
+    A smart catalogue searching the public catalogues lists their events in the browser only:
+    Python and SciQLop see its picked events, not what the server finds. The page shows at
+    most 10,000 events and says when the search finds more.
 
 ## Smart catalogues
 

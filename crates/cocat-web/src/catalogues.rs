@@ -46,6 +46,9 @@ pub struct CatalogueItem {
     pub smart: bool,
     /// `None` when the rule does not evaluate.
     pub count: Option<usize>,
+    /// Its rule takes events from the public catalogues: the server counts those, when the
+    /// catalogue is open.
+    pub public: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -77,11 +80,17 @@ pub fn catalogue_list<T: ReadTxn>(txn: &T) -> CatalogueList {
             } else {
                 Some(summary.event_count)
             };
+            let public = summary
+                .rule
+                .as_ref()
+                .and_then(|rule| cocat_core::rules::parse(rule).ok())
+                .is_some_and(|set| set.reaches_public());
             CatalogueItem {
                 uuid: summary.uuid,
                 name: summary.name,
                 smart,
                 count,
+                public,
             }
         })
         .collect();
@@ -173,12 +182,14 @@ mod tests {
                     name: "Bow shock crossings".into(),
                     smart: false,
                     count: Some(2),
+                    public: false,
                 },
                 CatalogueItem {
                     uuid: "c-s".into(),
                     name: "Solitary waves".into(),
                     smart: true,
                     count: Some(2),
+                    public: false,
                 },
             ]
         );

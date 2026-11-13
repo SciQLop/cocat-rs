@@ -20,6 +20,7 @@ impl Words<'_> {
     fn set(&self, set: &Set) -> String {
         match set {
             Set::All { .. } => "every event".to_owned(),
+            Set::Public { .. } => "every event of the public catalogues".to_owned(),
             Set::Catalogue { catalogue } => match (self.name)(catalogue) {
                 Some(name) => format!("“{name}”"),
                 None => format!("catalogue {catalogue}"),
@@ -27,6 +28,7 @@ impl Words<'_> {
             Set::Filter { filter, predicate } => {
                 let subject = match filter.as_ref() {
                     Set::All { .. } => "events".to_owned(),
+                    Set::Public { .. } => "events of the public catalogues".to_owned(),
                     other => self.operand(other),
                 };
                 format!("{subject} where {}", self.predicate(predicate))
@@ -69,7 +71,7 @@ impl Words<'_> {
     /// A set inside another, bracketed unless it is one word.
     fn operand(&self, set: &Set) -> String {
         match set {
-            Set::All { .. } | Set::Catalogue { .. } => self.set(set),
+            Set::All { .. } | Set::Public { .. } | Set::Catalogue { .. } => self.set(set),
             _ => format!("({})", self.set(set)),
         }
     }
@@ -255,6 +257,12 @@ mod tests {
             words(rule),
             "events where start ≥ 2015-01-01 00:00:00 and duration > 10 min"
         );
+    }
+
+    #[test]
+    fn a_search_of_the_public_catalogues_says_so() {
+        let rule = json!({"filter": {"public": true}, "where": {"text": "shock"}});
+        assert!(words(rule).starts_with("events of the public catalogues where"));
     }
 
     #[test]

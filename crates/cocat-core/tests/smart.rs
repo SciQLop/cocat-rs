@@ -485,3 +485,11 @@ fn a_frozen_catalogue_names_the_smart_one_it_froze() {
     let untouched = model::catalogue(&doc.transact(), THIRD).unwrap();
     assert!(untouched.copied_from.is_empty());
 }
+
+#[test]
+fn a_search_of_the_public_catalogues_holds_only_its_picked_events_in_the_room() {
+    let doc = room();
+    let rule = json!({"filter": {"public": true}, "where": {"text": "shock"}});
+    catalogue(&doc, SMART, &uuids(&[2]), Some(rule));
+    assert_eq!(event_uuids(&doc, SMART), uuids(&[2]));
+}
