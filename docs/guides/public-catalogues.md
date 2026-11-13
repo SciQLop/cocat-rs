@@ -33,8 +33,10 @@ you may find:
   since 1963, current sheet exhausts, the 1859 aurora sightings); HELCATS HIGeoCAT and LINKCAT;
   MMS burst selections and magnetopause crossings; Lan Jian's STEREO ICME, SIR, shock and SEP
   lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
-  ICME comes from; the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms;
-  and Parker Solar Probe's heliospheric current sheet crossings (Fargette et al. 2026).
+  ICME comes from; LLAMAICE (Kay et al. 2026), every near-Earth CME candidate with the
+  team's verdict and boundaries, and the six catalogues it collates side by side;
+  the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms; and Parker Solar
+  Probe's heliospheric current sheet crossings (Fargette et al. 2026).
 - **VizieR**, under the same *Literature* folders: 27 event tables published with papers and
   kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
   Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar

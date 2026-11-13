@@ -60,6 +60,9 @@ enum Files {
         urls: &'static [&'static str],
         answered: fn(&str) -> Result<(), String>,
     },
+    /// Files that only make sense together: downloaded on each run, they reach `read` as one
+    /// text, each after a [`FILE_BREAK`].
+    Together(&'static [&'static str]),
 }
 
 struct List {
@@ -81,7 +84,11 @@ const JUNO: &str = "Louis, Hospodarsky, Jackman et al. (2022), Lists of magnetop
 const CASSINI: &str = "Jackman (2022), List of Saturn magnetopause and bow shock crossings by the Cassini spacecraft, Zenodo, https://doi.org/10.5281/zenodo.5913537, licence CC-BY-4.0; see Jackman et al. (2019), JGR, https://doi.org/10.1029/2019JA026628.";
 const MESSENGER: &str = "Sun (2026), Lists of Magnetopause and Bow Shock Crossings of Mercury by MESSENGER Spacecraft, Zenodo, https://doi.org/10.5281/zenodo.18236915, licence CC-BY-4.0; see Sun et al. (2020), GRL, https://doi.org/10.1029/2020GL089784.";
 
-const LISTS: [List; 53] = [
+const LLAMAICE_CREDIT: &str = "Kay, C., Davies, E. E., Dumbović, M., Martinić, K., Palmerio, E., Rüdisser, H. T., Weiler, E. & Möstl, C. (2026), Collection, Collation, and Comparison of Near-Earth In Situ CME Boundaries, Space Weather, https://doi.org/10.1029/2025SW004753 (paper CC-BY-4.0); LLAMAICE v1.0 at https://osprei.space/llamaice, which states no licence for the files.";
+const LLAMAICE_FOLDER: &str = "Literature/Heliosphere/LLAMAICE near-Earth CMEs (Kay)";
+const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat";
+
+const LISTS: [List; 60] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -701,6 +708,86 @@ const LISTS: [List; 53] = [
         part: "",
     },
     List {
+        key: "llamaice",
+        folder: LLAMAICE_FOLDER,
+        name: "Near-Earth CME candidates, ACE and Wind 1995-2006 (LLAMAICE)",
+        about: "Every CME candidate the published near-Earth catalogues list from February 1995 to December 2006, as the LLAMAICE team reviewed it, with the team's `comment` starting with its confidence that this is a CME (Y yes, PY probably yes, M maybe, PN probably not, N no). Where the team set boundaries (`bounds_from` LLAMAICE), the event runs from the first to the last of, in time order, `sheath_start`, `front_mixed_start` (a region mixing sheath and ejecta signatures), `ejecta_start`, `ejecta_end` and `back_mixed_end` (a mixed region behind the ejecta). Where it did not, mostly candidates it doubts (`bounds_from` catalogues), the event spans what the catalogues said. `catalogues` names the catalogues that list it, each with its own list here; `interacts_with` is the LLAMAICE CME it interacts with and `hss` the high-speed stream catalogues it matches.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Together(&[
+            "https://osprei.space/llamadata/LLAMAICE_1.0.csv",
+            LLAMAICE_SOURCES,
+        ]),
+        read: llamaice,
+        part: "",
+    },
+    List {
+        key: "llamaice-richardson-cane",
+        folder: LLAMAICE_FOLDER,
+        name: "Richardson & Cane ICMEs (LLAMAICE)",
+        about: "The Richardson & Cane list of near-Earth ICMEs (Richardson & Cane 2010, https://doi.org/10.1007/s11207-010-9568-6), as collated by LLAMAICE for ACE and Wind, February 1995 to December 2006. The event runs from the sheath start (the ejecta start when the catalogue gives no sheath) to the ejecta end; `llamaice_event` is the LLAMAICE CME it was matched to, so the same CME can be compared across catalogues, and `cme_time` the time of the CME at the Sun when the catalogue gives one.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Remote(&[LLAMAICE_SOURCES]),
+        read: llamaice_source,
+        part: "RC",
+    },
+    List {
+        key: "llamaice-jian",
+        folder: LLAMAICE_FOLDER,
+        name: "Jian ICMEs (LLAMAICE)",
+        about: "Lan Jian's list of ICMEs at ACE and Wind (Jian et al. 2006, https://doi.org/10.1007/s11207-006-0133-2), as collated by LLAMAICE for ACE and Wind, February 1995 to December 2006. The event runs from the sheath start (the ejecta start when the catalogue gives no sheath) to the ejecta end; `llamaice_event` is the LLAMAICE CME it was matched to, so the same CME can be compared across catalogues, and `cme_time` the time of the CME at the Sun when the catalogue gives one.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Remote(&[LLAMAICE_SOURCES]),
+        read: llamaice_source,
+        part: "Jian",
+    },
+    List {
+        key: "llamaice-lepping",
+        folder: LLAMAICE_FOLDER,
+        name: "Lepping magnetic clouds (LLAMAICE)",
+        about: "Lepping's list of Wind magnetic clouds (Lepping et al. 2006, https://doi.org/10.5194/angeo-24-215-2006), as collated by LLAMAICE for ACE and Wind, February 1995 to December 2006. The event runs from the sheath start (the ejecta start when the catalogue gives no sheath) to the ejecta end; `llamaice_event` is the LLAMAICE CME it was matched to, so the same CME can be compared across catalogues, and `cme_time` the time of the CME at the Sun when the catalogue gives one.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Remote(&[LLAMAICE_SOURCES]),
+        read: llamaice_source,
+        part: "Lepping",
+    },
+    List {
+        key: "llamaice-wind",
+        folder: LLAMAICE_FOLDER,
+        name: "Wind ICME catalogue (LLAMAICE)",
+        about: "The Wind ICME catalogue (Nieves-Chinchilla et al. 2018, https://doi.org/10.1007/s11207-018-1247-z), as collated by LLAMAICE for ACE and Wind, February 1995 to December 2006. The event runs from the sheath start (the ejecta start when the catalogue gives no sheath) to the ejecta end; `llamaice_event` is the LLAMAICE CME it was matched to, so the same CME can be compared across catalogues, and `cme_time` the time of the CME at the Sun when the catalogue gives one.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Remote(&[LLAMAICE_SOURCES]),
+        read: llamaice_source,
+        part: "Wind",
+    },
+    List {
+        key: "llamaice-cdaw",
+        folder: LLAMAICE_FOLDER,
+        name: "CDAW flux rope ICMEs (LLAMAICE)",
+        about: "The ICMEs of the CDAW flux rope campaign, as collated by LLAMAICE for ACE and Wind, February 1995 to December 2006. The event runs from the sheath start (the ejecta start when the catalogue gives no sheath) to the ejecta end; `llamaice_event` is the LLAMAICE CME it was matched to, so the same CME can be compared across catalogues, and `cme_time` the time of the CME at the Sun when the catalogue gives one.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Remote(&[LLAMAICE_SOURCES]),
+        read: llamaice_source,
+        part: "CDAW",
+    },
+    List {
+        key: "llamaice-dreams",
+        folder: LLAMAICE_FOLDER,
+        name: "DREAMS ICMEs (LLAMAICE)",
+        about: "The ICMEs of the catalogue LLAMAICE calls DREAMS, as collated by LLAMAICE for ACE and Wind, February 1995 to December 2006. The event runs from the sheath start (the ejecta start when the catalogue gives no sheath) to the ejecta end; `llamaice_event` is the LLAMAICE CME it was matched to, so the same CME can be compared across catalogues, and `cme_time` the time of the CME at the Sun when the catalogue gives one.",
+        credit: LLAMAICE_CREDIT,
+        url: "https://osprei.space/llamaice",
+        files: Files::Remote(&[LLAMAICE_SOURCES]),
+        read: llamaice_source,
+        part: "DREAMS",
+    },
+    List {
         key: "intense-storms-ji",
         folder: "Literature/Earth",
         name: "Intense geomagnetic storms 1998-2006 (Ji et al. 2012)",
@@ -1169,6 +1256,162 @@ fn icme_source(code: &str) -> &str {
         "cat_13" => "Du et al. (2010), doi:10.1007/s11207-009-9505-8",
         other => other,
     }
+}
+
+/// A LLAMAICE time, `1995-02-07T18:48` or with seconds; `-` and `None` mark a missing one.
+fn llamaice_time(cell: &str) -> Result<Option<Timestamp>, String> {
+    let parsed = match cell.trim() {
+        "-" | "None" | "" => return Ok(None),
+        minutes if minutes.len() == 16 => Timestamp::parse(&format!("{minutes}:00")),
+        seconds => Timestamp::parse(seconds),
+    };
+    parsed.map(Some).ok_or_else(|| format!("bad time {cell:?}"))
+}
+
+fn time_value(at: Timestamp) -> Option<Value> {
+    at.rfc3339().ok().map(Value::from)
+}
+
+/// The two LLAMAICE files, read together: the team's boundaries, then the catalogues'.
+const FILE_BREAK: &str = "\n\u{1c}\n";
+
+/// Every LLAMAICE candidate CME, a row of the team's CSV: its number, the CMEs it interacts
+/// with, five boundaries in time order (sheath start, start of the sheath/ejecta mixed region,
+/// ejecta start and end, end of the trailing mixed region), the high-speed stream catalogues
+/// it matches, and a comment saying whether the team believes it is a CME. A candidate the
+/// team gave no boundary spans what the catalogues that listed it said.
+fn llamaice(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    const BOUNDARIES: [&str; 5] = [
+        "sheath_start",
+        "front_mixed_start",
+        "ejecta_start",
+        "ejecta_end",
+        "back_mixed_end",
+    ];
+    let (team, catalogues) = text
+        .split_once(FILE_BREAK)
+        .ok_or("the catalogues' boundaries are missing")?;
+    let listed = llamaice_catalogues(catalogues)?;
+    let mut reader = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .from_reader(team.as_bytes());
+    let mut items = Vec::new();
+    for record in reader.records() {
+        let record = record.map_err(|error| error.to_string())?;
+        let cell = |at: usize| record.get(at).unwrap_or_default();
+        let listing: Vec<_> = listed.iter().filter(|row| row.event == cell(0)).collect();
+        let mut attributes = Map::new();
+        let mut times = Vec::new();
+        for (index, name) in BOUNDARIES.iter().enumerate() {
+            if let Some(at) = llamaice_time(cell(2 + index))? {
+                times.push(at);
+                attributes.extend(time_value(at).map(|value| (name.to_string(), value)));
+            }
+        }
+        let bounds_from = if times.is_empty() {
+            times.extend(
+                listing
+                    .iter()
+                    .flat_map(|row| [row.item.start, row.item.stop]),
+            );
+            "catalogues"
+        } else {
+            "LLAMAICE"
+        };
+        let (Some(&start), Some(&stop)) = (times.iter().min(), times.iter().max()) else {
+            return Err(format!("no time for LLAMAICE CME {}", cell(0)));
+        };
+        let mut names: Vec<_> = listing.iter().map(|row| row.catalogue).collect();
+        names.sort_unstable();
+        names.dedup();
+        attributes.insert("bounds_from".to_owned(), bounds_from.into());
+        attributes.insert("catalogues".to_owned(), names.join(", ").into());
+        keep(
+            &mut attributes,
+            [
+                ("llamaice_event", cell(0)),
+                ("interacts_with", cell(1)),
+                ("hss", cell(7)),
+                ("comment", cell(8)),
+            ],
+        );
+        items.push(Item {
+            id: cell(0).to_owned(),
+            start,
+            stop,
+            attributes,
+        });
+    }
+    Ok(items)
+}
+
+/// One ICME of a catalogue LLAMAICE collates, with the LLAMAICE CME it was matched to.
+struct Listed<'a> {
+    event: &'a str,
+    catalogue: &'a str,
+    item: Item,
+}
+
+/// The ICMEs of the catalogues LLAMAICE collates, from the file grouping them by LLAMAICE CME:
+/// whitespace-separated rows of the LLAMAICE number, its time and day of year, the catalogue,
+/// the sheath start, the ejecta start and end, and the time of the CME at the Sun. An ICME
+/// LLAMAICE matched to several of its times is repeated: it stays once.
+fn llamaice_catalogues(text: &str) -> Result<Vec<Listed<'_>>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut listed = Vec::new();
+    for line in text.lines() {
+        let cells: Vec<&str> = line.split_whitespace().collect();
+        let [event, _, _, catalogue, sheath, front, end, cme] = cells[..] else {
+            if cells.is_empty() {
+                continue;
+            }
+            return Err(format!("not 8 cells: {line:?}"));
+        };
+        if !seen.insert((catalogue, sheath, front, end)) {
+            continue;
+        }
+        let missing = || format!("no ejecta in {line:?}");
+        let ejecta_start = llamaice_time(front)?.ok_or_else(missing)?;
+        let ejecta_end = llamaice_time(end)?.ok_or_else(missing)?;
+        let id = format!("{sheath}|{front}|{end}");
+        let sheath = llamaice_time(sheath)?;
+        let mut attributes = Map::new();
+        keep(&mut attributes, [("llamaice_event", event)]);
+        let times = [
+            ("sheath_start", sheath),
+            ("ejecta_start", Some(ejecta_start)),
+            ("ejecta_end", Some(ejecta_end)),
+            ("cme_time", llamaice_time(cme)?),
+        ];
+        for (name, at) in times {
+            attributes.extend(
+                at.and_then(time_value)
+                    .map(|value| (name.to_owned(), value)),
+            );
+        }
+        let start = sheath.unwrap_or(ejecta_start);
+        let item = Item {
+            id,
+            start,
+            stop: ejecta_end.max(start),
+            attributes,
+        };
+        listed.push(Listed {
+            event,
+            catalogue,
+            item,
+        });
+    }
+    Ok(listed)
+}
+
+/// The ICMEs of one catalogue LLAMAICE collates, `part`.
+fn llamaice_source(text: &str, part: &str) -> Result<Vec<Item>, String> {
+    Ok(llamaice_catalogues(text)?
+        .into_iter()
+        .filter(|row| row.catalogue == part)
+        .map(|row| row.item)
+        .collect())
 }
 
 /// The SITL segments: no header, `, ` between 25 cells (the last, the discussion, may hold
@@ -2039,17 +2282,28 @@ async fn texts(
         Files::Mirrored { urls, answered } => {
             mirrored(http, urls, *answered).await.map(|text| vec![text])
         }
-        Files::Remote(urls) => {
-            let mut texts = Vec::with_capacity(urls.len());
-            for url in *urls {
-                if !downloaded.contains_key(url) {
-                    downloaded.insert(url, download(http, url).await);
-                }
-                texts.push(downloaded[url].clone()?);
-            }
-            Ok(texts)
+        Files::Remote(urls) => remote(http, urls, downloaded).await,
+        Files::Together(urls) => {
+            let texts = remote(http, urls, downloaded).await?;
+            Ok(vec![texts.join(FILE_BREAK)])
         }
     }
+}
+
+/// Each of `urls`, downloaded once per run however many lists read it.
+async fn remote(
+    http: &reqwest::Client,
+    urls: &[&'static str],
+    downloaded: &mut HashMap<&'static str, Result<String, String>>,
+) -> Result<Vec<String>, String> {
+    let mut texts = Vec::with_capacity(urls.len());
+    for url in urls {
+        if !downloaded.contains_key(url) {
+            downloaded.insert(url, download(http, url).await);
+        }
+        texts.push(downloaded[url].clone()?);
+    }
+    Ok(texts)
 }
 
 /// The first answer from `urls` that `answered` accepts, trying them all again after a pause
@@ -2126,6 +2380,9 @@ mod tests {
     const LINKCAT: &str = include_str!("../../tests/fixtures/relay/literature_linkcat.txt");
     const ICME_MULTI: &str =
         include_str!("../../tests/fixtures/relay/literature_icme_multicatalog.csv");
+    const LLAMAICE: &str = include_str!("../../tests/fixtures/relay/literature_llamaice.csv");
+    const LLAMAICE_SOURCES: &str =
+        include_str!("../../tests/fixtures/relay/literature_llamaice_sources.dat");
 
     fn at(text: &str) -> Timestamp {
         Timestamp::parse(text).unwrap()
@@ -2532,6 +2789,91 @@ mod tests {
         assert_eq!(items[1].attributes["spacecraft"], json!("Helios"));
         assert_eq!(items[2].attributes["spacecraft"], json!("Solar Orbiter"));
         assert_eq!(items[2].attributes["sheath"], json!("no"));
+    }
+
+    #[test]
+    fn a_llamaice_cme_runs_from_its_first_to_its_last_boundary() {
+        let items = llamaice(&format!("{LLAMAICE}{FILE_BREAK}{LLAMAICE_SOURCES}"), "").unwrap();
+        assert_eq!(items.len(), 3);
+        let first = &items[0];
+        assert_eq!(first.attributes["bounds_from"], json!("LLAMAICE"));
+        assert_eq!(
+            first.attributes["catalogues"],
+            json!("DREAMS, Jian, Lepping, Wind")
+        );
+        assert_eq!(first.id, "1");
+        assert_eq!(first.start, at("1995-02-07T18:48:00Z"));
+        assert_eq!(first.stop, at("1995-02-09T01:50:00Z"));
+        assert_eq!(first.attributes["llamaice_event"], json!(1.0));
+        assert_eq!(
+            first.attributes["ejecta_start"],
+            json!("1995-02-08T03:21:00Z")
+        );
+        assert_eq!(
+            first.attributes["ejecta_end"],
+            json!("1995-02-08T21:00:00Z")
+        );
+        assert_eq!(first.attributes["interacts_with"], json!(2.0));
+        assert!(!first.attributes.contains_key("front_mixed_start"));
+        assert!(!first.attributes.contains_key("hss"));
+        assert!(
+            first.attributes["comment"]
+                .as_str()
+                .unwrap()
+                .starts_with("Y. M2")
+        );
+        assert_eq!(items[1].attributes["llamaice_event"], json!(3.0));
+    }
+
+    #[test]
+    fn a_cme_the_llamaice_team_did_not_bound_spans_what_the_catalogues_said() {
+        let items = llamaice(&format!("{LLAMAICE}{FILE_BREAK}{LLAMAICE_SOURCES}"), "").unwrap();
+        let doubted = &items[2];
+        assert_eq!(doubted.id, "16");
+        assert_eq!(doubted.start, at("1995-10-24T07:45:00Z"));
+        assert_eq!(doubted.stop, at("1995-10-25T08:04:00Z"));
+        assert_eq!(doubted.attributes["bounds_from"], json!("catalogues"));
+        assert_eq!(doubted.attributes["catalogues"], json!("Jian"));
+        assert!(!doubted.attributes.contains_key("ejecta_start"));
+        assert!(
+            doubted.attributes["comment"]
+                .as_str()
+                .unwrap()
+                .starts_with("PN.")
+        );
+    }
+
+    #[test]
+    fn a_catalogue_llamaice_collates_keeps_each_of_its_icmes_once() {
+        let rc = llamaice_source(LLAMAICE_SOURCES, "RC").unwrap();
+        assert_eq!(
+            rc.len(),
+            1,
+            "an ICME matched to three LLAMAICE times stays once"
+        );
+        assert_eq!(rc[0].start, at("2002-03-23T11:37:00Z"));
+        assert_eq!(rc[0].stop, at("2002-03-25T20:00:00Z"));
+        assert_eq!(rc[0].attributes["llamaice_event"], json!(266.0));
+        assert_eq!(
+            rc[0].attributes["ejecta_start"],
+            json!("2002-03-24T12:00:00Z")
+        );
+        assert_eq!(rc[0].attributes["cme_time"], json!("2002-03-20T17:06:00Z"));
+        let jian = llamaice_source(LLAMAICE_SOURCES, "Jian").unwrap();
+        assert_eq!(jian.len(), 2);
+        assert_eq!(
+            jian[0].start,
+            at("1995-02-08T03:10:00Z"),
+            "no sheath: the ejecta"
+        );
+        assert!(!jian[0].attributes.contains_key("sheath_start"));
+        assert!(!jian[0].attributes.contains_key("cme_time"));
+        assert_eq!(llamaice_source(LLAMAICE_SOURCES, "Wind").unwrap().len(), 2);
+        assert!(
+            llamaice_source(LLAMAICE_SOURCES, "CDAW")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
