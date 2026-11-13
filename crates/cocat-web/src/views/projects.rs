@@ -269,7 +269,7 @@ pub fn ProjectActions() -> impl IntoView {
     };
     view! {
         <Show when=move || !elsewhere() && actions().rename>
-            <button type="button" class="project-rename" title="Rename the project"
+            <button type="button" class="rename-pen" title="Rename the project"
                 aria-label=move || format!("Rename the project “{}”", name())
                 on:click=move |_| dialog.set(Some(Dialog::Rename))>
                 <PenIcon/>
@@ -313,7 +313,7 @@ fn close_menu(menu: NodeRef<Details>) {
 }
 
 #[component]
-fn PenIcon() -> impl IntoView {
+pub fn PenIcon() -> impl IntoView {
     view! {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

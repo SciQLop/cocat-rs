@@ -310,6 +310,8 @@ fn CatalogueView(
         _ => "Search all events".to_owned(),
     });
     let can_write = room.can_write();
+    // As the Catalogue menu offers it: on a catalogue, to those who may write.
+    let renamable = move || can_write && matches!(shown.get(), Route::Catalogue(_));
     let reader = room.clone();
     let about = live_about(&room, shown);
     let counts = live_counts(&room, shown, about, members, order, with_search);
@@ -332,7 +334,7 @@ fn CatalogueView(
         Memo::new(move |_| members.with(|members| members.map(attribute_keys).unwrap_or_default()));
     view! {
         <div class="page-head">
-            <Heading about counts members/>
+            <Heading about counts members rename=(Signal::derive(renamable), Callback::new(move |()| form.set(Form::Rename)))/>
             <div class="tools">
                 <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
                     <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>

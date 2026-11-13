@@ -114,6 +114,9 @@ pub fn Heading(
     about: Memo<About>,
     counts: Signal<Option<String>>,
     members: Members,
+    /// Offered beside the title, while it holds a name the visitor may change.
+    #[prop(optional)]
+    rename: Option<(Signal<bool>, Callback<()>)>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let listed = cocat_core::room_id::is_public_id(&room.config.room_id)
@@ -121,7 +124,18 @@ pub fn Heading(
     let listed = move || listed.and_then(|listed| listed.get());
     view! {
         <div class="heading">
-            <h1>{move || about.with(|about| about.title.clone())}</h1>
+            <div class="title-line">
+                <h1>{move || about.with(|about| about.title.clone())}</h1>
+                {rename.map(|(shown, rename)| view! {
+                    <Show when=move || shown.get()>
+                        <button type="button" class="rename-pen" title="Rename"
+                            aria-label=move || format!("Rename “{}”", about.with(|about| about.title.clone()))
+                            on:click=move |_| rename.run(())>
+                            <crate::views::projects::PenIcon/>
+                        </button>
+                    </Show>
+                })}
+            </div>
             <p class="quiet meta-line">
                 {counts}
                 {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {
