@@ -1377,8 +1377,10 @@ impl Project {
         write(&self.room, |txn| model::remove_link(txn, id))
     }
 
-    fn close(&self) {
-        self.room.close();
+    /// Stops syncing and writes the cache, without the GIL: the sync threads may need it to
+    /// log while they finish.
+    fn close(&self, py: Python<'_>) {
+        py.detach(|| self.room.close());
     }
 
     #[getter]

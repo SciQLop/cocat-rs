@@ -435,11 +435,13 @@ fn apply(inner: &Inner, bytes: &[u8]) {
             return;
         }
     };
-    if let Err(error) = inner
+    // The transaction commits at the end of this statement, before anything is logged: a log
+    // record may wait for a host's lock (Python's GIL) while that host waits for the document.
+    let applied = inner
         .doc()
         .transact_mut_with(REMOTE_ORIGIN)
-        .apply_update(update)
-    {
+        .apply_update(update);
+    if let Err(error) = applied {
         tracing::warn!(%error, "the document refused the server's update");
     }
 }

@@ -481,9 +481,13 @@ impl Room {
     pub fn close(&self) {
         self.stop();
         self.inner.status.set(Status::Offline);
-        if let Some(cache) = &self.inner.cache
-            && let Err(error) = lock(cache).flush()
-        {
+        let Some(cache) = &self.inner.cache else {
+            return;
+        };
+        // Logged once the lock is released: a log record may wait for a host's lock (Python's
+        // GIL), which must never be taken while holding the cache.
+        let flushed = lock(cache).flush();
+        if let Err(error) = flushed {
             tracing::error!(%error, "the cache could not be flushed");
         }
     }
@@ -596,11 +600,15 @@ fn observe(
         // simplify: the file only ever grows. Rewriting it as one state update when a room
         // opens and the file is much larger than that (and compaction is wanted back) is
         // the upgrade path.
-        if let Err(error) = lock(&cache).append(Bytes::copy_from_slice(&update.update)) {
+        // Each result is logged after its lock is released: a log record may wait for a host's
+        // lock (Python's GIL) while that host waits for the cache.
+        let appended = lock(&cache).append(Bytes::copy_from_slice(&update.update));
+        if let Err(error) = appended {
             tracing::error!(%error, "the cache rejected an update");
             return;
         }
-        if let Err(error) = lock(&cache).write() {
+        let written = lock(&cache).write();
+        if let Err(error) = written {
             tracing::error!(%error, "the cache could not write an update");
         }
         if batching.load(Ordering::Relaxed) {
