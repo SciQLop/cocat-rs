@@ -139,28 +139,6 @@ pub fn Actions(
     }
 }
 
-/// Renames the catalogue on screen, under its heading.
-#[component]
-pub fn RenameForm(uuid: String, form: RwSignal<Form>) -> impl IntoView {
-    let room = expect_context::<Room>();
-    let initial = room
-        .read(|txn| model::catalogue(txn, &uuid))
-        .map(|catalogue| catalogue.name)
-        .unwrap_or_default();
-    let open = RwSignal::new(true);
-    Effect::new(move |_| {
-        if !open.get() {
-            form.set(Form::Closed);
-        }
-    });
-    let rename = move |name: String| room.write(|txn| edit::rename_catalogue(txn, &uuid, &name));
-    view! {
-        <div class="inline-form">
-            <NameForm label="New name of the catalogue" action="Rename" initial open submit=rename/>
-        </div>
-    }
-}
-
 /// In a public catalogue: copy it to use it, and for its readers, copy it to change it
 /// and submit the change.
 #[component]

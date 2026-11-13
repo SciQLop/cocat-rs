@@ -27,7 +27,8 @@ pub fn read(text: &str, catalogues: &[(String, String)]) -> Query {
     }
 }
 
-fn sentence(text: &str) -> String {
+/// `text` with a capital first letter.
+pub fn sentence(text: &str) -> String {
     let mut characters = text.chars();
     characters.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(characters).collect()

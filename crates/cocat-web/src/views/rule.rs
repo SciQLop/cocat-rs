@@ -107,6 +107,50 @@ pub fn live_counts(
     })
 }
 
+/// Renaming a page's title in place: whether the visitor may, whether the field is open, and
+/// what saves a name (the error to show, if it is refused).
+#[derive(Clone, Copy)]
+pub struct TitleEdit {
+    pub allowed: Signal<bool>,
+    pub editing: RwSignal<bool>,
+    pub save: Callback<String, Result<(), String>>,
+}
+
+/// The title as a field: Enter or Save keeps the name, Escape or Cancel leaves it.
+#[component]
+fn TitleField(about: Memo<About>, rename: TitleEdit) -> impl IntoView {
+    let input = NodeRef::<leptos::html::Input>::new();
+    let error = RwSignal::new(None::<String>);
+    let initial = about.with_untracked(|about| about.title.clone());
+    Effect::new(move |_| {
+        if let Some(input) = input.get() {
+            let _ = input.focus();
+            input.select();
+        }
+    });
+    let save = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        let name = input.get().map(|input| input.value()).unwrap_or_default();
+        match rename.save.run(name) {
+            Ok(()) => rename.editing.set(false),
+            Err(refused) => error.set(Some(crate::search::sentence(&refused))),
+        }
+    };
+    let escape = move |event: leptos::ev::KeyboardEvent| {
+        if event.key() == "Escape" {
+            rename.editing.set(false);
+        }
+    };
+    view! {
+        <form class="title-field" on:submit=save>
+            <input type="text" node_ref=input value=initial aria-label="Name" on:keydown=escape/>
+            <button type="submit" class="button primary">"Save"</button>
+            <button type="button" class="button" on:click=move |_| rename.editing.set(false)>"Cancel"</button>
+        </form>
+        {move || error.get().map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
+    }
+}
+
 /// The heading of the live page and of the preview: `about` and `counts` come from the
 /// project or from the server's answers.
 #[component]
@@ -114,9 +158,9 @@ pub fn Heading(
     about: Memo<About>,
     counts: Signal<Option<String>>,
     members: Members,
-    /// Offered beside the title, while it holds a name the visitor may change.
+    /// Renaming in place, where the visitor may.
     #[prop(optional)]
-    rename: Option<(Signal<bool>, Callback<()>)>,
+    rename: Option<TitleEdit>,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
     let listed = cocat_core::room_id::is_public_id(&room.config.room_id)
@@ -124,18 +168,24 @@ pub fn Heading(
     let listed = move || listed.and_then(|listed| listed.get());
     view! {
         <div class="heading">
-            <div class="title-line">
-                <h1>{move || about.with(|about| about.title.clone())}</h1>
-                {rename.map(|(shown, rename)| view! {
-                    <Show when=move || shown.get()>
-                        <button type="button" class="rename-pen" title="Rename"
-                            aria-label=move || format!("Rename “{}”", about.with(|about| about.title.clone()))
-                            on:click=move |_| rename.run(())>
-                            <crate::views::projects::PenIcon/>
-                        </button>
-                    </Show>
-                })}
-            </div>
+            {move || match rename.filter(|rename| rename.editing.get() && rename.allowed.get()) {
+                Some(rename) => view! { <TitleField about rename/> }.into_any(),
+                None => view! {
+                    <div class="title-line">
+                        <h1>{move || about.with(|about| about.title.clone())}</h1>
+                        {rename.map(|rename| view! {
+                            <Show when=move || rename.allowed.get()>
+                                <button type="button" class="rename-pen" title="Rename"
+                                    aria-label=move || format!("Rename “{}”", about.with(|about| about.title.clone()))
+                                    on:click=move |_| rename.editing.set(true)>
+                                    <crate::views::projects::PenIcon/>
+                                </button>
+                            </Show>
+                        })}
+                    </div>
+                }
+                .into_any(),
+            }}
             <p class="quiet meta-line">
                 {counts}
                 {move || about.with(|about| about.copied.clone()).map(|(line, chain)| view! {

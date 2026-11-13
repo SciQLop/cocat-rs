@@ -18,10 +18,10 @@ use crate::search::{self, Listing, Query, Side, listing, public_query};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::sync::Loading;
-use crate::views::actions::{Actions, Form, Freeze, PublicButtons, RenameForm};
+use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
 use crate::views::controls::Hint;
 use crate::views::projects::Projects;
-use crate::views::rule::{Heading, live_about, live_counts};
+use crate::views::rule::{Heading, TitleEdit, live_about, live_counts};
 use crate::views::rule_editor::RuleEditor;
 use crate::views::search::{Boxed, SearchBox, SearchBuilder, SearchLine, own_search};
 use crate::views::submissions::{CopyForm, ProposeForm, SubmitForm, UpdateForm};
@@ -310,8 +310,7 @@ fn CatalogueView(
         _ => "Search all events".to_owned(),
     });
     let can_write = room.can_write();
-    // As the Catalogue menu offers it: on a catalogue, to those who may write.
-    let renamable = move || can_write && matches!(shown.get(), Route::Catalogue(_));
+    let rename = title_edit(&room, shown, form, can_write);
     let reader = room.clone();
     let about = live_about(&room, shown);
     let counts = live_counts(&room, shown, about, members, order, with_search);
@@ -334,7 +333,7 @@ fn CatalogueView(
         Memo::new(move |_| members.with(|members| members.map(attribute_keys).unwrap_or_default()));
     view! {
         <div class="page-head">
-            <Heading about counts members rename=(Signal::derive(renamable), Callback::new(move |()| form.set(Form::Rename)))/>
+            <Heading about counts members rename/>
             <div class="tools">
                 <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
                     <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>
@@ -364,7 +363,6 @@ fn CatalogueView(
                 Some(view! { <CopyForm public=public_id.clone() close/> }.into_any())
             }
             (Form::Export, Route::Catalogue(uuid)) => Some(view! { <ExportForm uuid form/> }.into_any()),
-            (Form::Rename, Route::Catalogue(uuid)) => Some(view! { <RenameForm uuid form/> }.into_any()),
             _ => None,
         }}
         {move || (shown.get() == Route::Trash).then(|| view! {
@@ -465,6 +463,37 @@ fn found_note(asked: bool, found: &Option<Result<Found, String>>) -> Option<AnyV
             .into_any(),
         ),
         _ => None,
+    }
+}
+
+/// Renaming the catalogue in its title, from the pen or from Catalogue › Rename…: on a
+/// catalogue, to those who may write. The field closes when another page shows.
+fn title_edit(room: &Room, shown: Memo<Route>, form: RwSignal<Form>, can_write: bool) -> TitleEdit {
+    let editing = RwSignal::new(false);
+    Effect::new(move |_| {
+        if form.get() == Form::Rename {
+            editing.set(true);
+            form.set(Form::Closed);
+        }
+    });
+    Effect::watch(
+        move || shown.track(),
+        move |_, _, _| editing.set(false),
+        false,
+    );
+    let writer = room.clone();
+    let save = move |name: String| {
+        let Route::Catalogue(uuid) = shown.get_untracked() else {
+            return Ok(());
+        };
+        writer
+            .write(|txn| crate::edit::rename_catalogue(txn, &uuid, &name))
+            .map_err(|refused| refused.to_string())
+    };
+    TitleEdit {
+        allowed: Signal::derive(move || can_write && matches!(shown.get(), Route::Catalogue(_))),
+        editing,
+        save: Callback::new(save),
     }
 }
 

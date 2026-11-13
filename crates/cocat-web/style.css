@@ -1025,8 +1025,23 @@ a.button { text-decoration: none; }
   border: 0; border-radius: var(--radius); background: none; color: var(--muted); cursor: pointer;
 }
 .rename-pen:hover { background: var(--chip); color: var(--ink); }
+/* The pen shows over the name it edits, or reached by keyboard; still there, unseen, so the
+   pointer can move onto it. Touch screens have no hover: it stays. */
+@media (hover: hover) {
+  .rename-pen { opacity: 0; transition: opacity 0.12s; }
+  .title-line:hover .rename-pen, .project-menu:hover + .rename-pen,
+  .rename-pen:hover, .rename-pen:focus-visible { opacity: 1; }
+}
 .title-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .title-line h1 { min-width: 0; overflow-wrap: anywhere; }
+/* The title being renamed: the field takes the title's place and size. */
+.title-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title-field input {
+  flex: 1 1 auto; min-width: 0; margin: 0; padding: 2px 8px; height: 40px;
+  font: inherit; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: var(--focus); outline: none;
+}
 .project-actions > summary::-webkit-details-marker { display: none; }
 .project-actions > summary:hover, .project-actions[open] > summary { background: var(--chip); color: var(--ink); }
 .project-actions[open] > summary::before { content: ""; position: fixed; inset: 0; z-index: 3; cursor: default; }
