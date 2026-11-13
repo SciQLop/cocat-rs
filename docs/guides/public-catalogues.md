@@ -35,8 +35,9 @@ you may find:
   lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
   ICME comes from; LLAMAICE (Kay et al. 2026), every near-Earth CME candidate with the
   team's verdict and boundaries, and the six catalogues it collates side by side;
-  the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms; and Parker Solar
-  Probe's heliospheric current sheet crossings (Fargette et al. 2026).
+  the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms and reconnection
+  exhausts (Fargette et al. 2023); Cassini's long-standing reconnection at Saturn (Guo et al.
+  2019); and Parker Solar Probe's heliospheric current sheet crossings (Fargette et al. 2026).
 - **VizieR**, under the same *Literature* folders: 27 event tables published with papers and
   kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
   Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar

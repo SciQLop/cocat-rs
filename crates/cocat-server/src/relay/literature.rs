@@ -88,7 +88,7 @@ const LLAMAICE_CREDIT: &str = "Kay, C., Davies, E. E., Dumbović, M., Martinić,
 const LLAMAICE_FOLDER: &str = "Literature/Heliosphere/LLAMAICE near-Earth CMEs (Kay)";
 const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat";
 
-const LISTS: [List; 60] = [
+const LISTS: [List; 62] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -839,6 +839,28 @@ const LISTS: [List; 60] = [
         credit: "Fargette et al. (2026), ApJ 997, 174, https://doi.org/10.3847/1538-4357/ae2601, licence CC-BY-4.0. (Table 3)",
         url: "https://doi.org/10.3847/1538-4357/ae2601",
         files: Files::Kept(include_str!("data/fargette_2026_hcs_side_jets.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "solo-reconnection-exhausts",
+        folder: "Literature/Heliosphere",
+        name: "Reconnection exhausts in the solar wind, Solar Orbiter 2020 (Fargette et al. 2023)",
+        about: "146 magnetic reconnection exhausts (jets) Solar Orbiter saw between 0.6 and 0.8 AU from 14 July to 13 August 2020, from PAS and MAG, with start and end times refined by eye: `number` is the row in the paper's Table D.1, `found_by` says whether the automated detection found it or only visual inspection did (13 exhausts; the table's note says nine, the text and the bold rows say 13).",
+        credit: "Fargette, N., Lavraud, B., Rouillard, A. P. et al. (2023), Clustering of magnetic reconnection exhausts in the solar wind: An automated detection study, A&A 674, A98, https://doi.org/10.1051/0004-6361/202346043, licence CC-BY-4.0 (Table D.1).",
+        url: "https://doi.org/10.1051/0004-6361/202346043",
+        files: Files::Kept(include_str!("data/fargette_2023_reconnection_exhausts.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "cassini-long-standing-reconnection",
+        folder: "Literature/Saturn",
+        name: "Long-standing small-scale reconnection at Saturn, Cassini (Guo et al. 2019)",
+        about: "17 intervals in which Cassini met several small-scale magnetic reconnection sites in a row in Saturn's magnetodisk, 2005-2010. The paper gives the start to the hour and the duration to about an hour: the stop is the start plus that duration. `reconnection_sites` is how many sites were met, `separation_*_h` the mean, shortest and longest time between them, then the local time (hours) and distance to Saturn (Rs) at start and end, whether accelerated particles were seen, and the `sector` the paper files it under (noon, dusk, night, dawn, or periodical for the ones that repeat).",
+        credit: "Guo, R. L., Yao, Z. H., Sergis, N. et al. (2019), Long-standing Small-scale Reconnection Processes at Saturn Revealed by Cassini, ApJL 884, L14, https://doi.org/10.3847/2041-8213/ab4429, licence CC-BY-3.0 (Table 1).",
+        url: "https://doi.org/10.3847/2041-8213/ab4429",
+        files: Files::Kept(include_str!("data/guo_2019_saturn_reconnection.csv")),
         read: kept_table,
         part: "",
     },
@@ -2767,6 +2789,21 @@ mod tests {
         assert_eq!(crossings[30].attributes["jet"], json!("inward"));
         assert_eq!(count("psp-hcs-partial-crossings").len(), 29);
         assert_eq!(count("psp-hcs-side-jets").len(), 4);
+        let exhausts = count("solo-reconnection-exhausts");
+        assert_eq!(exhausts.len(), 146);
+        let visual: Vec<_> = exhausts
+            .iter()
+            .filter(|item| item.attributes["found_by"] == json!("visual inspection"))
+            .collect();
+        assert_eq!(visual.len(), 13);
+        assert_eq!(visual[0].start, at("2020-07-14T12:01:35Z"));
+        assert_eq!(exhausts[145].stop, at("2020-08-12T09:11:16Z"));
+        let saturn = count("cassini-long-standing-reconnection");
+        assert_eq!(saturn.len(), 17);
+        assert_eq!(saturn[14].start, at("2006-03-02T07:00:00Z"));
+        assert_eq!(saturn[14].stop, at("2006-03-07T12:00:00Z"), "125 h later");
+        assert_eq!(saturn[14].attributes["reconnection_sites"], json!(19.0));
+        assert_eq!(saturn[14].attributes["sector"], json!("periodical"));
     }
 
     #[test]
