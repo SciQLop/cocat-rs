@@ -148,6 +148,11 @@ These commands only change the database. A running server reads every open socke
 again every 30 seconds, so a revoked role or removed member is cut off within that time.
 The admin pages cut them off at once.
 
+To tell every visitor something, such as a coming move or maintenance, an administrator writes
+it in the **Notice** field of the admin overview. It shows in a banner above every page, the
+catalogue app included, until the field is emptied. It is kept in the database, so it survives
+a restart.
+
 ## Catalogue providers
 
 The server can keep public catalogues in step with lists published elsewhere. Six

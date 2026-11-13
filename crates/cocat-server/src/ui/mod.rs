@@ -100,6 +100,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(groups::revoke),
         )
         .route("/admin", get(admin::overview))
+        .route("/admin/notice", post(admin::set_notice))
         .route("/admin/users", get(admin::users))
         .route("/admin/users/{user}/flag", post(admin::set_flag))
         .route("/admin/users/{user}/quota", post(admin::set_quota))

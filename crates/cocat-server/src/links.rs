@@ -3,6 +3,8 @@
 //! Both the mails and (later) the web UI hand out links, so the prefix arithmetic lives
 //! here: `Links::ui` for an absolute path inside the app.
 
+use std::sync::{Arc, RwLock};
+
 use thiserror::Error;
 
 pub use cocat_core::room_id::path_segment as segment;
@@ -15,6 +17,28 @@ pub use cocat_core::room_id::path_segment as segment;
 pub struct Links {
     origin: String,
     prefix: String,
+    /// What every page tells visitors in a banner, such as a coming move.
+    notice: Notice,
+}
+
+/// The banner text, set by an administrator and kept in the database. Every page builds its
+/// links from the server's one `Links`, so the clones share this cell: a change shows on the
+/// next page any visitor loads.
+#[derive(Debug, Clone, Default)]
+struct Notice(Arc<RwLock<Option<String>>>);
+
+impl PartialEq for Notice {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || *read(&self.0) == *read(&other.0)
+    }
+}
+
+impl Eq for Notice {}
+
+/// A panic while the text was replaced leaves a whole `Option`: still readable.
+fn read(cell: &RwLock<Option<String>>) -> std::sync::RwLockReadGuard<'_, Option<String>> {
+    cell.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[derive(Debug, Error)]
@@ -30,7 +54,22 @@ impl Links {
         Ok(Links {
             origin: origin(&env("COCAT_PUBLIC_URL").unwrap_or_default())?,
             prefix: prefix(&env("COCAT_PROXY_PREFIX").unwrap_or_default()),
+            notice: Notice::default(),
         })
+    }
+
+    /// The banner text every page shows, when an administrator set one.
+    pub fn notice(&self) -> Option<String> {
+        read(&self.notice.0).clone()
+    }
+
+    /// Shows `text` above every page from now on, or no banner with `None`.
+    pub fn set_notice(&self, text: Option<String>) {
+        *self
+            .notice
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = text;
     }
 
     /// Browser path of a page, reverse-proxy prefix included and no origin.

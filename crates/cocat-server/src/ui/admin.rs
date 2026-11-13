@@ -31,6 +31,10 @@ struct OverviewPage {
     server: ServerView,
     largest: Vec<RoomView>,
     near_quota: Vec<UserView>,
+    /// The banner every page shows now, empty for none, and where the form sends a new one.
+    notice: String,
+    notice_action: String,
+    notice_max: usize,
 }
 
 #[derive(Template)]
@@ -190,6 +194,9 @@ pub(crate) async fn overview(
             .into_iter()
             .map(|row| user_view(&state, &user, row))
             .collect(),
+        notice: state.links.notice().unwrap_or_default(),
+        notice_action: state.links.path("/admin/notice"),
+        notice_max: admin::MAX_NOTICE_CHARS,
     })
 }
 
@@ -337,6 +344,12 @@ pub(crate) struct QuotaForm {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct NoticeForm {
+    #[serde(default)]
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct OwnerForm {
     #[serde(default)]
     email: String,
@@ -380,6 +393,20 @@ pub(crate) async fn set_quota(
     };
     let result = admin::set_user_quota(&state, &user, target, mb).await;
     answer(&state, "/admin/users", result, "Quota saved")
+}
+
+pub(crate) async fn set_notice(
+    RequireUser(user): RequireUser,
+    State(state): State<AppState>,
+    Form(form): Form<NoticeForm>,
+) -> Response {
+    let result = admin::set_notice(&state, &user, &form.text).await;
+    let done = if form.text.trim().is_empty() {
+        "Notice removed"
+    } else {
+        "Notice shown on every page"
+    };
+    answer(&state, "/admin", result, done)
 }
 
 pub(crate) async fn delete_user(
@@ -673,6 +700,7 @@ fn answer(state: &AppState, page: &str, result: Result<(), AdminError>, done: &s
             | AdminError::UnknownUser
             | AdminError::PublicRoom
             | AdminError::UnknownProvider
+            | AdminError::LongNotice
             | AdminError::Schedule(_)),
         ) => error.to_string(),
         Err(error) => {

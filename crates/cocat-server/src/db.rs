@@ -1660,6 +1660,36 @@ fn user_from_row(row: &SqliteRow) -> Result<User, sqlx::Error> {
     })
 }
 
+/// The banner every page shows, when an administrator set one.
+pub async fn notice(pool: &SqlitePool) -> Result<Option<String>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT text FROM server_notice WHERE id = 1")
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// Sets the banner, or removes it with `None`.
+pub async fn set_notice(pool: &SqlitePool, text: Option<&str>) -> Result<(), DbError> {
+    match text {
+        Some(text) => {
+            sqlx::query(
+                "INSERT INTO server_notice (id, text) VALUES (1, ?) \
+                 ON CONFLICT (id) DO UPDATE SET text = excluded.text",
+            )
+            .bind(text)
+            .execute(pool)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM server_notice")
+                .execute(pool)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     /// The workspace builds the hashing crates optimised in tests to keep them fast; this

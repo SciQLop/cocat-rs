@@ -591,3 +591,16 @@ th[aria-sort="descending"] button.sort::after { content: " ↓"; }
 @media (max-width: 40rem) {
   .apps td[data-label]::before { content: attr(data-label) " "; color: var(--muted); }
 }
+
+/* The administrator's banner (Admin, Overview: Notice), first in the body, above the header; the same rule
+   in the server's and the app's stylesheets. */
+.server-notice {
+  flex: none;
+  margin: 0;
+  padding: 8px 16px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-bottom: 2px solid var(--accent);
+}

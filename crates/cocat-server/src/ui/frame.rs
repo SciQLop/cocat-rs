@@ -127,6 +127,8 @@ pub(crate) struct Frame {
     pub scripts: Vec<String>,
     pub header: Option<Header>,
     pub flash: Option<String>,
+    /// The administrator's banner, above the header.
+    pub notice: Option<String>,
 }
 
 impl Frame {
@@ -151,6 +153,7 @@ impl Frame {
                 logout_action: links.path("/logout"),
             }),
             flash: None,
+            notice: links.notice(),
         }
     }
 

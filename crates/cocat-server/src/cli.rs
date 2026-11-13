@@ -370,6 +370,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     check_database(db_path, update_dir)?;
     let pool = db::open(db_path).await?;
     db::refuse_reserved_ids(&pool).await?;
+    crate::admin::restore_notice(&pool, &links).await?;
     crate::relay::store::stop_all(&pool).await?;
     let secret = auth::load_secret(db_path)?;
     let rooms = RoomManager::new(update_dir.to_owned(), budget).with_storage(storage_limits()?);

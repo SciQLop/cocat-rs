@@ -3,6 +3,15 @@
 <div class="page-head"><h1>Administration</h1></div>
 {% include "admin_tabs.html" %}
 
+<section class="notice-setting">
+  <h2>Notice</h2>
+  <p class="muted">A sentence shown in a banner above every page, the catalogue app included, for instance a coming move. Leave it empty for no banner.</p>
+  <form method="post" action="{{ notice_action }}" class="inline">
+    <input type="text" name="text" value="{{ notice }}" maxlength="{{ notice_max }}" aria-label="Notice" placeholder="No notice">
+    <button type="submit">Save</button>
+  </form>
+</section>
+
 <div class="stats">
   <section class="stat">
     <h2>Users</h2>

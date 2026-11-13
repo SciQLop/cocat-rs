@@ -37,6 +37,13 @@ struct Head<'a> {
     share_link: Option<String>,
 }
 
+/// The administrator's banner, first in the app page's body, outside what the app draws.
+#[derive(Template)]
+#[template(path = "notice.html")]
+struct NoticeBar<'a> {
+    text: &'a str,
+}
+
 #[derive(Template)]
 #[template(path = "app_missing.html")]
 struct MissingPage {
@@ -84,9 +91,11 @@ pub(crate) async fn browse(
         flash,
         share_link,
     };
-    match head.render() {
-        Ok(head) => page(&index, &head),
-        Err(error) => {
+    let notice = state.links.notice();
+    let notice = notice.as_deref().map(|text| NoticeBar { text }.render());
+    match (head.render(), notice.transpose()) {
+        (Ok(head), Ok(notice)) => page(&index, &head, notice.as_deref().unwrap_or_default()),
+        (Err(error), _) | (_, Err(error)) => {
             tracing::warn!(%error, "cannot render the catalogue browser's head");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
@@ -162,12 +171,18 @@ async fn index(state: &AppState) -> Option<String> {
 
 /// The index with `head` first in its `<head>`: the `<base>` must precede every URL it
 /// resolves. The page names the visitor, so no cache keeps it.
-fn page(index: &str, head: &str) -> Response {
-    let Some(at) = index.find("<head>").map(|at| at + "<head>".len()) else {
-        tracing::warn!("the catalogue browser's index has no <head>");
+fn page(index: &str, head: &str, notice: &str) -> Response {
+    let after = |tag: &str| index.find(tag).map(|at| at + tag.len());
+    let (Some(head_at), Some(body_at)) = (after("<head>"), after("<body>")) else {
+        tracing::warn!("the catalogue browser's index has no <head> or <body>");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
-    let body = format!("{}\n{head}{}", &index[..at], &index[at..]);
+    let body = format!(
+        "{}\n{head}{}{notice}{}",
+        &index[..head_at],
+        &index[head_at..body_at],
+        &index[body_at..]
+    );
     ([(header::CACHE_CONTROL, "no-store")], Html(body)).into_response()
 }
 

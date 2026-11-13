@@ -10,7 +10,8 @@
   {% endfor %}
 </head>
 <body>
-{% match frame.header %}
+{% match frame.notice %}{% when Some with (text) %}{% include "notice.html" %}
+{% when None %}{% endmatch %}{% match frame.header %}
 {% when Some with (header) %}
 <header class="site-header">
   <div class="bar">

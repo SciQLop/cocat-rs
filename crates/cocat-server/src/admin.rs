@@ -10,12 +10,14 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use cocat_core::role::Role;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::accounts::{self, AccountError, Change};
 use crate::db::{self, DbError, User};
 use crate::lifecycle;
+use crate::links::Links;
 use crate::room::CloseReason;
 
 /// The largest quota an administrator may set, in MB (one terabyte).
@@ -120,6 +122,8 @@ pub enum AdminError {
     PublicRoom,
     #[error("no such catalogue provider")]
     UnknownProvider,
+    #[error("a notice is at most {MAX_NOTICE_CHARS} characters")]
+    LongNotice,
     #[error(transparent)]
     Schedule(#[from] crate::relay::schedule::ScheduleError),
     #[error(transparent)]
@@ -320,6 +324,27 @@ pub async fn set_user_quota(
     if !db::set_user_quota(&state.pool, user, mb).await? {
         return Err(AdminError::UnknownUser);
     }
+    Ok(())
+}
+
+/// The longest banner the overview form takes: a sentence or two, not a page.
+pub const MAX_NOTICE_CHARS: usize = 500;
+
+/// Sets the banner every page shows, or removes it when `text` is blank.
+pub async fn set_notice(state: &AppState, actor: &User, text: &str) -> Result<(), AdminError> {
+    require(actor)?;
+    let text = Some(text.trim()).filter(|text| !text.is_empty());
+    if text.is_some_and(|text| text.chars().count() > MAX_NOTICE_CHARS) {
+        return Err(AdminError::LongNotice);
+    }
+    db::set_notice(&state.pool, text).await?;
+    state.links.set_notice(text.map(str::to_owned));
+    Ok(())
+}
+
+/// Shows again, after a restart, the banner an administrator set.
+pub async fn restore_notice(pool: &SqlitePool, links: &Links) -> Result<(), DbError> {
+    links.set_notice(db::notice(pool).await?);
     Ok(())
 }
 

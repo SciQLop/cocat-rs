@@ -842,6 +842,12 @@ const ROWS: &[Row] = &[
     ),
     row("GET", "/ui/static/{file}", Guard::Public, Style::UiPage),
     row("GET", "/ui/admin", Guard::Superuser, Style::UiPage),
+    row(
+        "POST",
+        "/ui/admin/notice",
+        Guard::Superuser,
+        Style::UiAction,
+    ),
     row("GET", "/ui/admin/users", Guard::Superuser, Style::UiPage),
     row("GET", "/ui/admin/rooms", Guard::Superuser, Style::UiPage),
     row(
@@ -1363,6 +1369,7 @@ impl World {
             ("POST", "/ui/admin/users/{user}/quota" | "/ui/admin/rooms/{room}/limit") => {
                 (form, "mb=100".to_owned())
             }
+            ("POST", "/ui/admin/notice") => (form, "text=moving+soon".to_owned()),
             ("POST", "/ui/admin/rooms/{room}/owner") => {
                 (form, "email=owner%40example.org".to_owned())
             }
