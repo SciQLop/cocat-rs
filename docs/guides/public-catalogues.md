@@ -5,8 +5,11 @@ puts those lists next to your own, under **Public catalogues**.
 
 ## What is there
 
-Open **Public catalogues** on the left, under your catalogues. They are sorted in folders,
-such as `AMDA / Solar wind`. The search box finds a catalogue by its name or description.
+Open **Public catalogues** on the left, under your catalogues. They are sorted in folders, such
+as `AMDA / Solar wind`. The search box finds a catalogue by its name, folder, source or
+description, best answer first: a word in the name counts more than the same word in a
+description, and a rare word more than a common one, as in SciQLop's product search. Paste a
+DOI to see whether a paper's list is already there.
 
 Some are kept by **curators**, people the server's administrators trust to accept and edit
 them.

@@ -13,6 +13,7 @@ pub mod round;
 pub mod rules;
 pub mod shape_json;
 pub mod store;
+pub mod text_search;
 pub mod tfcat;
 pub mod time;
 pub mod tscat_json;

@@ -1,6 +1,7 @@
 //! The public catalogues' index: a folder tree, and shelves by folder narrowed by a search.
 
 use cocat_core::role::Role;
+use cocat_core::text_search::{Fields, TextIndex};
 use serde::Deserialize;
 
 use crate::projects::{Project, role};
@@ -83,6 +84,19 @@ impl PublicCatalogue {
                     .strip_prefix(path)
                     .is_some_and(|rest| rest.starts_with('/'))
         })
+    }
+
+    /// What names it, for the search: its name, folder and source.
+    fn title(&self) -> String {
+        [
+            Some(self.name.as_str()),
+            self.folder.as_deref(),
+            self.source.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ")
     }
 
     fn matches(&self, words: &[String]) -> bool {
@@ -205,11 +219,32 @@ pub fn folder_label(path: &str) -> String {
     folder_parts(path).join(" / ")
 }
 
-/// The catalogues whose name, description, source or folder hold every word of `search`,
-/// shelved by folder (unfiled last), each shelf by name.
+/// The catalogues that answer `search`, shelved by folder. Without a search: every one, shelves
+/// by folder (unfiled last), each by name. With one: those ranked by BM25 (see
+/// [`cocat_core::text_search`]) best first, a shelf where its best catalogue ranks; then those
+/// holding a word only as the start of a longer one (`reconn`), while it is being typed.
 pub fn shelves(all: &[PublicCatalogue], search: &str) -> Vec<Shelf> {
-    let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
-    let mut kept: Vec<&PublicCatalogue> = all.iter().filter(|c| c.matches(&words)).collect();
+    let kept = if search.trim().is_empty() {
+        by_folder(all)
+    } else {
+        ranked(all, search)
+    };
+    let mut shelves: Vec<Shelf> = Vec::new();
+    for catalogue in kept {
+        let folder = catalogue.folder_path();
+        match shelves.iter_mut().find(|shelf| shelf.folder == folder) {
+            Some(shelf) => shelf.catalogues.push(catalogue.clone()),
+            None => shelves.push(Shelf {
+                folder,
+                catalogues: vec![catalogue.clone()],
+            }),
+        }
+    }
+    shelves
+}
+
+fn by_folder(all: &[PublicCatalogue]) -> Vec<&PublicCatalogue> {
+    let mut kept: Vec<&PublicCatalogue> = all.iter().collect();
     kept.sort_by_key(|c| {
         let folder = c.folder_path();
         (
@@ -218,18 +253,27 @@ pub fn shelves(all: &[PublicCatalogue], search: &str) -> Vec<Shelf> {
             c.name.to_lowercase(),
         )
     });
-    let mut shelves: Vec<Shelf> = Vec::new();
-    for catalogue in kept {
-        let folder = catalogue.folder_path();
-        match shelves.last_mut() {
-            Some(shelf) if shelf.folder == folder => shelf.catalogues.push(catalogue.clone()),
-            _ => shelves.push(Shelf {
-                folder,
-                catalogues: vec![catalogue.clone()],
-            }),
-        }
-    }
-    shelves
+    kept
+}
+
+// simplify: the index is rebuilt on every keystroke, fine for the few hundred public
+// catalogues there are; past a few thousand, keep it in a memo of the list instead.
+fn ranked<'a>(all: &'a [PublicCatalogue], search: &str) -> Vec<&'a PublicCatalogue> {
+    let titles: Vec<String> = all.iter().map(PublicCatalogue::title).collect();
+    let index = TextIndex::new(all.iter().zip(&titles).map(|(catalogue, title)| Fields {
+        title,
+        body: catalogue.description.as_deref().unwrap_or_default(),
+    }));
+    let found = index.search(search);
+    let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
+    let typed = (0..all.len())
+        .filter(|at| !found.iter().any(|(hit, _)| hit == at) && all[*at].matches(&words));
+    found
+        .iter()
+        .map(|(at, _)| *at)
+        .chain(typed)
+        .map(|at| &all[at])
+        .collect()
 }
 
 #[cfg(test)]
@@ -333,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_keeps_what_holds_every_word_in_any_field() {
+    fn a_search_finds_a_word_in_any_field() {
         let all = [
             entry("shocks", Some("AMDA/Solar wind"), Some("Seen by ACE")),
             entry(
@@ -345,7 +389,50 @@ mod tests {
         assert_eq!(names(&shelves(&all, "ace")).len(), 1);
         assert_eq!(names(&shelves(&all, "  SOLAR  shocks ")).len(), 1);
         assert_eq!(names(&shelves(&all, "amda")).len(), 2);
-        assert!(shelves(&all, "shocks cluster").is_empty());
+        assert!(shelves(&all, "magnetopause").is_empty());
+    }
+
+    #[test]
+    fn a_search_ranks_the_best_answer_first_and_its_shelf_with_it() {
+        let all = [
+            entry(
+                "Wind ICMEs",
+                Some("Literature/Heliosphere"),
+                Some("Compared with Solar Orbiter."),
+            ),
+            entry("Mirror mode storms", Some("Literature/Heliosphere"), None),
+            entry(
+                "Solar Orbiter reconnection exhausts",
+                Some("Literature/Heliosphere"),
+                None,
+            ),
+            entry("Reconnection at Saturn", Some("Literature/Saturn"), None),
+        ];
+        assert_eq!(
+            names(&shelves(&all, "solar orbiter reconnection")),
+            vec![
+                (
+                    "Literature / Heliosphere".to_owned(),
+                    vec!["Solar Orbiter reconnection exhausts", "Wind ICMEs"],
+                ),
+                (
+                    "Literature / Saturn".to_owned(),
+                    vec!["Reconnection at Saturn"]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_word_still_being_typed_finds_what_it_starts() {
+        let all = [
+            entry("Reconnection exhausts", None, None),
+            entry("Shocks", None, None),
+        ];
+        assert_eq!(
+            names(&shelves(&all, "reconn")),
+            vec![("Other".to_owned(), vec!["Reconnection exhausts"])]
+        );
     }
 
     /// A folder's path and count.
@@ -436,10 +523,12 @@ mod tests {
     fn a_search_looks_in_every_folder_for_all_and_only_in_the_folder_otherwise() {
         let all = amda();
         let found = |folder: Option<&str>, search: &str| {
-            index(&all, folder, search)
+            let mut names: Vec<_> = index(&all, folder, search)
                 .iter()
                 .flat_map(|shelf| shelf.catalogues.iter().map(|c| c.name.clone()))
-                .collect::<Vec<_>>()
+                .collect();
+            names.sort();
+            names
         };
         assert_eq!(found(None, "ace"), vec!["CMEs", "loose"]);
         assert_eq!(found(Some("AMDA"), "ace"), vec!["CMEs"]);
