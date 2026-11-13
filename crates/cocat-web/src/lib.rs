@@ -3,6 +3,7 @@
 //! The modules declared first are plain logic, tested natively; the rest only exist in the
 //! browser.
 
+pub mod agent_tools;
 pub mod catalogues;
 pub mod detail;
 pub mod edit;

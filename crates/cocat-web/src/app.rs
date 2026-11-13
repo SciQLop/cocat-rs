@@ -76,6 +76,7 @@ fn failure(message: String) -> impl IntoView {
 fn Shell(config: RoomConfig) -> impl IntoView {
     let projects = Projects::new(config, read_notice());
     provide_context(projects);
+    crate::views::webmcp::offer_tools(projects);
     projects.reload();
     // The shell lives as long as the page: nothing to remove the listeners for.
     let _ = window_event_listener(leptos::ev::popstate, move |_| projects.arrived());

@@ -130,3 +130,18 @@ A curator sees exactly what your update adds, changes and removes, and accepts o
 
 Catalogues that follow a source can't be changed this way: the source is the truth. Copy it
 and fix your copy, and tell the source's maintainers.
+
+## For AI agents in the browser
+
+The page offers its search to an AI agent running in the browser through
+[WebMCP](https://webmachinelearning.github.io/webmcp/), when the browser supports it (Chrome
+behind its WebMCP trial, or any browser with the `@mcp-b/global` polyfill). Two tools, both
+read-only, with the signed-in visitor's access:
+
+- `search_public_catalogues` takes a `query` (words, a DOI or a link to a paper) and an
+  optional `limit`, and answers the best catalogues first, each with its id, name, folder,
+  source, description and number of events. The descriptions are marked as written by others.
+- `open_public_catalogue` takes an `id` from a search and opens that catalogue in the page.
+
+An agent asked "is this paper's list already in cocat?" passes the paper's DOI or link to the
+search.

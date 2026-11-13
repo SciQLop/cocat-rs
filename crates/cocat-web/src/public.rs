@@ -87,7 +87,7 @@ impl PublicCatalogue {
     }
 
     /// What the search reads of it.
-    fn searched(&self) -> Catalogue<'_> {
+    pub fn searched(&self) -> Catalogue<'_> {
         Catalogue {
             name: &self.name,
             folder: self.folder.as_deref(),
