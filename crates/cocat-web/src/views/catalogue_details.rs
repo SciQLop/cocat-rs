@@ -1,24 +1,27 @@
 //! What the catalogue is, apart from what its events measure: its tags and attributes as a
-//! block under the page's title, and the editor that takes the side panel's place while an
-//! editor changes them.
+//! block under the page's title, which turns into their fields, in place, while an editor
+//! changes them.
 
 use cocat_core::model::{self, CatalogueSummary};
 use leptos::prelude::*;
 
 use crate::catalogues::{attribute_rows, description, listed_attributes};
 use crate::edit;
-use crate::route::Route;
 use crate::state::Room;
 use crate::views::controls::{commit, error_line};
 use crate::views::event_editor::{Attributes, CATALOGUE, Tags, Target};
 
-/// Whether the side panel edits the open catalogue's details instead of showing statistics.
+/// Whether the About box under the title edits the open catalogue's details.
 #[derive(Clone, Copy)]
 pub struct DetailsEditor(pub RwSignal<bool>);
 
 impl DetailsEditor {
     pub fn open(self) {
         self.0.set(true);
+    }
+
+    pub fn is_open(self) -> bool {
+        self.0.get()
     }
 }
 
@@ -90,23 +93,12 @@ pub fn AboutBox(
     .into_any()
 }
 
-/// The side panel while an editor changes the open catalogue's details; Done brings the
-/// statistics back.
+/// The About box as fields, where it shows them: each change is saved as it is made, and
+/// Done shows the box again.
 #[component]
-pub fn CatalogueEditor(route: Memo<Route>) -> impl IntoView {
-    let Some(DetailsEditor(editing)) = use_context::<DetailsEditor>() else {
-        return ().into_any();
-    };
-    (move || match route.get() {
-        Route::Catalogue(uuid) => Some(view! { <Editor uuid editing/> }),
-        _ => None,
-    })
-    .into_any()
-}
-
-#[component]
-fn Editor(uuid: String, editing: RwSignal<bool>) -> impl IntoView {
+pub fn AboutEditor(uuid: String) -> impl IntoView {
     let room = expect_context::<Room>();
+    let editing = use_context::<DetailsEditor>();
     let summary: Summary = {
         let uuid = uuid.clone();
         Memo::new(move |_| {
@@ -119,13 +111,16 @@ fn Editor(uuid: String, editing: RwSignal<bool>) -> impl IntoView {
         summary.with(|summary| summary.as_ref().map(|c| attribute_rows(&c.attributes)))
     });
     view! {
-        <div class="panel-head editor-head">
-            <span class="eyebrow">"Catalogue details"</span>
-            <button type="button" class="button primary" on:click=move |_| editing.set(false)>"Done"</button>
-        </div>
-        <DescriptionField uuid=uuid.clone() summary/>
-        <Tags target=Target::new(uuid.clone(), CATALOGUE) tags/>
-        <Attributes target=Target::new(uuid, CATALOGUE) attributes/>
+        <section class="about-box about-editing" aria-labelledby="about-title">
+            <header class="about-head">
+                <h2 id="about-title" class="eyebrow">"About this catalogue"</h2>
+                <button type="button" class="button primary about-done"
+                    on:click=move |_| if let Some(DetailsEditor(open)) = editing { open.set(false) }>"Done"</button>
+            </header>
+            <DescriptionField uuid=uuid.clone() summary/>
+            <Tags target=Target::new(uuid.clone(), CATALOGUE) tags/>
+            <Attributes target=Target::new(uuid, CATALOGUE) attributes/>
+        </section>
     }
 }
 

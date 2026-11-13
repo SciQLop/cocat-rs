@@ -26,8 +26,8 @@ pub struct About {
     decided_in: Option<(String, String)>,
     /// Its `description` attribute.
     description: Option<String>,
-    /// A catalogue's heading, which lists its details; not the trash or every event.
-    catalogue: bool,
+    /// A catalogue's uuid: its heading lists its details; not the trash or every event.
+    catalogue: Option<String>,
     /// Its tags and other attributes, shown read-only under the title.
     tags: Vec<String>,
     attributes: Vec<(String, String)>,
@@ -43,7 +43,7 @@ impl About {
             copied: None,
             decided_in: None,
             description: None,
-            catalogue: false,
+            catalogue: None,
             tags: Vec::new(),
             attributes: Vec::new(),
         }
@@ -166,6 +166,13 @@ pub fn Heading(
     let listed = cocat_core::room_id::is_public_id(&room.config.room_id)
         .then(|| crate::views::public::listed(room.config.room_id.clone()));
     let listed = move || listed.and_then(|listed| listed.get());
+    let details = use_context::<crate::views::catalogue_details::DetailsEditor>()
+        .filter(|_| room.can_write());
+    let editing_details = Memo::new(move |_| {
+        details
+            .filter(|details| details.is_open())
+            .and_then(|_| about.with(|about| about.catalogue.clone()))
+    });
     view! {
         <div class="heading">
             {move || match rename.filter(|rename| rename.editing.get() && rename.allowed.get()) {
@@ -195,17 +202,22 @@ pub fn Heading(
             {move || listed().and_then(|listed| listed.relay).map(|relay| view! {
                 <p class="quiet">{crate::views::public::relay_line(&relay)}</p>
             })}
-            {move || {
-                let curated = listed().and_then(|listed| listed.description);
-                let description = curated.or_else(|| about.with(|about| about.description.clone()));
-                match about.with(|about| about.catalogue.then(|| (about.tags.clone(), about.attributes.clone()))) {
-                    Some((tags, attributes)) => view! {
-                        <crate::views::catalogue_details::AboutBox description tags attributes/>
-                    }.into_any(),
-                    None => description
-                        .map(|text| view! { <crate::views::public::Description text/> })
-                        .into_any(),
-                }
+            {move || match editing_details.get() {
+                // Keyed on the catalogue alone: the fields stay put while their saves change
+                // what the heading shows.
+                Some(uuid) => view! { <crate::views::catalogue_details::AboutEditor uuid/> }.into_any(),
+                None => (move || {
+                    let curated = listed().and_then(|listed| listed.description);
+                    let description = curated.or_else(|| about.with(|about| about.description.clone()));
+                    match about.with(|about| about.catalogue.as_ref().map(|_| (about.tags.clone(), about.attributes.clone()))) {
+                        Some((tags, attributes)) => view! {
+                            <crate::views::catalogue_details::AboutBox description tags attributes/>
+                        }.into_any(),
+                        None => description
+                            .map(|text| view! { <crate::views::public::Description text/> })
+                            .into_any(),
+                    }
+                }).into_any(),
             }}
             {move || about.with(|about| about.decided_in.clone()).map(|(id, name)| view! {
                 <p class="quiet">"Decided in round "<a href=Route::Round(id).href(&page())>{name}</a></p>
@@ -238,7 +250,7 @@ pub fn catalogue_about(
         decided_in: decided_in(&catalogue.attributes),
         description: crate::catalogues::description(&catalogue.attributes),
         attributes: crate::catalogues::attribute_rows(&catalogue.attributes),
-        catalogue: true,
+        catalogue: Some(catalogue.uuid),
         tags: catalogue.tags,
     }
 }

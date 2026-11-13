@@ -1032,6 +1032,11 @@ a.button { text-decoration: none; }
   .title-line:hover .rename-pen, .project-menu:hover + .rename-pen,
   .rename-pen:hover, .rename-pen:focus-visible { opacity: 1; }
 }
+/* The About box while its details are edited in place. */
+.about-editing .about-done { margin-left: auto; }
+.about-editing textarea { width: 100%; font: inherit; font-size: 14px; line-height: 1.5; }
+.about-editing input[type=text] { width: 100%; max-width: 420px; font: inherit; font-size: 14px; }
+.about-editing section + section, .about-editing > * + * { margin-top: 10px; }
 .title-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .title-line h1 { min-width: 0; overflow-wrap: anywhere; }
 /* The title being renamed: the field takes the title's place and size. */

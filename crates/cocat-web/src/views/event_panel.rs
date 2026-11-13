@@ -8,7 +8,6 @@ use crate::route::Route;
 use crate::rows::Row;
 use crate::state::Room;
 use crate::views::catalogue::OnScreen;
-use crate::views::catalogue_details::{CatalogueEditor, DetailsEditor};
 use crate::views::event_editor::{Editor, TrashActions};
 use crate::views::history::LastChanges;
 use crate::views::projects::Projects;
@@ -52,10 +51,7 @@ pub fn EventPanel(
     route: Memo<Route>,
     screen: RwSignal<Option<OnScreen>>,
 ) -> impl IntoView {
-    let details = use_context::<DetailsEditor>();
-    let editing_details = move || details.is_some_and(|DetailsEditor(open)| open.get());
     let content = move || match shown.get() {
-        Shown::Nothing if editing_details() => view! { <CatalogueEditor route/> }.into_any(),
         Shown::Nothing => view! { <Statistics screen/> }.into_any(),
         Shown::Derived(row) => derived(&row).into_any(),
         Shown::Public(row) => public(&row).into_any(),
