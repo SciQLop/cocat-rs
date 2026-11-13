@@ -14,7 +14,6 @@ use crate::views::transfer::ExportDialog;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
     Create,
-    Rename,
     Leave,
     Delete,
     Export,
@@ -31,7 +30,6 @@ pub fn ProjectDialog(which: Dialog, dialog: RwSignal<Option<Dialog>>) -> impl In
     });
     let body = match which {
         Dialog::Create => view! { <Create dialog/> }.into_any(),
-        Dialog::Rename => view! { <Rename dialog/> }.into_any(),
         Dialog::Leave => view! { <Leave dialog/> }.into_any(),
         Dialog::Delete => view! { <Delete dialog/> }.into_any(),
         Dialog::Export => view! { <ExportDialog dialog/> }.into_any(),
@@ -118,41 +116,6 @@ fn Create(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
             </label>
             {error_line(error)}
             <Buttons action="Create" busy dialog/>
-        </form>
-    }
-}
-
-#[component]
-fn Rename(dialog: RwSignal<Option<Dialog>>) -> impl IntoView {
-    let projects = expect_context::<Projects>();
-    let (id, name) = projects
-        .open
-        .with_untracked(|config| (config.room_id.clone(), config.room_name.clone()));
-    let input = NodeRef::<Input>::new();
-    let (error, busy): (Error, _) = (RwSignal::new(None), RwSignal::new(false));
-    let submit = move |event: leptos::ev::SubmitEvent| {
-        event.prevent_default();
-        let (api, id, name) = (projects.api(), id.clone(), typed(input));
-        send(
-            error,
-            busy,
-            async move { api::rename_project(&api, &id, &name).await },
-            move |project| {
-                projects.renamed(project);
-                dialog.set(None);
-            },
-        );
-    };
-    view! {
-        <form method="dialog" class="name-form" on:submit=submit>
-            <h2>"Rename project"</h2>
-            <label>
-                <span class="field-label">"Name"</span>
-                <input type="text" node_ref=input value=name required maxlength="200" autofocus
-                    on:input=move |_| error.set(None)/>
-            </label>
-            {error_line(error)}
-            <Buttons action="Rename" busy dialog/>
         </form>
     }
 }

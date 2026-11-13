@@ -8,7 +8,7 @@ use crate::projects::shareable;
 use crate::route::Route;
 use crate::state::Room;
 use crate::sync::Status;
-use crate::views::projects::{ProjectActions, ProjectMenu, Projects};
+use crate::views::projects::{ProjectActions, ProjectMenu, ProjectNameField, Projects};
 use crate::views::share::ShareButton;
 
 #[component]
@@ -84,14 +84,17 @@ pub fn PublicHeader(shown: Memo<Route>) -> impl IntoView {
 #[component]
 fn Crumbs(shown: Memo<Route>) -> impl IntoView {
     let page = window().location().pathname().unwrap_or_default();
+    let renaming = RwSignal::new(false);
     view! {
         <a class="brand" href=Route::Home.href(&page) title="Home">
             <img src="mark.png" alt="" width="24" height="28"/>
             "cocat"
         </a>
         <nav class="crumbs" aria-label="Breadcrumb">
-            <ProjectMenu/>
-            <ProjectActions/>
+            <Show when=move || !renaming.get() fallback=move || view! { <ProjectNameField open=renaming/> }>
+                <ProjectMenu/>
+            </Show>
+            <ProjectActions renaming/>
             {move || shown.get().crumb().map(|here| view! {
                 <span aria-hidden="true">"/"</span>
                 <span class="here" aria-current="page">{here}</span>

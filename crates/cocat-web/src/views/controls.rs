@@ -93,3 +93,44 @@ pub fn NameForm(
         </form>
     }
 }
+
+/// A name edited where it shows, in its place: Enter or Save hands the typed name to `save`,
+/// Escape or Cancel closes `open`. The caller closes `open` once saved, or puts the refusal
+/// in `error`, shown under the field. `class` sizes it like what it replaces.
+#[component]
+pub fn NameField(
+    #[prop(into)] initial: String,
+    label: &'static str,
+    open: RwSignal<bool>,
+    error: Error,
+    save: Callback<String>,
+    #[prop(optional)] class: &'static str,
+) -> impl IntoView {
+    let input = NodeRef::<Input>::new();
+    Effect::new(move |_| {
+        if let Some(input) = input.get() {
+            let _ = input.focus();
+            input.select();
+        }
+    });
+    let send = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        save.run(input.get().map(|input| input.value()).unwrap_or_default());
+    };
+    let escape = move |event: leptos::ev::KeyboardEvent| {
+        if event.key() == "Escape" {
+            open.set(false);
+        }
+    };
+    view! {
+        <div class=format!("name-field {class}")>
+            <form on:submit=send>
+                <input type="text" node_ref=input value=initial aria-label=label maxlength="200"
+                    on:keydown=escape on:input=move |_| error.set(None)/>
+                <button type="submit" class="button primary">"Save"</button>
+                <button type="button" class="button" on:click=move |_| open.set(false)>"Cancel"</button>
+            </form>
+            {error_line(error)}
+        </div>
+    }
+}

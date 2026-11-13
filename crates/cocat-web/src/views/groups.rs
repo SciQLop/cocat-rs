@@ -110,21 +110,25 @@ fn CreateGroup() -> impl IntoView {
 #[component]
 fn GroupRow(group: Group, reload: Callback<()>) -> impl IntoView {
     let href = Route::Group(group.id.clone()).href(&page());
+    let renaming = RwSignal::new(false);
+    let (id, name, shown) = (group.id.clone(), group.name.clone(), group.name.clone());
     view! {
         <li class="group-row">
-            <a class="grow" href=href>{group.name.clone()}</a>
+            <Show when=move || !renaming.get()
+                fallback=move || view! { <GroupNameField id=id.clone() name=name.clone() open=renaming changed=reload class="grow"/> }>
+                <a class="grow" href=href.clone()>{shown.clone()}</a>
+            </Show>
             <span class="role">{group.role.clone()}</span>
-            <GroupActions group changed=reload/>
+            <GroupActions group=group.clone() changed=reload renaming/>
         </li>
     }
 }
 
 /// Rename and delete for the owner, leave for a member.
 #[component]
-fn GroupActions(group: Group, changed: Callback<()>) -> impl IntoView {
+fn GroupActions(group: Group, changed: Callback<()>, renaming: RwSignal<bool>) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let error: Error = RwSignal::new(None);
-    let renaming = RwSignal::new(false);
     let id = StoredValue::new(group.id.clone());
     let name = StoredValue::new(group.name.clone());
     let delete = move |_| {
@@ -152,16 +156,15 @@ fn GroupActions(group: Group, changed: Callback<()>) -> impl IntoView {
     view! {
         <span class="row-buttons">
             {owner.then(|| view! {
-                <button type="button" class="link-button" on:click=move |_| renaming.set(true)>"Rename"</button>
+                <Show when=move || !renaming.get()>
+                    <button type="button" class="link-button" on:click=move |_| renaming.set(true)>"Rename"</button>
+                </Show>
                 <button type="button" class="link-button danger" on:click=delete>"Delete"</button>
             })}
             {(!owner).then(|| view! {
                 <button type="button" class="link-button" on:click=leave>"Leave"</button>
             })}
         </span>
-        <Show when=move || renaming.get()>
-            <RenameGroup id=id.get_value() name=name.get_value() open=renaming changed/>
-        </Show>
         {error_line(error)}
     }
 }
@@ -174,43 +177,29 @@ fn gone(changed: Callback<()>) -> Callback<()> {
     })
 }
 
+/// The group's name as a field, where it showed.
 #[component]
-fn RenameGroup(
+fn GroupNameField(
     id: String,
     name: String,
     open: RwSignal<bool>,
     changed: Callback<()>,
+    class: &'static str,
 ) -> impl IntoView {
     let projects = expect_context::<Projects>();
-    let input = NodeRef::<Input>::new();
     let error: Error = RwSignal::new(None);
-    let submit = move |event: leptos::ev::SubmitEvent| {
-        event.prevent_default();
-        let name = input
-            .get_untracked()
-            .map(|input| input.value())
-            .unwrap_or_default();
+    let save = Callback::new(move |typed: String| {
         let (api, id) = (projects.api(), id.clone());
         let done = Callback::new(move |()| {
             open.set(false);
             changed.run(());
         });
         act(error, done, async move {
-            api::patch(&api, &["groups", &id], json!({ "name": name })).await
+            api::patch(&api, &["groups", &id], json!({ "name": typed })).await
         });
-    };
+    });
     view! {
-        <form class="name-form group-rename" on:submit=submit>
-            <label>
-                <span class="field-label">"Group name"</span>
-                <input type="text" required maxlength="200" node_ref=input value=name autofocus/>
-            </label>
-            {error_line(error)}
-            <div class="row-buttons">
-                <button type="submit" class="button primary">"Rename"</button>
-                <button type="button" class="button" on:click=move |_| open.set(false)>"Cancel"</button>
-            </div>
-        </form>
+        <crate::views::controls::NameField initial=name label="Name of the group" open error save class=class/>
     }
 }
 
@@ -321,6 +310,8 @@ fn GroupBody(
     changed: Callback<()>,
 ) -> impl IntoView {
     let owner = group.role == "owner";
+    let renaming = RwSignal::new(false);
+    let (id, name, title) = (group.id.clone(), group.name.clone(), group.name.clone());
     let members = part(loaded, |found| &found.members);
     let row = {
         let role = group.role.clone();
@@ -329,9 +320,12 @@ fn GroupBody(
     };
     view! {
         <div class="groups-head">
-            <h1>{group.name.clone()}</h1>
+            <Show when=move || !renaming.get()
+                fallback=move || view! { <GroupNameField id=id.clone() name=name.clone() open=renaming changed class="title-field"/> }>
+                <h1>{title.clone()}</h1>
+            </Show>
             <span class="role">{format!("Your role: {}", group.role)}</span>
-            <GroupActions group=group.clone() changed/>
+            <GroupActions group=group.clone() changed renaming/>
         </div>
         <section class="share-section">
             <h2 class="eyebrow">"Members"</h2>

@@ -1039,8 +1039,25 @@ a.button { text-decoration: none; }
 .about-editing section + section, .about-editing > * + * { margin-top: 10px; }
 .title-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .title-line h1 { min-width: 0; overflow-wrap: anywhere; }
-/* The title being renamed: the field takes the title's place and size. */
-.title-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* A name edited where it shows (NameField): the field takes the name's place. */
+.name-field { min-width: 0; }
+.name-field form { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name-field input {
+  flex: 1 1 auto; min-width: 0; margin: 0; padding: 4px 8px; font: inherit; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius);
+  box-shadow: var(--focus); outline: none;
+}
+.name-field .field-error { margin: 4px 0 0; }
+/* In the header: the size of the project menu it replaces; a refusal floats under it. */
+.project-name-field { position: relative; }
+.project-name-field input { width: 240px; height: 34px; font-size: 14px; }
+.project-name-field .button { height: 34px; padding: 0 12px; }
+.project-name-field .field-error {
+  position: absolute; top: 100%; left: 0; z-index: 4; white-space: nowrap;
+  background: var(--surface); padding: 2px 6px; border-radius: var(--radius);
+}
+/* A page's title being renamed: the field keeps the title's size. */
+.title-field { flex: 1 1 auto; }
 .title-field input {
   flex: 1 1 auto; min-width: 0; margin: 0; padding: 2px 8px; height: 40px;
   font: inherit; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink);

@@ -245,8 +245,9 @@ pub fn ProjectMenu() -> impl IntoView {
 
 /// What can be done with the open project, beside its name: the everyday actions first, then
 /// leaving or deleting it, set apart at the end. Nothing on the public catalogues or at home.
+/// `renaming`: the project's name is a field in the header, in place of its menu.
 #[component]
-pub fn ProjectActions() -> impl IntoView {
+pub fn ProjectActions(renaming: RwSignal<bool>) -> impl IntoView {
     let projects = expect_context::<Projects>();
     let Some(room) = use_context::<Room>() else {
         return ().into_any();
@@ -268,10 +269,10 @@ pub fn ProjectActions() -> impl IntoView {
         dialog.set(Some(which));
     };
     view! {
-        <Show when=move || !elsewhere() && actions().rename>
+        <Show when=move || !elsewhere() && actions().rename && !renaming.get()>
             <button type="button" class="rename-pen" title="Rename the project"
                 aria-label=move || format!("Rename the project “{}”", name())
-                on:click=move |_| dialog.set(Some(Dialog::Rename))>
+                on:click=move |_| renaming.set(true)>
                 <PenIcon/>
             </button>
         </Show>
@@ -282,7 +283,8 @@ pub fn ProjectActions() -> impl IntoView {
                     title="Project actions">"⋯"</summary>
                 <div class="menu" role="menu" aria-label="Project actions">
                     <Show when=move || actions().rename>
-                        <button type="button" role="menuitem" on:click=move |_| pick(Dialog::Rename)>"Rename…"</button>
+                        <button type="button" role="menuitem"
+                            on:click=move |_| { close_menu(menu); renaming.set(true); }>"Rename…"</button>
                     </Show>
                     {importer.filter(|_| editor).map(|importer| view! {
                         <button type="button" role="menuitem"
@@ -319,5 +321,33 @@ pub fn PenIcon() -> impl IntoView {
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"></path>
         </svg>
+    }
+}
+
+/// The open project's name as a field in the header, where its menu was.
+#[component]
+pub fn ProjectNameField(open: RwSignal<bool>) -> impl IntoView {
+    let projects = expect_context::<Projects>();
+    let error = RwSignal::new(None::<String>);
+    let (id, name) = projects
+        .open
+        .with_untracked(|config| (config.room_id.clone(), config.room_name.clone()));
+    let save = Callback::new(move |typed: String| {
+        let (api, id) = (projects.api(), id.clone());
+        spawn_local(async move {
+            match api::rename_project(&api, &id, &typed).await {
+                Ok(project) => {
+                    projects.renamed(project);
+                    open.try_set(false);
+                }
+                Err(failure) => {
+                    error.try_set(Some(failure.to_string()));
+                }
+            }
+        });
+    });
+    view! {
+        <crate::views::controls::NameField initial=name label="Name of the project" open error save
+            class="project-name-field"/>
     }
 }

@@ -116,38 +116,17 @@ pub struct TitleEdit {
     pub save: Callback<String, Result<(), String>>,
 }
 
-/// The title as a field: Enter or Save keeps the name, Escape or Cancel leaves it.
+/// The title as a field, in its place.
 #[component]
 fn TitleField(about: Memo<About>, rename: TitleEdit) -> impl IntoView {
-    let input = NodeRef::<leptos::html::Input>::new();
     let error = RwSignal::new(None::<String>);
-    let initial = about.with_untracked(|about| about.title.clone());
-    Effect::new(move |_| {
-        if let Some(input) = input.get() {
-            let _ = input.focus();
-            input.select();
-        }
+    let save = Callback::new(move |name: String| match rename.save.run(name) {
+        Ok(()) => rename.editing.set(false),
+        Err(refused) => error.set(Some(crate::search::sentence(&refused))),
     });
-    let save = move |event: leptos::ev::SubmitEvent| {
-        event.prevent_default();
-        let name = input.get().map(|input| input.value()).unwrap_or_default();
-        match rename.save.run(name) {
-            Ok(()) => rename.editing.set(false),
-            Err(refused) => error.set(Some(crate::search::sentence(&refused))),
-        }
-    };
-    let escape = move |event: leptos::ev::KeyboardEvent| {
-        if event.key() == "Escape" {
-            rename.editing.set(false);
-        }
-    };
     view! {
-        <form class="title-field" on:submit=save>
-            <input type="text" node_ref=input value=initial aria-label="Name" on:keydown=escape/>
-            <button type="submit" class="button primary">"Save"</button>
-            <button type="button" class="button" on:click=move |_| rename.editing.set(false)>"Cancel"</button>
-        </form>
-        {move || error.get().map(|why| view! { <p class="field-error" role="alert">{why}</p> })}
+        <crate::views::controls::NameField initial=about.with_untracked(|about| about.title.clone())
+            label="Name of the catalogue" open=rename.editing error save class="title-field"/>
     }
 }
 
