@@ -86,6 +86,8 @@ pub enum RoomError {
 pub struct Room {
     inner: Arc<Inner>,
     session: Mutex<Option<Session>>,
+    /// The server url and cookie of the last connect, for the calls beside the socket.
+    server: Mutex<Option<(String, String)>>,
 }
 
 /// What the sync task and the document observers share.
@@ -327,7 +329,28 @@ impl Room {
         Room {
             inner,
             session: Mutex::new(None),
+            server: Mutex::new(None),
         }
+    }
+
+    /// The server url and cookie of the last connect.
+    pub fn server(&self) -> Option<(String, String)> {
+        lock(&self.server).clone()
+    }
+
+    /// What `query` finds in the public catalogues, as the server last answered: asked again
+    /// each time, kept beside the room's cache. `None` before the first connect.
+    pub async fn search_public(
+        &self,
+        query: crate::PublicQuery<'_>,
+    ) -> Option<Result<crate::PublicSearch, crate::LoginError>> {
+        let (url, cookie) = lock(&self.server).clone()?;
+        let cache = self
+            .inner
+            .cache
+            .as_ref()
+            .and_then(|store| lock(store).path().parent().map(Path::to_path_buf));
+        Some(crate::search_public(&url, &cookie, query, cache.as_deref()).await)
     }
 
     /// Runs `edit` in one transaction, which is one update for the server and for the cache.
@@ -459,6 +482,7 @@ impl Room {
         if self.is_past() {
             return Err(RoomError::Past);
         }
+        *lock(&self.server) = Some((url.to_owned(), cookie.to_owned()));
         let url = websocket_url(url, &self.inner.room_id)?;
         self.stop();
         // Set before spawning: a caller that just gave a new cookie must not read the old

@@ -74,9 +74,9 @@ What the search found is marked in the table, and in the names of the public cat
 you search their list.
 
 !!! note "Public events stay on the server"
-    A smart catalogue searching the public catalogues lists their events in the browser only:
-    Python and SciQLop see its picked events, not what the server finds. The page shows at
-    most 10,000 events and says when the search finds more.
+    The server searches the public catalogues; the browser, Python and SciQLop all ask it, and
+    keep its last answer for when it is out of reach. They show at most 10,000 events, the
+    first by start time, and the page says when the search finds more.
 
 ## Smart catalogues
 
@@ -93,7 +93,13 @@ From Python:
 ```python
 project.search("tag:shock confidence:>=0.8")            # the events, in time order
 project.create_smart_catalogue("Strong shocks", "tag:shock confidence:>=0.8")
+project.search_public("tag:icme #speed:>800")                  # arrays, as event_arrays gives
+project.create_smart_catalogue("Fast ICMEs", "tag:icme #speed:>800", public=True)
 ```
+
+In the arrays of a catalogue searching the public catalogues, an event found there has no
+`uuid` (it is not an event of the project): `sources` holds its own uuid and `catalogue` the
+id of its public catalogue.
 
 ### Rules a search cannot say
 

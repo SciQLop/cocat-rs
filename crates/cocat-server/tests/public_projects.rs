@@ -871,7 +871,7 @@ async fn one_search_finds_events_in_every_public_catalogue() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|event| event["uuid"].as_str().unwrap().to_owned())
+            .map(|found| found["event"]["uuid"].as_str().unwrap().to_owned())
             .collect()
     };
 
@@ -884,7 +884,7 @@ async fn one_search_finds_events_in_every_public_catalogue() {
     );
     assert_eq!(found["total"], 2);
     assert_eq!(found["events"][0]["catalogue"], cmes.as_str());
-    assert_eq!(found["events"][1]["tags"], json!(["shock"]));
+    assert_eq!(found["events"][1]["event"]["tags"], json!(["shock"]));
 
     let (_, found) = search("shock catalogue:Shocks").await;
     assert_eq!(uuids(&found), ["s1"], "catalogue: names a public catalogue");
@@ -907,10 +907,115 @@ async fn one_search_finds_events_in_every_public_catalogue() {
         .await;
     assert_eq!((uuids(&found).len(), found["total"].clone()), (1, json!(3)));
 
+    let where_ =
+        form_urlencoded::byte_serialize(br#"{"contains": ["tags", "shock"]}"#).collect::<String>();
+    let (status, found) = world
+        .call(
+            Some(world.reader),
+            Method::GET,
+            &format!("/api/public/events?where={where_}"),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (status, found["total"].clone()),
+        (StatusCode::OK, json!(3)),
+        "a stored predicate"
+    );
+
     let (status, _) = search("auhtor:x").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     let (status, _) = world
         .call(None, Method::GET, "/api/public/events?q=shock", None)
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// A search as `caller` sends it, with the version tag it holds: the status, the tag, the body.
+async fn search_held(
+    world: &World,
+    query: &str,
+    held: Option<&str>,
+) -> (StatusCode, String, Value) {
+    let encoded: String = form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let token = auth::start_session(&world.state.pool, world.reader)
+        .await
+        .unwrap();
+    let mut request = Request::get(format!("/api/public/events?q={encoded}"))
+        .header(header::COOKIE, format!("fastapiusersauth={token}"));
+    if let Some(held) = held {
+        request = request.header(header::IF_NONE_MATCH, held);
+    }
+    let response = ws::router(world.state.clone())
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let tag = response.headers()[header::ETAG]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    (
+        status,
+        tag,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn a_client_holding_the_answer_is_told_nothing_changed_until_a_catalogue_does() {
+    let world = World::start().await;
+    let shocks = world.public(json!({"name": "Shocks"})).await;
+    append_events(
+        &world,
+        &shocks,
+        &[("s1", "2020-01-02T00:00:00Z", &["shock"])],
+    );
+    let (status, tag, found) = search_held(&world, "tag:shock", None).await;
+    assert_eq!((status, found["total"].clone()), (StatusCode::OK, json!(1)));
+
+    let (status, again, _) = search_held(&world, "tag:shock", Some(&tag)).await;
+    assert_eq!(
+        (status, again.as_str()),
+        (StatusCode::NOT_MODIFIED, tag.as_str())
+    );
+    let (status, _, _) = search_held(&world, "tag:wave", Some(&tag)).await;
+    assert_eq!(status, StatusCode::OK, "another search is another answer");
+
+    append_events(
+        &world,
+        &shocks,
+        &[("s2", "2020-01-03T00:00:00Z", &["shock"])],
+    );
+    let (status, changed, found) = search_held(&world, "tag:shock", Some(&tag)).await;
+    assert_eq!((status, found["total"].clone()), (StatusCode::OK, json!(2)));
+    assert_ne!(changed, tag);
+}
+
+#[tokio::test]
+async fn a_search_seen_before_scans_only_the_catalogues_that_changed() {
+    let world = World::start().await;
+    let shocks = world.public(json!({"name": "Shocks"})).await;
+    let cmes = world.public(json!({"name": "CMEs"})).await;
+    append_events(
+        &world,
+        &shocks,
+        &[("s1", "2020-01-02T00:00:00Z", &["shock"])],
+    );
+    append_events(&world, &cmes, &[("c1", "2020-01-01T00:00:00Z", &["shock"])]);
+    let (_, _, found) = search_held(&world, "tag:shock", None).await;
+    assert_eq!(found["total"], 2);
+
+    let snapshots = world.update_dir.join("public-index");
+    assert!(snapshots.join(format!("{shocks}.jsonl")).exists());
+    fs::remove_dir_all(&snapshots).unwrap();
+    append_events(&world, &cmes, &[("c2", "2020-01-03T00:00:00Z", &["shock"])]);
+    let (_, _, found) = search_held(&world, "tag:shock", None).await;
+    assert_eq!(found["total"], 3, "Shocks answered from what was kept");
+    assert!(!snapshots.join(format!("{shocks}.jsonl")).exists());
+    assert!(
+        snapshots.join(format!("{cmes}.jsonl")).exists(),
+        "CMEs scanned again"
+    );
 }

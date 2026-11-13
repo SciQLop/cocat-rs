@@ -21,7 +21,6 @@ pub struct Found {
 pub struct PublicEvent {
     /// The id of the public catalogue holding it.
     pub catalogue: String,
-    #[serde(flatten)]
     pub event: EventRecord,
 }
 
@@ -94,10 +93,11 @@ mod tests {
         let found: Found = serde_json::from_value(json!({
             "total": 2,
             "events": [
-                {"catalogue": "public.donki.cme", "uuid": "a", "start": "2020-01-01T00:00:00Z",
-                 "stop": "2020-01-01T01:00:00Z", "tags": ["cme"], "attributes": {"speed": 900}},
-                {"catalogue": "public.gone", "uuid": "b", "start": "2020-01-02T00:00:00Z",
-                 "stop": "2020-01-02T00:00:00Z"},
+                {"catalogue": "public.donki.cme", "event": {"uuid": "a",
+                 "start": "2020-01-01T00:00:00Z", "stop": "2020-01-01T01:00:00Z",
+                 "tags": ["cme"], "attributes": {"speed": 900}}},
+                {"catalogue": "public.gone", "event": {"uuid": "b",
+                 "start": "2020-01-02T00:00:00Z", "stop": "2020-01-02T00:00:00Z"}},
             ],
         }))
         .unwrap();

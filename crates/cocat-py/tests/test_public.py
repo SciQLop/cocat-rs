@@ -124,3 +124,38 @@ def test_a_curator_changes_what_the_index_says_and_it_counts_the_events(server, 
     writer.save(15)
     writer.close()
     wait_until(lambda: cc.raw.public_catalogues(server.url, server.cookie)[0]["count"] == 1)
+
+
+def test_a_smart_catalogue_searching_the_public_catalogues_lists_their_events(
+    server, project, tmp_path
+):
+    from conftest import free_port
+
+    curator = account(server, "keeper@example.org", "set-curator")
+    shocks = cc.raw.create_public_catalogue(server.url, curator, "Shocks", key="zz.shocks")
+    public = connected(tmp_path / "keeper", shocks, server.url, curator)
+    events = [
+        public.create_event("2020-01-02T00:00:00Z", "2020-01-02T01:00:00Z", tags=["shock"],
+                            attributes={"mach": 3.5}),
+        public.create_event("2020-01-03T00:00:00Z", "2020-01-03T01:00:00Z", tags=["wave"]),
+    ]
+    public.create_catalogue("Shocks", events=events)
+    public.save(15)
+    public.close()
+
+    found = project.search_public('tag:shock catalogue:"Shocks"')
+    assert found["sources"] == [[events[0].uuid]]
+    assert found["catalogue"] == [shocks]
+    assert found["attributes"] == [{"mach": 3.5}]
+
+    picked = project.create_event("2019-01-01T00:00:00Z", "2019-01-01T01:00:00Z")
+    smart = project.create_smart_catalogue("Shocks everywhere", "tag:shock", public=True)
+    smart.add_events([picked])
+    arrays = smart.event_arrays(attributes=True)
+    assert arrays["uuid"] == [picked.uuid, None], "the picked event, then the public one"
+    assert arrays["catalogue"] == [None, shocks]
+    assert arrays["sources"] == [None, [events[0].uuid]]
+
+    project.connect(f"http://127.0.0.1:{free_port()}", server.cookie)
+    offline = smart.event_arrays()
+    assert offline["catalogue"] == [None, shocks], "the last answer, while the server is away"

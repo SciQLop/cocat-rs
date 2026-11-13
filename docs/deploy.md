@@ -39,7 +39,7 @@ podman run -d --name cocat -p 6570:6570 \
 
 | Mount | Holds |
 |---|---|
-| `/storage` | the project files: `<room_id>.y` and its history stamps `<room_id>.y.h`; a workspace adds one `<project>%2F<document>.y` (and `.y.h`) per document, and its whole files under `blobs/` |
+| `/storage` | the project files: `<room_id>.y` and its history stamps `<room_id>.y.h`; a workspace adds one `<project>%2F<document>.y` (and `.y.h`) per document, and its whole files under `blobs/`; `public-index/` caches one JSON-lines snapshot per public catalogue for the search across them (about the size of their project files, rewritten when one changes, safe to delete) |
 | `/db` | `cocat-rs.db` and `cocat-rs.db.secret`. The database holds everything that is not a project's content: accounts and password hashes, sessions and app tokens, projects with their owners, members, groups and invitations, quotas, public-catalogue and curator settings, saved versions, rounds, submissions (their only copy), the workspace document and uploaded-file lists, and the providers' state. Without it the project files have no owners. |
 | `/log` | kept for the Python image's contract; the server prints to the container output (`podman logs cocat`) |
 

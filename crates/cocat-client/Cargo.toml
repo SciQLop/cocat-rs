@@ -12,6 +12,7 @@ cookie = { version = "0.18", features = ["percent-encode"] }
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde.workspace = true
+sha2 = "0.10"
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }

@@ -16,7 +16,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use cocat_client::{Change, Credentials, Room as ClientRoom, RoomInfo as ClientRoomInfo};
+use cocat_client::{
+    Change, Credentials, PublicEvent, PublicQuery, Room as ClientRoom, RoomInfo as ClientRoomInfo,
+};
 use cocat_core::model::{
     self, AttributeType, EventField, EventRecord, Hop, Member, NewCatalogue, Origin, OriginKind,
     Status, Used, Vertex,
@@ -366,6 +368,24 @@ fn search_rule(room: &ClientRoom, text: &str, source: Option<&str>) -> Result<Va
     let txn = doc.transact();
     let predicate = query::parse(text, &model::catalogue_names(&txn)).map_err(value_error)?;
     Ok(query::rule(&predicate, source))
+}
+
+/// The rule searching the public catalogues, whose names `catalogue:` takes from the server.
+fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
+    let Some((url, cookie)) = room.server() else {
+        return Err(PyRuntimeError::new_err(
+            "connect the project to search the public catalogues",
+        ));
+    };
+    let listed = py
+        .detach(|| block_on(cocat_client::public_catalogues(&url, &cookie)))?
+        .map_err(http_error)?;
+    let names: Vec<(String, String)> = listed
+        .into_iter()
+        .map(|catalogue| (catalogue.id, catalogue.name))
+        .collect();
+    let predicate = query::parse(text, &names).map_err(value_error)?;
+    Ok(query::public_rule(&predicate))
 }
 
 fn event_uuid(event: &Bound<'_, PyAny>) -> Result<String> {
@@ -788,8 +808,8 @@ impl Catalogue {
     /// from one read of the document, so a remote change cannot fall between them.
     #[pyo3(signature = (attributes=false))]
     fn event_arrays(&self, py: Python<'_>, attributes: bool) -> Result<Py<PyAny>> {
-        let (members, dates) = self.members_and_dates()?;
-        event_arrays_of(py, &members, &dates, attributes)
+        let (members, public, dates) = self.members_and_dates(py)?;
+        event_arrays_of(py, &members, &public, &dates, attributes)
     }
 
     #[pyo3(signature = (keys=None))]
@@ -803,9 +823,13 @@ impl Catalogue {
             None => None,
         };
         let rows = PyList::empty(py);
-        let (members, dates) = self.members_and_dates()?;
-        for member in &members {
-            let map: JsonMap<String, Value> = attributes_of(member)
+        let (members, public, dates) = self.members_and_dates(py)?;
+        let all = members
+            .iter()
+            .map(attributes_of)
+            .chain(public.iter().map(|found| Some(&found.event.attributes)));
+        for attributes in all {
+            let map: JsonMap<String, Value> = attributes
                 .into_iter()
                 .flatten()
                 .filter(|(key, _)| wanted.as_ref().is_none_or(|keys| keys.contains(key)))
@@ -843,14 +867,26 @@ impl Catalogue {
             .map_err(value_error)
     }
 
-    /// The members and the date-typed attribute keys, from one read.
-    fn members_and_dates(&self) -> Result<(Vec<Member>, Vec<String>)> {
-        let doc = self.room.doc();
-        let txn = doc.transact();
-        let members = model::catalogue_members(&txn, &self.uuid)
-            .ok_or_else(|| unknown("catalogue"))?
-            .map_err(value_error)?;
-        Ok((members, date_keys(&txn)))
+    /// The members, what its search finds in the public catalogues, and the date-typed
+    /// attribute keys.
+    fn members_and_dates(
+        &self,
+        py: Python<'_>,
+    ) -> Result<(Vec<Member>, Vec<PublicEvent>, Vec<String>)> {
+        let (members, dates, rule) = {
+            let doc = self.room.doc();
+            let txn = doc.transact();
+            let members = model::catalogue_members(&txn, &self.uuid)
+                .ok_or_else(|| unknown("catalogue"))?
+                .map_err(value_error)?;
+            let rule = model::catalogue(&txn, &self.uuid).and_then(|catalogue| catalogue.rule);
+            (members, date_keys(&txn), rule)
+        };
+        let public = match rule.as_ref().and_then(public_predicate) {
+            Some(predicate) => public_events(py, &self.room, PublicQuery::Predicate(&predicate))?,
+            None => Vec::new(),
+        };
+        Ok((members, public, dates))
     }
 }
 
@@ -1141,51 +1177,111 @@ impl Event {
     }
 }
 
-/// The arrays Python scripts plot with, in the order the members come. A derived interval
-/// has no uuid and names the events it came from in `sources`; an event's `sources` is `None`.
+/// The arrays Python scripts plot with: the members in their order, then the events found
+/// in the public catalogues. A derived interval has no uuid and names the events it came
+/// from in `sources`; an event's `sources` is `None`. A public event is no event of the
+/// project either: no uuid, its own in `sources`, and its catalogue's id in `catalogue`.
 fn event_arrays_of(
     py: Python<'_>,
     members: &[Member],
+    public: &[PublicEvent],
     dates: &[String],
     attributes: bool,
 ) -> Result<Py<PyAny>> {
-    let (uuids, sources): (Vec<_>, Vec<_>) = members
+    let rows: Vec<Row<'_>> = members
         .iter()
         .map(|member| match member {
-            Member::Event { record, .. } => (Some(record.uuid.as_str()), None),
-            Member::Derived { sources, .. } => (None, Some(sources)),
+            Member::Event { record, .. } => Row {
+                uuid: Some(&record.uuid),
+                span: (record.start, record.stop),
+                sources: None,
+                catalogue: None,
+                attributes: Some(&record.attributes),
+            },
+            Member::Derived {
+                start,
+                stop,
+                sources,
+            } => Row {
+                uuid: None,
+                span: (*start, *stop),
+                sources: Some(sources.clone()),
+                catalogue: None,
+                attributes: None,
+            },
         })
-        .unzip();
+        .chain(public.iter().map(|found| Row {
+            uuid: None,
+            span: (found.event.start, found.event.stop),
+            sources: Some(vec![found.event.uuid.clone()]),
+            catalogue: Some(&found.catalogue),
+            attributes: Some(&found.event.attributes),
+        }))
+        .collect();
     let micros = |time: Timestamp| time.unix_micros() as i64;
-    let (starts, stops) = members
-        .iter()
-        .map(span)
-        .map(|(start, stop)| (micros(start), micros(stop)))
-        .unzip();
+    let starts = rows.iter().map(|row| micros(row.span.0)).collect();
+    let stops = rows.iter().map(|row| micros(row.span.1)).collect();
     let arrays = PyDict::new(py);
-    arrays.set_item("uuid", uuids)?;
+    arrays.set_item("uuid", rows.iter().map(|row| row.uuid).collect::<Vec<_>>())?;
     arrays.set_item("start", datetime_array(py, starts)?)?;
     arrays.set_item("stop", datetime_array(py, stops)?)?;
-    arrays.set_item("sources", sources)?;
+    arrays.set_item(
+        "sources",
+        rows.iter()
+            .map(|row| row.sources.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    arrays.set_item(
+        "catalogue",
+        rows.iter().map(|row| row.catalogue).collect::<Vec<_>>(),
+    )?;
     if attributes {
-        let rows = PyList::empty(py);
-        for member in members {
-            let empty = JsonMap::new();
-            rows.append(attributes_to_python(
+        let list = PyList::empty(py);
+        let empty = JsonMap::new();
+        for row in &rows {
+            list.append(attributes_to_python(
                 py,
                 dates,
-                attributes_of(member).unwrap_or(&empty),
+                row.attributes.unwrap_or(&empty),
             )?)?;
         }
-        arrays.set_item("attributes", rows)?;
+        arrays.set_item("attributes", list)?;
     }
     Ok(arrays.into_any().unbind())
 }
 
-fn span(member: &Member) -> (Timestamp, Timestamp) {
-    match member {
-        Member::Event { record, .. } => (record.start, record.stop),
-        Member::Derived { start, stop, .. } => (*start, *stop),
+/// One row of [`event_arrays_of`].
+struct Row<'m> {
+    uuid: Option<&'m str>,
+    span: (Timestamp, Timestamp),
+    sources: Option<Vec<String>>,
+    catalogue: Option<&'m str>,
+    attributes: Option<&'m JsonMap<String, Value>>,
+}
+
+/// The search of a rule over the public catalogues: only `{"filter": {"public": true}, ...}`.
+fn public_predicate(rule: &Value) -> Option<cocat_core::rules::Predicate> {
+    match cocat_core::rules::parse(rule).ok()? {
+        cocat_core::rules::Set::Filter { filter, predicate }
+            if matches!(*filter, cocat_core::rules::Set::Public { .. }) =>
+        {
+            Some(predicate)
+        }
+        _ => None,
+    }
+}
+
+/// What `query` finds in the public catalogues, the server asked without the GIL; nothing
+/// before the project first connected.
+fn public_events(
+    py: Python<'_>,
+    room: &ClientRoom,
+    query: PublicQuery<'_>,
+) -> Result<Vec<PublicEvent>> {
+    let found = py.detach(|| block_on(room.search_public(query)))?;
+    match found {
+        None => Ok(Vec::new()),
+        Some(found) => Ok(found.map_err(http_error)?.events),
     }
 }
 
@@ -1503,7 +1599,7 @@ impl Project {
                 .collect::<Vec<_>>();
             (records, date_keys(&txn))
         };
-        event_arrays_of(py, &records.0, &records.1, attributes)
+        event_arrays_of(py, &records.0, &[], &records.1, attributes)
     }
 
     /// The events not in the trash that the search `query` matches, in time order.
@@ -1521,18 +1617,37 @@ impl Project {
             .collect()
     }
 
-    /// A smart catalogue whose rule is the search `query` over all events, or over the
-    /// events of `source` (a `Catalogue` or a uuid).
-    #[pyo3(signature = (name, query, source=None))]
+    /// What the search `query` finds in every public catalogue on the server, as the arrays
+    /// `Catalogue.event_arrays(attributes=True)` gives, with each event's public catalogue in
+    /// `catalogue`; at most 10,000 events, the first by start time. The last answer is kept,
+    /// for when the server cannot be reached.
+    fn search_public(&self, py: Python<'_>, query: &str) -> Result<Py<PyAny>> {
+        if self.room.server().is_none() {
+            return Err(PyRuntimeError::new_err(
+                "connect the project to search the public catalogues",
+            ));
+        }
+        let found = public_events(py, &self.room, PublicQuery::Text(query))?;
+        event_arrays_of(py, &[], &found, &[], true)
+    }
+
+    /// A smart catalogue whose rule is the search `query` over all events, over the events
+    /// of `source` (a `Catalogue` or a uuid), or with `public=True` over every public
+    /// catalogue on the server.
+    #[pyo3(signature = (name, query, source=None, public=false))]
     fn create_smart_catalogue(
         &self,
         py: Python<'_>,
         name: String,
         query: &str,
         source: Option<&Bound<'_, PyAny>>,
+        public: bool,
     ) -> Result<Py<Catalogue>> {
         let source = source.map(catalogue_uuid).transpose()?;
-        let rule = search_rule(&self.room, query, source.as_deref())?;
+        let rule = match public {
+            true => public_rule(py, &self.room, query)?,
+            false => search_rule(&self.room, query, source.as_deref())?,
+        };
         let catalogue = NewCatalogue {
             uuid: uuid_argument(None)?,
             name,
