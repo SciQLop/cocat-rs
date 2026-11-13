@@ -268,6 +268,13 @@ pub fn ProjectActions() -> impl IntoView {
         dialog.set(Some(which));
     };
     view! {
+        <Show when=move || !elsewhere() && actions().rename>
+            <button type="button" class="project-rename" title="Rename the project"
+                aria-label=move || format!("Rename the project “{}”", name())
+                on:click=move |_| dialog.set(Some(Dialog::Rename))>
+                <PenIcon/>
+            </button>
+        </Show>
         <Show when=move || !elsewhere()>
             <details class="project-actions" data-menu node_ref=menu
                 on:keydown=move |event| if event.key() == "Escape" { close_menu(menu); }>
@@ -302,5 +309,15 @@ pub fn ProjectActions() -> impl IntoView {
 fn close_menu(menu: NodeRef<Details>) {
     if let Some(menu) = menu.get_untracked() {
         menu.set_open(false);
+    }
+}
+
+#[component]
+fn PenIcon() -> impl IntoView {
+    view! {
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"></path>
+        </svg>
     }
 }

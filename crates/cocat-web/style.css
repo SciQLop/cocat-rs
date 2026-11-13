@@ -1019,6 +1019,12 @@ a.button { text-decoration: none; }
   border: 1px solid var(--rule); border-radius: var(--radius); color: var(--muted);
   font-weight: 700; cursor: pointer;
 }
+/* Beside the project's name: quieter than the menu, no border. */
+.project-rename {
+  display: grid; place-items: center; width: 28px; height: 34px; padding: 0;
+  border: 0; border-radius: var(--radius); background: none; color: var(--muted); cursor: pointer;
+}
+.project-rename:hover { background: var(--chip); color: var(--ink); }
 .project-actions > summary::-webkit-details-marker { display: none; }
 .project-actions > summary:hover, .project-actions[open] > summary { background: var(--chip); color: var(--ink); }
 .project-actions[open] > summary::before { content: ""; position: fixed; inset: 0; z-index: 3; cursor: default; }
