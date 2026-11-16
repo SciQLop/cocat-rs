@@ -3019,7 +3019,7 @@ async fn mirrored(
 /// What the lists are, as built: their descriptions, where their files are, and the kept
 /// tables themselves. A new list, or a corrected table, changes it.
 // simplify: a change to a reader alone (`read`) is not seen; it waits for the weekly run.
-fn fingerprint(lists: &[List]) -> String {
+fn fingerprint<'a>(lists: impl IntoIterator<Item = &'a List>) -> String {
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
     for list in lists {
@@ -3061,7 +3061,7 @@ impl Provider for Literature {
     }
 
     fn built(&self) -> Option<String> {
-        Some(fingerprint(&LISTS))
+        Some(fingerprint(lists()))
     }
 
     async fn fetch(
@@ -3328,6 +3328,19 @@ mod tests {
         assert_eq!(fingerprint(&LISTS), built);
         lists[0].files = Files::Kept("start,stop\n");
         assert_ne!(fingerprint(&lists), built);
+    }
+
+    #[test]
+    fn the_fingerprint_covers_the_vizier_lists_too() {
+        let built = Literature.built().unwrap();
+        assert_eq!(
+            built,
+            fingerprint(lists()),
+            "a VizieR list removed or changed must be seen"
+        );
+        let mut vizier = vizier::LISTS.clone();
+        vizier[0].part = "start=Elsewhere";
+        assert_ne!(fingerprint(LISTS.iter().chain(&vizier)), built);
     }
 
     #[test]
