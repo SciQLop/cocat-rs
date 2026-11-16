@@ -64,8 +64,8 @@ you may find:
   al. 2025); Parker Solar Probe switchbacks (Martinović et al. 2021) and SIRs with their
   STEREO-A and L1 counterparts (Allen et al. 2021); SEP events above 30 MeV since 1956 and the
   GSEP GOES list; ICMEs at Mercury (Winslow et al. 2015); Van Allen Probes EMIC waves (Inglis et
-  al. 2024; Remya et al. 2023); and the HELIO type III radio bursts at Wind and STEREO,
-  1996-2011.
+  al. 2024; Remya et al. 2023); the HELIO type III radio bursts at Wind and STEREO,
+  1996-2011; and the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004).
 - **VizieR**, under the same *Literature* folders: 28 event tables published with papers and
   kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
   Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar

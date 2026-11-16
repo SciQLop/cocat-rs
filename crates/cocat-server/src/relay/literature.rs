@@ -117,7 +117,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 107] = [
+static LISTS: [List; 108] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -1087,6 +1087,17 @@ static LISTS: [List; 107] = [
         credit: "Guo, R. L., Yao, Z. H., Sergis, N. et al. (2019), Long-standing Small-scale Reconnection Processes at Saturn Revealed by Cassini, ApJL 884, L14, https://doi.org/10.3847/2041-8213/ab4429, licence CC-BY-3.0 (Table 1).",
         url: "https://doi.org/10.3847/2041-8213/ab4429",
         files: Files::Kept(include_str!("data/guo_2019_saturn_reconnection.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "image-substorm-onsets-frey",
+        folder: "Literature/Earth",
+        name: "Substorm onsets seen by IMAGE-FUV, 2000-2002 (Frey et al. 2004)",
+        about: "Northern auroral substorm onsets picked in IMAGE-FUV images, May 2000 to December 2002: the imager used (WIC, or S13 for SI-13), the brightest pixel of the onset surge (image pixel and raw counts), IMAGE's geocentric distance, and the onset's geographic and geomagnetic position and magnetic local time. Converted once from the paper's supplementary table.",
+        credit: "Frey, Mende, Angelopoulos & Donovan (2004), Substorm onset observations by IMAGE-FUV, JGR 109, A10304, https://doi.org/10.1029/2004JA010607, supplementary table 1; copyright AGU (no open licence): the onset times and positions are given here with this citation.",
+        url: "https://doi.org/10.1029/2004JA010607",
+        files: Files::Kept(include_str!("data/frey_2004_image_substorm_onsets.csv")),
         read: kept_table,
         part: "",
     },
@@ -3829,6 +3840,10 @@ mod tests {
             (include_str!("data/allen_2021_psp_sirs.csv"), 11),
             (include_str!("data/allen_2021_stereo_a_sirs.csv"), 11),
             (include_str!("data/allen_2021_l1_sirs.csv"), 12),
+            (
+                include_str!("data/frey_2004_image_substorm_onsets.csv"),
+                2437,
+            ),
         ];
         for (text, count) in counts {
             assert_eq!(read(text).len(), count);
