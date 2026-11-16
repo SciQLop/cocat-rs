@@ -88,7 +88,7 @@ const LLAMAICE_CREDIT: &str = "Kay, C., Davies, E. E., Dumbović, M., Martinić,
 const LLAMAICE_FOLDER: &str = "Literature/Heliosphere/LLAMAICE near-Earth CMEs (Kay)";
 const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat";
 
-const LISTS: [List; 63] = [
+const LISTS: [List; 68] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -234,6 +234,63 @@ const LISTS: [List; 63] = [
         credit: "Fuselier et al. (2026), Multiple Reconnection X-Lines at the Earth's Magnetopause in the Presence of Magnetosheath Flow, JGR Space Physics 131, e2025JA034839, https://doi.org/10.1029/2025JA034839, licence CC-BY-4.0 (Table 1).",
         url: "https://doi.org/10.1029/2025JA034839",
         files: Files::Kept(include_str!("data/fuselier_2026_multiple_xlines.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-turbulence-stawarz",
+        folder: "Literature/Earth",
+        name: "MMS magnetosheath turbulence intervals (Stawarz et al. 2022)",
+        about: "Turbulent magnetosheath intervals in MMS burst data, 2015-2019: position (GSE, km), mean flow and fluctuations, field and fluctuations, density, temperatures, betas, the angle between flow and field, the plasma scales (km) and the magnetic correlation length (in ion inertial lengths). Converted once from the paper's supplementary data.",
+        credit: "Stawarz et al. (2022), Turbulence-driven magnetic reconnection and the magnetic correlation length: Observations from Magnetospheric Multiscale, Phys. Plasmas 29, 012302, https://doi.org/10.1063/5.0071106, licence CC-BY-4.0 (supplementary material).",
+        url: "https://doi.org/10.1063/5.0071106",
+        files: Files::Kept(include_str!("data/stawarz_2022_turbulence_intervals.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-turbulence-reconnection-stawarz",
+        folder: "Literature/Earth",
+        name: "MMS reconnecting current sheets in magnetosheath turbulence (Stawarz et al. 2022)",
+        about: "Reconnection events found in the turbulence intervals of the same paper: each event spans the four spacecraft's crossings, with each spacecraft's crossing time, peak current, magnetic shear, thickness (electron inertial lengths), electron and ion outflow jumps (in Alfven speed) and inflow Alfven speed, then the LMN frame (GSE) and the mean ion flow over 10 ion inertial lengths. Converted once from the paper's supplementary data.",
+        credit: "Stawarz et al. (2022), Turbulence-driven magnetic reconnection and the magnetic correlation length: Observations from Magnetospheric Multiscale, Phys. Plasmas 29, 012302, https://doi.org/10.1063/5.0071106, licence CC-BY-4.0 (supplementary material).",
+        url: "https://doi.org/10.1063/5.0071106",
+        files: Files::Kept(include_str!("data/stawarz_2022_reconnection_events.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-bow-shock-current-sheets-gingell",
+        folder: "Literature/Earth",
+        name: "MMS reconnecting current sheets at the bow shock (Gingell et al. 2020)",
+        about: "Reconnecting current sheets in the transition region of Earth's bow shock, seen by MMS: each event is the sheet's time, with its width, current, electron and ion outflows, heating (DT, across the sheet; dT, against the surroundings), the LMN field, inflow and outflow plasma, position (GSE, Earth radii), shock Mach number and angle, and three shock normals. Converted once from the paper's supplementary data set.",
+        credit: "Gingell et al. (2020), Statistics of Reconnecting Current Sheets in the Transition Region of Earth's Bow Shock, JGR Space Physics 125, e2019JA027119, https://doi.org/10.1029/2019JA027119, Data Set S1; free to read, copyright AGU (no open licence): the event times and values are given here with this citation.",
+        url: "https://doi.org/10.1029/2019JA027119",
+        files: Files::Kept(include_str!(
+            "data/gingell_2020_reconnecting_current_sheets.csv"
+        )),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-magnetosheath-wang",
+        folder: "Literature/Earth",
+        name: "MMS turbulent magnetosheath intervals (Wang et al. 2021)",
+        about: "Magnetosheath intervals in MMS burst data, 2016-2017, behind a quasi-perpendicular or a quasi-parallel shock, with the mean ion speed, ion beta and electron density, used for a survey of collisionless dissipation. Converted once from Table 1 of the paper.",
+        credit: "Wang et al. (2021), Statistical Survey of Collisionless Dissipation in the Terrestrial Magnetosheath, JGR Space Physics 126, e2020JA029000, https://doi.org/10.1029/2020JA029000, Table 1; free to read, copyright AGU (no open licence): the event times and values are given here with this citation.",
+        url: "https://doi.org/10.1029/2020JA029000",
+        files: Files::Kept(include_str!("data/wang_2021_magnetosheath_intervals.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "sirs-chi",
+        folder: "Literature/Heliosphere",
+        name: "Stream interaction regions near Earth, 1995-2016 (Chi et al. 2018)",
+        about: "Every SIR in Wind and ACE data from 1995 to 2016, extending Jian et al. (2006): start, end and the stream interface (middle), the minimum Dst and its time when the SIR drove a storm, and whether it interacted with an ICME, with the ICME's times. Converted once from the paper's supporting Tables S2 and S3.",
+        credit: "Chi et al. (2018), Geoeffectiveness of Stream Interaction Regions From 1995 to 2016, Space Weather 16, 1960-1971, https://doi.org/10.1029/2018SW001894, Tables S2 and S3; free to read, copyright AGU (no open licence): the event times and values are given here with this citation.",
+        url: "https://doi.org/10.1029/2018SW001894",
+        files: Files::Kept(include_str!("data/chi_2018_sirs.csv")),
         read: kept_table,
         part: "",
     },
@@ -2534,6 +2591,63 @@ mod tests {
                 .iter()
                 .any(|list| list.key == "mms-multiple-xlines-fuselier")
         );
+    }
+
+    #[test]
+    fn the_kept_tables_converted_from_supplements_read_whole() {
+        let read = |text| kept_table(text, "").unwrap();
+        let turbulence = read(include_str!("data/stawarz_2022_turbulence_intervals.csv"));
+        assert_eq!(turbulence.len(), 60);
+        assert_eq!(turbulence[0].start, at("2015-10-21T06:55:10Z"));
+        assert_eq!(turbulence[0].stop, at("2015-10-21T07:03:45Z"));
+        assert_eq!(
+            turbulence[0].attributes["correlation_length_di"],
+            json!(21.44)
+        );
+
+        let reconnection = read(include_str!("data/stawarz_2022_reconnection_events.csv"));
+        assert_eq!(reconnection.len(), 256);
+        assert_eq!(reconnection[0].start, at("2015-10-21T06:55:09.9969Z"));
+        assert_eq!(reconnection[0].stop, at("2015-10-21T06:55:10.6530Z"));
+        assert!(
+            !reconnection[0].attributes.contains_key("mms1_dui_l_va"),
+            "NaN is no value"
+        );
+
+        let sheets = read(include_str!(
+            "data/gingell_2020_reconnecting_current_sheets.csv"
+        ));
+        assert_eq!(sheets.len(), 165);
+        assert_eq!(sheets[0].stop, sheets[0].start);
+        assert_eq!(sheets[0].attributes["DT_e_par_eV"], json!(-9.58));
+        assert_eq!(sheets[0].attributes["dT_e_tot_eV"], json!(-3.19));
+        assert!(
+            !sheets[0].attributes.contains_key("v_sh_km_per_s"),
+            "Inf is no value"
+        );
+
+        let sheath = read(include_str!("data/wang_2021_magnetosheath_intervals.csv"));
+        assert_eq!(sheath.len(), 50);
+        assert_eq!(
+            sheath[0].attributes["shock_type"],
+            json!("quasi-perpendicular")
+        );
+
+        let sirs = read(include_str!("data/chi_2018_sirs.csv"));
+        assert_eq!(sirs.len(), 866);
+        let met = sirs
+            .iter()
+            .filter(|sir| sir.attributes["interacted_with_icme"] == json!("yes"));
+        assert_eq!(met.count(), 60);
+        for key in [
+            "mms-turbulence-stawarz",
+            "mms-turbulence-reconnection-stawarz",
+            "mms-bow-shock-current-sheets-gingell",
+            "mms-magnetosheath-wang",
+            "sirs-chi",
+        ] {
+            assert!(LISTS.iter().any(|list| list.key == key), "{key}");
+        }
     }
 
     #[test]
