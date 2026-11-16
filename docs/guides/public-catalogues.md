@@ -66,10 +66,10 @@ you may find:
   GSEP GOES list; ICMEs at Mercury (Winslow et al. 2015); Van Allen Probes EMIC waves (Inglis et
   al. 2024; Remya et al. 2023); the HELIO type III radio bursts at Wind and STEREO,
   1996-2011; and the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004).
-- **VizieR**, under the same *Literature* folders: 28 event tables published with papers and
+- **VizieR**, under the same *Literature* folders: 27 event tables published with papers and
   kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
   Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar
-  wind, pickup-ion waves at the Voyagers, and ICMEs at Juno on its way to Jupiter.
+  wind, and pickup-ion waves at the Voyagers.
   Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA
