@@ -26,7 +26,8 @@ you may find:
 
 - NASA's **DONKI** space weather database: flares, CMEs, solar energetic particles,
   interplanetary shocks, geomagnetic storms…
-- the **CDAW** SOHO/LASCO CME catalogue, and Wind/STEREO WAVES type II bursts;
+- the **CDAW** SOHO/LASCO CME catalogue, Wind/STEREO WAVES type II bursts, and the intense
+  geomagnetic storms (Dst at or below -100 nT) with their solar and interplanetary causes;
 - **AMDA**'s shared catalogues;
 - **HELIO4CAST** ICMECAT, one catalogue per spacecraft, and its companion lists;
 - **Solar Orbiter STIX** flares;
@@ -43,7 +44,8 @@ you may find:
   MMS burst selections, magnetopause crossings and the crossings with multiple X-lines (Fuselier et
   al. 2026), magnetosheath turbulence and its reconnecting current sheets (Stawarz et al. 2022),
   reconnecting current sheets at the bow shock (Gingell et al. 2020) and magnetosheath intervals
-  (Wang et al. 2021); the SIRs of Chi et al. (2018), 1995-2016; Lan Jian's STEREO ICME, SIR, shock
+  (Wang et al. 2021); Cluster flux transfer events (Fear et al. 2012); Svalgaard's
+  interplanetary sector boundaries from ground magnetometers, 1947-1978; the SIRs of Chi et al. (2018), 1995-2016; Lan Jian's STEREO ICME, SIR, shock
   and SEP lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
   ICME comes from; LLAMAICE (Kay et al. 2026), every near-Earth CME candidate with the
   team's verdict and boundaries, and the six catalogues it collates side by side;

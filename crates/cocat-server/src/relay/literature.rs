@@ -88,7 +88,7 @@ const LLAMAICE_CREDIT: &str = "Kay, C., Davies, E. E., Dumbović, M., Martinić,
 const LLAMAICE_FOLDER: &str = "Literature/Heliosphere/LLAMAICE near-Earth CMEs (Kay)";
 const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat";
 
-const LISTS: [List; 68] = [
+const LISTS: [List; 70] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -223,6 +223,28 @@ const LISTS: [List; 68] = [
         credit: "Ballerini et al. (2024), J. Plasma Phys. 90, 905900612, https://doi.org/10.1017/S0022377824001089, licence CC-BY-4.0 (supplementary material).",
         url: "https://doi.org/10.1017/S0022377824001089",
         files: Files::Kept(include_str!("data/ballerini_2024_magnetopause.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "cluster-ftes-fear",
+        folder: "Literature/Earth",
+        name: "Cluster flux transfer events, 2002-2003 (Fear et al. 2012)",
+        about: "Flux transfer events seen by Cluster at the magnetopause, used to study how season and IMF clock angle control where FTEs are observed. Each event is the FTE time, to the minute, with the lag applied to ACE data and the lagged IMF in GSM (nT); the IMF is left out where ACE had no data. Converted once from the paper's Data Set S1.",
+        credit: "Fear, Palmroth and Milan (2012), Seasonal and clock angle control of the location of flux transfer event signatures at the magnetopause, JGR 117, A04202, https://doi.org/10.1029/2011JA017235, Data Set S1; copyright AGU (no open licence): the event times and values are given here with this citation.",
+        url: "https://doi.org/10.1029/2011JA017235",
+        files: Files::Kept(include_str!("data/fear_2012_cluster_ftes.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "sector-boundaries-svalgaard",
+        folder: "Literature/Heliosphere",
+        name: "Interplanetary sector boundaries from ground magnetometers, 1947-1978 (Svalgaard)",
+        about: "Crossings of interplanetary magnetic sector boundaries inferred by Svalgaard from polar-cap magnetometer data. A boundary needs the polarity to hold for about 4 days on each side, so these are large-scale, mostly recurrent boundaries. The list has a 1-day resolution: each event is the 24 hours centred on the listed day, within which the crossing most probably lies. `polarity_change` says from which polarity to which (away from or toward the Sun); `bartels_rotation` and `bartels_day` give the first day of the new sector. Converted once from the NOAA NCEI file.",
+        credit: "Svalgaard's list of solar sector boundary crossings, from the NOAA National Centers for Environmental Information (https://www.ngdc.noaa.gov/stp/space-weather/interplanetary-data/sector_boundaries/station_data/Stanford/sector.bnd); NOAA data, public domain.",
+        url: "https://www.ngdc.noaa.gov/stp/space-weather/interplanetary-data/sector_boundaries/station_data/",
+        files: Files::Kept(include_str!("data/svalgaard_sector_boundaries.csv")),
         read: kept_table,
         part: "",
     },
@@ -2646,6 +2668,21 @@ mod tests {
         assert!(
             !reconnection[0].attributes.contains_key("mms1_dui_l_va"),
             "NaN is no value"
+        );
+
+        let ftes = read(include_str!("data/fear_2012_cluster_ftes.csv"));
+        assert_eq!(ftes.len(), 446);
+        assert_eq!(ftes[0].start, at("2002-11-10T09:52:00Z"));
+        assert_eq!(ftes[0].stop, ftes[0].start);
+        assert_eq!(ftes[0].attributes["imf_bz_gsm_nt"], json!(15.78));
+
+        let boundaries = read(include_str!("data/svalgaard_sector_boundaries.csv"));
+        assert_eq!(boundaries.len(), 932);
+        assert_eq!(boundaries[0].start, at("1947-01-07T12:00:00Z"));
+        assert_eq!(boundaries[0].stop, at("1947-01-08T12:00:00Z"));
+        assert_eq!(
+            boundaries[0].attributes["polarity_change"],
+            json!("toward_to_away")
         );
 
         let sheets = read(include_str!(
