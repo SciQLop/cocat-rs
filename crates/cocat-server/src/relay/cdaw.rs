@@ -1,8 +1,9 @@
-//! CDAW, the NASA GSFC Coronal Mass Ejection Data Center: the SOHO/LASCO CME catalogue and
-//! the list of type II radio bursts seen by Wind/WAVES and STEREO/WAVES.
+//! CDAW, the NASA GSFC Coronal Mass Ejection Data Center: the SOHO/LASCO CME catalogue, the
+//! list of type II radio bursts seen by Wind/WAVES and STEREO/WAVES, and the list of intense
+//! geomagnetic storms with their solar and interplanetary causes.
 //!
-//! Both lists are plain text. LASCO's is a file with one CME per line; the burst list is an
-//! HTML page holding one `<pre>` block, its links flattened to their text. Both are read by
+//! All lists are plain text. LASCO's is a file with one CME per line; the others are HTML
+//! pages holding one `<pre>` block, its links flattened to their text. All are read by
 //! splitting each line on whitespace: only the last column, the remarks, contains spaces, and
 //! it comes after the fixed ones. A line the lists cannot be read from is an error, not a
 //! skipped row: a layout change must fail the run rather than silently shrink the catalogue.
@@ -73,6 +74,31 @@ const TYPE_II: List = List {
     ],
 };
 
+const STORMS: List = List {
+    key: "dst100",
+    name: "Intense geomagnetic storms",
+    description: "Geomagnetic storms with Dst at or below -100 nT since 1996, with their solar sources and interplanetary drivers, from the CDAW list (Gopalswamy et al. 2025, https://doi.org/10.1007/s12036-025-10091-7). An event runs from the shock or the start of the driver to the end of the driver or the Dst minimum, whichever is later.",
+    url: "https://cdaw.gsfc.nasa.gov/CME_list/dst100/",
+    data_url: "https://cdaw.gsfc.nasa.gov/CME_list/dst100/",
+    columns: &[
+        "dst_min_nt",
+        "dst_min_time",
+        "driver",
+        "cme_speed_km_s",
+        "source_time",
+        "source_location",
+        "source_region",
+        "shock_time",
+        "ip_start",
+        "ip_end",
+        "v1_km_s",
+        "v2_km_s",
+        "min_vbz_mv_m",
+        "min_bz_nt",
+        "comment",
+    ],
+};
+
 const NAMESPACE: Uuid = Uuid::from_u128(0x3a9d41c2_7be5_4f08_b6a1_c0de5d4a7e21);
 
 /// LASCO columns after date, time and central angle: the token index and the attribute.
@@ -95,6 +121,16 @@ const DAY_SECONDS: i64 = 86_400;
 /// Date, time, end date, end time, two frequencies, flare, region, importance, CME date,
 /// time, angle, width, speed, plot link.
 const TYPE_II_COLUMNS: usize = 15;
+/// Storm date and hour, Dst, driver, CME speed, source date, time, location and region,
+/// shock date and time, driver start day and time, end day and time, V1, V2, VBz, Bz.
+const STORM_COLUMNS: usize = 19;
+/// The storm list's speeds and fields after the driver's end: token index and attribute.
+const STORM_MEASURES: [(usize, &str); 4] = [
+    (15, "v1_km_s"),
+    (16, "v2_km_s"),
+    (17, "min_vbz_mv_m"),
+    (18, "min_bz_nt"),
+];
 
 fn parse_lasco(body: &str) -> Result<Vec<EventRecord>, String> {
     let rows = rows(body.lines());
@@ -155,11 +191,7 @@ fn type_ii_event(row: &Row) -> Result<(String, EventRecord), String> {
     insert(a, "flare_location", text(t[6]));
     insert(a, "noaa_ar", number(t[7]).or_else(|| text(t[7])));
     insert(a, "importance", text(t[8].trim_end_matches('.')));
-    insert(
-        a,
-        "cme_date_time",
-        cme_time(start, t[9], t[10]).and_then(|at| Some(Value::String(at.rfc3339().ok()?))),
-    );
+    insert(a, "cme_date_time", moment(nearest(start, t[9], t[10])));
     insert(a, "cme_cpa_deg", number(t[11]));
     insert(a, "cme_width_deg", number(t[12].trim_start_matches('>')));
     if t[12].starts_with('>') {
@@ -167,6 +199,57 @@ fn type_ii_event(row: &Row) -> Result<(String, EventRecord), String> {
     }
     insert(a, "cme_speed_km_s", number(t[13]));
     insert(a, "remarks", text(&t[TYPE_II_COLUMNS..].join(" ")));
+    Ok((format!("{} {}", t[0], t[1]), record))
+}
+
+fn parse_storms(page: &str) -> Result<Vec<EventRecord>, String> {
+    let block = preformatted(page)?;
+    let rows = rows(block.lines());
+    let events = rows
+        .iter()
+        .map(|row| storm_event(row))
+        .collect::<Result<Vec<_>, _>>()?;
+    non_empty(with_occurrences(STORMS.key, events))
+}
+
+fn storm_event(row: &Row) -> Result<(String, EventRecord), String> {
+    let t = &row.tokens;
+    if t.len() < STORM_COLUMNS {
+        return Err(format!("storm line has too few columns: {}", row.line));
+    }
+    let hour: i64 = t[1]
+        .parse()
+        .map_err(|_| format!("{} is not an hour", t[1]))?;
+    let minimum = stamp(row.date, hour * 3600)?;
+    let shock = dated(t[9], t[10]);
+    let driver_start = nearest(minimum, t[11], t[12]);
+    let driver_end = nearest(minimum, t[13], t[14]);
+    let start = [shock, driver_start, Some(minimum)]
+        .into_iter()
+        .flatten()
+        .min_by_key(|at| at.unix_micros());
+    let stop = [driver_end, Some(minimum)]
+        .into_iter()
+        .flatten()
+        .max_by_key(|at| at.unix_micros());
+    let mut record = EventRecord::new(
+        String::new(),
+        start.unwrap_or(minimum),
+        stop.unwrap_or(minimum),
+    );
+    record.attributes = numbers(t, &STORM_MEASURES);
+    let a = &mut record.attributes;
+    insert(a, "dst_min_nt", number(t[2]));
+    insert(a, "dst_min_time", moment(Some(minimum)));
+    insert(a, "driver", text(t[3]));
+    insert(a, "cme_speed_km_s", number(t[4]));
+    insert(a, "source_time", moment(dated(t[5], t[6])));
+    insert(a, "source_location", text(t[7]));
+    insert(a, "source_region", number(t[8]).or_else(|| text(t[8])));
+    insert(a, "shock_time", moment(shock));
+    insert(a, "ip_start", moment(driver_start));
+    insert(a, "ip_end", moment(driver_end));
+    insert(a, "comment", text(&t[STORM_COLUMNS..].join(" ")));
     Ok((format!("{} {}", t[0], t[1]), record))
 }
 
@@ -273,15 +356,25 @@ fn day_after_or_same(start: Date, end: &str) -> Result<Date, String> {
         .ok_or_else(|| format!("{end} is not a date after {start}"))
 }
 
-/// The CME has no year either and may come just before or after the burst: it is the nearest
-/// to the burst's start.
-fn cme_time(burst: Timestamp, day: &str, clock: &str) -> Option<Timestamp> {
+/// A month and day with no year, like a burst's CME or a storm's driver, may come just before
+/// or after the event it belongs to: it is the one nearest to that event.
+fn nearest(event: Timestamp, day: &str, clock: &str) -> Option<Timestamp> {
     let day = month_day(day)?;
     let seconds = minutes_of(clock).ok()? * 60;
-    let year = burst.parts().year;
+    let year = event.parts().year;
     (year - 1..=year + 1)
         .filter_map(|year| stamp(date_in(year, day)?, seconds).ok())
-        .min_by_key(|at| (at.unix_micros() - burst.unix_micros()).abs())
+        .min_by_key(|at| (at.unix_micros() - event.unix_micros()).abs())
+}
+
+/// A full date and time; the dashes the lists write for an unknown one give `None`.
+fn dated(day: &str, clock: &str) -> Option<Timestamp> {
+    let date = Date::parse(day, format_description!("[year]/[month]/[day]")).ok()?;
+    stamp(date, minutes_of(clock).ok()? * 60).ok()
+}
+
+fn moment(at: Option<Timestamp>) -> Option<Value> {
+    Some(Value::String(at?.rfc3339().ok()?))
 }
 
 fn numbers(tokens: &[&str], columns: &[(usize, &str)]) -> Map<String, Value> {
@@ -375,6 +468,7 @@ impl Provider for Cdaw {
         Ok(vec![
             fetch_list(http, &LASCO, parse_lasco).await?,
             fetch_list(http, &TYPE_II, parse_type_ii).await?,
+            fetch_list(http, &STORMS, parse_storms).await?,
         ])
     }
 }
@@ -387,6 +481,7 @@ mod tests {
 
     const LASCO_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_univ_all_head.txt");
     const TYPE_II_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_waves_type2.html");
+    const STORMS_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_dst100.html");
 
     fn at(text: &str) -> Timestamp {
         Timestamp::parse(text).unwrap()
@@ -416,6 +511,7 @@ mod tests {
         let lists = [
             (&LASCO, parse_lasco(LASCO_FIXTURE).unwrap()),
             (&TYPE_II, parse_type_ii(TYPE_II_FIXTURE).unwrap()),
+            (&STORMS, parse_storms(STORMS_FIXTURE).unwrap()),
         ];
         for (list, events) in lists {
             for key in events.iter().flat_map(|event| event.attributes.keys()) {
@@ -572,19 +668,79 @@ mod tests {
         let burst = at("2024-01-01T00:10:00Z");
 
         assert_eq!(
-            cme_time(burst, "12/31", "23:50"),
+            nearest(burst, "12/31", "23:50"),
             Some(at("2023-12-31T23:50:00Z"))
         );
         assert_eq!(
-            cme_time(burst, "01/01", "00:30"),
+            nearest(burst, "01/01", "00:30"),
             Some(at("2024-01-01T00:30:00Z"))
         );
+    }
+
+    fn storm_at(dst_minimum: &str) -> EventRecord {
+        let minimum = json!(dst_minimum);
+        parse_storms(STORMS_FIXTURE)
+            .unwrap()
+            .into_iter()
+            .find(|event| event.attributes["dst_min_time"] == minimum)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_storm_spans_its_interplanetary_driver_and_its_dst_minimum() {
+        let storm = storm_at("1996-10-23T05:00:00Z");
+
+        assert_eq!(storm.uuid, event_uuid("dst100", "1996/10/23 05"));
+        assert_eq!(storm.start, at("1996-10-22T18:15:00Z"));
+        assert_eq!(storm.stop, at("1996-10-23T05:25:00Z"));
+        let expected = json!({
+            "dst_min_nt": -105, "dst_min_time": "1996-10-23T05:00:00Z", "driver": "SIR",
+            "source_time": "1996-10-20T18:28:00Z", "source_location": "S10W10",
+            "source_region": "CH", "ip_start": "1996-10-22T18:15:00Z",
+            "ip_end": "1996-10-23T05:25:00Z", "v1_km_s": 466, "v2_km_s": 707,
+            "min_vbz_mv_m": -7.28, "min_bz_nt": -12.2,
+        });
+        assert_eq!(Value::Object(storm.attributes), expected);
+    }
+
+    #[test]
+    fn a_storm_starts_at_its_shock_and_crosses_new_year() {
+        let storm = storm_at("2016-01-01T01:00:00Z");
+
+        assert_eq!(storm.start, at("2015-12-31T01:00:00Z"));
+        assert_eq!(storm.stop, at("2016-01-01T06:00:00Z"));
+        assert_eq!(storm.attributes["ip_start"], json!("2015-12-31T18:30:00Z"));
+        assert_eq!(storm.attributes["source_region"], json!(12473));
+        assert_eq!(storm.attributes["cme_speed_km_s"], json!(1212));
+    }
+
+    #[test]
+    fn a_storm_without_solar_wind_data_runs_from_its_shock_to_its_dst_minimum() {
+        let storm = storm_at("2001-11-06T07:00:00Z");
+
+        assert_eq!(storm.start, at("2001-11-06T01:33:00Z"));
+        assert_eq!(storm.stop, at("2001-11-06T07:00:00Z"));
+        assert!(!storm.attributes.contains_key("ip_start"));
+        assert!(!storm.attributes.contains_key("v1_km_s"));
+    }
+
+    #[test]
+    fn a_storm_keeps_its_comment_and_leaves_out_data_gaps() {
+        let storm = storm_at("1997-11-23T07:00:00Z");
+
+        assert_eq!(
+            storm.attributes["comment"],
+            json!("C1.6 flare 1997/11/19 17:00")
+        );
+        assert!(!storm.attributes.contains_key("cme_speed_km_s"));
+        assert!(!storm.attributes.contains_key("source_time"));
     }
 
     #[test]
     fn a_page_or_file_without_events_is_an_error() {
         assert!(parse_lasco("<html>moved</html>").is_err());
         assert!(parse_type_ii("<html><pre>nothing</pre></html>").is_err());
+        assert!(parse_storms("<html><pre>nothing</pre></html>").is_err());
     }
 
     #[test]
@@ -597,6 +753,7 @@ mod tests {
         let lands = [
             catalogue(&LASCO, parse_lasco(LASCO_FIXTURE).unwrap()),
             catalogue(&TYPE_II, parse_type_ii(TYPE_II_FIXTURE).unwrap()),
+            catalogue(&STORMS, parse_storms(STORMS_FIXTURE).unwrap()),
         ]
         .map(|list| (list.key, list.folder, list.name));
 
@@ -605,6 +762,11 @@ mod tests {
             [
                 ("lasco".into(), "CDAW".into(), "SOHO LASCO CMEs".into()),
                 ("type2".into(), "CDAW".into(), "WAVES type II bursts".into()),
+                (
+                    "dst100".into(),
+                    "CDAW".into(),
+                    "Intense geomagnetic storms".into()
+                ),
             ]
         );
     }
