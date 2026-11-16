@@ -88,7 +88,7 @@ const LLAMAICE_CREDIT: &str = "Kay, C., Davies, E. E., Dumbović, M., Martinić,
 const LLAMAICE_FOLDER: &str = "Literature/Heliosphere/LLAMAICE near-Earth CMEs (Kay)";
 const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat";
 
-const LISTS: [List; 62] = [
+const LISTS: [List; 63] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -223,6 +223,17 @@ const LISTS: [List; 62] = [
         credit: "Ballerini et al. (2024), J. Plasma Phys. 90, 905900612, https://doi.org/10.1017/S0022377824001089, licence CC-BY-4.0 (supplementary material).",
         url: "https://doi.org/10.1017/S0022377824001089",
         files: Files::Kept(include_str!("data/ballerini_2024_magnetopause.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-multiple-xlines-fuselier",
+        folder: "Literature/Earth",
+        name: "MMS magnetopause crossings with multiple X-lines (Fuselier et al. 2026)",
+        about: "Dayside magnetopause crossings by MMS, 2017-2019, used to test whether X-lines form at the maximum magnetic shear location and drift with the magnetosheath flow: IMF Bx/B and clock angle, the distance to the predicted X-line (Earth radii), whether the crossing agrees with that prediction, and whether multiple reconnection shows in the magnetosheath boundary layer (MSBL) and in the low-latitude boundary layer (LLBL). Each event is the crossing time, to the minute. Converted once from Table 1 of the paper.",
+        credit: "Fuselier et al. (2026), Multiple Reconnection X-Lines at the Earth's Magnetopause in the Presence of Magnetosheath Flow, JGR Space Physics 131, e2025JA034839, https://doi.org/10.1029/2025JA034839, licence CC-BY-4.0 (Table 1).",
+        url: "https://doi.org/10.1029/2025JA034839",
+        files: Files::Kept(include_str!("data/fuselier_2026_multiple_xlines.csv")),
         read: kept_table,
         part: "",
     },
@@ -2500,6 +2511,29 @@ mod tests {
         assert_eq!(items[0].stop, at("2015-09-02T15:26:29.6Z"));
         assert_eq!(items[0].attributes["hodogram"], json!("other"));
         assert_eq!(items[0].attributes["width_km"], json!(540.46));
+    }
+
+    #[test]
+    fn the_kept_fuselier_table_is_fifteen_crossings_at_their_minute() {
+        let items = kept_table(include_str!("data/fuselier_2026_multiple_xlines.csv"), "").unwrap();
+        assert_eq!(items.len(), 15);
+        assert_eq!(items[0].start, at("2017-12-29T04:01:00Z"));
+        assert_eq!(items[0].stop, items[0].start);
+        assert_eq!(items[7].attributes["imf_bx_over_b"], json!(-0.2));
+        assert_eq!(
+            items[1].attributes["multiple_reconnection_in_llbl"],
+            json!("no")
+        );
+        assert!(
+            !items[1]
+                .attributes
+                .contains_key("multiple_reconnection_in_msbl")
+        );
+        assert!(
+            LISTS
+                .iter()
+                .any(|list| list.key == "mms-multiple-xlines-fuselier")
+        );
     }
 
     #[test]

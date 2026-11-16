@@ -40,7 +40,8 @@ you may find:
   small-scale flux ropes of Hu et al. (Wind, ACE, Ulysses, Parker Solar Probe); the CDAWeb
   event lists (ISTP Solar Wind Catalog, bow shock crossings since 1973, magnetopause crossings
   since 1963, current sheet exhausts, the 1859 aurora sightings); HELCATS HIGeoCAT and LINKCAT;
-  MMS burst selections and magnetopause crossings; Lan Jian's STEREO ICME, SIR, shock and SEP
+  MMS burst selections, magnetopause crossings and the crossings with multiple X-lines (Fuselier et
+  al. 2026); Lan Jian's STEREO ICME, SIR, shock and SEP
   lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
   ICME comes from; LLAMAICE (Kay et al. 2026), every near-Earth CME candidate with the
   team's verdict and boundaries, and the six catalogues it collates side by side;
