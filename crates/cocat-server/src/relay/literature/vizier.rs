@@ -293,7 +293,7 @@ fn after(at: Timestamp, seconds: f64) -> Option<Timestamp> {
     Timestamp::from_unix_micros(at.unix_micros() + (seconds * 1e6).round() as i128)
 }
 
-pub(super) const LISTS: [List; 27] = [
+pub(super) const LISTS: [List; 28] = [
     List {
         key: "vizier-cme-source-regions-yeates",
         folder: "Literature/Sun",
@@ -699,6 +699,21 @@ pub(super) const LISTS: [List; 27] = [
         read: table,
         part: "start=ObsS;stop=ObsA",
     },
+    List {
+        key: "vizier-juno-icmes-davies",
+        folder: "Literature/Heliosphere",
+        name: "ICMEs at Juno between 1 and 5.4 au, 2011-2016 (Davies et al. 2021)",
+        about: "ICMEs seen by Juno's magnetometer during its cruise to Jupiter, 2011-2016: from the ICME start to its end, with Juno's position (HAE and HEE), mean and peak field, the flux rope's start, end and alternative end where one is seen, its type and handedness, a quality flag and notes.",
+        credit: credit!(
+            "Davies et al. (2021), A Catalog of Interplanetary Coronal Mass Ejections Observed by Juno between 1 and 5.4 au, ApJ 923, 136",
+            "2021ApJ...923..136D",
+            "J/ApJ/923/136"
+        ),
+        url: page!("J/ApJ/923/136"),
+        files: table!("J/ApJ/923/136/table1"),
+        read: table,
+        part: "start=ICME-Start;stop=ICME-End;at=FR-Start,FR-End,FR-Alt",
+    },
 ];
 
 #[cfg(test)]
@@ -729,6 +744,28 @@ mod tests {
         assert_eq!(items[0].attributes["inst"], json!("W"));
         assert_eq!(items[0].attributes["cme"], json!("1996-08-14T19:30"));
         assert!(!items[0].attributes.contains_key("recno"));
+    }
+
+    #[test]
+    fn juno_icmes_run_from_start_to_end_with_the_flux_rope_times_kept() {
+        let items = table(
+            &fixture("juno_icmes"),
+            "start=ICME-Start;stop=ICME-End;at=FR-Start,FR-End,FR-Alt",
+        )
+        .unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].start, at("2011-09-09T18:01:30Z"));
+        assert_eq!(items[0].stop, at("2011-09-10T22:51:42Z"));
+        assert_eq!(
+            items[1].attributes["fr_start"],
+            json!("2011-09-17T19:59:30Z")
+        );
+        assert!(!items[0].attributes.contains_key("fr_start"));
+        assert!(
+            LISTS
+                .iter()
+                .any(|list| list.key == "vizier-juno-icmes-davies")
+        );
     }
 
     #[test]

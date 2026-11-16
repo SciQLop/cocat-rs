@@ -1,0 +1,59 @@
+#
+#   VizieR Astronomical Server vizier.cfa.harvard.edu
+#    Date: 2026-11-16T20:51:32 [V7.6.1]
+#   In case of problem, please report to:	cds-question@unistra.fr
+#
+#
+#Coosys	J2000:	eq_FK5 J2000
+#INFO	service_protocol=ASU	  IVOID of the protocol through which the data was retrieved
+#INFO	request_date=2026-11-16T20:51:32	  Query execution date
+#INFO	request=https://vizier.cfa.harvard.edu/viz-bin/asu-tsv?-out.all&-out.max=3&-source=J/ApJ/923/136/table1	  Full request URL
+#INFO	contact=cds-question@unistra.fr	  Email or URL to contact publisher
+#INFO	server_software=VizieR/7.6.1	  Software version
+#INFO	publisher=CDS	  Data centre that produced the VOTable
+
+#RESOURCE=yCat_19230136
+#Name: J/ApJ/923/136
+#Title: ICMEs observed by Juno between 1 and 5.4au (Davies+, 2021)
+#INFO	ivoid=ivo://cds.vizier/j/apj/923/136	    IVOID of underlying data collection
+#INFO	data_ivoid=ivo://cds.vizier/j/apj/923/136	    IVOID of underlying data collection
+#INFO	creator=Davies E.E.	    First author or institution
+#INFO	cites=bibcode:2021ApJ...923..136D	    Article or Data origin sources
+#INFO	journal=ApJ	    Journal name
+#INFO	original_date=2021	    Year of the article publication
+#INFO	reference_url=https://cdsarc.cds.unistra.fr/viz-bin/cat/J/ApJ/923/136	    Dataset landing page
+#INFO	publication_date=2023-10-02	    Date of first publication in the data centre
+#INFO	rights_uri=https://cds.unistra.fr/vizier-org/licences_vizier.html	    Licence URI
+#Table	J_ApJ_923_136_table1:
+#Name: J/ApJ/923/136/table1
+#Title: Interplanetary coronal mass ejection (ICME) catalog
+#Column	recno	(I8)	Record number assigned by the VizieR team. Should Not be used for identification.	[ucd=meta.record]
+#Column	ID	(A9)	Unique Juno ID (1)	[ucd=meta.id;meta.main]
+#Column	f_ID	(A1)	[*] * = missing data	[ucd=meta.code]
+#Column	HAE-r	(F5.2)	[0.99/5.5] Spacecraft heliocentric distance, Heliocentric Aries Ecliptic	[ucd=pos.distance;pos.heliocentric]
+#Column	HAE-lat	(F5.2)	[-0.07/4.6] Spacecraft latitude, Heliocentric Aries Ecliptic	[ucd=pos.ecliptic.lat;pos.heliocentric]
+#Column	HAE-lon	(F6.2)	[0.2/353] Spacecraft longitude, Heliocentric Aries Ecliptic	[ucd=pos.ecliptic.lon;pos.heliocentric]
+#Column	HEE-r	(F5.2)	[0.99/5.5] Spacecraft heliocentric distance, Heliocentric Earth Ecliptic	[ucd=pos.distance;pos.heliocentric]
+#Column	HEE-lat	(F5.2)	[-0.07/4.6] Spacecraft latitude, Heliocentric Earth Ecliptic	[ucd=pos.earth.lat;pos.heliocentric]
+#Column	HEE-lon	(F6.2)	[0.5/360] Spacecraft longitude, Heliocentric Earth Ecliptic	[ucd=pos.earth.lon;pos.heliocentric;pos.eop]
+#Column	ICME-Start	(A19)	ICME Start datetime, ISO 3601 (2)	[ucd=time.epoch]
+#Column	ICME-End	(A19)	ICME End datetime, ISO 3601 (2)	[ucd=time.epoch]
+#Column	ICME-Bmean	(F5.2)	[1/12.7]? Mean magnetic field during ICME	[ucd=phys.magField]
+#Column	ICME-Bmax	(F5.2)	[1.6/27]? Max magnetic field during ICME	[ucd=phys.magField]
+#Column	FR-Start	(A19)	Flux rope Start datetime, ISO 3601 (2)	[ucd=time.epoch]
+#Column	FR-End	(A19)	Flux rope End datetime, ISO 3601 (2)	[ucd=time.epoch]
+#Column	FR-Alt	(A19)	Alternative flux rope End datetime (3)	[ucd=time.epoch]
+#Column	FR-Bmean	(F5.2)	[1.17/19.7]? Mean magnetic field during flux rope	[ucd=phys.magField]
+#Column	FR-AltBmean	(F5.2)	[4.17/19]? Alternative flux rope mean magnetic field (3)	[ucd=phys.magField]
+#Column	FR-Bmax	(F5.2)	[1.4/21.1]? Max magnetic field during flux rope	[ucd=phys.magField]
+#Column	FR-Type	(A3)	Flux rope type (4)	[ucd=meta.code]
+#Column	FR-Hand	(A1)	[LR] Flux rope handedness (L=left-handed; R=right-handed)	[ucd=meta.code]
+#Column	Q	(I1)	[1/3] Quality of event (1:high quality) (5)	[ucd=meta.code.qual]
+#Column	Notes	(a354)	Notes on event	[ucd=meta.note]
+recno	ID	f_ID	HAE-r	HAE-lat	HAE-lon	HEE-r	HEE-lat	HEE-lon	ICME-Start	ICME-End	ICME-Bmean	ICME-Bmax	FR-Start	FR-End	FR-Alt	FR-Bmean	FR-AltBmean	FR-Bmax	FR-Type	FR-Hand	Q	Notes
+ 	 	 	au	deg	deg	au	deg	deg	s	s	nT	nT	s	s	s	nT	nT	nT	 	 	 	
+--------	---------	-	-----	-----	------	-----	-----	------	-------------------	-------------------	-----	-----	-------------------	-------------------	-------------------	-----	-----	-----	---	-	-	------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+       1	20110910 	 	 1.04	-0.04	352.34	 1.04	-0.04	  5.63	2011-09-09T18:01:30	2011-09-10T22:51:42	12.63	26.57	                   	                   	                   	     	     	     	   	 	2	ICME followed by HSS arriving 11 Sep  as shown by Wind plasma features .
+       2	20110917 	 	 1.07	-0.05	  0.22	 1.07	-0.05	  6.19	2011-09-17T06:29:30	2011-09-18T21:57:31	 9.67	14.99	2011-09-17T19:59:30	2011-09-18T13:17:30	2011-09-18T21:51:31	11.84	10.39	14.99	SEN	L	1	Clear shock, sheath, and ejecta with clear flux rope structure. Trailing edge of FR ambiguous due to discontinuity in N magnetic field component around 18 Sep 14:30. Possibly followed by flank of another ICME.
+       3	20110927 	 	 1.10	-0.05	  9.91	 1.10	-0.05	  6.32	2011-09-27T01:02:30	2011-09-28T20:14:32	 8.47	21.25	                   	                   	                   	     	     	     	   	 	1	Period of burst of activity, with middle structure clear ICME with strong shock and sheath structure preceding ejecta.
+

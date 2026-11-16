@@ -1,0 +1,112 @@
+{
+ "schema": {
+  "fields": [
+   {
+    "name": "index",
+    "type": "integer"
+   },
+   {
+    "name": "Rau",
+    "type": "number"
+   },
+   {
+    "name": "MOclass",
+    "type": "string"
+   },
+   {
+    "name": "meanB",
+    "type": "number"
+   },
+   {
+    "name": "meanVsw",
+    "type": "number"
+   },
+   {
+    "name": "Vexp",
+    "type": "number"
+   },
+   {
+    "name": "DiP",
+    "type": "number"
+   },
+   {
+    "name": "ICME_datestart",
+    "type": "datetime",
+    "tz": "UTC"
+   },
+   {
+    "name": "MO_datestart",
+    "type": "datetime",
+    "tz": "UTC"
+   },
+   {
+    "name": "ICME_dateend",
+    "type": "datetime",
+    "tz": "UTC"
+   },
+   {
+    "name": "save_name",
+    "type": "string"
+   },
+   {
+    "name": "img_name",
+    "type": "string"
+   },
+   {
+    "name": "shock",
+    "type": "boolean"
+   }
+  ],
+  "primaryKey": [
+   "index"
+  ],
+  "pandas_version": "0.20.0"
+ },
+ "data": [
+  {
+   "index": 0,
+   "Rau": 0.57,
+   "MOclass": "Fr",
+   "meanB": 18.14,
+   "meanVsw": 0.0,
+   "Vexp": 0.0,
+   "DiP": 0.53,
+   "ICME_datestart": "2007-05-04T13:34:00.000Z",
+   "MO_datestart": "2007-05-04T20:57:00.000Z",
+   "ICME_dateend": "2007-05-06T00:57:00.000Z",
+   "save_name": "MSG_20070504_124",
+   "img_name": "1messCleanedFig.png",
+   "shock": false
+  },
+  {
+   "index": 37,
+   "Rau": 0.43,
+   "MOclass": null,
+   "meanB": 47.17,
+   "meanVsw": 0.0,
+   "Vexp": 0.0,
+   "DiP": 0.85,
+   "ICME_datestart": "2012-01-02T18:28:00.000Z",
+   "MO_datestart": "2012-01-02T19:54:00.000Z",
+   "ICME_dateend": "2012-01-02T23:36:00.000Z",
+   "save_name": "MSG_20120102_002",
+   "img_name": "38messCleanedFig.png",
+   "shock": false
+  },
+  {
+   "index": 86,
+   "Rau": 0.31,
+   "MOclass": "E",
+   "meanB": 47.32,
+   "meanVsw": 0.0,
+   "Vexp": 0.0,
+   "DiP": 0.61,
+   "ICME_datestart": "2015-04-22T00:49:00.000Z",
+   "MO_datestart": "2015-04-22T05:22:00.000Z",
+   "ICME_dateend": "2015-04-22T18:08:48.000Z",
+   "save_name": "MSG_20150422_112",
+   "img_name": "87messCleanedFig.png",
+   "shock": false
+  }
+ ]
+}

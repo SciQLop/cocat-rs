@@ -55,11 +55,21 @@ you may find:
   team's verdict and boundaries, and the six catalogues it collates side by side;
   the intense storms of Ji et al. (2012); Solar Orbiter's mirror mode storms and reconnection
   exhausts (Fargette et al. 2023); Cassini's long-standing reconnection at Saturn (Guo et al.
-  2019); and Parker Solar Probe's heliospheric current sheet crossings (Fargette et al. 2026).
-- **VizieR**, under the same *Literature* folders: 27 event tables published with papers and
+  2019); and Parker Solar Probe's heliospheric current sheet crossings (Fargette et al. 2026);
+  the SODA shock list (Parker Solar Probe, Solar Orbiter, STEREO-A) and the LASSOS ICME
+  catalogues (Helios, MESSENGER, Parker Solar Probe, Solar Orbiter, STEREO), both kept up to
+  date by NASA GSFC; Venus Express bow shock and ion composition boundary crossings (Persson et
+  al. 2023); predicted MAVEN bow shock crossings (Simon Wedlund et al.); THEMIS magnetosheath
+  intervals and jets by three criteria, with SIR and high-speed stream intervals at L1 (Koller et
+  al. 2025); Parker Solar Probe switchbacks (Martinović et al. 2021) and SIRs with their
+  STEREO-A and L1 counterparts (Allen et al. 2021); SEP events above 30 MeV since 1956 and the
+  GSEP GOES list; ICMEs at Mercury (Winslow et al. 2015); Van Allen Probes EMIC waves (Inglis et
+  al. 2024; Remya et al. 2023); and the HELIO type III radio bursts at Wind and STEREO,
+  1996-2011.
+- **VizieR**, under the same *Literature* folders: 28 event tables published with papers and
   kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
   Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar
-  wind, and pickup-ion waves at the Voyagers.
+  wind, pickup-ion waves at the Voyagers, and ICMEs at Juno on its way to Jupiter.
   Each says whom to cite and under which licence.
 
 Such a catalogue says where it comes from under its name, for instance "From DONKI (NASA

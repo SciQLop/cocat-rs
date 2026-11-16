@@ -42,6 +42,7 @@ struct Item {
 type Read = fn(text: &str, part: &str) -> Result<Vec<Item>, String>;
 
 /// Where a list's events come from.
+#[derive(Clone)]
 enum Files {
     /// Downloaded on each run; a list spread over several files reads them all.
     Remote(&'static [&'static str]),
@@ -65,6 +66,7 @@ enum Files {
     Together(&'static [&'static str]),
 }
 
+#[derive(Clone)]
 struct List {
     key: &'static str,
     folder: &'static str,
@@ -90,6 +92,17 @@ const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat
 
 /// The description of a region list from our own run of the Olshevsky et al. (2021) classifier:
 /// it must say first that this is our version, with how the run differs from the paper.
+const KOLLER: &str = "Koller (2025), THEMIS Dayside Magnetosheath Intervals and detected Jets 2008 - 2023; SIR and HSS Event Lists 1995-2023, Zenodo, https://doi.org/10.5281/zenodo.13843752, licence CC-BY-4.0; see Koller et al. (2025), Stability of the Earth's Dayside Magnetosheath, JGR Space Physics 130, https://doi.org/10.1029/2025JA034098.";
+const TYPE_III: &str = "HELIO Heliophysics Feature Catalogue (Observatoire de Paris), feature TYPE III, code RABAT3 v2.03 (X. Bonnin), https://voparis-helio.obspm.fr/hfc-gui/; method of Lobzin et al. (2009), Space Weather 7, https://doi.org/10.1029/2008SW000425. No licence stated.";
+const TYPE_III_ABOUT: &str = "Type III radio bursts found automatically (not checked by hand) in the dynamic spectra by the HELIO Feature Catalogue's RABAT3 code: start and end, the frequency range of the burst's box, peak intensity above background, the code's trust level, and `multiple` when bursts overlap. The catalogue stops at the end of 2011. Converted once from the HFC query service.";
+const ALLEN: &str = "Allen et al. (2021), A living catalog of stream interaction regions in the Parker Solar Probe era, A&A 650, A25, https://doi.org/10.1051/0004-6361/202039833 (open access).";
+const SODA: &str = "SODA interplanetary shock list, NASA GSFC, https://parker.gsfc.nasa.gov/shocks.html (no licence stated); see Kruparova et al. (2025), ApJL 979, L10, https://doi.org/10.3847/2041-8213/ada558.";
+const SODA_ABOUT: &str = "Shocks found by the ShOck Detection Algorithm (SODA) and kept up to date by NASA GSFC: `type` is FF, FR, SF or SR (fast or slow, forward or reverse), the list's quality and `rhs` flags, field and density compression, speed jump, upstream beta, shock angle, Alfvén and magnetosonic Mach numbers, distance in solar radii, HEEQ latitude and longitude, and the driver.";
+const SODA_FILE: &str = "https://parker.gsfc.nasa.gov/static_data/soda2/soda.json";
+const LASSOS: &str = "LASSOS ICME catalogues, NASA GSFC Heliophysics Science Division, https://science.gsfc.nasa.gov/lassos/ (no licence stated); magnetic obstacle model of Nieves-Chinchilla et al. (2016), ApJ 823, 27, https://doi.org/10.3847/0004-637X/823/1/27.";
+const LASSOS_FOLDER: &str = "Literature/Heliosphere/LASSOS ICME catalogues (NASA GSFC)";
+const LASSOS_ABOUT: &str = "ICMEs in situ, from the ICME start (its shock when it has one) to its end, kept up to date by the LASSOS working group: magnetic obstacle start and class (Fr flux rope, F- small and F+ large rotation flux rope, Cx complex, E ejecta), its mean field, mean speed and expansion speed (left out when no plasma was measured), distortion parameter, distance in au and whether a shock led it.";
+
 macro_rules! lpp_mms_run {
     ($region:literal) => {
         concat!(
@@ -104,7 +117,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-const LISTS: [List; 79] = [
+static LISTS: [List; 107] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -1075,6 +1088,326 @@ const LISTS: [List; 79] = [
         url: "https://doi.org/10.3847/2041-8213/ab4429",
         files: Files::Kept(include_str!("data/guo_2019_saturn_reconnection.csv")),
         read: kept_table,
+        part: "",
+    },
+    List {
+        key: "venus-bow-shock-persson",
+        folder: "Literature/Venus",
+        name: "Venus bow shock crossings, Venus Express (Persson et al. 2023)",
+        about: "Bow shock crossings of Venus by Venus Express, 2006-2014, picked by hand in ASPERA-4 and MAG data: orbit, inbound or outbound, and position in VSO (Venus radii). Converted once from the Zenodo file.",
+        credit: "Persson, Bergman, Signoles, Wolff, Martinez, Lindwall & Futaana (2023), Venusian bow shock crossings manually identified from measurements by the ASPERA-4 and MAG instruments onboard Venus Express, Zenodo, https://doi.org/10.5281/zenodo.7679678, licence CC-BY-4.0.",
+        url: "https://doi.org/10.5281/zenodo.7679678",
+        files: Files::Kept(include_str!("data/persson_2023_venus_bow_shock.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "venus-ion-composition-boundary-persson",
+        folder: "Literature/Venus",
+        name: "Venus ion composition boundary crossings, Venus Express (Persson et al. 2023)",
+        about: "Crossings of the ion composition boundary of Venus (the induced magnetosphere's inner edge) by Venus Express, 2006-2014, picked by hand in ASPERA-4 and MAG data: orbit, inbound or outbound, and position in VSO (Venus radii). Converted once from the Zenodo file.",
+        credit: "Persson, Bergman, Signoles, Wolff, Martinez, Lindwall & Futaana (2023), Venusian bow shock crossings manually identified from measurements by the ASPERA-4 and MAG instruments onboard Venus Express, Zenodo, https://doi.org/10.5281/zenodo.7679678, licence CC-BY-4.0.",
+        url: "https://doi.org/10.5281/zenodo.7679678",
+        files: Files::Kept(include_str!(
+            "data/persson_2023_venus_ion_composition_boundary.csv"
+        )),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mars-bow-shock-simon-wedlund",
+        folder: "Literature/Mars",
+        name: "Mars bow shock crossings, MAVEN, predicted (Simon Wedlund et al. 2022)",
+        about: "Predicted, not picked by hand: bow shock crossings of Mars by MAVEN, 2014-2024, from a 3D shock model corrected on the magnetic field (predictor-corrector). The authors advise using them as a first indicator of the shock, with caution. `direction` inbound is from the solar wind into the sheath; position in MSO (Mars radii), solar zenith angle, shock angle and solar longitude Ls. Converted once from the Zenodo file.",
+        credit: "Simon Wedlund, Volwerk, Beth, Mazelle, Möstl, Halekas, Gruesbeck & Rojas-Castillo (2025), Predicted times, spatial coordinates of bow shock crossings and shock geometry at Mars from the NASA/MAVEN mission, Zenodo, https://doi.org/10.5281/zenodo.15056494, licence CC-BY-4.0; method in Simon Wedlund et al. (2022), JGR Space Physics 127, https://doi.org/10.1029/2021JA029942.",
+        url: "https://doi.org/10.5281/zenodo.15056494",
+        files: Files::Kept(include_str!("data/simon_wedlund_2022_mars_bow_shock.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "themis-magnetosheath-koller",
+        folder: "Literature/Earth/THEMIS magnetosheath and jets (Koller)",
+        name: "THEMIS subsolar magnetosheath intervals, 2008-2023 (Koller et al. 2025)",
+        about: "Intervals when one of the five THEMIS probes was in the subsolar magnetosheath, 2008-2023, from ESA and FGM data at spin resolution (3 s), selected as in Plaschke et al. (2013). The jet lists of this folder are found inside these intervals. Converted once from the Zenodo file.",
+        credit: KOLLER,
+        url: "https://doi.org/10.5281/zenodo.13843752",
+        files: Files::Kept(include_str!("data/koller_2025_themis_magnetosheath.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "themis-jets-plaschke",
+        folder: "Literature/Earth/THEMIS magnetosheath and jets (Koller)",
+        name: "THEMIS magnetosheath jets, Plaschke criterion, 2008-2023 (Koller et al. 2025)",
+        about: "High-speed jets over 10 s in the THEMIS subsolar magnetosheath intervals, 2008-2023, by the Plaschke et al. (2013) criterion (anti-sunward dynamic pressure against the solar wind's). `inner_time` is a third time the file gives between start and end without naming it. Converted once from the Zenodo file.",
+        credit: KOLLER,
+        url: "https://doi.org/10.5281/zenodo.13843752",
+        files: Files::Kept(include_str!("data/koller_2025_themis_jets_plaschke.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "themis-jets-archer",
+        folder: "Literature/Earth/THEMIS magnetosheath and jets (Koller)",
+        name: "THEMIS magnetosheath jets, Archer criterion, 2008-2023 (Koller et al. 2025)",
+        about: "High-speed jets over 10 s in the THEMIS subsolar magnetosheath intervals, 2008-2023, by the Archer et al. (2013) criterion (dynamic pressure against its 20-minute running mean). `inner_time` is a third time the file gives between start and end without naming it. Converted once from the Zenodo file.",
+        credit: KOLLER,
+        url: "https://doi.org/10.5281/zenodo.13843752",
+        files: Files::Kept(include_str!("data/koller_2025_themis_jets_archer.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "themis-jets-koller",
+        folder: "Literature/Earth/THEMIS magnetosheath and jets (Koller)",
+        name: "THEMIS magnetosheath jets, Koller criterion, 2008-2023 (Koller et al. 2025)",
+        about: "High-speed jets over 10 s in the THEMIS subsolar magnetosheath intervals, 2008-2023, by the Koller et al. (2022) criterion; not used in the 2025 paper. `inner_time` is a third time the file gives between start and end without naming it. Converted once from the Zenodo file.",
+        credit: KOLLER,
+        url: "https://doi.org/10.5281/zenodo.13843752",
+        files: Files::Kept(include_str!("data/koller_2025_themis_jets_koller.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "omni-sir-hss-koller",
+        folder: "Literature/Heliosphere",
+        name: "Stream interaction regions and high-speed streams at L1, 1995-2023 (Koller et al. 2025)",
+        about: "SIRs with their high-speed streams in OMNI data, 1995-2023: from the start of the pressure rise to the end of the fast stream, with the time of peak speed and the list each event comes from (Grandin et al. 2019, then the authors). Limited by OMNI coverage; the authors do not claim completeness. Converted once from the Zenodo file.",
+        credit: KOLLER,
+        url: "https://doi.org/10.5281/zenodo.13843752",
+        files: Files::Kept(include_str!("data/koller_2025_omni_sir_hss.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "psp-switchbacks-martinovic",
+        folder: "Literature/Heliosphere",
+        name: "Switchbacks at Parker Solar Probe, encounters 1 and 2 (Martinović et al. 2021)",
+        about: "1,074 switchbacks picked by eye in Parker Solar Probe encounters 1 and 2: the event is the switchback itself (stable reversed field); `sampled_from` and `sampled_to` bound the quiet and transition regions sampled around it. `quality` runs 0-5; under 2 the authors deem the event unreliable. Converted once from the Zenodo HDF5 file.",
+        credit: "Martinović, Klein, Huang, Chandran, Kasper, Lichko, Bowen, Chen, Matteini, Stevens, Case & Bale (2021), Parker Solar Probe E1,2 Switchback Database, Zenodo, https://doi.org/10.5281/zenodo.4579821, licence CC-BY-4.0; see Martinović et al. (2021), ApJ 912, https://doi.org/10.3847/1538-4357/abebe5.",
+        url: "https://doi.org/10.5281/zenodo.4579821",
+        files: Files::Kept(include_str!("data/martinovic_2021_psp_switchbacks.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "sep-30mev-papaioannou",
+        folder: "Literature/Heliosphere",
+        name: "SEP events above 30 MeV, 1956-2023 (Papaioannou)",
+        about: "Solar energetic particle events with protons above 30 MeV, 1956-2023, by day, with their omnidirectional fluence; `source` says which compilation an event comes from. The authors made no cross-calibration between sources. Each event is its whole day. Converted once from the Zenodo sheet.",
+        credit: "Papaioannou (2025), A catalog of E>30 MeV Solar Energetic Particle (SEP) events from 1956 to 2023, Zenodo, https://doi.org/10.5281/zenodo.15083732, licence CC-BY-4.0; compiled from Shea & Smart (1990), GSEP (Rotti et al. 2022) and Papaioannou et al. (2023).",
+        url: "https://doi.org/10.5281/zenodo.15083732",
+        files: Files::Kept(include_str!("data/papaioannou_2025_sep_30mev.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "gsep-rotti",
+        folder: "Literature/Heliosphere",
+        name: "GOES solar energetic particle events, 1986-2017 (GSEP, Rotti et al. 2022)",
+        about: "Proton events in GOES data, 1986-2017, over the time slice the authors analysed, with the flare (class, position, region) and CME they associate, peak fluxes and fluences above 10 to 100 MeV, and `above_swpc_threshold` (1 for the 244 events over NOAA's 10 pfu at 10 MeV). Converted once from the Dataverse table (version 5).",
+        credit: "Rotti, Aydin, Georgoulis & Martens (2022), Integrated Geostationary Solar Energetic Particle Events Catalog: GSEP, ApJS, https://doi.org/10.3847/1538-4365/ac87ac; data at Harvard Dataverse, https://doi.org/10.7910/DVN/DZYLHK, licence CC0-1.0.",
+        url: "https://doi.org/10.7910/DVN/DZYLHK",
+        files: Files::Kept(include_str!("data/rotti_2022_gsep.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mercury-icmes-winslow",
+        folder: "Literature/Mercury",
+        name: "ICMEs at Mercury, MESSENGER (Winslow et al. 2015)",
+        about: "ICMEs seen by MESSENGER in orbit around Mercury, 2011-2014: from the shock (or the ejecta when no shock) to the ICME's end, with the ejecta start, the CME launch and coronal speed (`source_uncertain` when the authors marked the source with a question mark), transit speeds, Mercury's distance and field strengths. Converted once from the SPDF spreadsheet.",
+        credit: "Winslow et al. (2015), Interplanetary coronal mass ejections from MESSENGER orbital observations at Mercury, JGR Space Physics 120, https://doi.org/10.1002/2015JA021200; spreadsheet at NASA SPDF, https://spdf.gsfc.nasa.gov/pub/data/messenger/ICME_Catalog_at_Mercury.xls (NASA data, no licence stated).",
+        url: "https://doi.org/10.1002/2015JA021200",
+        files: Files::Kept(include_str!("data/winslow_2015_mercury_icmes.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "rbspb-emic-inglis",
+        folder: "Literature/Earth",
+        name: "EMIC waves, Van Allen Probe B, 2013-2019 (Inglis et al. 2024)",
+        about: "Electromagnetic ion cyclotron waves detected automatically in Van Allen Probe B magnetometer data, 2013 to July 2019: band (H+, He+, O+), mean frequency, L and MLT at start and end. Times are the file's UT columns: its unix columns run 5 h ahead of them. Converted once from the Zenodo file.",
+        credit: "Inglis, Murphy & Halford (2024), A database of detected EMIC wave activity using Van Allen Probe B magnetometer data, Zenodo, https://doi.org/10.5281/zenodo.12548567, licence CC-BY-4.0; see Inglis et al. (2024), JGR Space Physics, https://doi.org/10.1029/2024JA032666.",
+        url: "https://doi.org/10.5281/zenodo.12548567",
+        files: Files::Kept(include_str!("data/inglis_2024_rbspb_emic.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "rbsp-emic-remya",
+        folder: "Literature/Earth",
+        name: "EMIC waves, Van Allen Probes A and B, 2012-2019 (Remya et al. 2023)",
+        about: "Electromagnetic ion cyclotron waves found by an automated algorithm (after Bortnik et al. 2007) in Van Allen Probes A and B data, September 2012 to October 2019: probe, band(s), mean field, frequency range, wave power, mean L, MLT and MLAT, and mean AE and Sym-H. Converted once from the Zenodo file.",
+        credit: "Remya (2024), EMIC Wave Event List from Van Allen Probes, Zenodo, https://doi.org/10.5281/zenodo.14195258, licence CC-BY-4.0 (the author asks users to get in touch); see Remya et al. (2023), JGR Space Physics 128, https://doi.org/10.1029/2023JA031712.",
+        url: "https://doi.org/10.5281/zenodo.14195258",
+        files: Files::Kept(include_str!("data/remya_2024_rbsp_emic.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "type-iii-wind-hfc",
+        folder: "Literature/Sun/Type III radio bursts (HELIO HFC)",
+        name: "Type III radio bursts, Wind/WAVES RAD2, 1996-2011 (HELIO HFC)",
+        about: TYPE_III_ABOUT,
+        credit: TYPE_III,
+        url: "https://voparis-helio.obspm.fr/hfc-gui/",
+        files: Files::Kept(include_str!("data/hfc_type_iii_wind.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "type-iii-stereo-a-hfc",
+        folder: "Literature/Sun/Type III radio bursts (HELIO HFC)",
+        name: "Type III radio bursts, STEREO-A/WAVES HFR, 2007-2011 (HELIO HFC)",
+        about: TYPE_III_ABOUT,
+        credit: TYPE_III,
+        url: "https://voparis-helio.obspm.fr/hfc-gui/",
+        files: Files::Kept(include_str!("data/hfc_type_iii_stereo_a.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "type-iii-stereo-b-hfc",
+        folder: "Literature/Sun/Type III radio bursts (HELIO HFC)",
+        name: "Type III radio bursts, STEREO-B/WAVES HFR, 2007-2011 (HELIO HFC)",
+        about: TYPE_III_ABOUT,
+        credit: TYPE_III,
+        url: "https://voparis-helio.obspm.fr/hfc-gui/",
+        files: Files::Kept(include_str!("data/hfc_type_iii_stereo_b.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "psp-sirs-allen",
+        folder: "Literature/Heliosphere/PSP-era SIRs (Allen et al. 2021)",
+        name: "Stream interaction regions at Parker Solar Probe, orbits 1-5 (Allen et al. 2021)",
+        about: "SIRs and CIRs seen by Parker Solar Probe in orbits 1 to 5, 2018-2020: time of peak pressure (the interface), distance, peak pressure, field and density, speed range, whether STEREO-A and L1 saw it too, whether it is a CIR (seen a rotation earlier), had a shock, or sat near a current sheet crossing, and the ambiguous flag (0 clean). Converted once from the paper's Table 1; the living version the paper announces is no longer online.",
+        credit: ALLEN,
+        url: "https://doi.org/10.1051/0004-6361/202039833",
+        files: Files::Kept(include_str!("data/allen_2021_psp_sirs.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "stereo-a-sirs-allen",
+        folder: "Literature/Heliosphere/PSP-era SIRs (Allen et al. 2021)",
+        name: "Stream interaction regions at STEREO-A matching PSP's, 2018-2019 (Allen et al. 2021)",
+        about: "The SIRs and CIRs STEREO-A saw that match Parker Solar Probe's (`psp_events` gives their numbers in the PSP list), with the same quantities. Converted once from the paper's Table 2.",
+        credit: ALLEN,
+        url: "https://doi.org/10.1051/0004-6361/202039833",
+        files: Files::Kept(include_str!("data/allen_2021_stereo_a_sirs.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "l1-sirs-allen",
+        folder: "Literature/Heliosphere/PSP-era SIRs (Allen et al. 2021)",
+        name: "Stream interaction regions at L1 matching PSP's, 2018-2019 (Allen et al. 2021)",
+        about: "The SIRs and CIRs ACE and Wind saw at L1 that match Parker Solar Probe's (`psp_events` gives their numbers in the PSP list), with the same quantities. Converted once from the paper's Table 3.",
+        credit: ALLEN,
+        url: "https://doi.org/10.1051/0004-6361/202039833",
+        files: Files::Kept(include_str!("data/allen_2021_l1_sirs.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "soda-shocks-psp",
+        folder: "Literature/Heliosphere/SODA interplanetary shocks",
+        name: "Interplanetary shocks at Parker Solar Probe (SODA)",
+        about: SODA_ABOUT,
+        credit: SODA,
+        url: "https://parker.gsfc.nasa.gov/shocks.html",
+        files: Files::Remote(&[SODA_FILE]),
+        read: soda_shocks,
+        part: "PSP",
+    },
+    List {
+        key: "soda-shocks-solar-orbiter",
+        folder: "Literature/Heliosphere/SODA interplanetary shocks",
+        name: "Interplanetary shocks at Solar Orbiter (SODA)",
+        about: SODA_ABOUT,
+        credit: SODA,
+        url: "https://parker.gsfc.nasa.gov/shocks.html",
+        files: Files::Remote(&[SODA_FILE]),
+        read: soda_shocks,
+        part: "SLO",
+    },
+    List {
+        key: "soda-shocks-stereo-a",
+        folder: "Literature/Heliosphere/SODA interplanetary shocks",
+        name: "Interplanetary shocks at STEREO-A (SODA)",
+        about: SODA_ABOUT,
+        credit: SODA,
+        url: "https://parker.gsfc.nasa.gov/shocks.html",
+        files: Files::Remote(&[SODA_FILE]),
+        read: soda_shocks,
+        part: "STA",
+    },
+    List {
+        key: "lassos-icmes-helios",
+        folder: LASSOS_FOLDER,
+        name: "ICMEs at Helios 1 and 2, 1975-1980 (LASSOS)",
+        about: LASSOS_ABOUT,
+        credit: LASSOS,
+        url: "https://science.gsfc.nasa.gov/lassos/ICME_catalogs/helios-catalog.shtml",
+        files: Files::Remote(&[
+            "https://science.gsfc.nasa.gov/lassos/assets/catalogs/ICMEcatalog_Helios_web.json",
+        ]),
+        read: lassos_icmes,
+        part: "",
+    },
+    List {
+        key: "lassos-icmes-messenger",
+        folder: LASSOS_FOLDER,
+        name: "ICMEs at MESSENGER, 2007-2015 (LASSOS)",
+        about: LASSOS_ABOUT,
+        credit: LASSOS,
+        url: "https://science.gsfc.nasa.gov/lassos/ICME_catalogs/messenger-catalog.shtml",
+        files: Files::Remote(&[
+            "https://science.gsfc.nasa.gov/lassos/assets/catalogs/ICMEcatalog_MESSENGER_web.json",
+        ]),
+        read: lassos_icmes,
+        part: "",
+    },
+    List {
+        key: "lassos-icmes-psp",
+        folder: LASSOS_FOLDER,
+        name: "ICMEs at Parker Solar Probe (LASSOS)",
+        about: LASSOS_ABOUT,
+        credit: LASSOS,
+        url: "https://science.gsfc.nasa.gov/lassos/ICME_catalogs/parker-catalog.shtml",
+        files: Files::Remote(&[
+            "https://science.gsfc.nasa.gov/lassos/assets/catalogs/ICMEcatalog_Parker_web.json",
+        ]),
+        read: lassos_icmes,
+        part: "",
+    },
+    List {
+        key: "lassos-icmes-solar-orbiter",
+        folder: LASSOS_FOLDER,
+        name: "ICMEs at Solar Orbiter (LASSOS)",
+        about: LASSOS_ABOUT,
+        credit: LASSOS,
+        url: "https://science.gsfc.nasa.gov/lassos/ICME_catalogs/solo-catalog.shtml",
+        files: Files::Remote(&[
+            "https://science.gsfc.nasa.gov/lassos/assets/catalogs/ICMEcatalog_Orbiter_web.json",
+        ]),
+        read: lassos_icmes,
+        part: "",
+    },
+    List {
+        key: "lassos-icmes-stereo",
+        folder: LASSOS_FOLDER,
+        name: "ICMEs at STEREO A and B (LASSOS)",
+        about: LASSOS_ABOUT,
+        credit: LASSOS,
+        url: "https://science.gsfc.nasa.gov/lassos/ICME_catalogs/stereo-catalog.shtml",
+        files: Files::Remote(&[
+            "https://science.gsfc.nasa.gov/lassos/assets/catalogs/ICMEcatalog_STEREO_web.json",
+        ]),
+        read: lassos_icmes,
         part: "",
     },
 ];
@@ -2106,6 +2439,111 @@ fn cfa_shocks(text: &str, part: &str) -> Result<Vec<Item>, String> {
         .collect()
 }
 
+/// The SODA shock list (NASA GSFC): a JSON array of the shocks the algorithm found at Parker
+/// Solar Probe, Solar Orbiter and STEREO-A; `part` picks a spacecraft by its code (PSP, SLO,
+/// STA). Its numbers are strings, a blank one is none.
+fn soda_shocks(text: &str, part: &str) -> Result<Vec<Item>, String> {
+    const KEPT: [(&str, &str); 14] = [
+        ("Type", "type"),
+        ("Quality", "quality"),
+        ("RHS", "rhs"),
+        ("B_comp", "b_compression"),
+        ("n_comp", "density_compression"),
+        ("delta_v", "delta_v_km_s"),
+        ("beta_up", "beta_upstream"),
+        ("theta_bn", "theta_bn_deg"),
+        // `machx` is never below `mmsx` at a fast shock: it is the Alfvén Mach number.
+        ("machx", "mach_alfven"),
+        ("mmsx", "mach_magnetosonic"),
+        ("distance", "distance_rs"),
+        ("latitude", "latitude_heeq_deg"),
+        ("longitude", "longitude_heeq_deg"),
+        ("driver", "driver"),
+    ];
+    let shocks: Vec<Map<String, Value>> =
+        serde_json::from_str(text).map_err(|error| error.to_string())?;
+    shocks
+        .iter()
+        .filter(|shock| shock.get("SC").and_then(Value::as_str) == Some(part))
+        .map(|shock| {
+            let cell = |field: &str| match shock.get(field) {
+                Some(Value::String(text)) => text.clone(),
+                Some(Value::Number(number)) => number.to_string(),
+                _ => String::new(),
+            };
+            let id = cell("ID");
+            let at = slash_time(&cell("Time")).ok_or_else(|| format!("bad time in {id}"))?;
+            let cells: Vec<(&str, String)> = KEPT
+                .iter()
+                .map(|(field, name)| (*name, cell(field)))
+                .collect();
+            let mut attributes = Map::new();
+            keep(
+                &mut attributes,
+                cells
+                    .iter()
+                    .map(|(name, cell)| (*name, cell.trim().trim_end_matches('*'))),
+            );
+            // The page: a starred Mach number was computed with a separate tool, for a shock
+            // without the flow's direction.
+            if cell("machx").trim().ends_with('*') {
+                attributes.insert("mach_alfven_estimated".to_owned(), Value::from(true));
+            }
+            Ok(point(id, at, attributes))
+        })
+        .collect()
+}
+
+/// A LASSOS ICME catalogue (NASA GSFC) as pandas writes a table to JSON: `{schema, data}`, a
+/// row per ICME. An ICME runs from its start (its shock, when it has one) to its end. A speed
+/// of 0 is none: the spacecraft measured no plasma.
+fn lassos_icmes(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    const KEPT: [(&str, &str); 9] = [
+        ("SC", "spacecraft"),
+        ("MOclass", "mo_class"),
+        ("meanB", "mo_mean_b_nt"),
+        ("meanVsw", "mo_mean_speed_km_s"),
+        ("Vexp", "mo_expansion_speed_km_s"),
+        ("DiP", "distortion_parameter"),
+        ("Rau", "distance_au"),
+        ("R_au", "distance_au"),
+        ("shock", "shock"),
+    ];
+    let table: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let rows = table["data"].as_array().ok_or("no data")?;
+    rows.iter()
+        .map(|row| {
+            let time = |field: &str| row[field].as_str().and_then(Timestamp::parse);
+            let (Some(start), Some(stop)) = (time("ICME_datestart"), time("ICME_dateend")) else {
+                return Err(format!("bad times in {row}"));
+            };
+            // Some catalogues name several ICMEs "-": the start, on its spacecraft, keys one.
+            let begun = row["ICME_datestart"].as_str().unwrap_or_default();
+            let id = match row["SC"].as_str() {
+                Some(spacecraft) => format!("{spacecraft} {begun}"),
+                None => begun.to_owned(),
+            };
+            let mut attributes = Map::new();
+            if let Some(mo) = time("MO_datestart").and_then(|at| at.rfc3339().ok()) {
+                attributes.insert("mo_start".to_owned(), Value::from(mo));
+            }
+            for (field, name) in KEPT {
+                let speed = matches!(field, "meanVsw" | "Vexp");
+                let none = row[field].is_null() || speed && row[field].as_f64() == Some(0.0);
+                if !none {
+                    attributes.insert(name.to_owned(), row[field].clone());
+                }
+            }
+            Ok(Item {
+                id,
+                start,
+                stop: stop.max(start),
+                attributes,
+            })
+        })
+        .collect()
+}
+
 /// A flux rope page's time, `1996/01/01 02:01` or with seconds.
 fn slash_time(text: &str) -> Option<Timestamp> {
     let iso = text.trim().replace('/', "-").replacen(' ', "T", 1);
@@ -2874,7 +3312,7 @@ mod tests {
 
     #[test]
     fn the_fingerprint_follows_a_kept_table() {
-        let mut lists = LISTS;
+        let mut lists = LISTS.clone();
         let built = fingerprint(&lists);
         assert_eq!(fingerprint(&LISTS), built);
         lists[0].files = Files::Kept("start,stop\n");
@@ -3290,6 +3728,131 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn soda_shocks_are_moments_of_one_spacecraft_with_their_mach_numbers() {
+        const SODA: &str = include_str!("../../tests/fixtures/relay/literature_soda.json");
+        let psp = soda_shocks(SODA, "PSP").unwrap();
+        assert_eq!(psp.len(), 1);
+        assert_eq!(psp[0].id, "PSP_20181107_0750_8f");
+        assert_eq!(psp[0].start, at("2018-11-07T07:50:19Z"));
+        assert_eq!(psp[0].stop, psp[0].start);
+        assert_eq!(psp[0].attributes["type"], json!("SR"));
+        assert_eq!(psp[0].attributes["mach_alfven"], json!(0.67));
+        assert_eq!(psp[0].attributes["mach_magnetosonic"], json!(0.45));
+        assert_eq!(psp[0].attributes["distance_rs"], json!(36.7));
+        let solo = soda_shocks(SODA, "SLO").unwrap();
+        assert_eq!(solo.len(), 1);
+        assert!(
+            !solo[0].attributes.contains_key("mach_alfven"),
+            "blank is no value"
+        );
+        let stereo = soda_shocks(SODA, "STA").unwrap();
+        assert_eq!(stereo.len(), 2);
+        let estimated = &stereo[1].attributes;
+        assert!(
+            estimated["mach_alfven"].is_number(),
+            "the star is not part of the number"
+        );
+        assert_eq!(estimated["mach_alfven_estimated"], json!(true));
+        assert!(!stereo[0].attributes.contains_key("mach_alfven_estimated"));
+    }
+
+    #[test]
+    fn lassos_icmes_run_from_the_icme_start_to_its_end_and_a_zero_speed_is_none() {
+        const LASSOS: &str =
+            include_str!("../../tests/fixtures/relay/literature_lassos_messenger.json");
+        let icmes = lassos_icmes(LASSOS, "").unwrap();
+        assert_eq!(icmes.len(), 3);
+        assert_eq!(icmes[0].id, "2007-05-04T13:34:00.000Z");
+        assert_eq!(icmes[0].start, at("2007-05-04T13:34:00Z"));
+        assert_eq!(icmes[0].stop, at("2007-05-06T00:57:00Z"));
+        assert_eq!(
+            icmes[0].attributes["mo_start"],
+            json!("2007-05-04T20:57:00Z")
+        );
+        assert_eq!(icmes[0].attributes["mo_class"], json!("Fr"));
+        assert_eq!(icmes[0].attributes["distance_au"], json!(0.57));
+        assert_eq!(icmes[0].attributes["shock"], json!(false));
+        assert!(!icmes[0].attributes.contains_key("mo_mean_speed_km_s"));
+        assert!(!icmes[1].attributes.contains_key("mo_class"));
+
+        const PARKER: &str =
+            include_str!("../../tests/fixtures/relay/literature_lassos_parker.json");
+        let parker = lassos_icmes(PARKER, "").unwrap();
+        assert_ne!(parker[0].id, parker[2].id, "two ICMEs both named -");
+    }
+
+    #[test]
+    fn the_kept_tables_of_the_november_batch_read_whole() {
+        let read = |text| kept_table(text, "").unwrap();
+        let counts = [
+            (include_str!("data/persson_2023_venus_bow_shock.csv"), 5218),
+            (
+                include_str!("data/persson_2023_venus_ion_composition_boundary.csv"),
+                2941,
+            ),
+            (
+                include_str!("data/simon_wedlund_2022_mars_bow_shock.csv"),
+                20107,
+            ),
+            (
+                include_str!("data/koller_2025_themis_magnetosheath.csv"),
+                38212,
+            ),
+            (
+                include_str!("data/koller_2025_themis_jets_plaschke.csv"),
+                10478,
+            ),
+            (
+                include_str!("data/koller_2025_themis_jets_archer.csv"),
+                14083,
+            ),
+            (
+                include_str!("data/koller_2025_themis_jets_koller.csv"),
+                9296,
+            ),
+            (include_str!("data/koller_2025_omni_sir_hss.csv"), 1022),
+            (
+                include_str!("data/martinovic_2021_psp_switchbacks.csv"),
+                1074,
+            ),
+            (include_str!("data/papaioannou_2025_sep_30mev.csv"), 387),
+            (include_str!("data/rotti_2022_gsep.csv"), 433),
+            (include_str!("data/winslow_2015_mercury_icmes.csv"), 61),
+            (include_str!("data/inglis_2024_rbspb_emic.csv"), 2678),
+            (include_str!("data/remya_2024_rbsp_emic.csv"), 2480),
+            (include_str!("data/hfc_type_iii_wind.csv"), 69117),
+            (include_str!("data/hfc_type_iii_stereo_a.csv"), 12322),
+            (include_str!("data/hfc_type_iii_stereo_b.csv"), 9406),
+            (include_str!("data/allen_2021_psp_sirs.csv"), 11),
+            (include_str!("data/allen_2021_stereo_a_sirs.csv"), 11),
+            (include_str!("data/allen_2021_l1_sirs.csv"), 12),
+        ];
+        for (text, count) in counts {
+            assert_eq!(read(text).len(), count);
+        }
+        let emic = read(include_str!("data/inglis_2024_rbspb_emic.csv"));
+        assert_eq!(
+            emic[0].start,
+            at("2013-01-14T04:46:24Z"),
+            "the UT column, not the unix one 5 h ahead"
+        );
+        let mercury = read(include_str!("data/winslow_2015_mercury_icmes.csv"));
+        assert_eq!(mercury[0].start, at("2011-05-19T11:50:02.005Z"));
+        assert_eq!(mercury[0].attributes["source_uncertain"], json!("false"));
+        let psp = read(include_str!("data/allen_2021_psp_sirs.csv"));
+        assert_eq!(
+            psp[1].attributes["max_pressure_time"],
+            json!("2018-11-14T23:56:30Z")
+        );
+        assert!(!psp[0].attributes.contains_key("max_pressure_time"));
+        let lists_of_batch = LISTS
+            .iter()
+            .filter(|list| matches!(list.files, Files::Kept(text) if counts.iter().any(|(kept, _)| *kept == text)))
+            .count();
+        assert_eq!(lists_of_batch, counts.len(), "every table has its list");
     }
 
     #[test]

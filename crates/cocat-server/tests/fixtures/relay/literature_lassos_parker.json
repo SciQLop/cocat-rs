@@ -1,0 +1,98 @@
+{
+ "schema": {
+  "fields": [
+   {
+    "name": "index",
+    "type": "integer"
+   },
+   {
+    "name": "ICME_datestart",
+    "type": "datetime",
+    "tz": "UTC"
+   },
+   {
+    "name": "MO_datestart",
+    "type": "datetime",
+    "tz": "UTC"
+   },
+   {
+    "name": "ICME_dateend",
+    "type": "datetime",
+    "tz": "UTC"
+   },
+   {
+    "name": "MOclass",
+    "type": "string"
+   },
+   {
+    "name": "meanB",
+    "type": "number"
+   },
+   {
+    "name": "meanVsw",
+    "type": "number"
+   },
+   {
+    "name": "save_name",
+    "type": "string"
+   },
+   {
+    "name": "DiP",
+    "type": "number"
+   },
+   {
+    "name": "R_au",
+    "type": "number"
+   },
+   {
+    "name": "Vexp",
+    "type": "number"
+   }
+  ],
+  "primaryKey": [
+   "index"
+  ],
+  "pandas_version": "1.4.0"
+ },
+ "data": [
+  {
+   "index": 0,
+   "ICME_datestart": "2018-10-30T20:55:00.000Z",
+   "MO_datestart": "2018-10-30T20:55:00.000Z",
+   "ICME_dateend": "2018-10-31T08:10:00.000Z",
+   "MOclass": "F-",
+   "meanB": 52.11,
+   "meanVsw": 0.0,
+   "save_name": "-",
+   "DiP": 0.56,
+   "R_au": 0.28,
+   "Vexp": 0.0
+  },
+  {
+   "index": 1,
+   "ICME_datestart": "2018-11-11T23:51:00.000Z",
+   "MO_datestart": "2018-11-11T23:51:00.000Z",
+   "ICME_dateend": "2018-11-12T06:07:00.000Z",
+   "MOclass": "F-",
+   "meanB": 82.08,
+   "meanVsw": 0.0,
+   "save_name": "PSP_20181111_315",
+   "DiP": 0.53,
+   "R_au": 0.23,
+   "Vexp": 0.0
+  },
+  {
+   "index": 2,
+   "ICME_datestart": "2019-03-15T09:00:00.000Z",
+   "MO_datestart": "2019-03-15T12:14:00.000Z",
+   "ICME_dateend": "2019-03-15T17:45:00.000Z",
+   "MOclass": "F-",
+   "meanB": 31.3,
+   "meanVsw": 0.0,
+   "save_name": "-",
+   "DiP": 0.52,
+   "R_au": 0.55,
+   "Vexp": 0.0
+  }
+ ]
+}
