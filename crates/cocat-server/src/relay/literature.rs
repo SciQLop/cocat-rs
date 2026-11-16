@@ -88,7 +88,23 @@ const LLAMAICE_CREDIT: &str = "Kay, C., Davies, E. E., Dumbović, M., Martinić,
 const LLAMAICE_FOLDER: &str = "Literature/Heliosphere/LLAMAICE near-Earth CMEs (Kay)";
 const LLAMAICE_SOURCES: &str = "https://osprei.space/llamadata/otherCats_1.0.dat";
 
-const LISTS: [List; 70] = [
+/// The description of a region list from our own run of the Olshevsky et al. (2021) classifier:
+/// it must say first that this is our version, with how the run differs from the paper.
+macro_rules! lpp_mms_run {
+    ($region:literal) => {
+        concat!(
+            "Our version, not the authors' catalogue: our own run of the Olshevsky et al. (2021) classifier, made at LPP on 2026-11-16 over all MMS1 FPI fast ion distributions from July 2015 to October 2026, on newer data and libraries than the paper. ",
+            "Intervals where MMS1 was in the ", $region, ", as the classifier labels it. ",
+            "Run: the authors' code (bitbucket.org/volshevsky/mmslearning, commit 7b93d08) and both published models (trained on 2017-11 and 2017-12), their probabilities averaged; Python 3.11.5, TensorFlow 2.21.0, numpy 2.4.6, pycdfpp 0.20.0; data mms1_fpi_fast_l2_dis-dist, mostly file version v3.4.0. ",
+            "Code changes: CDF files read with pycdfpp's cdflib layer instead of cdflib (same arrays); no axis swap, as today's readers already give the order the models expect; no background subtraction, as in the paper's classification. ",
+            "Rules: labels smoothed to the most common over 5 samples (about 22 s); a gap over 60 s ends an interval; intervals under 60 s are dropped; only dayside samples (X GSE > 0) are kept, as the models were trained on the dayside and label the tail lobes as solar wind; intervals whose mean probability is under 0.8 are dropped. ",
+            "Checked against the human labels of 2017-11 and 2017-12: 97.7% and 97.1% of samples agree. ",
+            "`confidence` is the interval's mean probability, `samples` its number of 4.5 s distributions. Converted once from the run's output."
+        )
+    };
+}
+
+const LISTS: [List; 74] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -223,6 +239,58 @@ const LISTS: [List; 70] = [
         credit: "Ballerini et al. (2024), J. Plasma Phys. 90, 905900612, https://doi.org/10.1017/S0022377824001089, licence CC-BY-4.0 (supplementary material).",
         url: "https://doi.org/10.1017/S0022377824001089",
         files: Files::Kept(include_str!("data/ballerini_2024_magnetopause.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms1-solar-wind-olshevsky-lpp",
+        folder: "Literature/Earth/MMS1 regions (Olshevsky classifier, LPP run)",
+        name: "MMS1 solar wind, 2015-2026 (LPP run of the Olshevsky et al. 2021 classifier)",
+        about: lpp_mms_run!("solar wind"),
+        credit: "Classifier and models of Olshevsky et al. (2021), Automated Classification of Plasma Regions Using 3D Particle Energy Distributions, JGR Space Physics 126, e2021JA029620, https://doi.org/10.1029/2021JA029620, code at https://bitbucket.org/volshevsky/mmslearning; run by LPP on MMS FPI data (MMS Science Data Center). Cite the paper and say the list is LPP's run.",
+        url: "https://doi.org/10.1029/2021JA029620",
+        files: Files::Kept(include_str!(
+            "data/olshevsky_2021_mms1_solar_wind_lpp_run.csv"
+        )),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms1-foreshock-olshevsky-lpp",
+        folder: "Literature/Earth/MMS1 regions (Olshevsky classifier, LPP run)",
+        name: "MMS1 ion foreshock, 2015-2026 (LPP run of the Olshevsky et al. 2021 classifier)",
+        about: lpp_mms_run!("ion foreshock"),
+        credit: "Classifier and models of Olshevsky et al. (2021), Automated Classification of Plasma Regions Using 3D Particle Energy Distributions, JGR Space Physics 126, e2021JA029620, https://doi.org/10.1029/2021JA029620, code at https://bitbucket.org/volshevsky/mmslearning; run by LPP on MMS FPI data (MMS Science Data Center). Cite the paper and say the list is LPP's run.",
+        url: "https://doi.org/10.1029/2021JA029620",
+        files: Files::Kept(include_str!(
+            "data/olshevsky_2021_mms1_foreshock_lpp_run.csv"
+        )),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms1-magnetosheath-olshevsky-lpp",
+        folder: "Literature/Earth/MMS1 regions (Olshevsky classifier, LPP run)",
+        name: "MMS1 magnetosheath, 2015-2026 (LPP run of the Olshevsky et al. 2021 classifier)",
+        about: lpp_mms_run!("magnetosheath"),
+        credit: "Classifier and models of Olshevsky et al. (2021), Automated Classification of Plasma Regions Using 3D Particle Energy Distributions, JGR Space Physics 126, e2021JA029620, https://doi.org/10.1029/2021JA029620, code at https://bitbucket.org/volshevsky/mmslearning; run by LPP on MMS FPI data (MMS Science Data Center). Cite the paper and say the list is LPP's run.",
+        url: "https://doi.org/10.1029/2021JA029620",
+        files: Files::Kept(include_str!(
+            "data/olshevsky_2021_mms1_magnetosheath_lpp_run.csv"
+        )),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms1-magnetosphere-olshevsky-lpp",
+        folder: "Literature/Earth/MMS1 regions (Olshevsky classifier, LPP run)",
+        name: "MMS1 magnetosphere, 2015-2026 (LPP run of the Olshevsky et al. 2021 classifier)",
+        about: lpp_mms_run!("magnetosphere"),
+        credit: "Classifier and models of Olshevsky et al. (2021), Automated Classification of Plasma Regions Using 3D Particle Energy Distributions, JGR Space Physics 126, e2021JA029620, https://doi.org/10.1029/2021JA029620, code at https://bitbucket.org/volshevsky/mmslearning; run by LPP on MMS FPI data (MMS Science Data Center). Cite the paper and say the list is LPP's run.",
+        url: "https://doi.org/10.1029/2021JA029620",
+        files: Files::Kept(include_str!(
+            "data/olshevsky_2021_mms1_magnetosphere_lpp_run.csv"
+        )),
         read: kept_table,
         part: "",
     },
@@ -2670,6 +2738,14 @@ mod tests {
             "NaN is no value"
         );
 
+        let solar_wind = read(include_str!(
+            "data/olshevsky_2021_mms1_solar_wind_lpp_run.csv"
+        ));
+        assert_eq!(solar_wind.len(), 13164);
+        assert_eq!(solar_wind[0].start, at("2015-09-09T20:16:27.302Z"));
+        assert_eq!(solar_wind[0].attributes["confidence"], json!(0.959));
+        assert_eq!(solar_wind[0].attributes["samples"], json!(24.0));
+
         let ftes = read(include_str!("data/fear_2012_cluster_ftes.csv"));
         assert_eq!(ftes.len(), 446);
         assert_eq!(ftes[0].start, at("2002-11-10T09:52:00Z"));
@@ -3150,5 +3226,25 @@ mod tests {
         assert!(
             lists().all(|list| list.credit.contains("doi.org") || list.credit.contains("http"))
         );
+    }
+}
+
+#[cfg(test)]
+mod lpp_run_tests {
+    use super::*;
+
+    #[test]
+    fn our_mms_region_lists_say_first_they_are_our_run() {
+        let ours = LISTS
+            .iter()
+            .filter(|list| list.key.ends_with("-olshevsky-lpp"));
+        assert_eq!(ours.clone().count(), 4);
+        for list in ours {
+            assert!(
+                list.about
+                    .starts_with("Our version, not the authors' catalogue")
+            );
+            assert!(list.about.contains("2026-11-16"));
+        }
     }
 }
