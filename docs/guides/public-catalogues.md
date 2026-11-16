@@ -47,7 +47,9 @@ you may find:
   (Wang et al. 2021); MMS1 solar wind, foreshock, magnetosheath and magnetosphere
   intervals, 2015-2026, from our own run of the Olshevsky et al. (2021) classifier (each
   description says how the run differs from the paper); Cluster flux transfer events (Fear et al. 2012); Svalgaard's
-  interplanetary sector boundaries from ground magnetometers, 1947-1978; the SIRs of Chi et al. (2018), 1995-2016; Lan Jian's STEREO ICME, SIR, shock
+  interplanetary sector boundaries from ground magnetometers, 1947-1978; ISGI's geomagnetic
+  events (sudden commencements since 1869, solar flare effects, international quiet and disturbed
+  days, CK-days; mostly CC BY-NC); the SIRs of Chi et al. (2018), 1995-2016; Lan Jian's STEREO ICME, SIR, shock
   and SEP lists; the ICME multi-catalogue of Larrodera & Temmer, which says which source catalogue each
   ICME comes from; LLAMAICE (Kay et al. 2026), every near-Earth CME candidate with the
   team's verdict and boundaries, and the six catalogues it collates side by side;

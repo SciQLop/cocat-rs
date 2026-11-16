@@ -104,7 +104,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-const LISTS: [List; 74] = [
+const LISTS: [List; 79] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -291,6 +291,61 @@ const LISTS: [List; 74] = [
         files: Files::Kept(include_str!(
             "data/olshevsky_2021_mms1_magnetosphere_lpp_run.csv"
         )),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "isgi-sudden-commencements",
+        folder: "Literature/Earth/ISGI geomagnetic events",
+        name: "Sudden commencements, 1869-2026 (ISGI)",
+        about: "Sudden commencements: sharp increases of the horizontal geomagnetic field, from a jump in solar wind dynamic pressure, seen at low-latitude observatories. `type` is SSC (followed by a storm) or SI (sudden impulse), blank before it was given; `mean_rise_time_min` and `mean_amplitude_nt` are averaged over the observatories; `quality_codes` are 0-3 per observatory or record collection (3 or 2: unmistakably an SC; 1: possibly; 0: doubtful; * or -: unknown); `observatories` (from 1975) or `record_collections` (N, S, T, before) name the records used. `status` is definitive or provisional (from 2023). Copied once from the ISGI download service on 2026-11-16; provisional events may still change.",
+        credit: "Sudden commencements from the Observatori de l'Ebre (Spain), distributed by ISGI, the International Service of Geomagnetic Indices (https://isgi.unistra.fr); licence CC BY-NC 4.0 (non-commercial use). Acknowledge the Ebre Observatory, ISGI and the contributing magnetic observatories.",
+        url: "https://isgi.unistra.fr/events_sc.php",
+        files: Files::Kept(include_str!("data/isgi_sudden_commencements.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "isgi-solar-flare-effects",
+        folder: "Literature/Earth/ISGI geomagnetic events",
+        name: "Solar flare effects, 1970-2026 (ISGI)",
+        about: "Solar flare effects: sudden geomagnetic perturbations on the dayside from the ionospheric currents a flare enhances. `quality` is 1 (doubtful), 2 (shape and extent of an SFE) or 3 (a notable SFE); `confirmed` says whether ionospheric or solar data confirmed it (given only in some years); `observatories` reported it. `status` is definitive or provisional. Copied once from the ISGI download service on 2026-11-16; provisional events may still change.",
+        credit: "Solar flare effects from the Observatori de l'Ebre (Spain), distributed by ISGI, the International Service of Geomagnetic Indices (https://isgi.unistra.fr); licence CC BY-NC 4.0 (non-commercial use). Acknowledge the Ebre Observatory, ISGI and the contributing magnetic observatories.",
+        url: "https://isgi.unistra.fr/events_sfe.php",
+        files: Files::Kept(include_str!("data/isgi_solar_flare_effects.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "isgi-quiet-days",
+        folder: "Literature/Earth/ISGI geomagnetic events",
+        name: "International quietest days (Q-days), 1932-2026 (ISGI)",
+        about: "The ten quietest UT days of each month, ranked from the Kp index (sum, sum of squares and maximum of the eight daily values). `rank` is 1 (quietest) to 10; `not_really_quiet` says why a selected day is not truly quiet (Ap above 6, or Kp above 3 once or above 2+ twice). The ranking is relative to the month. Copied once from the ISGI download service on 2026-11-16.",
+        credit: "International Q-days from GFZ Potsdam (Matzka et al. 2021, Geomagnetic Kp index, V. 1.0, GFZ Data Services, https://doi.org/10.5880/Kp.0001), distributed by ISGI (https://isgi.unistra.fr); licence CC BY 4.0.",
+        url: "https://isgi.unistra.fr/events_qdays.php",
+        files: Files::Kept(include_str!("data/isgi_quiet_days.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "isgi-disturbed-days",
+        folder: "Literature/Earth/ISGI geomagnetic events",
+        name: "International most disturbed days (D-days), 1932-2026 (ISGI)",
+        about: "The five most disturbed UT days of each month, ranked from the Kp index (sum, sum of squares and maximum of the eight daily values). `rank` is 1 (most disturbed) to 5; `not_really_disturbed` is yes when the day's Ap is under 20. The ranking is relative to the month. Copied once from the ISGI download service on 2026-11-16.",
+        credit: "International D-days from GFZ Potsdam (Matzka et al. 2021, Geomagnetic Kp index, V. 1.0, GFZ Data Services, https://doi.org/10.5880/Kp.0001), distributed by ISGI (https://isgi.unistra.fr); licence CC BY 4.0.",
+        url: "https://isgi.unistra.fr/events_qdays.php",
+        files: Files::Kept(include_str!("data/isgi_disturbed_days.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "isgi-ck-days",
+        folder: "Literature/Earth/ISGI geomagnetic events",
+        name: "Quietest CK-days, 1868-2024 (ISGI)",
+        about: "Quiet UT days from the aa index of two antipodal observatories. `ck24` judges the day itself (mean aa under 13 nT), `ck48` the 48 hours centred on it; each is really_quiet (C) or quiet (K) from the summed aa weights, blank when the day does not qualify. Copied once from the ISGI download service on 2026-11-16.",
+        credit: "Quietest CK-days from EOST (Strasbourg, France), distributed by ISGI, the International Service of Geomagnetic Indices (https://isgi.unistra.fr); licence CC BY-NC 4.0 (non-commercial use).",
+        url: "https://isgi.unistra.fr/events_ckdays.php",
+        files: Files::Kept(include_str!("data/isgi_ck_days.csv")),
         read: kept_table,
         part: "",
     },
@@ -2745,6 +2800,26 @@ mod tests {
         assert_eq!(solar_wind[0].start, at("2015-09-09T20:16:27.302Z"));
         assert_eq!(solar_wind[0].attributes["confidence"], json!(0.959));
         assert_eq!(solar_wind[0].attributes["samples"], json!(24.0));
+
+        let commencements = read(include_str!("data/isgi_sudden_commencements.csv"));
+        assert_eq!(commencements.len(), 3836);
+        assert_eq!(commencements[0].start, at("1869-01-20T07:54:00Z"));
+        assert_eq!(
+            commencements[0].attributes["record_collections"],
+            json!("N S T")
+        );
+        let flare_effects = read(include_str!("data/isgi_solar_flare_effects.csv"));
+        assert_eq!(flare_effects.len(), 1377);
+        assert_eq!(flare_effects[0].attributes["confirmed"], json!("yes"));
+        let quiet = read(include_str!("data/isgi_quiet_days.csv"));
+        let disturbed = read(include_str!("data/isgi_disturbed_days.csv"));
+        assert_eq!((quiet.len(), disturbed.len()), (11370, 5685));
+        assert_eq!(quiet[0].start, at("1932-01-04T00:00:00Z"));
+        assert_eq!(quiet[0].stop, at("1932-01-05T00:00:00Z"));
+        let ck = read(include_str!("data/isgi_ck_days.csv"));
+        assert_eq!(ck.len(), 26988);
+        assert_eq!(ck[0].attributes["ck24"], json!("really_quiet"));
+        assert!(!ck[0].attributes.contains_key("ck48"), "blank is no value");
 
         let ftes = read(include_str!("data/fear_2012_cluster_ftes.csv"));
         assert_eq!(ftes.len(), 446);
