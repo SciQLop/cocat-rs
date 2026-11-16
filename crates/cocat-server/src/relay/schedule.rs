@@ -1,5 +1,5 @@
 //! When providers run: each wakes on its cron line (UTC), and a provider that missed its
-//! slot while the server was down runs once at start.
+//! slot while the server was down, or whose built-in lists changed, runs once at start.
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -86,6 +86,13 @@ async fn is_due(
         .schedule
         .as_deref()
         .unwrap_or(provider.default_schedule());
+    if matches!(since, Since::Success)
+        && provider
+            .built()
+            .is_some_and(|built| row.built.as_deref() != Some(&built))
+    {
+        return true;
+    }
     let last = match since {
         Since::Success => row.last_ok_at,
         Since::Attempt => row.last_run_at,

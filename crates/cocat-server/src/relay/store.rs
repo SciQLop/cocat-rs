@@ -19,6 +19,8 @@ pub struct ProviderRow {
     pub last_ok_at: Option<String>,
     /// A JSON object: the counts of a run that worked, or `{"error": …}`.
     pub last_result: Option<String>,
+    /// The provider's built-in lists, as of the last run that worked.
+    pub built: Option<String>,
 }
 
 /// A public catalogue that follows a provider.
@@ -44,7 +46,8 @@ impl RelayedRow {
 
 pub async fn provider(pool: &SqlitePool, id: &str) -> Result<Option<ProviderRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, enabled, schedule, settings, running, last_run_at, last_ok_at, last_result
+        "SELECT id, enabled, schedule, settings, running, last_run_at, last_ok_at, last_result,
+                built
          FROM relay_provider WHERE id = ?",
     )
     .bind(id)
@@ -66,18 +69,28 @@ pub async fn start(pool: &SqlitePool, id: &str) -> Result<bool, DbError> {
     Ok(started.rows_affected() == 1)
 }
 
-/// Records the end of a run: when, whether it worked, and what it did or why it failed.
-pub async fn finish(pool: &SqlitePool, id: &str, ok: bool, result: &str) -> Result<(), DbError> {
+/// Records the end of a run: when, whether it worked, and what it did or why it failed; a run
+/// that worked also records the lists it was `built` with.
+pub async fn finish(
+    pool: &SqlitePool,
+    id: &str,
+    ok: bool,
+    result: &str,
+    built: Option<String>,
+) -> Result<(), DbError> {
     // One statement reads one 'now', so a run that worked has equal times.
     sqlx::query(
         "UPDATE relay_provider SET running = 0,
            last_run_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
            last_ok_at = CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ELSE last_ok_at END,
-           last_result = ?
+           last_result = ?,
+           built = CASE WHEN ? THEN ? ELSE built END
          WHERE id = ?",
     )
     .bind(ok)
     .bind(result)
+    .bind(ok)
+    .bind(built)
     .bind(id)
     .execute(pool)
     .await?;

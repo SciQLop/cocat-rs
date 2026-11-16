@@ -12,12 +12,14 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use cocat_core::model::{self, EventRecord, Status};
 use cocat_core::time::Timestamp;
+use cocat_server::relay::schedule::Since;
 use cocat_server::relay::{self, Fetched, Provider, RelayError, store};
 use cocat_server::room::{Author, RoomManager};
 use cocat_server::{AppState, auth, db, links::Links, ratelimit::LoginLimit, ws};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tempfile::TempDir;
+use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio_tungstenite::connect_async;
@@ -46,7 +48,11 @@ struct Fake {
     answer: Answer,
     asked: Asked,
     gate: Option<(Arc<Notify>, Arc<Notify>)>,
+    built: Built,
 }
+
+/// The fingerprint of what the fake provider has built in.
+type Built = Arc<Mutex<Option<String>>>;
 
 #[async_trait]
 impl Provider for Fake {
@@ -60,6 +66,10 @@ impl Provider for Fake {
 
     fn default_schedule(&self) -> &'static str {
         "0 3 * * *"
+    }
+
+    fn built(&self) -> Option<String> {
+        self.built.lock().unwrap().clone()
     }
 
     async fn fetch(
@@ -85,6 +95,7 @@ struct World {
     state: AppState,
     answer: Answer,
     asked: Asked,
+    built: Built,
     reader: Uuid,
     curator: Uuid,
     author: Uuid,
@@ -103,10 +114,12 @@ impl World {
         let pool = db::open(&dir.path().join("test.db")).await.unwrap();
         let answer: Answer = Arc::new(Mutex::new(Ok(two_lists())));
         let asked: Asked = Arc::default();
+        let built: Built = Arc::new(Mutex::new(Some("first build".to_owned())));
         let fake = Fake {
             answer: answer.clone(),
             asked: asked.clone(),
             gate,
+            built: built.clone(),
         };
         let state = AppState {
             pool,
@@ -130,6 +143,7 @@ impl World {
             state,
             answer,
             asked,
+            built,
             reader,
             curator,
             author,
@@ -475,6 +489,38 @@ async fn a_list_the_provider_stops_publishing_stays_marked() {
     assert_eq!(row["relay"]["refreshed_at"], refreshed);
     assert_eq!(row["count"], 1);
     assert_eq!(world.row(SHOCKS).await["relay"]["published"], true);
+}
+
+#[tokio::test]
+async fn a_provider_whose_built_in_lists_changed_runs_at_start_even_when_not_due() {
+    let world = World::start().await;
+    relay::store::configure(&world.state.pool, "fake", true, None, "{}")
+        .await
+        .unwrap();
+    world.run().await.unwrap();
+    let start_up =
+        || relay::schedule::run_due(&world.state, OffsetDateTime::now_utc(), Since::Success);
+
+    *world.asked.lock().unwrap() = None;
+    start_up().await;
+    assert!(
+        world.asked.lock().unwrap().is_none(),
+        "same build, not due: no run"
+    );
+
+    *world.built.lock().unwrap() = Some("second build".to_owned());
+    start_up().await;
+    assert!(
+        world.asked.lock().unwrap().is_some(),
+        "a new build runs at start"
+    );
+
+    *world.asked.lock().unwrap() = None;
+    start_up().await;
+    assert!(
+        world.asked.lock().unwrap().is_none(),
+        "the run recorded the new build"
+    );
 }
 
 #[tokio::test]

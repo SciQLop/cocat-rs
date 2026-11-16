@@ -83,6 +83,12 @@ pub trait Provider: Send + Sync {
     fn settings(&self) -> &'static [&'static str] {
         &[]
     }
+    /// A fingerprint of the lists built into the server, for a provider that has some: when
+    /// it differs from the last run that worked, the provider runs at start, so a deploy
+    /// publishes them without waiting for the schedule.
+    fn built(&self) -> Option<String> {
+        None
+    }
     /// Every list the provider publishes now; the error is what the administrator reads.
     /// `refreshed` says when each list, by key, was last written to its catalogue: a provider
     /// that only fetches what changed since reads it, and fetches a list missing from it (new,
@@ -227,7 +233,7 @@ async fn run_to_end(state: AppState, provider: Arc<dyn Provider>) -> Result<RunR
         Ok(settings) => refresh_hiding_secrets(&state, &provider, settings).await,
         Err(error) => Err(error.into()),
     };
-    record(&state, provider.id(), &refreshed).await;
+    record(&state, provider.as_ref(), &refreshed).await;
     refreshed
 }
 
@@ -247,18 +253,25 @@ async fn refresh_hiding_secrets(
 }
 
 /// Stores how the run went; when that fails, the provider is still marked stopped.
-async fn record(state: &AppState, provider: &str, refreshed: &Result<RunReport, RelayError>) {
+async fn record(
+    state: &AppState,
+    provider: &dyn Provider,
+    refreshed: &Result<RunReport, RelayError>,
+) {
     let result = match refreshed {
         Ok(report) => report.as_json(),
         Err(error) => serde_json::json!({ "error": error.to_string() }),
     };
     let ok = refreshed.is_ok();
-    let Err(error) = store::finish(&state.pool, provider, ok, &result.to_string()).await else {
+    let built = provider.built();
+    let result = result.to_string();
+    let finished = store::finish(&state.pool, provider.id(), ok, &result, built);
+    let Err(error) = finished.await else {
         return;
     };
-    tracing::error!(%error, provider, "the end of a relay run was not recorded");
-    if let Err(error) = store::stop(&state.pool, provider).await {
-        tracing::error!(%error, provider, "a relay run stays marked running until a restart");
+    tracing::error!(%error, provider = provider.id(), "the end of a relay run was not recorded");
+    if let Err(error) = store::stop(&state.pool, provider.id()).await {
+        tracing::error!(%error, provider = provider.id(), "a relay run stays marked running until a restart");
     }
 }
 

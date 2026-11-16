@@ -2422,6 +2422,36 @@ async fn mirrored(
     Err(failures.join("; "))
 }
 
+/// What the lists are, as built: their descriptions, where their files are, and the kept
+/// tables themselves. A new list, or a corrected table, changes it.
+// simplify: a change to a reader alone (`read`) is not seen; it waits for the weekly run.
+fn fingerprint(lists: &[List]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for list in lists {
+        let files: Vec<&str> = match &list.files {
+            Files::Remote(urls) | Files::Together(urls) => urls.to_vec(),
+            Files::Mirrored { urls, .. } => urls.to_vec(),
+            Files::Kept(text) => vec![text],
+            Files::Linked { index, pattern } => vec![index, pattern],
+        };
+        let described = [
+            list.key,
+            list.folder,
+            list.name,
+            list.about,
+            list.credit,
+            list.url,
+            list.part,
+        ];
+        for part in described.into_iter().chain(files) {
+            hash.update(part.as_bytes());
+            hash.update([0]);
+        }
+    }
+    format!("{:x}", hash.finalize())
+}
+
 #[async_trait]
 impl Provider for Literature {
     fn id(&self) -> &'static str {
@@ -2434,6 +2464,10 @@ impl Provider for Literature {
 
     fn default_schedule(&self) -> &'static str {
         "45 6 * * 1"
+    }
+
+    fn built(&self) -> Option<String> {
+        Some(fingerprint(&LISTS))
     }
 
     async fn fetch(
@@ -2648,6 +2682,15 @@ mod tests {
         ] {
             assert!(LISTS.iter().any(|list| list.key == key), "{key}");
         }
+    }
+
+    #[test]
+    fn the_fingerprint_follows_a_kept_table() {
+        let mut lists = LISTS;
+        let built = fingerprint(&lists);
+        assert_eq!(fingerprint(&LISTS), built);
+        lists[0].files = Files::Kept("start,stop\n");
+        assert_ne!(fingerprint(&lists), built);
     }
 
     #[test]
