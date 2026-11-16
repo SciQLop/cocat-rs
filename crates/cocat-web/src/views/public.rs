@@ -16,7 +16,7 @@ use crate::views::header::PublicHeader;
 use crate::views::projects::{Projects, set_title};
 use crate::views::sidebar::{PublicIcon, keep_current_in_view};
 use crate::views::submissions::{
-    CopyForm, MySubmissionsPage, SubmissionPage, SubmissionsPage, waiting_submissions,
+    CopyForm, MySubmissionsPage, RequestForm, SubmissionPage, SubmissionsPage, waiting_submissions,
 };
 use crate::views::table::marked;
 
@@ -321,6 +321,9 @@ fn PublicPage(folder: Option<String>, error: Error) -> impl IntoView {
     let title = label.unwrap_or_else(|| "All public catalogues".to_owned());
     let none_yet = move || all.with(|all| all.as_ref().is_some_and(Vec::is_empty));
     let here = folder.clone();
+    // The request form, open with the title it starts with.
+    let asking = RwSignal::new(None::<String>);
+    let close = Callback::new(move |()| asking.set(None));
     let shown = move || {
         all.with(|all| {
             all.as_ref().map(|all| {
@@ -333,15 +336,24 @@ fn PublicPage(folder: Option<String>, error: Error) -> impl IntoView {
         <main class="content groups-page public-page">
             <div class="groups-head">
                 <h1>{title}</h1>
+                <button type="button" class="button" hidden=move || asking.with(Option::is_some)
+                    on:click=move |_| asking.set(Some(String::new()))>"Request a catalogue…"</button>
             </div>
             <Hint text="Catalogues everyone signed in can read. Curators keep them." anchor="public" topic="public catalogues"/>
+            {move || asking.get().map(|title| view! { <RequestForm title close/> })}
             <input type="search" class="public-search" hidden=none_yet placeholder=placeholder.clone()
                 aria-label=placeholder
                 prop:value=move || search.get() on:input=move |event| search.set(event_target_value(&event))/>
             {error_line(error)}
             {move || shown().map(|(empty, shelves)| match (empty, shelves.is_empty()) {
                 (true, _) => view! { <NoneYet/> }.into_any(),
-                (false, true) => view! { <p class="quiet">"No public catalogue matches."</p> }.into_any(),
+                (false, true) => view! {
+                    <p class="quiet">
+                        "No public catalogue matches. "
+                        <button type="button" class="link-button"
+                            on:click=move |_| asking.set(Some(search.get_untracked()))>"Ask the curators to add it"</button>
+                    </p>
+                }.into_any(),
                 (false, false) => shelves.into_iter().map(|shelf| {
                     let titled = shelf.folder != here;
                     let words = search.get_untracked();

@@ -16,13 +16,14 @@ use crate::public::PublicCatalogue;
 use crate::route::Route;
 use crate::state::Room;
 use crate::submissions::{
-    Detail, Proposal, Submission, SubmitFields, copy_body, copy_href, copy_target, folders,
-    pending, review_body, submit_body, update_body,
+    Detail, Proposal, RequestFields, Submission, SubmitFields, copy_body, copy_href, copy_target,
+    folders, pending, request_body, review_body, submit_body, update_body,
 };
 use crate::views::actions::Form;
 use crate::views::controls::{Error, Hint, confirm, error_line};
 use crate::views::history::{DiffTable, legend};
 use crate::views::projects::Projects;
+use crate::views::public::Description;
 
 /// Events shown at most in What changed.
 // simplify: a plain table cut at this many rows, as the history does.
@@ -143,6 +144,79 @@ pub fn UpdateForm(uuid: String, proposal: Proposal, form: RwSignal<Form>) -> imp
                 <div class="row-buttons">
                     <button type="submit" class="button primary">"Submit"</button>
                     <button type="button" class="button" on:click=move |_| form.set(Form::Closed)>"Cancel"</button>
+                </div>
+            </form>
+        </Show>
+    }
+}
+
+/// Asks the curators to add a list found elsewhere: a paper's table, a supplement, a page.
+#[component]
+pub fn RequestForm(
+    /// What the title starts as, like the search that found nothing.
+    title: String,
+    close: Callback<()>,
+) -> impl IntoView {
+    let api = expect_context::<Projects>().api();
+    let (name, source, note) = (
+        NodeRef::<Input>::new(),
+        NodeRef::<Textarea>::new(),
+        NodeRef::<Textarea>::new(),
+    );
+    let error: Error = RwSignal::new(None);
+    let sent = RwSignal::new(false);
+    let send = move |event: leptos::ev::SubmitEvent| {
+        event.prevent_default();
+        let fields = RequestFields {
+            title: name.get().map(|input| input.value()).unwrap_or_default(),
+            source: source.get().map(|area| area.value()).unwrap_or_default(),
+            note: note.get().map(|area| area.value()).unwrap_or_default(),
+        };
+        let api = api.clone();
+        spawn_local(async move {
+            let path = ["public", "submissions", "requests"];
+            match api::create::<Submission>(&api, &path, request_body(&fields)).await {
+                Ok(_) => sent.set(true),
+                Err(failure) => error.set(Some(failure.to_string())),
+            }
+        });
+    };
+    let page = page();
+    let done = move || {
+        let mine = Route::MySubmissions.href(&page);
+        view! {
+            <div class="inline-form submit-form" role="status">
+                <p>"Sent. The curators will look for it; you can follow it in My submissions."</p>
+                <div class="row-buttons">
+                    <a class="button primary" href=mine>"My submissions"</a>
+                    <button type="button" class="button" on:click=move |_| close.run(())>"Close"</button>
+                </div>
+            </div>
+        }
+    };
+    view! {
+        <Show when=move || !sent.get() fallback=done>
+            <form class="inline-form name-form submit-form" on:submit=send.clone()>
+                <Hint anchor="public" topic="requesting a catalogue"
+                    text="Found a list in a paper or on a website? Tell the curators where it is, and they add it to the public catalogues."/>
+                <label>
+                    <span class="field-label">"What list"</span>
+                    <input type="text" maxlength="200" required node_ref=name value=title.clone()
+                        placeholder="Such as flux transfer events of Fear et al. (2012)"/>
+                </label>
+                <label>
+                    <span class="field-label">"Where it is"</span>
+                    <textarea rows="2" maxlength="2000" required node_ref=source
+                        placeholder="The paper's DOI, a link to the table or supplement"></textarea>
+                </label>
+                <label>
+                    <span class="field-label">"Note to the curators (optional)"</span>
+                    <textarea rows="2" maxlength="2000" node_ref=note></textarea>
+                </label>
+                {error_line(error)}
+                <div class="row-buttons">
+                    <button type="submit" class="button primary">"Send request"</button>
+                    <button type="button" class="button" on:click=move |_| close.run(())>"Cancel"</button>
                 </div>
             </form>
         </Show>
@@ -483,10 +557,6 @@ fn SubmissionView(
         stale,
         changes,
     } = detail;
-    let (added, changed, removed) = diff_counts(&changes);
-    let mut rows = diff_rows(&changes);
-    let total = rows.len();
-    rows.truncate(MOST_ROWS);
     let pending = submission.is_pending();
     let status = status_class(&submission);
     let meta = format!(
@@ -502,6 +572,18 @@ fn SubmissionView(
     let id = submission.id;
     let open = submission.public().map(str::to_owned);
     let title = submission.title.clone();
+    let request = submission.is_request();
+    let accept = submission.accept_label();
+    let description = submission.description.clone().map(|text| match request {
+        true => view! {
+            <div class="submission-note">
+                <span class="field-label">"Where the list is"</span>
+                <Description text/>
+            </div>
+        }
+        .into_any(),
+        false => view! { <p class="submission-text">{text}</p> }.into_any(),
+    });
     view! {
         <div class="groups-head">
             <h1>{submission.title.clone()}</h1>
@@ -509,7 +591,7 @@ fn SubmissionView(
         </div>
         <p class="quiet">{meta}</p>
         {submission.folder.clone().map(|folder| view! { <p class="quiet">{format!("Folder: {folder}")}</p> })}
-        {submission.description.clone().map(|text| view! { <p class="submission-text">{text}</p> })}
+        {description}
         {submission.note.clone().map(|note| view! {
             <div class="submission-note"><span class="field-label">"Note to the curators"</span><p class="version-note">{note}</p></div>
         })}
@@ -527,8 +609,20 @@ fn SubmissionView(
         {open.map(|target| view! { <OpenPublic target title curator/> })}
         {(pending && mine).then(|| view! { <Withdraw id reload/> })}
         <Show when=move || pending && curator.get()>
-            <Review id reload/>
+            <Review id accept reload/>
         </Show>
+        {(!request).then(|| view! { <Changes changes compared/> })}
+    }
+}
+
+/// What accepting a submission changes in the public catalogues.
+#[component]
+fn Changes(changes: crate::history::Diff, compared: &'static str) -> impl IntoView {
+    let (added, changed, removed) = diff_counts(&changes);
+    let mut rows = diff_rows(&changes);
+    let total = rows.len();
+    rows.truncate(MOST_ROWS);
+    view! {
         <h2 class="section-title">"What changed"</h2>
         <p class="legend">{legend(added, changed, removed)}</p>
         <ul class="catalogue-changes">
@@ -568,7 +662,12 @@ fn OpenPublic(target: String, title: String, curator: RwSignal<bool>) -> impl In
 }
 
 #[component]
-fn Review(id: i64, reload: Callback<()>) -> impl IntoView {
+fn Review(
+    id: i64,
+    /// What the yes button says.
+    accept: &'static str,
+    reload: Callback<()>,
+) -> impl IntoView {
     let api = expect_context::<Projects>().api();
     let note = NodeRef::<Textarea>::new();
     let error: Error = RwSignal::new(None);
@@ -600,7 +699,7 @@ fn Review(id: i64, reload: Callback<()>) -> impl IntoView {
             {error_line(error)}
             <div class="row-buttons">
                 <button type="button" class="button primary" disabled=move || busy.get()
-                    on:click=move |_| decide(true)>"Accept"</button>
+                    on:click=move |_| decide(true)>{accept}</button>
                 <button type="button" class="button" disabled=move || busy.get()
                     on:click=move |_| decline(false)>"Decline"</button>
             </div>

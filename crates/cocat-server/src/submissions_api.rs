@@ -33,6 +33,8 @@ use crate::submissions::{
 const NEW: &str = "new";
 const A_CURATOR: &str = "a curator";
 const UPDATE: &str = "update";
+const REQUEST: &str = "request";
+const NO_SOURCE: &str = "Say where the list is: a paper, a DOI or a link";
 const NO_SUCH_SUBMISSION: &str = "No such submission";
 const NO_SUCH_CATALOGUE: &str = "No such catalogue in this project";
 const NO_SUCH_PUBLIC: &str = "No such public catalogue";
@@ -64,6 +66,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list, submit))
         .routes(routes!(submit_update))
+        .routes(routes!(submit_request))
         .routes(routes!(one))
         .routes(routes!(review))
         .routes(routes!(withdraw))
@@ -76,7 +79,8 @@ pub fn router() -> OpenApiRouter<AppState> {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct SubmissionOut {
     id: i64,
-    /// `new`, or `update` for a change to a public catalogue.
+    /// `new`, `update` for a change to a public catalogue, or `request` for a list someone
+    /// asks the curators to add.
     kind: String,
     /// The author's email.
     author: String,
@@ -165,6 +169,15 @@ struct UpdateBody {
     /// The project holding the copy.
     room: String,
     catalogue: String,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct RequestBody {
+    /// The list to add, like "Flux transfer events of Fear et al. (2012)".
+    title: String,
+    /// Where the list is: the paper, its DOI, a link to the table or supplement.
+    source: String,
     note: Option<String>,
 }
 
@@ -277,7 +290,7 @@ async fn submit(
     let note = note(body.note)?;
     let new = NewSubmission {
         author: user.id,
-        room: &body.room,
+        room: Some(&body.room),
         kind: NEW,
         target: None,
         base: None,
@@ -324,7 +337,7 @@ async fn submit_update(
     let (_, snapshot) = snapshot_of(&state, &body.room, &body.catalogue, user.id, None).await?;
     let new = NewSubmission {
         author: user.id,
-        room: &body.room,
+        room: Some(&body.room),
         kind: UPDATE,
         target: Some(&proposal.target),
         base: Some(proposal.base),
@@ -334,6 +347,46 @@ async fn submit_update(
         description: None,
         note: note.as_deref(),
         snapshot: &snapshot,
+    };
+    let id = submissions::insert(&state.pool, &new).await?;
+    Ok((StatusCode::CREATED, Json(stored(&state, id, false).await?)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/public/submissions/requests",
+    request_body = RequestBody,
+    security(("cookie" = [])),
+    responses(
+        (status = 201, description = "A request for the curators to add a list found elsewhere; accepting it publishes nothing", body = SubmissionOut),
+        (status = 400, description = "The title or the source is blank or too long, or the note is too long", body = Detail),
+        (status = 401, description = "No valid session", body = Detail),
+        (status = 409, description = "The caller has 20 submissions waiting already", body = Detail),
+        (status = 422, description = "The body is not a request", body = Detail),
+    )
+)]
+async fn submit_request(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    JsonBody(body): JsonBody<RequestBody>,
+) -> Result<(StatusCode, Json<SubmissionOut>), ApiError> {
+    refuse_too_many_waiting(&state, user.id).await?;
+    let title = title(body.title)?;
+    let source = description(Some(body.source))?
+        .ok_or_else(|| ApiError::BadRequest(NO_SOURCE.to_owned()))?;
+    let note = note(body.note)?;
+    let new = NewSubmission {
+        author: user.id,
+        room: None,
+        kind: REQUEST,
+        target: None,
+        base: None,
+        catalogue: "",
+        title: &title,
+        folder: None,
+        description: Some(&source),
+        note: note.as_deref(),
+        snapshot: &[],
     };
     let id = submissions::insert(&state.pool, &new).await?;
     Ok((StatusCode::CREATED, Json(stored(&state, id, false).await?)))
@@ -356,8 +409,12 @@ async fn one(
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<SubmissionDetail>, ApiError> {
     let (submission, curator) = visible(&state, id, user.id).await?;
-    let snapshot = submissions::snapshot(&state.pool, id).await?;
-    let (changes, stale) = what_changed(&state, &submission, snapshot).await?;
+    let (changes, stale) = if submission.kind == REQUEST {
+        (Diff::default(), false)
+    } else {
+        let snapshot = submissions::snapshot(&state.pool, id).await?;
+        what_changed(&state, &submission, snapshot).await?
+    };
     Ok(Json(SubmissionDetail {
         submission: SubmissionOut::seen_by(submission, curator),
         stale,
@@ -404,6 +461,7 @@ async fn review(
         return Err(ApiError::Conflict(DECIDED.to_owned()));
     }
     if body.accept
+        && submission.kind != REQUEST
         && let Err(error) = take_in(&state, &submission, user.id, note.as_deref()).await
     {
         submissions::reopen(&state.pool, id).await?;
@@ -559,6 +617,13 @@ async fn stored(state: &AppState, id: i64, curator: bool) -> Result<SubmissionOu
     Ok(SubmissionOut::seen_by(submission, curator))
 }
 
+async fn refuse_too_many_waiting(state: &AppState, author: Uuid) -> Result<(), ApiError> {
+    if submissions::pending(&state.pool, author).await? >= MAX_PENDING {
+        return Err(ApiError::Conflict(TOO_MANY_PENDING.to_owned()));
+    }
+    Ok(())
+}
+
 /// The catalogue's name and the catalogue alone as one update, once `author` may store it.
 /// A new submission passes the email of `copier`, and its snapshot then records the copy out
 /// of the project as it is now; an update does not, as accepting it keeps the target's chain.
@@ -569,9 +634,7 @@ async fn snapshot_of(
     author: Uuid,
     copier: Option<&str>,
 ) -> Result<(String, Vec<u8>), ApiError> {
-    if submissions::pending(&state.pool, author).await? >= MAX_PENDING {
-        return Err(ApiError::Conflict(TOO_MANY_PENDING.to_owned()));
-    }
+    refuse_too_many_waiting(state, author).await?;
     let uuid = catalogue.to_owned();
     let (name, snapshot) = state
         .rooms

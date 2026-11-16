@@ -53,10 +53,11 @@ pub const ACCEPTED: &str = "accepted";
 pub const DECLINED: &str = "declined";
 pub const WITHDRAWN: &str = "withdrawn";
 
-/// What an author offers, from project `room`. `target` and `base` are set for an update.
+/// What an author offers, from project `room`. `target` and `base` are set for an update; a
+/// request has no project, an empty `catalogue` and an empty snapshot.
 pub struct NewSubmission<'a> {
     pub author: Uuid,
-    pub room: &'a str,
+    pub room: Option<&'a str>,
     pub kind: &'a str,
     pub target: Option<&'a str>,
     pub base: Option<i64>,

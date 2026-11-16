@@ -133,6 +133,13 @@ stays in your project. Submit again to send a newer version.
 **My submissions**, on the left of the public catalogues, shows each one you sent: waiting,
 accepted or declined, with the curator's note.
 
+## Ask for a list
+
+Found an event list in a paper, a supplement or on a website that isn't here yet? Choose
+**Request a catalogue…** at the top of the public catalogues, or **Ask the curators to add it**
+when a search finds nothing. Say what list it is and where it is: the paper's DOI, a link to
+the table or supplement. The curators add it and say where it went, in **My submissions**.
+
 ## Fix a public catalogue
 
 Found a wrong time in a curated catalogue?

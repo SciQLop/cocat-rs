@@ -1378,3 +1378,126 @@ async fn a_copy_keeps_the_curators_description_and_a_proposal_does_not_add_it() 
         "a proposal changes only what its author changes"
     );
 }
+
+async fn request(world: &World, caller: Uuid, body: Value) -> (StatusCode, Value) {
+    world
+        .call(
+            caller,
+            Method::POST,
+            "/api/public/submissions/requests",
+            Some(body),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn a_request_names_a_list_to_add_and_waits_in_the_curators_queue() {
+    let world = World::start().await;
+
+    let (status, made) = request(
+        &world,
+        world.stranger,
+        json!({"title": "FTEs of Fear et al. (2012)",
+               "source": "https://doi.org/10.1029/2011JA017235, Data Set S1",
+               "note": "Vincent asked"}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["kind"], "request");
+    assert_eq!(made["status"], "pending");
+    assert_eq!(made["title"], "FTEs of Fear et al. (2012)");
+    assert_eq!(
+        made["description"],
+        "https://doi.org/10.1029/2011JA017235, Data Set S1"
+    );
+    assert_eq!(made["note"], "Vincent asked");
+    let (_, queue) = world
+        .call(world.curator, Method::GET, "/api/public/submissions", None)
+        .await;
+    assert_eq!(queue[0]["id"], made["id"]);
+    let id = made["id"].as_i64().unwrap();
+    let (status, detail) = world.detail(world.stranger, id).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["stale"], false);
+}
+
+#[tokio::test]
+async fn accepting_a_request_records_the_answer_and_publishes_nothing() {
+    let world = World::start().await;
+    let (_, made) = request(
+        &world,
+        world.author,
+        json!({"title": "ISGI sudden commencements", "source": "https://isgi.unistra.fr"}),
+    )
+    .await;
+    let id = made["id"].as_i64().unwrap();
+
+    let (status, decided) = world
+        .review(
+            world.curator,
+            id,
+            json!({"accept": true, "note": "Added under Literature/Earth"}),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    assert_eq!(decided["status"], "accepted");
+    assert_eq!(decided["review_note"], "Added under Literature/Earth");
+    assert_eq!(decided["target"], Value::Null);
+    let (_, index) = world
+        .call(world.author, Method::GET, "/api/public", None)
+        .await;
+    assert_eq!(index, json!([]));
+}
+
+#[tokio::test]
+async fn a_request_says_what_and_where_from() {
+    let world = World::start().await;
+
+    let (no_title, _) = request(
+        &world,
+        world.author,
+        json!({"title": " ", "source": "https://example.org"}),
+    )
+    .await;
+    let (no_source, _) = request(
+        &world,
+        world.author,
+        json!({"title": "Shocks", "source": "  "}),
+    )
+    .await;
+    let (long_source, _) = request(
+        &world,
+        world.author,
+        json!({"title": "Shocks", "source": "x".repeat(5000)}),
+    )
+    .await;
+
+    assert_eq!(no_title, StatusCode::BAD_REQUEST);
+    assert_eq!(no_source, StatusCode::BAD_REQUEST);
+    assert_eq!(long_source, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn requests_count_among_the_twenty_an_author_may_have_waiting() {
+    let world = World::start().await;
+    for n in 0..20 {
+        let (status, _) = request(
+            &world,
+            world.author,
+            json!({"title": format!("List {n}"), "source": "https://example.org"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let (status, _) = request(
+        &world,
+        world.author,
+        json!({"title": "One more", "source": "https://example.org"}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+}

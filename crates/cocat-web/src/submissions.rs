@@ -30,6 +30,19 @@ impl Submission {
         self.status == "pending"
     }
 
+    /// A list someone asks the curators to add: no catalogue comes with it.
+    pub fn is_request(&self) -> bool {
+        self.kind == "request"
+    }
+
+    /// What a curator presses to say yes: a request is done by hand, outside this page.
+    pub fn accept_label(&self) -> &'static str {
+        match self.is_request() {
+            true => "Mark as added",
+            false => "Accept",
+        }
+    }
+
     /// Who wrote the review note: a curator sees the reviewer's email, an author is only
     /// told it was a curator.
     pub fn said_by(&self) -> String {
@@ -43,12 +56,14 @@ impl Submission {
     pub fn kind_text(&self) -> String {
         match self.kind.as_str() {
             "update" => format!("Change to “{}”", self.title),
+            "request" => "Catalogue request".to_owned(),
             _ => "New catalogue".to_owned(),
         }
     }
 
     pub fn status_text(&self) -> &'static str {
         match self.status.as_str() {
+            "accepted" if self.is_request() => "Added",
             "accepted" => "Accepted",
             "declined" => "Declined",
             "withdrawn" => "Withdrawn",
@@ -170,6 +185,23 @@ pub struct SubmitFields {
     pub note: String,
 }
 
+/// What "Request a catalogue" sends.
+pub fn request_body(fields: &RequestFields) -> Value {
+    json!({
+        "title": fields.title.trim(),
+        "source": fields.source.trim(),
+        "note": given(&fields.note),
+    })
+}
+
+/// What the request form holds, as typed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequestFields {
+    pub title: String,
+    pub source: String,
+    pub note: String,
+}
+
 pub fn update_body(room: &str, catalogue: &str, note: &str) -> Value {
     json!({ "room": room, "catalogue": catalogue, "note": given(note) })
 }
@@ -272,6 +304,31 @@ mod tests {
         assert_eq!(decided.said_by(), "The curator said");
         decided.reviewer = Some("alice@example.org".into());
         assert_eq!(decided.said_by(), "alice@example.org said");
+    }
+
+    #[test]
+    fn a_request_reads_as_a_list_to_add() {
+        let request = submission("request", "pending");
+        assert!(request.is_request());
+        assert_eq!(request.kind_text(), "Catalogue request");
+        assert_eq!(request.accept_label(), "Mark as added");
+        assert_eq!(submission("request", "accepted").status_text(), "Added");
+        assert_eq!(submission("new", "pending").accept_label(), "Accept");
+        assert_eq!(submission("new", "accepted").status_text(), "Accepted");
+    }
+
+    #[test]
+    fn a_request_sends_what_was_typed_and_leaves_a_blank_note_out() {
+        let fields = RequestFields {
+            title: " Fear et al. (2012) FTEs ".into(),
+            source: "https://doi.org/10.1029/2011JA017235".into(),
+            note: "  ".into(),
+        };
+        assert_eq!(
+            request_body(&fields),
+            json!({"title": "Fear et al. (2012) FTEs",
+                   "source": "https://doi.org/10.1029/2011JA017235", "note": null})
+        );
     }
 
     #[test]

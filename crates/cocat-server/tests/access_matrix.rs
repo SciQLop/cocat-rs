@@ -202,6 +202,12 @@ const ROWS: &[Row] = &[
     )
     .room_any(),
     row(
+        "POST",
+        "/api/public/submissions/requests",
+        Guard::SignedIn,
+        Style::Api,
+    ),
+    row(
         "GET",
         "/api/public/submissions/{submission}",
         Guard::SubmissionReader,
@@ -1307,6 +1313,10 @@ impl World {
                 json,
                 format!(r#"{{"room":"{}","catalogue":"c1"}}"#, self.room),
             ),
+            ("POST", "/api/public/submissions/requests") => (
+                json,
+                r#"{"title":"Shocks","source":"https://example.org"}"#.to_owned(),
+            ),
             ("POST", "/api/public/submissions/{submission}/review") => {
                 (json, r#"{"accept":false}"#.to_owned())
             }
@@ -1497,7 +1507,7 @@ async fn submission(state: &AppState, room: &str, owner: Uuid, public: &str) -> 
         .unwrap();
     let new = submissions::NewSubmission {
         author: owner,
-        room,
+        room: Some(room),
         kind: "new",
         target: None,
         base: None,

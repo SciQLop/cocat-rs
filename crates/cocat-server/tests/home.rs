@@ -185,7 +185,7 @@ impl World {
     async fn submission(&self, author: Uuid, title: &str) -> i64 {
         let new = NewSubmission {
             author,
-            room: LAB,
+            room: Some(LAB),
             kind: "new",
             target: None,
             base: None,
