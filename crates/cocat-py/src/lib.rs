@@ -374,7 +374,7 @@ fn search_rule(room: &ClientRoom, text: &str, source: Option<&str>) -> Result<Va
 fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
     let Some((url, cookie)) = room.server() else {
         return Err(PyRuntimeError::new_err(
-            "connect the project, or Project.use_server, to search the public catalogues",
+            "sign in to search the public catalogues (connect the project, or Project.use_server)",
         ));
     };
     let listed = py
@@ -1432,10 +1432,16 @@ impl Project {
     }
 
     /// The server to search the public catalogues on, without syncing this project: for a
-    /// project kept on this computer. Called again, it takes a new cookie. `connect` sets it
-    /// too.
-    fn use_server(&self, url: String, cookie: String) {
-        self.room.use_server(&url, &cookie);
+    /// project kept on this computer. Called again, it takes a new cookie; with `None`, it
+    /// forgets the server (signed out) and the last answers are shown. `connect` sets it too.
+    #[pyo3(signature = (url, cookie=None))]
+    fn use_server(&self, url: Option<String>, cookie: Option<String>) -> Result<()> {
+        match (url, cookie) {
+            (Some(url), Some(cookie)) => self.room.use_server(&url, &cookie),
+            (None, _) => self.room.forget_server(),
+            (Some(_), None) => return Err(PyValueError::new_err("use_server needs a cookie")),
+        }
+        Ok(())
     }
 
     fn set_cookie(&self, cookie: String) -> Result<()> {

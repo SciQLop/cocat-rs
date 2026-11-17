@@ -245,3 +245,17 @@ def test_a_search_of_the_public_catalogues_is_asked_again_only_after_a_while_or_
     online.use_server(server.url, server.cookie)
     wait_until(lambda: len(smart.event_arrays()["uuid"]) == 2)
     online.close()
+
+
+def test_a_project_told_to_forget_the_server_shows_the_last_answer(server, tmp_path):
+    shocks = public_shocks(server, tmp_path)
+    local = kept_here(tmp_path)
+    local.use_server(server.url, server.cookie)
+    smart = local.create_smart_catalogue("Shocks everywhere", "tag:shock", public=True)
+    assert smart.event_arrays()["catalogue"] == [shocks]
+
+    local.use_server(None)  # signed out
+    assert smart.event_arrays()["catalogue"] == [shocks]
+    with pytest.raises(RuntimeError, match="sign in"):
+        local.create_smart_catalogue("More", "tag:shock", public=True)
+    local.close()

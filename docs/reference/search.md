@@ -103,7 +103,7 @@ id of its public catalogue.
 
 The public catalogues are searched on the server, by a signed-in account. A project kept on
 this computer, never connected, asks it through `project.use_server(url, cookie)`: the
-project itself is not sent. With no server (signed out, offline), a catalogue shows the
+project itself is not sent; `project.use_server(None)` forgets it again. With no server (signed out, offline), a catalogue shows the
 answer kept from its last search; with none kept, it shows only its own events and warns.
 
 An answer is shown for a minute before the server is asked again (`cocat_rs` keeps it in

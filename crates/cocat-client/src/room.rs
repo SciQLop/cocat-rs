@@ -354,7 +354,16 @@ impl Room {
     /// syncing the room: for a project kept on this computer. [`Room::connect`] sets it too.
     /// The public catalogues are asked again at the next search.
     pub fn use_server(&self, url: &str, cookie: &str) {
-        *lock(&self.server) = Some((url.to_owned(), cookie.to_owned()));
+        self.set_server(Some((url.to_owned(), cookie.to_owned())));
+    }
+
+    /// No server any more (signed out): the public catalogues answer as last kept.
+    pub fn forget_server(&self) {
+        self.set_server(None);
+    }
+
+    fn set_server(&self, server: Option<(String, String)>) {
+        *lock(&self.server) = server;
         lock(&self.public_answers).clear();
     }
 
