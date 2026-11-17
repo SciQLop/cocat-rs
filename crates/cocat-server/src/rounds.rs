@@ -32,7 +32,11 @@ macro_rules! text_enum {
 
 text_enum!(
     /// Declared in the order a round goes through them.
-    RoundState { Proposing, Voting, Decided }
+    RoundState {
+        Proposing,
+        Voting,
+        Decided
+    }
 );
 text_enum!(Visibility { Open, Blind });
 text_enum!(Kind {
