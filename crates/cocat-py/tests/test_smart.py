@@ -159,3 +159,40 @@ def test_the_tags_of_a_catalogue_change(project):
     catalogue = project.create_catalogue(name="tagged", tags=["x"])
     catalogue.tags = ["y", "z"]
     assert catalogue.tags == {"y", "z"}
+
+
+def test_other_python_threads_run_while_a_rule_is_evaluated(project, tmp_path):
+    """SciQLop reads smart catalogues off its GUI thread: the evaluation must let go of the GIL.
+    A counting thread is timed alone, then during the read; holding the GIL, it gets ~1 %."""
+    import sys
+    import threading
+    import time
+
+    path = tmp_path / "many.csv"
+    rows = (f"{at(60 * i).isoformat()},{at(60 * i + 30).isoformat()},wave" for i in range(40_000))
+    path.write_text("start,stop,tags\n" + "\n".join(rows))
+    project.import_csv(str(path), "many")
+    smart = project.create_smart_catalogue("none", "tag:nothing")
+
+    ticks, done = [0], threading.Event()
+
+    def count():
+        while not done.is_set():
+            ticks[0] += 1
+
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(0.0005)  # short slices: the thread cannot borrow one long slice
+    counter = threading.Thread(target=count)
+    counter.start()
+    try:
+        alone = ticks[0]
+        time.sleep(0.05)
+        rate = (ticks[0] - alone) / 0.05
+        before, began = ticks[0], time.perf_counter()
+        smart.event_arrays()
+        share = (ticks[0] - before) / (rate * (time.perf_counter() - began))
+    finally:
+        done.set()
+        counter.join()
+        sys.setswitchinterval(interval)
+    assert share > 0.3, f"the counting thread ran {share:.0%} of the read"

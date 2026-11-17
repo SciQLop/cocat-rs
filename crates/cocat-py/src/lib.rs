@@ -886,15 +886,19 @@ impl Catalogue {
         &self,
         py: Python<'_>,
     ) -> Result<(Vec<Member>, Vec<PublicEvent>, Vec<String>)> {
-        let (members, dates, rule) = {
-            let doc = self.room.doc();
-            let txn = doc.transact();
-            let members = model::catalogue_members(&txn, &self.uuid)
-                .ok_or_else(|| unknown("catalogue"))?
-                .map_err(value_error)?;
-            let rule = model::catalogue(&txn, &self.uuid).and_then(|catalogue| catalogue.rule);
-            (members, date_keys(&txn), rule)
-        };
+        // Without the GIL: a rule over a big project takes tens of ms, and SciQLop reads
+        // smart catalogues from a worker thread while its GUI thread keeps running Python.
+        let (room, uuid) = (&self.room, &self.uuid);
+        let (members, dates, rule) = py
+            .detach(|| {
+                let doc = room.doc();
+                let txn = doc.transact();
+                let members = model::catalogue_members(&txn, uuid)?;
+                let rule = model::catalogue(&txn, uuid).and_then(|catalogue| catalogue.rule);
+                Some((members, date_keys(&txn), rule))
+            })
+            .ok_or_else(|| unknown("catalogue"))?;
+        let members = members.map_err(value_error)?;
         let public = match rule.as_ref().and_then(public_predicate) {
             Some(predicate) => {
                 let found = public_events(py, &self.room, PublicQuery::Predicate(&predicate))?;
