@@ -91,6 +91,8 @@ def test_derived_intervals_have_no_uuid_and_name_their_sources(project, events):
     assert arrays["start"][0] == np.datetime64(at(10).replace(tzinfo=None), "us")
     assert arrays["stop"][0] == np.datetime64(at(31).replace(tzinfo=None), "us")
     assert arrays["attributes"] == [{}]
+    assert arrays["tags"] == [None], "an interval a rule made has no fields of its own"
+    assert arrays["confidence"] == [None]
     assert smart.event_attributes() == [{}]
     assert smart.events == set()
 

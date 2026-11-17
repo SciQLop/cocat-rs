@@ -254,6 +254,24 @@ def test_event_arrays_can_carry_the_attributes_from_the_same_read(project):
     assert "attributes" not in catalogue.event_arrays()
 
 
+def test_event_arrays_with_attributes_carry_tags_and_confidence(project):
+    """A table of events (SciQLop's notebook catalogs.get()) needs them without one read each."""
+    catalogue = a_catalogue(project)
+    tagged = an_event(project, start=PRECISE_START, stop=PRECISE_STOP, confidence=0.8)
+    plain = project.create_event(start=START, stop=STOP)
+    catalogue.add_events([tagged, plain])
+
+    arrays = catalogue.event_arrays(attributes=True)
+    assert arrays["tags"] == [[], ["t1"]]
+    assert arrays["confidence"] == [None, 0.8]
+
+    by_uuid = project.event_arrays([tagged.uuid, plain.uuid], attributes=True)
+    assert by_uuid["tags"] == [["t1"], []]
+    assert by_uuid["confidence"] == [0.8, None]
+    assert "tags" not in catalogue.event_arrays()
+    assert "confidence" not in project.event_arrays([plain.uuid])
+
+
 def test_project_event_arrays_follow_the_uuid_order_and_skip_unknown(project):
     """One read for a set of events named by uuid, in the caller's order."""
     catalogue = a_catalogue(project)

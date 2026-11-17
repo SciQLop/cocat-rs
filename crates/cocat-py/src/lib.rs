@@ -816,8 +816,9 @@ impl Catalogue {
         Ok(())
     }
 
-    /// Uuids, start and stop times, and with `attributes=True` each event's attributes, all
-    /// from one read of the document, so a remote change cannot fall between them.
+    /// Uuids, start and stop times, and with `attributes=True` each event's attributes, tags
+    /// and confidence (`None` for an interval a rule made), all from one read of the
+    /// document, so a remote change cannot fall between them.
     #[pyo3(signature = (attributes=false))]
     fn event_arrays(&self, py: Python<'_>, attributes: bool) -> Result<Py<PyAny>> {
         let (members, public, dates) = self.members_and_dates(py)?;
@@ -1214,7 +1215,7 @@ fn event_arrays_of(
                 span: (record.start, record.stop),
                 sources: None,
                 catalogue: None,
-                attributes: Some(&record.attributes),
+                record: Some(record),
             },
             Member::Derived {
                 start,
@@ -1225,7 +1226,7 @@ fn event_arrays_of(
                 span: (*start, *stop),
                 sources: Some(sources.clone()),
                 catalogue: None,
-                attributes: None,
+                record: None,
             },
         })
         .chain(public.iter().map(|found| Row {
@@ -1233,7 +1234,7 @@ fn event_arrays_of(
             span: (found.event.start, found.event.stop),
             sources: Some(vec![found.event.uuid.clone()]),
             catalogue: Some(&found.catalogue),
-            attributes: Some(&found.event.attributes),
+            record: Some(&found.event),
         }))
         .collect();
     let micros = |time: Timestamp| time.unix_micros() as i64;
@@ -1260,10 +1261,22 @@ fn event_arrays_of(
             list.append(attributes_to_python(
                 py,
                 dates,
-                row.attributes.unwrap_or(&empty),
+                row.record.map_or(&empty, |record| &record.attributes),
             )?)?;
         }
         arrays.set_item("attributes", list)?;
+        arrays.set_item(
+            "tags",
+            rows.iter()
+                .map(|row| row.record.map(|record| record.tags.clone()))
+                .collect::<Vec<_>>(),
+        )?;
+        arrays.set_item(
+            "confidence",
+            rows.iter()
+                .map(|row| row.record.and_then(|record| record.confidence))
+                .collect::<Vec<_>>(),
+        )?;
     }
     Ok(arrays.into_any().unbind())
 }
@@ -1274,7 +1287,8 @@ struct Row<'m> {
     span: (Timestamp, Timestamp),
     sources: Option<Vec<String>>,
     catalogue: Option<&'m str>,
-    attributes: Option<&'m JsonMap<String, Value>>,
+    /// The event behind the row: none for an interval a rule made.
+    record: Option<&'m EventRecord>,
 }
 
 /// The search of a rule over the public catalogues: only `{"filter": {"public": true}, ...}`.

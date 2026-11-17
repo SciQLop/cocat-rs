@@ -155,6 +155,7 @@ def test_a_smart_catalogue_searching_the_public_catalogues_lists_their_events(
     assert arrays["uuid"] == [picked.uuid, None], "the picked event, then the public one"
     assert arrays["catalogue"] == [None, shocks]
     assert arrays["sources"] == [None, [events[0].uuid]]
+    assert arrays["tags"] == [[], ["shock"]], "a public event's own tags"
 
     project.connect(f"http://127.0.0.1:{free_port()}", server.cookie)
     offline = smart.event_arrays()

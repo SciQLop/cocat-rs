@@ -42,7 +42,7 @@ import cocat_rs as cc
 | `catalogue.add_events([...])`, `catalogue.remove_events([...])` | change what it lists |
 | `catalogue.name = "..."` | rename |
 | `catalogue.delete()`, `catalogue.restore()` | to the trash and back |
-| `catalogue.event_arrays()` | `uuid`, `start`, `stop` as arrays, fast for big catalogues |
+| `catalogue.event_arrays()` | `uuid`, `start`, `stop` as arrays, fast for big catalogues; `attributes=True` adds `attributes`, `tags` and `confidence` |
 | `catalogue.to_pandas()`, `catalogue.to_polars()` | the events as a DataFrame |
 
 ## Events
