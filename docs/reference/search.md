@@ -101,6 +101,11 @@ In the arrays of a catalogue searching the public catalogues, an event found the
 `uuid` (it is not an event of the project): `sources` holds its own uuid and `catalogue` the
 id of its public catalogue.
 
+The public catalogues are searched on the server, by a signed-in account. A project kept on
+this computer, never connected, asks it through `project.use_server(url, cookie)`: the
+project itself is not sent. With no server (signed out, offline), a catalogue shows the
+answer kept from its last search; with none kept, it shows only its own events and warns.
+
 ### Rules a search cannot say
 
 Some selections are about time, not fields: "merge events closer than 10 minutes", "shocks

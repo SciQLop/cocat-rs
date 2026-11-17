@@ -103,6 +103,12 @@ pub async fn search_public(
     }
 }
 
+/// The answer last kept for `query`, read without asking the server: what a client that
+/// cannot ask (signed out, never connected) still shows.
+pub fn kept_public(query: PublicQuery<'_>, cache: &Path) -> Option<PublicSearch> {
+    read_kept(&answer_file(cache, &query.parameter())).map(|kept| kept.answer)
+}
+
 enum Fetched {
     Unchanged,
     New(Kept),
@@ -166,5 +172,31 @@ fn write_kept(file: &Path, kept: &Kept) {
         .and_then(|()| std::fs::write(file, serde_json::to_vec(kept).unwrap_or_default()));
     if let Err(error) = written {
         tracing::warn!("the public catalogues' answer was not kept: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_kept_answer_is_read_back_for_the_same_search_only() {
+        let cache = tempfile::tempdir().unwrap();
+        let answer = PublicSearch {
+            total: 0,
+            indexing: 0,
+            events: Vec::new(),
+        };
+        let asked = PublicQuery::Text("tag:shock");
+        let kept = Kept {
+            tag: "\"t\"".to_owned(),
+            answer: answer.clone(),
+        };
+        write_kept(&answer_file(cache.path(), &asked.parameter()), &kept);
+        assert_eq!(kept_public(asked, cache.path()), Some(answer));
+        assert_eq!(
+            kept_public(PublicQuery::Text("tag:wave"), cache.path()),
+            None
+        );
     }
 }

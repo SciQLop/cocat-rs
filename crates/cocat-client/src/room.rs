@@ -333,24 +333,35 @@ impl Room {
         }
     }
 
-    /// The server url and cookie of the last connect.
+    /// The server url and cookie of the last connect or [`Room::use_server`].
     pub fn server(&self) -> Option<(String, String)> {
         lock(&self.server).clone()
     }
 
+    /// The server to ask what is read over HTTP (the public catalogues' search), without
+    /// syncing the room: for a project kept on this computer. [`Room::connect`] sets it too.
+    pub fn use_server(&self, url: &str, cookie: &str) {
+        *lock(&self.server) = Some((url.to_owned(), cookie.to_owned()));
+    }
+
     /// What `query` finds in the public catalogues, as the server last answered: asked again
-    /// each time, kept beside the room's cache. `None` before the first connect.
+    /// each time, kept beside the room's cache. With no server, the answer kept the last
+    /// time; `None` when there is neither.
     pub async fn search_public(
         &self,
         query: crate::PublicQuery<'_>,
     ) -> Option<Result<crate::PublicSearch, crate::LoginError>> {
-        let (url, cookie) = lock(&self.server).clone()?;
         let cache = self
             .inner
             .cache
             .as_ref()
             .and_then(|store| lock(store).path().parent().map(Path::to_path_buf));
-        Some(crate::search_public(&url, &cookie, query, cache.as_deref()).await)
+        match self.server() {
+            Some((url, cookie)) => {
+                Some(crate::search_public(&url, &cookie, query, cache.as_deref()).await)
+            }
+            None => crate::kept_public(query, cache.as_deref()?).map(Ok),
+        }
     }
 
     /// Runs `edit` in one transaction, which is one update for the server and for the cache.
@@ -482,7 +493,7 @@ impl Room {
         if self.is_past() {
             return Err(RoomError::Past);
         }
-        *lock(&self.server) = Some((url.to_owned(), cookie.to_owned()));
+        self.use_server(url, cookie);
         let url = websocket_url(url, &self.inner.room_id)?;
         self.stop();
         // Set before spawning: a caller that just gave a new cookie must not read the old

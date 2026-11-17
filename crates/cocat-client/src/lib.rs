@@ -28,7 +28,9 @@ pub use projects::{
     invitations, invite, members, project_groups, project_url, public_catalogues, remove_member,
     revoke_invitation, set_editors_can_share, set_role, update_public_catalogue,
 };
-pub use public_search::{PUBLIC_LIMIT, PublicEvent, PublicQuery, PublicSearch, search_public};
+pub use public_search::{
+    PUBLIC_LIMIT, PublicEvent, PublicQuery, PublicSearch, kept_public, search_public,
+};
 pub use room::{Room, RoomError, Status};
 pub use rounds::{
     create_round, move_round, my_proposal, round, rounds, set_round_members, set_verdict,

@@ -159,3 +159,62 @@ def test_a_smart_catalogue_searching_the_public_catalogues_lists_their_events(
     project.connect(f"http://127.0.0.1:{free_port()}", server.cookie)
     offline = smart.event_arrays()
     assert offline["catalogue"] == [None, shocks], "the last answer, while the server is away"
+
+
+def public_shocks(server, tmp_path):
+    """A public catalogue "Shocks" holding one shock; its id."""
+    curator = account(server, "keeper@example.org", "set-curator")
+    shocks = cc.raw.create_public_catalogue(server.url, curator, "Shocks", key="zz.shocks")
+    public = connected(tmp_path / "keeper", shocks, server.url, curator)
+    shock = public.create_event("2020-01-02T00:00:00Z", "2020-01-02T01:00:00Z", tags=["shock"])
+    public.create_catalogue("Shocks", events=[shock])
+    public.save(15)
+    public.close()
+    return shocks
+
+
+def kept_here(tmp_path, name="kept-here"):
+    """A project kept on this computer: never connected."""
+    directory = tmp_path / name
+    directory.mkdir()
+    return cc.Project.open(str(directory), name)
+
+
+def test_a_project_kept_on_this_computer_searches_the_public_catalogues_without_syncing(
+    server, tmp_path
+):
+    shocks = public_shocks(server, tmp_path)
+    local = kept_here(tmp_path)
+    local.use_server(server.url, server.cookie)
+    smart = local.create_smart_catalogue("Shocks everywhere", "tag:shock", public=True)
+    assert smart.event_arrays()["catalogue"] == [shocks]
+    assert local.search_public("tag:shock")["catalogue"] == [shocks]
+    assert local.status == "offline", "the project itself is not sent to the server"
+    local.close()
+
+
+def test_without_a_server_a_smart_catalogue_shows_the_last_answer(server, tmp_path):
+    shocks = public_shocks(server, tmp_path)
+    online = connected(tmp_path / "mine", server.project_id, server.url, server.cookie)
+    smart = online.create_smart_catalogue("Shocks everywhere", "tag:shock", public=True)
+    assert smart.event_arrays()["catalogue"] == [shocks]
+    online.save(15)
+    online.close()
+
+    signed_out = cc.Project.open(str(tmp_path / "mine"), server.project_id)
+    assert signed_out.catalogue(smart.uuid).event_arrays()["catalogue"] == [shocks]
+    signed_out.close()
+
+
+def test_with_neither_a_server_nor_a_last_answer_it_says_why_the_public_events_are_missing(
+    server, project, tmp_path
+):
+    rule = project.create_smart_catalogue("Shocks everywhere", "tag:shock", public=True).rule
+    local = kept_here(tmp_path)
+    smart = local.create_catalogue("Shocks everywhere")
+    smart.rule = rule
+    with pytest.warns(UserWarning, match="sign in"):
+        assert smart.event_arrays()["uuid"] == []
+    with pytest.raises(RuntimeError, match="sign in"):
+        local.search_public("tag:shock")
+    local.close()

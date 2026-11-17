@@ -374,7 +374,7 @@ fn search_rule(room: &ClientRoom, text: &str, source: Option<&str>) -> Result<Va
 fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
     let Some((url, cookie)) = room.server() else {
         return Err(PyRuntimeError::new_err(
-            "connect the project to search the public catalogues",
+            "connect the project, or Project.use_server, to search the public catalogues",
         ));
     };
     let listed = py
@@ -883,7 +883,13 @@ impl Catalogue {
             (members, date_keys(&txn), rule)
         };
         let public = match rule.as_ref().and_then(public_predicate) {
-            Some(predicate) => public_events(py, &self.room, PublicQuery::Predicate(&predicate))?,
+            Some(predicate) => {
+                let found = public_events(py, &self.room, PublicQuery::Predicate(&predicate))?;
+                if found.is_none() {
+                    warn(py, &[NO_PUBLIC_SERVER])?;
+                }
+                found.unwrap_or_default()
+            }
             None => Vec::new(),
         };
         Ok((members, public, dates))
@@ -1271,16 +1277,20 @@ fn public_predicate(rule: &Value) -> Option<cocat_core::rules::Predicate> {
     }
 }
 
-/// What `query` finds in the public catalogues, the server asked without the GIL; nothing
-/// before the project first connected.
+/// Why a search of the public catalogues has nothing to show.
+const NO_PUBLIC_SERVER: &str = "sign in to search the public catalogues: no server to ask \
+     (connect the project, or Project.use_server), and no answer kept from an earlier search";
+
+/// What `query` finds in the public catalogues, the server asked without the GIL; with no
+/// server, the answer kept the last time; `None` when there is neither.
 fn public_events(
     py: Python<'_>,
     room: &ClientRoom,
     query: PublicQuery<'_>,
-) -> Result<Vec<PublicEvent>> {
+) -> Result<Option<Vec<PublicEvent>>> {
     let found = py.detach(|| block_on(room.search_public(query)))?;
     let Some(found) = found else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     let found = found.map_err(http_error)?;
     if found.indexing > 0 {
@@ -1290,7 +1300,7 @@ fn public_events(
         );
         warn(py, &[note])?;
     }
-    Ok(found.events)
+    Ok(Some(found.events))
 }
 
 /// An event's attributes; a derived interval has none.
@@ -1407,6 +1417,13 @@ impl Project {
         *lock(&self.url) = Some(url);
         *lock(&self.credentials) = credentials;
         Ok(())
+    }
+
+    /// The server to search the public catalogues on, without syncing this project: for a
+    /// project kept on this computer. Called again, it takes a new cookie. `connect` sets it
+    /// too.
+    fn use_server(&self, url: String, cookie: String) {
+        self.room.use_server(&url, &cookie);
     }
 
     fn set_cookie(&self, cookie: String) -> Result<()> {
@@ -1630,12 +1647,8 @@ impl Project {
     /// `catalogue`; at most 10,000 events, the first by start time. The last answer is kept,
     /// for when the server cannot be reached.
     fn search_public(&self, py: Python<'_>, query: &str) -> Result<Py<PyAny>> {
-        if self.room.server().is_none() {
-            return Err(PyRuntimeError::new_err(
-                "connect the project to search the public catalogues",
-            ));
-        }
-        let found = public_events(py, &self.room, PublicQuery::Text(query))?;
+        let found = public_events(py, &self.room, PublicQuery::Text(query))?
+            .ok_or_else(|| PyRuntimeError::new_err(NO_PUBLIC_SERVER))?;
         event_arrays_of(py, &[], &found, &[], true)
     }
 
