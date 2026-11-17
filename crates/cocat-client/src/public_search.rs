@@ -44,7 +44,7 @@ pub enum PublicQuery<'q> {
 
 impl PublicQuery<'_> {
     /// The query parameter the server reads it from.
-    fn parameter(self) -> (&'static str, String) {
+    pub(crate) fn parameter(self) -> (&'static str, String) {
         match self {
             PublicQuery::Text(text) => ("q", text.to_owned()),
             PublicQuery::Predicate(predicate) => (

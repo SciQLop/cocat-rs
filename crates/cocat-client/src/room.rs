@@ -1,6 +1,7 @@
 //! A room: one yrs document, its local cache and the background task that keeps it in step
 //! with the server.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -88,7 +89,17 @@ pub struct Room {
     session: Mutex<Option<Session>>,
     /// The server url and cookie of the last connect, for the calls beside the socket.
     server: Mutex<Option<(String, String)>>,
+    /// The last answer of each search of the public catalogues, and when it was read.
+    public_answers: Mutex<HashMap<(&'static str, String), PublicAnswer>>,
 }
+
+/// An answer of the public catalogues, and when it was read.
+type PublicAnswer = (Instant, crate::PublicSearch);
+
+/// How long an answer of the public catalogues is shown before the server is asked again.
+/// A smart catalogue is read after every edit of its project, which never changes this
+/// answer; the public catalogues themselves change a few times a day.
+pub const PUBLIC_FRESH: Duration = Duration::from_secs(60);
 
 /// What the sync task and the document observers share.
 pub(crate) struct Inner {
@@ -330,6 +341,7 @@ impl Room {
             inner,
             session: Mutex::new(None),
             server: Mutex::new(None),
+            public_answers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -340,14 +352,33 @@ impl Room {
 
     /// The server to ask what is read over HTTP (the public catalogues' search), without
     /// syncing the room: for a project kept on this computer. [`Room::connect`] sets it too.
+    /// The public catalogues are asked again at the next search.
     pub fn use_server(&self, url: &str, cookie: &str) {
         *lock(&self.server) = Some((url.to_owned(), cookie.to_owned()));
+        lock(&self.public_answers).clear();
     }
 
     /// What `query` finds in the public catalogues, as the server last answered: asked again
-    /// each time, kept beside the room's cache. With no server, the answer kept the last
-    /// time; `None` when there is neither.
+    /// once [`PUBLIC_FRESH`] has passed, kept beside the room's cache. With no server, the
+    /// answer kept the last time; `None` when there is neither.
     pub async fn search_public(
+        &self,
+        query: crate::PublicQuery<'_>,
+    ) -> Option<Result<crate::PublicSearch, crate::LoginError>> {
+        let asked = query.parameter();
+        if let Some((read, answer)) = lock(&self.public_answers).get(&asked)
+            && read.elapsed() < PUBLIC_FRESH
+        {
+            return Some(Ok(answer.clone()));
+        }
+        let found = self.ask_public(query).await;
+        if let Some(Ok(answer)) = &found {
+            lock(&self.public_answers).insert(asked, (Instant::now(), answer.clone()));
+        }
+        found
+    }
+
+    async fn ask_public(
         &self,
         query: crate::PublicQuery<'_>,
     ) -> Option<Result<crate::PublicSearch, crate::LoginError>> {

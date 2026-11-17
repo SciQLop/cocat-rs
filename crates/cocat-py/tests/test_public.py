@@ -218,3 +218,30 @@ def test_with_neither_a_server_nor_a_last_answer_it_says_why_the_public_events_a
     with pytest.raises(RuntimeError, match="sign in"):
         local.search_public("tag:shock")
     local.close()
+
+
+def add_shock(server, tmp_path, shocks, start):
+    curator = login(server.url, "keeper@example.org")
+    public = connected(tmp_path / f"keeper-{start[:10]}", shocks, server.url, curator)
+    catalogue = public.catalogue("Shocks")
+    catalogue.add_events([public.create_event(start, start.replace("T00", "T01"), tags=["shock"])])
+    public.save(15)
+    public.close()
+
+
+def test_a_search_of_the_public_catalogues_is_asked_again_only_after_a_while_or_a_sign_in(
+    server, tmp_path
+):
+    shocks = public_shocks(server, tmp_path)
+    online = connected(tmp_path / "mine", server.project_id, server.url, server.cookie)
+    smart = online.create_smart_catalogue("Shocks everywhere", "tag:shock", public=True)
+    assert smart.searches_public
+    assert not online.create_catalogue("Plain").searches_public
+    assert len(smart.event_arrays()["uuid"]) == 1
+
+    add_shock(server, tmp_path, shocks, "2021-05-01T00:00:00Z")
+    assert len(smart.event_arrays()["uuid"]) == 1, "edits here do not ask the server again"
+
+    online.use_server(server.url, server.cookie)
+    wait_until(lambda: len(smart.event_arrays()["uuid"]) == 2)
+    online.close()

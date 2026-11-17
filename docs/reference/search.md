@@ -106,6 +106,11 @@ this computer, never connected, asks it through `project.use_server(url, cookie)
 project itself is not sent. With no server (signed out, offline), a catalogue shows the
 answer kept from its last search; with none kept, it shows only its own events and warns.
 
+An answer is shown for a minute before the server is asked again (`cocat_rs` keeps it in
+memory): reading such a catalogue after each edit of the project costs nothing. `use_server`
+or `connect` asks again at the next read. `catalogue.searches_public` tells which catalogues
+can change on the server alone, to read again now and then.
+
 ### Rules a search cannot say
 
 Some selections are about time, not fields: "merge events closer than 10 minutes", "shocks

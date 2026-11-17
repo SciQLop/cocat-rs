@@ -637,6 +637,18 @@ impl Catalogue {
         Ok(())
     }
 
+    /// True when its rule searches the public catalogues: what it holds can change on the
+    /// server without any change in this project, so it is worth reading again now and then.
+    #[getter]
+    fn searches_public(&self) -> Result<bool> {
+        Ok(self
+            .summary()?
+            .rule
+            .as_ref()
+            .and_then(public_predicate)
+            .is_some())
+    }
+
     /// The rule that makes this a smart catalogue, or `None`.
     #[getter]
     fn rule(&self, py: Python<'_>) -> Result<Py<PyAny>> {

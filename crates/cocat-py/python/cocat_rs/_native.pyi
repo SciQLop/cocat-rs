@@ -30,6 +30,8 @@ class Catalogue:
     columns: list[str]
     attributes: dict[str, Any]
     rule: dict[str, Any] | None
+    @property
+    def searches_public(self) -> bool: ...
     query: str | None
     shape_axis: ShapeAxis | None
     events: set[Event]
