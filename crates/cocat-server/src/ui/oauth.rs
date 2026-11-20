@@ -162,7 +162,7 @@ async fn exchange(
     let claims = id_token.claims(&provider.client.id_token_verifier(), &nonce)?;
     let subject = claims.subject().as_str().to_owned();
     let email = match claims.email() {
-        Some(email) => Some(email.as_str().to_owned()),
+        Some(email) => verified(email, claims.email_verified()),
         None => user_info_email(provider, &http, token.access_token().secret(), &subject).await?,
     };
     Ok(Identity { subject, email })
@@ -184,7 +184,15 @@ async fn user_info_email(
         .request_async(http)
         .await
         .map_err(|error| ExchangeError::Profile(error.to_string()))?;
-    Ok(claims.email().map(|email| email.as_str().to_owned()))
+    Ok(claims
+        .email()
+        .and_then(|email| verified(email, claims.email_verified())))
+}
+
+/// A provider that can verify addresses still says, per sign-in, whether it verified this
+/// one; an address it did not vouch for must never reach an existing account.
+fn verified(email: &openidconnect::EndUserEmail, claim: Option<bool>) -> Option<String> {
+    (claim == Some(true)).then(|| email.as_str().to_owned())
 }
 
 async fn signed_in(state: &AppState, user: crate::db::User, next: Option<&str>) -> Response {

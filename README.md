@@ -456,7 +456,8 @@ nonce and CSRF state ride in one signed `cocat_oidc` cookie (ten minutes, scoped
 `/ui/oauth/`), and no provider token is stored after the callback.
 
 An address the provider returns is believed only when the provider is marked
-`"verifies_email": true` and the address parses; otherwise the account gets
+`"verifies_email": true`, the token or profile carries `"email_verified": true` for this
+sign-in, and the address parses; otherwise the account gets
 `{subject}@{name}.placeholder.cocat.org` and is sent to `/ui/confirm-email` to name a real
 address. With a mailer configured, a trusted address links to an existing local account
 only when that account is already verified; an unverified one answers

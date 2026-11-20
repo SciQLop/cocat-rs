@@ -9,6 +9,7 @@ use cocat_server::{db, oidc};
 use oidc_support::Fake;
 use ui_support::{Fixture, PUBLIC_URL, body_text, cookie_cleared, cookie_named, location};
 use url::Url;
+use uuid::Uuid;
 
 const MEMBER: &str = "member@example.org";
 const PLACEHOLDER: &str = "orcid.placeholder.cocat.org";
@@ -504,4 +505,55 @@ async fn a_provider_sign_in_never_leaves_the_site() {
     .await;
 
     assert_eq!(location(&done), "/ui/app");
+}
+
+/// The provider's word that this sign-in's address is verified; the config flag only says
+/// the provider can verify addresses, not that it did for this one.
+async fn sign_in_claiming_member(verified: Option<bool>, from_userinfo: bool) -> (Fixture, Uuid) {
+    let (fixture, fake) = started(true).await;
+    let member = fixture.verified(MEMBER).await;
+    match from_userinfo {
+        true => fake.profile_email(Some(MEMBER)),
+        false => fake.email(Some(MEMBER)),
+    }
+    fake.email_verified(verified);
+    let attempt = begin(&fixture, &fake).await;
+
+    let done = callback(
+        &fixture,
+        &attempt.cookie,
+        &format!("code=code&state={}", attempt.state),
+    )
+    .await;
+
+    assert_eq!(location(&done), "/ui/confirm-email");
+    (fixture, member)
+}
+
+async fn assert_not_linked(fixture: &Fixture, member: Uuid) {
+    assert!(
+        oidc::linked_providers(&fixture.state.pool, member)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the provider identity must not be linked onto the existing account"
+    );
+}
+
+#[tokio::test]
+async fn an_address_the_provider_did_not_verify_never_links() {
+    let (fixture, member) = sign_in_claiming_member(Some(false), false).await;
+    assert_not_linked(&fixture, member).await;
+}
+
+#[tokio::test]
+async fn an_address_without_a_verified_claim_never_links() {
+    let (fixture, member) = sign_in_claiming_member(None, false).await;
+    assert_not_linked(&fixture, member).await;
+}
+
+#[tokio::test]
+async fn an_unverified_profile_address_never_links() {
+    let (fixture, member) = sign_in_claiming_member(Some(false), true).await;
+    assert_not_linked(&fixture, member).await;
 }

@@ -39,6 +39,7 @@ struct Options {
     token_error: bool,
     tamper: bool,
     profile_email: Option<String>,
+    email_verified: Option<bool>,
 }
 
 impl Default for Options {
@@ -56,6 +57,7 @@ impl Default for Options {
             token_error: false,
             tamper: false,
             profile_email: None,
+            email_verified: Some(true),
         }
     }
 }
@@ -142,6 +144,11 @@ impl Fake {
     pub fn profile_email(&self, email: Option<&str>) {
         self.options.lock().unwrap().profile_email = email.map(str::to_owned);
     }
+
+    /// The `email_verified` claim sent beside either email; `None` leaves it out.
+    pub fn email_verified(&self, verified: Option<bool>) {
+        self.options.lock().unwrap().email_verified = verified;
+    }
 }
 
 async fn discovery(State((base, _)): State<Endpoints>) -> Json<Value> {
@@ -205,6 +212,9 @@ async fn token(
     });
     if let Some(email) = &options.email {
         claims["email"] = json!(email);
+        if let Some(verified) = options.email_verified {
+            claims["email_verified"] = json!(verified);
+        }
     }
     let header = Header {
         alg: Algorithm::RS256,
@@ -244,6 +254,9 @@ async fn userinfo(State((_, options)): State<Endpoints>, headers: HeaderMap) -> 
     let mut profile = json!({ "sub": subject });
     if let Some(email) = options.profile_email {
         profile["email"] = json!(email);
+        if let Some(verified) = options.email_verified {
+            profile["email_verified"] = json!(verified);
+        }
     }
     Json(profile).into_response()
 }
