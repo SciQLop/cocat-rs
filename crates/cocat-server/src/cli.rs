@@ -418,18 +418,47 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     Ok(())
 }
 
-/// `COCAT_ROOM_MEMORY_BUDGET` is a positive number of megabytes; unset or empty means the
-/// server opens rooms without a limit.
+/// `COCAT_ROOM_MEMORY_BUDGET` is a positive number of megabytes; unset or empty means half
+/// the memory the server may use, or no limit where that cannot be read.
 fn room_budget() -> Result<Option<u64>, CliError> {
     match std::env::var("COCAT_ROOM_MEMORY_BUDGET") {
-        Err(VarError::NotPresent) => Ok(None),
+        Err(VarError::NotPresent) => Ok(default_budget()),
         Err(VarError::NotUnicode(_)) => Err(CliError::InvalidSize {
             variable: "COCAT_ROOM_MEMORY_BUDGET",
             value: "a non-unicode value".to_owned(),
         }),
-        Ok(value) if value.trim().is_empty() => Ok(None),
+        Ok(value) if value.trim().is_empty() => Ok(default_budget()),
         Ok(value) => positive_megabytes("COCAT_ROOM_MEMORY_BUDGET", &value).map(Some),
     }
+}
+
+/// Half of what the process may use, so the rest covers what the budget does not count
+/// (sessions, caches, the allocator's slack).
+fn default_budget() -> Option<u64> {
+    let cgroup = fs::read_to_string("/sys/fs/cgroup/memory.max").ok();
+    let meminfo = fs::read_to_string("/proc/meminfo").ok();
+    let budget = half_of_memory(cgroup.as_deref(), meminfo.as_deref());
+    if let Some(budget) = budget {
+        tracing::info!(megabytes = budget / (1024 * 1024), "room memory budget");
+    }
+    budget
+}
+
+/// A container's cgroup limit (bytes, or `max`) wins over the machine's `MemTotal` (kB).
+fn half_of_memory(cgroup: Option<&str>, meminfo: Option<&str>) -> Option<u64> {
+    let limited = cgroup.and_then(|limit| limit.trim().parse::<u64>().ok());
+    let machine = || {
+        meminfo?
+            .lines()
+            .find_map(|line| line.strip_prefix("MemTotal:"))?
+            .trim()
+            .strip_suffix("kB")?
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(|kilobytes| kilobytes.saturating_mul(1024))
+    };
+    limited.or_else(machine).map(|bytes| bytes / 2)
 }
 
 /// The room, owner and whole-file storage limits. All are megabytes; unset or empty means the default,
@@ -564,6 +593,32 @@ fn parse_role(value: &str) -> Result<Role, UnknownRole> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MEMINFO: &str = "MemTotal:       16384 kB\nMemFree:        1024 kB\n";
+
+    #[test]
+    fn the_default_budget_is_half_the_machine() {
+        assert_eq!(half_of_memory(None, Some(MEMINFO)), Some(8 * 1024 * 1024));
+    }
+
+    #[test]
+    fn a_container_limit_wins_over_the_machine() {
+        assert_eq!(half_of_memory(Some("4096\n"), Some(MEMINFO)), Some(2048));
+    }
+
+    #[test]
+    fn an_unlimited_container_falls_back_to_the_machine() {
+        assert_eq!(
+            half_of_memory(Some("max\n"), Some(MEMINFO)),
+            Some(8 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn an_unknown_machine_has_no_default_budget() {
+        assert_eq!(half_of_memory(None, None), None);
+        assert_eq!(half_of_memory(None, Some("garbage")), None);
+    }
 
     #[test]
     fn a_missing_database_beside_project_files_is_refused() {

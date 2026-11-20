@@ -530,6 +530,72 @@ async fn unloading_a_room_releases_its_share_of_the_budget() {
     second.detach(2).await;
 }
 
+/// A room is charged for what its file grows to, not only for what it held when it opened.
+#[tokio::test]
+async fn an_update_that_would_pass_the_budget_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let small = update_with("key", "value");
+    let big = update_with("big", &"x".repeat(64 * 1024));
+    let manager = RoomManager::new(
+        dir.path().to_owned(),
+        Some(32 * 1024 * MEMORY_PER_FILE_BYTE),
+    );
+    let room = manager.get_or_open("room-grows").unwrap();
+    let writer = attach(&room, 1, Role::Editor);
+    let mut reader = attach(&room, 2, Role::Editor);
+    next(&mut reader).await;
+    room.frame(1, update_frame(&small));
+    next(&mut reader).await;
+
+    room.frame(1, update_frame(&big));
+
+    let reason = timeout(WAIT, writer.close)
+        .await
+        .expect("the room never closed the writer")
+        .expect("the room dropped the close signal");
+    assert_eq!(reason, CloseReason::OverBudget);
+    room.frame(2, sync_step1());
+    let Message::Sync(SyncMessage::SyncStep2(state)) = next(&mut reader).await else {
+        panic!("the room answers a state request with its state");
+    };
+    let doc = Doc::new();
+    doc.transact_mut()
+        .apply_update(yrs::Update::decode_v1(&state).unwrap())
+        .unwrap();
+    assert!(content(&doc, "big").is_none(), "the refused update landed");
+    assert_eq!(content(&doc, "key").as_deref(), Some("value"));
+    room.detach(2).await;
+}
+
+#[tokio::test]
+async fn a_room_that_grew_keeps_others_out_of_the_budget() {
+    let dir = TempDir::new().unwrap();
+    let big = update_with("big", &"x".repeat(64 * 1024));
+    write_room(
+        dir.path(),
+        "room-second",
+        &update_with("key", &"z".repeat(40 * 1024)),
+    );
+    let manager = RoomManager::new(
+        dir.path().to_owned(),
+        Some(96 * 1024 * MEMORY_PER_FILE_BYTE),
+    );
+    let first = manager.get_or_open("room-first").unwrap();
+    let mut first_inbox = attach(&first, 1, Role::Editor);
+    next(&mut first_inbox).await;
+    let mut other = attach(&first, 2, Role::Editor);
+    next(&mut other).await;
+    first.frame(1, update_frame(&big));
+    next(&mut other).await;
+
+    assert!(
+        manager.get_or_open("room-second").is_err(),
+        "a room was admitted against the size the first one had when it opened"
+    );
+    first.detach(1).await;
+    first.detach(2).await;
+}
+
 #[tokio::test]
 async fn no_budget_means_no_limit() {
     let (_dir, manager) = manager();

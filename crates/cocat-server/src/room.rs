@@ -309,11 +309,7 @@ impl RoomManager {
         // Add LRU unloading when phase 2's REST reads keep rooms open.
         if let Some(budget) = self.budget {
             let cold = self.cold_bytes.load(Ordering::Relaxed);
-            let needed = rooms
-                .values()
-                .fold(estimate.saturating_add(cold), |needed, handle| {
-                    needed.saturating_add(handle.estimate)
-                });
+            let needed = charged(&rooms, cold).saturating_add(estimate);
             if needed > budget {
                 crate::telemetry::refused("cold_read_busy");
                 return Err(RoomError::OverBudget {
@@ -327,9 +323,25 @@ impl RoomManager {
         let registry = Arc::clone(&self.rooms);
         let task_room_id = room_id.to_owned();
         let update_dir = self.update_dir.clone();
+        let estimate = Arc::new(AtomicU64::new(estimate));
+        let memory = MemoryShare {
+            budget: self.budget,
+            rooms: Arc::clone(&self.rooms),
+            cold_bytes: Arc::clone(&self.cold_bytes),
+            estimate: Arc::clone(&estimate),
+        };
         thread::Builder::new()
             .name(format!("room-{room_id}"))
-            .spawn(move || load_room(task_room_id, update_dir, allowance, receiver, registry))
+            .spawn(move || {
+                load_room(
+                    task_room_id,
+                    update_dir,
+                    allowance,
+                    memory,
+                    receiver,
+                    registry,
+                )
+            })
             .map_err(RoomError::Spawn)?;
         let handle = RoomHandle { commands, estimate };
         rooms.insert(room_id.to_owned(), handle.clone());
@@ -734,11 +746,7 @@ impl RoomManager {
             .saturating_mul(docs);
         if let Some(budget) = self.budget {
             let cold = self.cold_bytes.load(Ordering::Relaxed);
-            let needed = rooms
-                .values()
-                .fold(cold.saturating_add(estimate), |needed, handle| {
-                    needed.saturating_add(handle.estimate)
-                });
+            let needed = charged(&rooms, cold).saturating_add(estimate);
             if needed > budget {
                 crate::telemetry::refused("cold_read_busy");
                 return Err(RoomError::OverBudget {
@@ -753,6 +761,50 @@ impl RoomManager {
             bytes: Arc::clone(&self.cold_bytes),
             estimate,
         })
+    }
+}
+
+/// What the open rooms and the cold reads in flight are charged together.
+fn charged(rooms: &HashMap<String, RoomHandle>, cold: u64) -> u64 {
+    rooms.values().fold(cold, |charged, handle| {
+        charged.saturating_add(handle.estimate.load(Ordering::Relaxed))
+    })
+}
+
+/// One room's share of the memory budget, kept at its file's size as the file grows.
+#[derive(Debug, Clone, Default)]
+struct MemoryShare {
+    budget: Option<u64>,
+    rooms: Rooms,
+    cold_bytes: Arc<AtomicU64>,
+    estimate: Arc<AtomicU64>,
+}
+
+impl MemoryShare {
+    /// Charges the room for a file of `size` bytes, or refuses when that growth would take
+    /// the open rooms past the budget. Measured and charged under the registry lock the
+    /// opens take, so two growing rooms cannot both fit in the same room left.
+    fn grow_to(&self, size: u64) -> Result<(), CloseReason> {
+        let estimate = size.saturating_mul(MEMORY_PER_FILE_BYTE);
+        let rooms = self.rooms.lock().map_err(|_| CloseReason::Failed)?;
+        let current = self.estimate.load(Ordering::Relaxed);
+        if let Some(budget) = self.budget {
+            let others =
+                charged(&rooms, self.cold_bytes.load(Ordering::Relaxed)).saturating_sub(current);
+            if estimate > current && others.saturating_add(estimate) > budget {
+                crate::telemetry::refused("memory_budget");
+                return Err(CloseReason::OverBudget);
+            }
+        }
+        self.estimate.store(estimate, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Charges the room for what its file really holds after an update, never refusing:
+    /// it is at most what `grow_to` admitted.
+    fn settle(&self, size: u64) {
+        self.estimate
+            .store(size.saturating_mul(MEMORY_PER_FILE_BYTE), Ordering::Relaxed);
     }
 }
 
@@ -796,8 +848,8 @@ where
 #[derive(Debug, Clone)]
 pub struct RoomHandle {
     commands: Sender<RoomCommand>,
-    /// What this room is charged against the budget, fixed when it opened.
-    estimate: u64,
+    /// What this room is charged against the budget, its file's size as it grows.
+    estimate: Arc<AtomicU64>,
 }
 
 impl RoomHandle {
@@ -977,6 +1029,7 @@ fn load_room(
     room_id: String,
     update_dir: PathBuf,
     allowance: u64,
+    memory: MemoryShare,
     commands: Receiver<RoomCommand>,
     registry: Rooms,
 ) {
@@ -996,7 +1049,7 @@ fn load_room(
         return abandon_room(&room_id, &registry, commands);
     }
     room_loop(
-        room_id, update_dir, allowance, store, doc, commands, registry,
+        room_id, update_dir, allowance, memory, store, doc, commands, registry,
     )
 }
 
@@ -1027,10 +1080,12 @@ fn refuse(commands: Receiver<RoomCommand>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn room_loop(
     room_id: String,
     update_dir: PathBuf,
     limit: u64,
+    memory: MemoryShare,
     mut store: FileRoomStore,
     doc: Doc,
     commands: Receiver<RoomCommand>,
@@ -1090,13 +1145,15 @@ fn room_loop(
                             clients: &mut clients,
                             presence: &mut presence,
                             limit,
+                            memory: &memory,
                         };
                         match handle_frame(&mut serving, client, frame) {
                             Ok(frame) => broadcast = frame,
                             Err(reason) => {
                                 tracing::warn!(
                                     room = %room_id,
-                                    "an update was refused at the room's storage limit"
+                                    reason = reason.reason(),
+                                    "an update was refused"
                                 );
                                 if let Some(closed) = clients.remove(&client) {
                                     let _ = closed.out.close.send(reason);
@@ -1144,7 +1201,8 @@ fn room_loop(
                         update,
                         done,
                     } => {
-                        let written = handle_update(
+                        let written = update_within(
+                            &memory,
                             &doc,
                             &mut store,
                             &mut stamps,
@@ -1637,7 +1695,8 @@ fn handle_frame(
             if !role.can_write() {
                 return Ok(None);
             }
-            let broadcast = handle_update(
+            let broadcast = update_within(
+                serving.memory,
                 serving.doc,
                 serving.store,
                 serving.stamps,
@@ -1680,6 +1739,7 @@ struct Serving<'a> {
     clients: &'a mut HashMap<ClientId, Client>,
     presence: &'a mut Presence,
     limit: u64,
+    memory: &'a MemoryShare,
 }
 
 /// What a state request is answered with. A state vector costs a few bytes and its answer
@@ -1733,6 +1793,25 @@ fn full_state_frame<'a>(doc: &Doc, cache: &'a mut Option<Bytes>) -> &'a Bytes {
             .encode_v1(),
         )
     })
+}
+
+/// `handle_update` within the memory budget: the growth is charged before the update is
+/// applied, so a refused one leaves the room as it was, and the true size after.
+#[allow(clippy::too_many_arguments)]
+fn update_within(
+    memory: &MemoryShare,
+    doc: &Doc,
+    store: &mut FileRoomStore,
+    stamps: &mut Option<StampFile>,
+    seen: &mut StateVector,
+    limit: u64,
+    payload: Vec<u8>,
+    author: Author,
+) -> Result<Option<Bytes>, CloseReason> {
+    memory.grow_to(store.total_size().saturating_add(payload.len() as u64))?;
+    let updated = handle_update(doc, store, stamps, seen, limit, payload, author);
+    memory.settle(store.total_size());
+    updated
 }
 
 fn handle_update(
@@ -1924,7 +2003,7 @@ mod tests {
         let (commands, receiver) = mpsc::channel();
         let handle = RoomHandle {
             commands,
-            estimate: 0,
+            estimate: Arc::default(),
         };
         let mut rooms = HashMap::new();
         rooms.insert("room".to_owned(), handle.clone());
@@ -2113,6 +2192,7 @@ mod tests {
                     clients: &mut clients,
                     presence: &mut Presence::default(),
                     limit: u64::MAX,
+                    memory: &MemoryShare::default(),
                 },
                 1,
                 frame,
@@ -2153,6 +2233,7 @@ mod tests {
                     clients: &mut clients,
                     presence: &mut Presence::default(),
                     limit: u64::MAX,
+                    memory: &MemoryShare::default(),
                 },
                 2,
                 frame,
@@ -2262,6 +2343,7 @@ mod tests {
                     clients: &mut clients,
                     presence: &mut Presence::default(),
                     limit: u64::MAX,
+                    memory: &MemoryShare::default(),
                 },
                 7,
                 Bytes::from(hostile),
@@ -2900,6 +2982,7 @@ mod tests {
                 clients: &mut clients,
                 presence: &mut Presence::default(),
                 limit,
+                memory: &MemoryShare::default(),
             },
             1,
             frame(&small),
@@ -2920,6 +3003,7 @@ mod tests {
                     clients: &mut clients,
                     presence: &mut Presence::default(),
                     limit,
+                    memory: &MemoryShare::default(),
                 },
                 2,
                 frame(&big),
@@ -2945,6 +3029,7 @@ mod tests {
                 clients: &mut clients,
                 presence: &mut Presence::default(),
                 limit,
+                memory: &MemoryShare::default(),
             },
             1,
             frame(&later),
