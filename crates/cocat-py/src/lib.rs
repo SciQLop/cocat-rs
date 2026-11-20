@@ -122,6 +122,12 @@ fn to_json(value: &Bound<'_, PyAny>) -> Result<Value> {
         return Ok(Value::from(integer));
     }
     if let Ok(float) = value.extract::<f64>() {
+        if !float.is_finite() {
+            return Err(PyValueError::new_err(
+                "it is NaN or infinity, which a catalogue cannot keep: give None for a \
+                 missing value",
+            ));
+        }
         return Ok(Value::from(float));
     }
     if let Ok(text) = value.extract::<String>() {
@@ -137,7 +143,9 @@ fn to_json(value: &Bound<'_, PyAny>) -> Result<Value> {
     if let Ok(dict) = value.cast::<PyDict>() {
         let mut map = JsonMap::new();
         for (key, item) in dict.iter() {
-            map.insert(key.extract::<String>()?, to_json(&item)?);
+            let key = key.extract::<String>()?;
+            let value = attribute(&key, &item)?;
+            map.insert(key, value);
         }
         return Ok(Value::Object(map));
     }
@@ -164,7 +172,8 @@ impl Attributes {
             if value.cast::<PyDateTime>().is_ok() {
                 attributes.dates.push(key.clone());
             }
-            attributes.values.insert(key, to_json(&value)?);
+            let value = attribute(&key, &value)?;
+            attributes.values.insert(key, value);
         }
         Ok(attributes)
     }
@@ -179,9 +188,21 @@ impl Attributes {
 fn to_json_map(dict: &Bound<'_, PyDict>) -> Result<JsonMap<String, Value>> {
     let mut map = JsonMap::new();
     for (key, value) in dict.iter() {
-        map.insert(key.extract::<String>()?, to_json(&value)?);
+        let key = key.extract::<String>()?;
+        let value = attribute(&key, &value)?;
+        map.insert(key, value);
     }
     Ok(map)
+}
+
+/// The JSON of one attribute; a value refused names its key.
+fn attribute(key: &str, value: &Bound<'_, PyAny>) -> Result<Value> {
+    to_json(value).map_err(|error| {
+        PyValueError::new_err(format!(
+            "attribute '{key}': {}",
+            error.to_string().trim_start_matches("ValueError: ")
+        ))
+    })
 }
 
 /// Says each registry mismatch as a Python warning; the values were written anyway.

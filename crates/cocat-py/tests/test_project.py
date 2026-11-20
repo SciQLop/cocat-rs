@@ -488,3 +488,13 @@ def test_a_transaction_that_raises_leaves_the_project_as_it_was(project):
     with pytest.raises(LookupError):
         project.event(made)
     assert project.catalogue(catalogue.uuid).name == "alpha"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), np.float64("nan")])
+def test_an_attribute_that_is_not_a_number_is_refused_not_dropped(project, value):
+    with pytest.raises(ValueError, match="'snr'.*NaN or infinity"):
+        project.create_event(start=START, stop=STOP, attributes={"snr": value})
+    event = an_event(project)
+    with pytest.raises(ValueError, match="'snr'.*NaN or infinity"):
+        event.set_attributes(snr=value)
+    assert "snr" not in event.attributes
