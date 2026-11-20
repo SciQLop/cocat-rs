@@ -71,16 +71,35 @@ fn to_python_datetime(py: Python<'_>, timestamp: Timestamp) -> Result<Py<PyAny>>
     .unbind())
 }
 
-/// A datetime argument: either a `datetime` or the text form a document holds. A naive value
-/// is UTC, as Python cocat takes it.
+/// A `numpy.datetime64` of any unit, read as nanoseconds since 1970: a `datetime` would drop
+/// what is below the microsecond. `NaT` is no time at all.
+fn numpy_timestamp(value: &Bound<'_, PyAny>) -> Result<Timestamp> {
+    let nanos: i64 = value
+        .call_method1("astype", ("datetime64[ns]",))?
+        .call_method1("astype", ("int64",))?
+        .extract()?;
+    if nanos == i64::MIN {
+        return Err(PyValueError::new_err(
+            "NaT (not a time) is no start or stop: give a real time",
+        ));
+    }
+    Timestamp::from_unix_nanos(nanos)
+        .ok_or_else(|| PyValueError::new_err("the numpy time is out of range"))
+}
+
+/// A datetime argument: a `datetime`, a `numpy.datetime64` or the text form a document holds.
+/// A naive value is UTC, as Python cocat takes it.
 fn to_timestamp(value: &Bound<'_, PyAny>) -> Result<Timestamp> {
     if let Ok(text) = value.extract::<String>() {
         return Timestamp::parse(&text)
             .ok_or_else(|| PyValueError::new_err(format!("not a timestamp: {text}")));
     }
-    let datetime = value
-        .cast::<PyDateTime>()
-        .map_err(|_| PyValueError::new_err("expected a datetime or a timestamp string"))?;
+    if value.get_type().name()? == "datetime64" {
+        return numpy_timestamp(value);
+    }
+    let datetime = value.cast::<PyDateTime>().map_err(|_| {
+        PyValueError::new_err("expected a datetime, a numpy.datetime64 or a timestamp string")
+    })?;
     let aware = !datetime.call_method0("utcoffset")?.is_none();
     let datetime = if aware {
         let utc = value

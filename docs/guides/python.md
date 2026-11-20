@@ -126,13 +126,16 @@ event = project.create_event(
 candidates.add_events([event])
 ```
 
+A time is a `datetime` (a naive one is UTC), a `numpy.datetime64` or a string such as
+`"2019-12-01T10:15:00Z"`.
+
 Creating an event does not put it in a catalogue. `add_events` does that. The same event can
 then go into other catalogues too.
 
 Edit an event by setting its fields:
 
 ```python
-event.stop = "2019-12-01T10:18:00Z"   # a datetime or a time string
+event.stop = "2019-12-01T10:18:00Z"   # any of the time forms above
 event.status = "confirmed"
 event.confidence = 0.9
 event.set_attributes(mach=3.2)

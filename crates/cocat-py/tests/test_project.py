@@ -498,3 +498,20 @@ def test_an_attribute_that_is_not_a_number_is_refused_not_dropped(project, value
     with pytest.raises(ValueError, match="'snr'.*NaN or infinity"):
         event.set_attributes(snr=value)
     assert "snr" not in event.attributes
+
+
+def test_numpy_times_are_times(project):
+    start = np.datetime64("2025-01-31T10:00:00.123456789")
+    stop = np.datetime64("2025-01-31T10:01:00", "s")
+    event = project.create_event(start=start, stop=stop)
+    assert event.start == datetime.datetime(2025, 1, 31, 10, 0, 0, 123456, tzinfo=UTC)
+    assert event.stop == STOP
+
+    event.stop = np.datetime64("2025-01-31T10:02:00")
+    assert event.stop == datetime.datetime(2025, 1, 31, 10, 2, tzinfo=UTC)
+    arrays = project.create_catalogue(name="numpy", events=[event]).event_arrays()
+    event.range = (arrays["start"][0], arrays["stop"][0])
+    assert event.stop == datetime.datetime(2025, 1, 31, 10, 2, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="NaT"):
+        project.create_event(start=np.datetime64("NaT", "ns"), stop=stop)
