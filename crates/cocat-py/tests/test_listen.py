@@ -248,6 +248,29 @@ async def test_a_fixed_field_change_is_an_event_fields_call(project, other):
     ]
 
 
+async def test_a_colleagues_comment_is_an_event_fields_call(project, other):
+    event = other.create_event(
+        start="2025-01-31 10:00:00", stop="2025-01-31 10:01:00", author="a@x.org"
+    )
+    await until(lambda: _has_event(project, event.uuid))
+
+    recorder = Recorder()
+    handle = project.listen(recorder)
+    try:
+        event.comment = "seen in the magnetometer too"
+        await until(lambda: recorder.batches == 1)
+        event.comment = None
+        await until(lambda: recorder.batches == 2)
+    finally:
+        handle.close()
+
+    fields = [call for call in recorder.calls if call[0] == "event_fields"]
+    assert fields == [
+        ("event_fields", event.uuid, {"comment": "seen in the magnetometer too"}, []),
+        ("event_fields", event.uuid, {}, ["comment"]),
+    ]
+
+
 def _has_event(project, uuid):
     try:
         project.event(uuid)

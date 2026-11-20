@@ -17,6 +17,7 @@ const STATUS: &str = "status";
 const MEMBERS: &str = "events";
 const START: &str = "start";
 const STOP: &str = "stop";
+const COMMENT: &str = "comment";
 
 /// One change, named after the listener method that receives it.
 #[derive(Clone, Debug, PartialEq)]
@@ -147,6 +148,9 @@ impl Change {
 pub(crate) enum Root {
     Catalogues,
     Events,
+    /// Event comments, kept apart from the events: a listener hears them as the event's
+    /// `comment` field.
+    Comments,
 }
 
 /// A map event held until its transaction commits, so one transaction becomes one batch.
@@ -216,7 +220,10 @@ pub(crate) fn finish(observations: &[Observation], txn: &TransactionMut<'_>) -> 
 /// The uuids whose map was inserted at a root in this transaction.
 fn created(observations: &[Observation]) -> HashSet<String> {
     let mut uuids = HashSet::new();
-    for observation in observations.iter().filter(|one| one.path.is_empty()) {
+    let objects = observations
+        .iter()
+        .filter(|one| one.path.is_empty() && one.root != Root::Comments);
+    for observation in objects {
         for (uuid, change) in &observation.keys {
             if matches!(change, EntryChange::Inserted(_)) {
                 uuids.insert(uuid.clone());
@@ -270,6 +277,20 @@ fn roots(observation: &Observation, txn: &TransactionMut<'_>, into: &mut Vec<Cha
             (Root::Events, EntryChange::Removed(_)) => {
                 into.push(Change::EventRemoved { uuid: uuid.clone() })
             }
+            (Root::Comments, EntryChange::Inserted(out) | EntryChange::Updated(_, out)) => {
+                if let Some(text) = json(out) {
+                    into.push(Change::EventFields {
+                        uuid: uuid.clone(),
+                        set: JsonMap::from_iter([(COMMENT.to_owned(), text)]),
+                        removed: Vec::new(),
+                    });
+                }
+            }
+            (Root::Comments, EntryChange::Removed(_)) => into.push(Change::EventFields {
+                uuid: uuid.clone(),
+                set: JsonMap::new(),
+                removed: vec![COMMENT.to_owned()],
+            }),
             // A new event is announced through `events_added` for the catalogue listing it;
             // there is no listener method for the event map itself.
             _ => {}
@@ -558,6 +579,34 @@ mod tests {
                 uuid: EVENT.to_owned(),
                 set: Map::new(),
                 removed: vec!["status".to_owned()],
+            }]
+        );
+    }
+
+    #[test]
+    fn a_comment_is_an_event_fields_change() {
+        let pair = Pair::new();
+        let batch = pair.relay(|txn| {
+            model::set_comment(txn, EVENT, Some("seen in the magnetometer too"));
+        });
+        assert_eq!(
+            batch,
+            [Change::EventFields {
+                uuid: EVENT.to_owned(),
+                set: map(json!({"comment": "seen in the magnetometer too"})),
+                removed: vec![],
+            }]
+        );
+
+        let batch = pair.relay(|txn| {
+            model::set_comment(txn, EVENT, None);
+        });
+        assert_eq!(
+            batch,
+            [Change::EventFields {
+                uuid: EVENT.to_owned(),
+                set: Map::new(),
+                removed: vec!["comment".to_owned()],
             }]
         );
     }

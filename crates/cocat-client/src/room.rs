@@ -763,6 +763,7 @@ fn observe(
     for (root, name) in [
         (Root::Catalogues, model::CATALOGUES),
         (Root::Events, model::EVENTS),
+        (Root::Comments, model::COMMENTS),
     ] {
         let pending = Arc::clone(&inner.pending);
         let map = doc.transact_mut_with(REPLAY_ORIGIN).get_or_insert_map(name);
