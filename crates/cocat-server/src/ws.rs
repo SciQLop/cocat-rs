@@ -2,6 +2,7 @@
 //! then bridge the socket to the room's actor thread.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use cocat_core::{ROLE_HEADER, SUBPROTOCOL};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, oneshot};
 use tokio::time::timeout;
 use tower_http::compression::CompressionLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -43,6 +44,13 @@ pub const ROLE_CHECK_PERIOD: Duration = Duration::from_secs(30);
 /// The largest frame or message a socket accepts: uvicorn's default `ws_max_size`, so a
 /// client cannot make the server buffer more than this. A bigger one is closed with 1009.
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// What one socket may have sent that its room has not processed yet: two of the largest
+/// messages. Past it the bridge stops reading, so TCP pushes back on the client.
+const INBOUND_BYTES: usize = 2 * MAX_MESSAGE_BYTES;
+
+/// What each frame counts beyond its bytes, so a stream of tiny frames is bounded as well.
+const FRAME_OVERHEAD: usize = 256;
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
 
@@ -277,6 +285,7 @@ async fn bridge(
         }
     });
 
+    let inbound = Arc::new(Semaphore::new(INBOUND_BYTES));
     let mut writer_finished = false;
     loop {
         tokio::select! {
@@ -290,7 +299,7 @@ async fn bridge(
             frame = stream.next() => match frame {
                 Some(Ok(Message::Binary(bytes))) => {
                     crate::telemetry::ws_frame(crate::telemetry::Direction::In, bytes.len());
-                    room.frame(client, bytes)
+                    room.frame(client, charged(&inbound, bytes).await)
                 }
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Err(error)) => {
@@ -322,6 +331,31 @@ async fn bridge(
     if !writer_finished && timeout(WRITE_TIMEOUT, &mut writer).await.is_err() {
         writer.abort();
         let _ = writer.await;
+    }
+}
+
+/// The frame, holding its share of the socket's inbound budget until the room drops it.
+async fn charged(inbound: &Arc<Semaphore>, frame: bytes::Bytes) -> bytes::Bytes {
+    let cost = u32::try_from(frame.len() + FRAME_OVERHEAD).expect("a frame is at most 16 MiB");
+    let permit = inbound
+        .clone()
+        .acquire_many_owned(cost)
+        .await
+        .expect("the bridge never closes its own budget");
+    bytes::Bytes::from_owner(Charged {
+        frame,
+        _permit: permit,
+    })
+}
+
+struct Charged {
+    frame: bytes::Bytes,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl AsRef<[u8]> for Charged {
+    fn as_ref(&self) -> &[u8] {
+        &self.frame
     }
 }
 

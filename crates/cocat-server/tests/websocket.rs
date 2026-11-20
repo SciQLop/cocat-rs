@@ -1218,3 +1218,54 @@ async fn wait_for_sockets(fixture: &Fixture, expected: usize) {
         sleep(Duration::from_millis(10)).await;
     }
 }
+
+/// The room thread is the only one that frees what a socket sends it; while it is busy a
+/// client must stall on its own socket instead of piling frames into the server's memory.
+#[tokio::test]
+async fn a_flood_waits_for_the_room_instead_of_queueing_in_memory() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let viewer = fixture.user("viewer@example.org").await;
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-flood",
+        "Flood",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
+    db::add_member(&fixture.pool, "room-flood", viewer, Role::Viewer)
+        .await
+        .unwrap();
+    let mut socket = fixture
+        .connect("room-flood", Some(&fixture.token(viewer).await))
+        .await;
+    next_message(&mut socket).await;
+    let (release, busy) = std::sync::mpsc::channel::<()>();
+    let rooms = fixture.rooms.clone();
+    let blocked = tokio::spawn(async move {
+        rooms
+            .read("room-flood", move |_| busy.recv().unwrap())
+            .await
+            .unwrap()
+    });
+    sleep(Duration::from_millis(100)).await;
+
+    let junk = Bytes::from(vec![0xffu8; 1 << 20]);
+    let mut flood = Box::pin(async {
+        for _ in 0..128 {
+            socket.send(WsMessage::Binary(junk.clone())).await.unwrap();
+        }
+    });
+    assert!(
+        timeout(Duration::from_secs(2), &mut flood).await.is_err(),
+        "the server took 128 MiB while its room could not process any of it"
+    );
+
+    release.send(()).unwrap();
+    timeout(WAIT, &mut flood)
+        .await
+        .expect("the socket moves again once the room does");
+    blocked.await.unwrap();
+}
