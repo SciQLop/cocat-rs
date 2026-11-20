@@ -1486,6 +1486,11 @@ impl Project {
         };
     }
 
+    /// The email `set_identity` recorded, the author of what is made here without one.
+    fn signed_in_email(&self) -> Option<String> {
+        lock(&self.identity).email.clone()
+    }
+
     /// The catalogues of other projects this one links to, by name.
     fn links<'py>(&self, py: Python<'py>) -> Result<Bound<'py, PyList>> {
         let links = model::links(&self.room.doc().transact());
@@ -1862,7 +1867,7 @@ impl Project {
         let catalogue = NewCatalogue {
             uuid: uuid.clone(),
             name,
-            author,
+            author: author.or_else(|| self.signed_in_email()),
             created: Some(now()?),
             tags: uuids(tags)?,
             columns: columns.unwrap_or_default(),
@@ -1921,7 +1926,11 @@ impl Project {
             (None, None) => Some(now()?),
             (None, Some(_)) => None,
         };
-        event.author = author;
+        // A hand-made event is its maker's; one copied from elsewhere keeps its origin's.
+        event.author = match origin {
+            None => author.or_else(|| self.signed_in_email()),
+            Some(_) => author,
+        };
         event.tags = uuids(tags)?;
         event.products = uuids(products)?;
         event.status = status.map(to_status).transpose()?.unwrap_or_default();

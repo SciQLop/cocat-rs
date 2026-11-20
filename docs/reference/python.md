@@ -27,7 +27,7 @@ import cocat_rs as cc
 | `cc.create_project("name")` | a new project; returns its info |
 | `project.save()` | wait until the server has every change |
 | `project.close()` | stop syncing |
-| `project.status` | `offline`, `connecting`, `synced`, `unauthorized`, `no_access` |
+| `project.status` | `offline`, `connecting`, `synced`, `unauthorized`, `no_access`, `too_large` |
 | `project.role`, `project.read_only` | your role in it |
 | `with project.transaction(): ...` | group many changes into one |
 

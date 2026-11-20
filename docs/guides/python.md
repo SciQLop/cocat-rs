@@ -69,7 +69,8 @@ for event in sorted(shocks.events, key=lambda e: e.start):
 ```
 
 Each event has `start`, `stop` (Python `datetime`, UTC), `tags`, `status`, `confidence`,
-`attributes`, `comment`, `author` and `uuid`.
+`attributes`, `comment`, `author` and `uuid`. What you make in a project opened with `cc.open`
+names you as its `author`, unless you give another.
 
 ### Into pandas or polars
 

@@ -177,6 +177,7 @@ class Client:
         project = Project.open(str(folder), project_id)
         project._opened_with(self, project_id)
         project.connect(self.server, self._require_session(), self._credentials)
+        self._name_copies(project, project_id, projects)
         if not reachable:
             warnings.warn(
                 f"Cannot reach {self.server}: working on the local copy, "
@@ -204,7 +205,6 @@ class Client:
                 f"You cannot open {project_id!r} on {self.server}: "
                 "it does not exist or you are not a member."
             ) from None
-        self._name_copies(project, project_id, projects)
         return project
 
     def _name_copies(
@@ -214,7 +214,7 @@ class Client:
         name the project by its id and no author: opening must not fail on it."""
         try:
             info = next((info for info in projects if info.id == project_id), None)
-            email = self.account()["email"]
+            email = self._known_account()["email"]
         except (Unauthorized, Forbidden, RuntimeError, OSError, KeyError, ValueError):
             return
         name = info.name if info else project_id
@@ -222,16 +222,24 @@ class Client:
 
     def account_id(self, fresh: bool = False) -> str:
         if self._account is None or fresh:
-            accounts = self._server_folder() / "accounts.json"
-            key = hashlib.sha256(self._require_session().encode()).hexdigest()
-            try:
-                self._account = self._call(_native.account_id)
-                _write_json(accounts, {**_read_json(accounts, {}), key: self._account})
-            except ConnectionError:
-                self._account = _read_json(accounts, {}).get(key)
-                if self._account is None:
-                    raise
+            self._account = self._known_account()["id"]
         return self._account
+
+    def _known_account(self) -> dict[str, str]:
+        """The account's id and email; with the server out of reach, the ones this computer
+        kept the last time it answered, so `open` still finds the account's copies."""
+        accounts = self._server_folder() / "accounts.json"
+        key = hashlib.sha256(self._require_session().encode()).hexdigest()
+        try:
+            account = self.account()
+        except ConnectionError:
+            kept = _read_json(accounts, {}).get(key)
+            if not isinstance(kept, dict):
+                raise
+            return kept
+        known = {"id": account["id"], "email": account["email"]}
+        _write_json(accounts, {**_read_json(accounts, {}), key: known})
+        return known
 
     def account(self) -> dict[str, Any]:
         """The signed-in account: `id`, `email` and `is_curator`."""

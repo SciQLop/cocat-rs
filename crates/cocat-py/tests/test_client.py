@@ -235,6 +235,31 @@ def test_with_the_server_down_open_works_on_the_local_copy(server, signed_in, mo
         project.close()
 
 
+def test_what_i_make_names_me_as_its_author(server, signed_in, cache):
+    project = signed_in.open("bench", cache=cache)
+    try:
+        event = project.create_event(start="2025-01-01T00:00:00Z", stop="2025-01-01T01:00:00Z")
+        catalogue = project.create_catalogue(name="mine", events=[event])
+        assert event.author == server.email
+        assert catalogue.author == server.email
+        assert [found.uuid for found in project.search(f"author:{server.email}")] == [event.uuid]
+    finally:
+        project.close()
+
+
+def test_what_i_make_offline_names_me_too(server, signed_in, cache):
+    signed_in.open("bench", cache=cache).close()
+    server.stop()
+
+    with pytest.warns(UserWarning, match="local copy"):
+        project = cc.Client(server.url).open("bench", cache=cache)
+    try:
+        event = project.create_event(start="2025-01-01T00:00:00Z", stop="2025-01-01T01:00:00Z")
+        assert event.author == server.email
+    finally:
+        project.close()
+
+
 def test_a_server_that_does_not_answer_is_a_connection_error():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
