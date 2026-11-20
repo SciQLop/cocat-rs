@@ -14,7 +14,7 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use cocat_core::role::Role;
-use cocat_core::{ROLE_HEADER, SUBPROTOCOL};
+use cocat_core::{MAX_MESSAGE_HEADER, ROLE_HEADER, SUBPROTOCOL};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use thiserror::Error;
@@ -41,13 +41,23 @@ const ATTACH_TRIES: usize = 3;
 /// reaches the database, so its changes land at the next check.
 pub const ROLE_CHECK_PERIOD: Duration = Duration::from_secs(30);
 
-/// The largest frame or message a socket accepts: uvicorn's default `ws_max_size`, so a
-/// client cannot make the server buffer more than this. A bigger one is closed with 1009.
+/// The largest frame or message a reader's socket accepts: uvicorn's default `ws_max_size`.
+/// A reader only sends state vectors and awareness, which stay far below it.
 pub const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
-/// What one socket may have sent that its room has not processed yet: two of the largest
-/// messages. Past it the bridge stops reading, so TCP pushes back on the client.
-const INBOUND_BYTES: usize = 2 * MAX_MESSAGE_BYTES;
+/// The largest message a writer's socket accepts. One transaction is one message, and a
+/// scientist's import of a few hundred thousand events is one transaction (~240 bytes each).
+pub const MAX_WRITER_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// The largest frame or message a socket accepts for this role. A bigger one is closed with
+/// 1009, and the upgrade answer names the limit so a client can refuse before it sends.
+pub fn max_message_bytes(role: Role) -> usize {
+    if role.can_write() {
+        MAX_WRITER_MESSAGE_BYTES
+    } else {
+        MAX_MESSAGE_BYTES
+    }
+}
 
 /// What each frame counts beyond its bytes, so a stream of tiny frames is bounded as well.
 const FRAME_OVERHEAD: usize = 256;
@@ -148,13 +158,18 @@ async fn open_socket(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     mark_seen(&state, &project, user.id).await;
+    let limit = max_message_bytes(role);
     let mut response = upgrade
-        .max_message_size(MAX_MESSAGE_BYTES)
-        .max_frame_size(MAX_MESSAGE_BYTES)
+        .max_message_size(limit)
+        .max_frame_size(limit)
         .on_upgrade(move |socket| bridge(socket, state, room_id, user, role, session));
     response.headers_mut().insert(
         HeaderName::from_static(ROLE_HEADER),
         HeaderValue::from_static(role.as_str()),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static(MAX_MESSAGE_HEADER),
+        HeaderValue::from(limit),
     );
     response
 }
@@ -285,7 +300,9 @@ async fn bridge(
         }
     });
 
-    let inbound = Arc::new(Semaphore::new(INBOUND_BYTES));
+    // What the socket may have sent that its room has not processed yet: two of its largest
+    // messages. Past it the bridge stops reading, so TCP pushes back on the client.
+    let inbound = Arc::new(Semaphore::new(2 * max_message_bytes(role)));
     let mut writer_finished = false;
     loop {
         tokio::select! {
@@ -336,7 +353,7 @@ async fn bridge(
 
 /// The frame, holding its share of the socket's inbound budget until the room drops it.
 async fn charged(inbound: &Arc<Semaphore>, frame: bytes::Bytes) -> bytes::Bytes {
-    let cost = u32::try_from(frame.len() + FRAME_OVERHEAD).expect("a frame is at most 16 MiB");
+    let cost = u32::try_from(frame.len() + FRAME_OVERHEAD).expect("a frame is at most 64 MiB");
     let permit = inbound
         .clone()
         .acquire_many_owned(cost)

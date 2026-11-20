@@ -28,6 +28,10 @@ pub const SUBPROTOCOL: &str = "cocat.v2";
 /// ignore it.
 pub const ROLE_HEADER: &str = "cocat-role";
 
+/// The response header of a websocket upgrade naming, in bytes, the largest message the
+/// server takes on that socket.
+pub const MAX_MESSAGE_HEADER: &str = "cocat-max-message";
+
 /// The header of a project's state answer giving its size before compression, so a page can
 /// show how far the download got.
 pub const STATE_BYTES_HEADER: &str = "cocat-state-bytes";

@@ -425,3 +425,53 @@ async fn a_connection_gone_silent_is_dropped_and_opened_again() {
     room.wait_synced(WAIT).unwrap();
     assert_eq!(relay.accepted.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
+
+fn event_carrying(uuid: &str, bytes: usize) -> cocat_core::model::EventRecord {
+    let mut event = new_event(uuid, "2024-05-14T16:46:00Z", "2024-05-14T17:08:00Z");
+    event
+        .attributes
+        .insert("remarks".into(), "x".repeat(bytes).into());
+    event
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_editor_change_larger_than_16_mib_reaches_the_others() {
+    let server = Server::start().await;
+    let token = seeded(&server, ROOM, "owner@x.org").await;
+    let (a_dir, b_dir) = (cache(), cache());
+    let a = Room::open(a_dir.path(), ROOM).unwrap();
+    let b = Room::open(b_dir.path(), ROOM).unwrap();
+    a.connect(&server.url(), &token).unwrap();
+    b.connect(&server.url(), &token).unwrap();
+    a.wait_synced(WAIT).unwrap();
+    b.wait_synced(WAIT).unwrap();
+
+    a.write(|txn| model::create_event(txn, &event_carrying(E1, 20 << 20)).unwrap())
+        .unwrap();
+    a.save(WAIT).unwrap();
+
+    let arrived = timeout(WAIT, async {
+        while model::event(&b.doc().transact(), E1).is_none() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+    assert!(arrived.await.is_ok(), "the other room never got the event");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_change_past_the_servers_limit_stops_the_room_and_says_so() {
+    let server = Server::start().await;
+    let token = seeded(&server, ROOM, "owner@x.org").await;
+    let dir = cache();
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    room.write(|txn| model::create_event(txn, &event_carrying(E1, 70 << 20)).unwrap())
+        .unwrap();
+
+    room.connect(&server.url(), &token).unwrap();
+
+    let error = room.wait_synced(WAIT).unwrap_err();
+    assert!(matches!(error, RoomError::TooLarge { .. }), "got {error:?}");
+    assert_eq!(room.status(), Status::TooLarge);
+    let said = error.to_string();
+    assert!(said.contains("MB"), "{said}");
+}

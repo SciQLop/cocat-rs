@@ -81,6 +81,9 @@ Yes. Your copy is kept on disk. Changes go out when the server answers again.
 Hundreds of thousands of events work. The STIX flare list, about 100 000 events, opens in a
 few seconds. Very large catalogues load the first rows first, then the rest.
 
+One change, a transaction or an import, can hold up to 64 MB, about 250 000 events. Import a
+bigger list in parts.
+
 **Is there a storage limit?**
 Each server sets one, per project and per account. When a project is full, the server refuses
 further changes and says why. Ask your server's administrator if you need more.

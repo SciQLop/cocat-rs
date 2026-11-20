@@ -156,7 +156,7 @@ restart.
 |---|---|
 | 1008 | session ended: the token the socket was opened with was revoked, its password was reset, the account was deactivated or deleted, or it logged out. Sign in again |
 | 4403 | access changed: the member was removed or left, their role changed (directly, through a group, or as a curator), ownership moved, or the project was deleted. The session is still good: reconnect at once, and the handshake names the new role or refuses with 403 |
-| 1009 | message too large: a frame or message above 16 MiB, the Python server's `ws_max_size` |
+| 1009 | message too large: above 64 MiB from an editor or owner, 16 MiB (the Python server's `ws_max_size`) from a viewer. The upgrade answer names the limit in a `cocat-max-message` header, so the client refuses a bigger change before sending it |
 | 1013 | try again later: the client fell more than 1024 frames behind, or the project would not fit in `COCAT_ROOM_MEMORY_BUDGET` |
 | 1011 | internal error while attaching the socket, or the role could not be read again right after it attached |
 | 4507 | project storage limit reached: an update would take the project file and its history stamps past `COCAT_ROOM_MAX_MB` or its owner's quota |

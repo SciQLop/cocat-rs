@@ -168,11 +168,14 @@ class Client:
         project.connect(self.server, self._require_session(), self._credentials)
         try:
             project.wait_synced(OPEN_TIMEOUT)
-        except RuntimeError:
+        except RuntimeError as error:
+            if project.status == "too_large":
+                warnings.warn(str(error), stacklevel=2)
+                return project
             if project.status not in ("unauthorized", "no_access"):
                 warnings.warn(
-                    f"Could not reach {self.server}: working on the local copy, "
-                    "it syncs when the server answers.",
+                    f"Not synced with {self.server} yet: working on the local copy, "
+                    "it syncs in the background.",
                     stacklevel=2,
                 )
                 return project

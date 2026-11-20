@@ -57,6 +57,9 @@ const FIRST_STATE_SILENCE: Duration = Duration::from_secs(300);
 /// message, and a relayed catalogue (LASCO's CMEs) is ~20 MiB, past tungstenite's 16 MiB.
 const MAX_MESSAGE_BYTES: usize = 256 * 1024 * 1024;
 
+/// The largest message a server that does not name its limit takes: uvicorn's default.
+const UNNAMED_SERVER_LIMIT: usize = 16 * 1024 * 1024;
+
 /// Keeps one room connected until the server refuses the session or the project.
 ///
 /// A refusal with credentials logs in once and tries again; a refusal of the cookie that
@@ -79,10 +82,12 @@ pub(crate) async fn run(
             Ending::Refused => {
                 let Some(credentials) = &credentials else {
                     inner.status.set(Status::Unauthorized);
+                    inner.ack.wake();
                     return;
                 };
                 if fresh_login {
                     inner.status.set(Status::Unauthorized);
+                    inner.ack.wake();
                     return;
                 }
                 match log_in_again(&url, credentials).await {
@@ -94,12 +99,25 @@ pub(crate) async fn run(
                     }
                     None => {
                         inner.status.set(Status::Unauthorized);
+                        inner.ack.wake();
                         return;
                     }
                 }
             }
             Ending::NoAccess => {
                 inner.status.set(Status::NoAccess);
+                inner.ack.wake();
+                return;
+            }
+            Ending::TooLarge { bytes, limit } => {
+                tracing::error!(
+                    room = %inner.room_id,
+                    bytes,
+                    limit,
+                    "a local change is larger than the server takes; the room stops syncing"
+                );
+                inner.status.set_too_large(bytes, limit);
+                inner.ack.wake();
                 return;
             }
             // Only after a synced session: one closed before it synced could be a server
@@ -168,6 +186,9 @@ enum Ending {
     /// The connection closed or broke; `synced` says whether it had got as far as exchanging
     /// state, which decides whether the backoff starts over.
     Lost { synced: bool },
+    /// A change to send is larger than the server takes in one message: sending it again
+    /// after a reconnect would fail the same way.
+    TooLarge { bytes: usize, limit: usize },
 }
 
 async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
@@ -177,24 +198,29 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_MESSAGE_BYTES))
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
-    let (mut socket, role) = match connect_async_with_config(request, Some(config), false).await {
-        Ok((socket, response)) => (socket, announced_role(&response)),
-        Err(SocketError::Http(response)) => {
-            let status = response.status();
-            if status == StatusCode::UNAUTHORIZED {
-                return Ending::Refused;
+    let (mut socket, role, limit) =
+        match connect_async_with_config(request, Some(config), false).await {
+            Ok((socket, response)) => (
+                socket,
+                announced_role(&response),
+                announced_limit(&response),
+            ),
+            Err(SocketError::Http(response)) => {
+                let status = response.status();
+                if status == StatusCode::UNAUTHORIZED {
+                    return Ending::Refused;
+                }
+                if status == StatusCode::FORBIDDEN {
+                    return Ending::NoAccess;
+                }
+                tracing::warn!(%status, "the server refused the websocket handshake");
+                return Ending::Lost { synced: false };
             }
-            if status == StatusCode::FORBIDDEN {
-                return Ending::NoAccess;
+            Err(error) => {
+                tracing::warn!(%error, "cannot reach the room");
+                return Ending::Lost { synced: false };
             }
-            tracing::warn!(%status, "the server refused the websocket handshake");
-            return Ending::Lost { synced: false };
-        }
-        Err(error) => {
-            tracing::warn!(%error, "cannot reach the room");
-            return Ending::Lost { synced: false };
-        }
-    };
+        };
 
     // A server that names a role sends its state vector first; a read-only room reads it
     // before saying hello, so the hello already describes the document it keeps.
@@ -239,6 +265,9 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                 match frame {
                     Ok(Frame::Binary(bytes)) => {
                         for reply in receive(inner, &bytes, &mut synced, &mut awaiting_ack) {
+                            if let Some(refused) = too_large(&reply, limit) {
+                                return refused;
+                            }
                             if let Err(error) = socket.send(Frame::Binary(reply.into())).await {
                                 tracing::warn!(%error, "the room could not answer the server");
                                 return Ending::Lost { synced };
@@ -266,6 +295,9 @@ async fn session(inner: &Arc<Inner>, url: &Url, cookie: &str) -> Ending {
                             state_vector(inner)
                         }
                     };
+                    if let Some(refused) = too_large(&frame, limit) {
+                        return refused;
+                    }
                     if let Err(error) = socket.send(Frame::Binary(frame.into())).await {
                         tracing::warn!(%error, "the room could not send a local change");
                         return Ending::Lost { synced };
@@ -298,6 +330,24 @@ fn closed(code: Option<CloseCode>, synced: bool) -> Ending {
         Some(cocat_core::ACCESS_CHANGED_CLOSE) => Ending::AccessChanged { synced },
         _ => Ending::Lost { synced },
     }
+}
+
+/// The largest message the server takes on this socket, as the upgrade answer names it.
+fn announced_limit(response: &Response) -> usize {
+    response
+        .headers()
+        .get(cocat_core::MAX_MESSAGE_HEADER)
+        .and_then(|value| value.to_str().ok()?.parse().ok())
+        .unwrap_or(UNNAMED_SERVER_LIMIT)
+}
+
+/// How the session ends when `frame` is past what the server takes: the server would close
+/// the socket, and every reconnect would send the same change again.
+fn too_large(frame: &[u8], limit: usize) -> Option<Ending> {
+    (frame.len() > limit).then_some(Ending::TooLarge {
+        bytes: frame.len(),
+        limit,
+    })
 }
 
 /// The role the upgrade answer names; `None` from a server that does not say.

@@ -246,10 +246,12 @@ cocat.save()
 | `NotSignedIn` | no sign-in for this server, or it was revoked | run `cc.login()` again |
 | `Forbidden: You cannot open …` | the project doesn't exist or you're not in it | check `cc.projects()` |
 | `RuntimeError: this project is read-only for you (viewer)` | you are a viewer | ask the owner for the editor role |
-| warning `Could not reach …: working on the local copy` | the server is out of reach | keep working; it syncs when the server answers |
+| warning `Not synced with … yet: working on the local copy` | the server is out of reach, or still busy with a big change | keep working; it syncs in the background |
+| `a change of … MB is larger than the … MB the server takes at once` | one transaction or import holds more than the server takes in one message (64 MB, about 250 000 events) | import in smaller parts |
 | `ValueError` from `search` | the search has a typo | the message says where, and suggests a fix |
 
 `project.status` tells you the state of the connection: `offline`, `connecting`, `synced`,
-`unauthorized` (sign in again) or `no_access` (you were removed from the project).
+`unauthorized` (sign in again), `no_access` (you were removed from the project) or
+`too_large` (a change was too big to send: see above).
 
 See also the [Python cheat sheet](../reference/python.md).

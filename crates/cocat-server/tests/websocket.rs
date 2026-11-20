@@ -166,8 +166,8 @@ impl Fixture {
     async fn connect_wide(&self, room_id: &str, token: Option<&str>) -> Socket {
         let request = self.request(room_id, token);
         let wide = WebSocketConfig::default()
-            .max_message_size(Some(64 << 20))
-            .max_frame_size(Some(64 << 20));
+            .max_message_size(Some(128 << 20))
+            .max_frame_size(Some(128 << 20));
         let (socket, response) = connect_async_with_config(request, Some(wide), true)
             .await
             .unwrap_or_else(|error| panic!("the handshake failed: {error}"));
@@ -927,7 +927,7 @@ async fn sixteen_mib_update_is_accepted() {
 }
 
 #[tokio::test]
-async fn oversized_message_closes_the_socket() {
+async fn a_writer_message_past_64_mib_closes_the_socket() {
     let fixture = Fixture::start().await;
     let owner = fixture.user("owner@example.org").await;
     db::create_room(
@@ -944,16 +944,42 @@ async fn oversized_message_closes_the_socket() {
         .await;
     next_message(&mut socket).await;
 
+    closes_with_1009(socket, ws::MAX_WRITER_MESSAGE_BYTES + 1).await;
+}
+
+#[tokio::test]
+async fn a_viewer_message_past_16_mib_closes_the_socket() {
+    let fixture = Fixture::start().await;
+    let owner = fixture.user("owner@example.org").await;
+    let viewer = fixture.user("viewer@example.org").await;
+    db::create_room(
+        &fixture.pool,
+        owner,
+        "room-viewer-big",
+        "Viewer",
+        db::ProjectKind::Catalogues,
+    )
+    .await
+    .unwrap();
+    db::add_member(&fixture.pool, "room-viewer-big", viewer, Role::Viewer)
+        .await
+        .unwrap();
+    let mut socket = fixture
+        .connect_wide("room-viewer-big", Some(&fixture.token(viewer).await))
+        .await;
+    next_message(&mut socket).await;
+
+    closes_with_1009(socket, ws::MAX_MESSAGE_BYTES + 1).await;
+}
+
+/// Sends one message of `bytes` and expects the server to refuse it.
+async fn closes_with_1009(mut socket: Socket, bytes: usize) {
     // A frame above the limit is refused at its header, so a client still writing it is
     // reset before the close frame can reach it; a client that finished writing reads the
     // 1009 the bridge sends, which is also how a message that grows past the limit through
     // fragments ends. Either way the message never lands.
     if socket
-        .send(WsMessage::Binary(Bytes::from(vec![
-            0u8;
-            ws::MAX_MESSAGE_BYTES
-                + 1
-        ])))
+        .send(WsMessage::Binary(Bytes::from(vec![0u8; bytes])))
         .await
         .is_err()
     {

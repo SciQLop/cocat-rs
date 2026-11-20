@@ -47,6 +47,9 @@ pub enum Status {
     /// The session is fine but the account is no longer in this project; the room will not
     /// retry.
     NoAccess,
+    /// A local change is larger than the server takes in one message; the room will not
+    /// retry, since it would only send the same change again.
+    TooLarge,
 }
 
 #[derive(Debug, Error)]
@@ -69,6 +72,14 @@ pub enum RoomError {
     Unauthorized,
     #[error("this account is no longer in the project")]
     NoAccess,
+    #[error(
+        "a change of {:.1} MB is larger than the {:.0} MB the server takes at once, so this \
+         project no longer syncs. Make big imports in smaller parts; the change stays in the \
+         local copy until then",
+        megabytes(*.bytes),
+        megabytes(*.limit)
+    )]
+    TooLarge { bytes: usize, limit: usize },
     #[error("the room did not reach {0:?} in time")]
     TimedOut(Status),
     #[error("the room is not connected")]
@@ -193,10 +204,24 @@ impl AckCell {
         self.changed.notify_all();
     }
 
-    fn wait(&self, generation: u64, timeout: Duration) -> Result<(), RoomError> {
+    /// Wakes the callers of [`AckCell::wait`] without an answer, to read a session that ended.
+    pub(crate) fn wake(&self) {
+        let _seen = lock(&self.generation);
+        self.changed.notify_all();
+    }
+
+    fn wait(
+        &self,
+        generation: u64,
+        timeout: Duration,
+        ended: impl Fn() -> Option<RoomError>,
+    ) -> Result<(), RoomError> {
         let deadline = Instant::now() + timeout;
         let mut seen = lock(&self.generation);
         while *seen <= generation {
+            if let Some(ending) = ended() {
+                return Err(ending);
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(RoomError::Unacknowledged);
@@ -214,6 +239,9 @@ impl AckCell {
 /// The status, and a way for a blocking caller to wait for one.
 pub(crate) struct StatusCell {
     status: Mutex<Status>,
+    /// The size of the change that stopped the room, and the server's limit, once it is
+    /// [`Status::TooLarge`].
+    oversize: Mutex<(usize, usize)>,
     changed: Condvar,
 }
 
@@ -221,6 +249,7 @@ impl StatusCell {
     fn new() -> StatusCell {
         StatusCell {
             status: Mutex::new(Status::Offline),
+            oversize: Mutex::new((0, 0)),
             changed: Condvar::new(),
         }
     }
@@ -234,14 +263,34 @@ impl StatusCell {
         self.changed.notify_all();
     }
 
+    pub(crate) fn set_too_large(&self, bytes: usize, limit: usize) {
+        *lock(&self.oversize) = (bytes, limit);
+        self.set(Status::TooLarge);
+    }
+
+    /// The error of a status the room will not leave by itself.
+    pub(crate) fn ended(&self) -> Option<RoomError> {
+        self.ending(self.get())
+    }
+
+    fn ending(&self, status: Status) -> Option<RoomError> {
+        match status {
+            Status::Unauthorized => Some(RoomError::Unauthorized),
+            Status::NoAccess => Some(RoomError::NoAccess),
+            Status::TooLarge => {
+                let (bytes, limit) = *lock(&self.oversize);
+                Some(RoomError::TooLarge { bytes, limit })
+            }
+            _ => None,
+        }
+    }
+
     fn wait(&self, wanted: Status, timeout: Duration) -> Result<(), RoomError> {
         let deadline = Instant::now() + timeout;
         let mut status = lock(&self.status);
         while *status != wanted {
-            match *status {
-                Status::Unauthorized => return Err(RoomError::Unauthorized),
-                Status::NoAccess => return Err(RoomError::NoAccess),
-                _ => {}
+            if let Some(ending) = self.ending(*status) {
+                return Err(ending);
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -501,12 +550,16 @@ impl Room {
     /// The session sends a state vector after those changes, and the server handles one
     /// socket's frames in order, so its answer to that vector is the proof.
     pub fn save(&self, timeout: Duration) -> Result<(), RoomError> {
+        let status = &self.inner.status;
+        if let Some(ending) = status.ended() {
+            return Err(ending);
+        }
         if !self.inner.online.load(Ordering::Relaxed) {
             return Err(RoomError::Offline);
         }
         let generation = self.inner.ack.generation();
         self.inner.outbox.request_ack();
-        self.inner.ack.wait(generation, timeout)
+        self.inner.ack.wait(generation, timeout, || status.ended())
     }
 
     /// How often the next sessions ping the server, and how long a synced one waits for any
@@ -750,6 +803,10 @@ fn websocket_url(base: &str, room_id: &str) -> Result<Url, RoomError> {
 /// a panic elsewhere must not turn every later change into a panic of its own.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn megabytes(bytes: usize) -> f64 {
+    bytes as f64 / 1e6
 }
 
 #[cfg(test)]

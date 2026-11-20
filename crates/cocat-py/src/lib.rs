@@ -427,6 +427,7 @@ fn status_name(status: cocat_client::Status) -> &'static str {
         cocat_client::Status::Synced => "synced",
         cocat_client::Status::Unauthorized => "unauthorized",
         cocat_client::Status::NoAccess => "no_access",
+        cocat_client::Status::TooLarge => "too_large",
     }
 }
 
