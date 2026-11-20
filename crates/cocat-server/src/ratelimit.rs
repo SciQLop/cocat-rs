@@ -2,7 +2,7 @@
 //! cannot pin the server's CPU.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -131,8 +131,11 @@ impl RateLimiter {
 
 /// Python's `ratelimit.py::client_key`: with `trusted_proxies` hops in front, the address the
 /// innermost trusted proxy saw; otherwise the peer itself, because any client can write its
-/// own `X-Forwarded-For`.
+/// own `X-Forwarded-For`. Unlike Python, the header is believed only from a peer that can
+/// be a proxy: one that reaches the port from the internet bypassed the proxy.
 pub fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>, trusted_proxies: usize) -> String {
+    let proxied = peer.is_none_or(|peer| can_be_proxy(peer.ip()));
+    let trusted_proxies = if proxied { trusted_proxies } else { 0 };
     let forwarded = headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
@@ -148,6 +151,15 @@ pub fn client_key(headers: &HeaderMap, peer: Option<SocketAddr>, trusted_proxies
     match peer {
         Some(address) => address.ip().to_string(),
         None => UNKNOWN.to_owned(),
+    }
+}
+
+/// Loopback, private and link-local addresses: where a reverse proxy in front of the server
+/// connects from, and never a client on the internet.
+fn can_be_proxy(address: IpAddr) -> bool {
+    match address.to_canonical() {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
     }
 }
 

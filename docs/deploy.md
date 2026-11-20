@@ -26,7 +26,7 @@ build silently.
 ## Running it
 
 ```sh
-podman run -d --name cocat -p 6570:6570 \
+podman run -d --name cocat -p 127.0.0.1:6570:6570 \
     -v cocat-storage:/storage -v cocat-db:/db -v cocat-log:/log \
     -e COCAT_PUBLIC_URL=https://cocat.example.org \
     -e COCAT_PROXY_PREFIX=/cocat \
@@ -35,7 +35,8 @@ podman run -d --name cocat -p 6570:6570 \
     ghcr.io/sciqlop/cocat-server:latest
 ```
 
-`docker run` takes the same arguments.
+`docker run` takes the same arguments. The port is published on loopback only: the reverse
+proxy reaches it there, and a client that reached it directly could bypass the proxy.
 
 | Mount | Holds |
 |---|---|

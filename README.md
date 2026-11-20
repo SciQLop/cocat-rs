@@ -23,7 +23,7 @@ The binary is `target/release/cocat-server`.
 
 ```sh
 podman build -t cocat-server-rs -f docker/Dockerfile .
-podman run -d --name cocat -p 6570:6570 \
+podman run -d --name cocat -p 127.0.0.1:6570:6570 \
     -v cocat-storage:/storage -v cocat-db:/db -v cocat-log:/log \
     cocat-server-rs
 ```
@@ -87,7 +87,7 @@ gracefully on SIGINT or SIGTERM, after flushing every open project. Project file
 | `COCAT_FILE_MAX_MB` | Largest whole file a project accepts, 20 by default; it counts toward the owner's `COCAT_OWNER_MAX_MB`. Same parsing rules as `COCAT_ROOM_MAX_MB`. |
 | `COCAT_METRICS_BIND` | Address for the Prometheus endpoint, such as `127.0.0.1:9187`. Unset or empty exports nothing; a value that is not an address stops the server at startup and names the variable. The endpoint is a separate listener, never the public port. |
 | `COCAT_METRICS_TOKEN` | Bearer token for the metrics endpoint. Unset or empty leaves `/metrics` open; anything shorter than 16 characters stops the server at startup and names the variable. The token is never logged and never appears in a label. |
-| `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops. A value that is not a non-negative integer stops the server at startup and names the variable. |
+| `COCAT_TRUSTED_PROXIES` | How many proxies stand in front of the server. Unset or empty means zero: the socket address is the client and `X-Forwarded-For` is ignored, because any client can write that header. With `N` proxies the client is the `N`-th hop from the right of `X-Forwarded-For`, believed only when the header carries at least `N` hops and the connection comes from a loopback, private or link-local address (a client reaching the port from the internet is keyed by its own address). A value that is not a non-negative integer stops the server at startup and names the variable. |
 | `COCAT_PUBLIC_URL` | The address users reach this deployment at, scheme and host only (`https://cocat.example.org`; a path, query or fragment is dropped). Every mailed link is built from it plus `COCAT_PROXY_PREFIX`, never from the request's `Host` header, which any client can spoof. A mailer configured without it stops the server at startup and names the variable. |
 | `COCAT_PROXY_PREFIX` | Path prefix the reverse proxy adds in front of the application (`/cocat`), used to build links that survive the proxy. Unset or blank means none. |
 | `COCAT_SMTP_HOST` | SMTP relay. Unset or empty means the server sends no mail: registration and password reset then have nothing to deliver, and invitations return their token in the response instead of mailing it. |

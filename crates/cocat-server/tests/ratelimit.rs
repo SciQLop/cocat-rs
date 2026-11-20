@@ -267,14 +267,41 @@ fn forwarded_for_is_ignored_without_trusted_proxies() {
 #[test]
 fn the_trusted_hop_is_the_key() {
     let headers = forwarded(&["198.51.100.1", "198.51.100.2"]);
+    let proxy = "10.0.0.2:41000".parse().unwrap();
 
-    assert_eq!(client_key(&headers, Some(peer()), 1), "198.51.100.2");
-    assert_eq!(client_key(&headers, Some(peer()), 2), "198.51.100.1");
+    assert_eq!(client_key(&headers, Some(proxy), 1), "198.51.100.2");
+    assert_eq!(client_key(&headers, Some(proxy), 2), "198.51.100.1");
     assert_eq!(
-        client_key(&headers, Some(peer()), 3),
-        "203.0.113.7",
+        client_key(&headers, Some(proxy), 3),
+        "10.0.0.2",
         "a header with fewer hops than trusted proxies must not be believed"
     );
+}
+
+/// The proxy reaches the server over loopback or a private network; a client that reaches
+/// the port directly from the internet wrote its `X-Forwarded-For` itself.
+#[test]
+fn a_public_peer_is_no_proxy() {
+    let headers = forwarded(&["198.51.100.1"]);
+
+    assert_eq!(
+        client_key(&headers, Some(peer()), 1),
+        "203.0.113.7",
+        "a client reaching the port directly chose its own rate-limit key"
+    );
+    for proxy in [
+        "127.0.0.1:1",
+        "192.168.1.2:1",
+        "172.16.0.9:1",
+        "[::1]:1",
+        "[fd00::1]:1",
+    ] {
+        assert_eq!(
+            client_key(&headers, Some(proxy.parse().unwrap()), 1),
+            "198.51.100.1",
+            "{proxy} can be the proxy"
+        );
+    }
 }
 
 #[test]
