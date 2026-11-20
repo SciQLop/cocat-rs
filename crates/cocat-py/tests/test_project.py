@@ -515,3 +515,18 @@ def test_numpy_times_are_times(project):
 
     with pytest.raises(ValueError, match="NaT"):
         project.create_event(start=np.datetime64("NaT", "ns"), stop=stop)
+
+
+def test_an_event_given_both_ends_never_ends_before_it_starts(project):
+    with pytest.raises(ValueError, match="stop is before the start"):
+        project.create_event(start=STOP, stop=START)
+
+    event = project.create_event(start=START, stop=STOP)
+    with pytest.raises(ValueError, match="stop is before the start"):
+        event.range = (STOP, START)
+    assert (event.start, event.stop) == (START, STOP)
+
+    later = datetime.timedelta(hours=1)
+    event.range = (START + later, STOP + later)
+    assert event.stop == STOP + later
+    assert project.create_event(start=START, stop=START).stop == START

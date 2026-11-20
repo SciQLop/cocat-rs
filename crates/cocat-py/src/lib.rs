@@ -71,6 +71,17 @@ fn to_python_datetime(py: Python<'_>, timestamp: Timestamp) -> Result<Py<PyAny>>
     .unbind())
 }
 
+/// Refuses an event that would end before it starts, as the web app does. A zero-length
+/// event is fine.
+fn in_order(start: Timestamp, stop: Timestamp) -> Result<()> {
+    if stop < start {
+        return Err(PyValueError::new_err(format!(
+            "the stop is before the start ({stop} < {start}): give the times in order"
+        )));
+    }
+    Ok(())
+}
+
 /// A `numpy.datetime64` of any unit, read as nanoseconds since 1970: a `datetime` would drop
 /// what is below the microsecond. `NaT` is no time at all.
 fn numpy_timestamp(value: &Bound<'_, PyAny>) -> Result<Timestamp> {
@@ -1036,11 +1047,13 @@ impl Event {
     #[setter]
     fn set_range(&self, range: &Bound<'_, PyAny>) -> Result<()> {
         let (start, stop): (Bound<'_, PyAny>, Bound<'_, PyAny>) = range.extract()?;
-        self.move_to(to_timestamp(&start)?, to_timestamp(&stop)?)
+        let (start, stop) = (to_timestamp(&start)?, to_timestamp(&stop)?);
+        in_order(start, stop)?;
+        self.move_to(start, stop)
     }
 
-    /// Moves the start and keeps the stop. Nothing checks the order, so an event can be
-    /// moved later one end at a time.
+    /// Moves the start and keeps the stop. Only `range` checks the order: scripts move an
+    /// event later one end at a time, as Python cocat lets them.
     #[setter]
     fn set_start(&self, start: &Bound<'_, PyAny>) -> Result<()> {
         self.move_to(to_timestamp(start)?, self.record()?.stop)
@@ -1968,7 +1981,9 @@ impl Project {
                  project.event({uuid:?}), or leave uuid out to make a new one"
             )));
         }
-        let mut event = EventRecord::new(uuid, to_timestamp(start)?, to_timestamp(stop)?);
+        let (start, stop) = (to_timestamp(start)?, to_timestamp(stop)?);
+        in_order(start, stop)?;
+        let mut event = EventRecord::new(uuid, start, stop);
         event.created = match (optional_timestamp(created)?, &origin) {
             (Some(created), _) => Some(created),
             (None, None) => Some(now()?),
