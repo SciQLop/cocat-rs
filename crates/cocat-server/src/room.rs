@@ -153,6 +153,8 @@ impl CloseReason {
 pub struct Outbox {
     pub frames: tokio_mpsc::Sender<Bytes>,
     pub close: oneshot::Sender<CloseReason>,
+    /// One permit: the answer built for this client alone that it has not read yet.
+    answering: Arc<Semaphore>,
 }
 
 #[derive(Debug)]
@@ -165,7 +167,11 @@ pub fn outbox() -> (Outbox, Inbox) {
     let (frames, inbox_frames) = tokio_mpsc::channel(OUTBOUND_FRAMES);
     let (close, inbox_close) = oneshot::channel();
     (
-        Outbox { frames, close },
+        Outbox {
+            frames,
+            close,
+            answering: Arc::new(Semaphore::new(1)),
+        },
         Inbox {
             frames: inbox_frames,
             close: inbox_close,
@@ -1619,19 +1625,11 @@ fn handle_frame(
     };
     match message {
         SyncMessage::SyncStep1(state_vector) => {
-            let reply = if state_vector.is_empty() {
-                full_state_frame(serving.doc, serving.full_state).clone()
-            } else {
-                Bytes::from(
-                    Message::Sync(SyncMessage::SyncStep2(
-                        serving
-                            .doc
-                            .transact()
-                            .encode_state_as_update_v1(&state_vector),
-                    ))
-                    .encode_v1(),
-                )
-            };
+            let answering = serving
+                .clients
+                .get(&client)
+                .map(|entry| &entry.out.answering);
+            let reply = state_answer(serving.doc, serving.full_state, answering, &state_vector);
             deliver(serving.clients, client, reply);
             Ok(None)
         }
@@ -1682,6 +1680,44 @@ struct Serving<'a> {
     clients: &'a mut HashMap<ClientId, Client>,
     presence: &'a mut Presence,
     limit: u64,
+}
+
+/// What a state request is answered with. A state vector costs a few bytes and its answer
+/// can be the whole room, so a client gets one answer built for it alone at a time; asking
+/// again before reading that one returns the shared full state, a superset any replica can
+/// apply, encoded at most once per change.
+fn state_answer(
+    doc: &Doc,
+    full_state: &mut Option<Bytes>,
+    answering: Option<&Arc<Semaphore>>,
+    state_vector: &StateVector,
+) -> Bytes {
+    let permit = answering.and_then(|answering| answering.clone().try_acquire_owned().ok());
+    match permit {
+        Some(permit) if !state_vector.is_empty() => {
+            let frame = Message::Sync(SyncMessage::SyncStep2(
+                doc.transact().encode_state_as_update_v1(state_vector),
+            ))
+            .encode_v1();
+            Bytes::from_owner(Answer {
+                frame,
+                _permit: permit,
+            })
+        }
+        _ => full_state_frame(doc, full_state).clone(),
+    }
+}
+
+/// A frame that gives its client's permit back once the socket wrote it and dropped it.
+struct Answer {
+    frame: Vec<u8>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl AsRef<[u8]> for Answer {
+    fn as_ref(&self) -> &[u8] {
+        &self.frame
+    }
 }
 
 /// Every cold client asks for the same whole-room state, and a 100k-event room answers in
@@ -2370,6 +2406,62 @@ mod tests {
             second.as_ptr(),
             "the full state was encoded one more time for the second client"
         );
+        room.detach(1).await;
+        room.detach(2).await;
+    }
+
+    fn state_request(state_vector: StateVector) -> Bytes {
+        Bytes::from(Message::Sync(SyncMessage::SyncStep1(state_vector)).encode_v1())
+    }
+
+    #[tokio::test]
+    async fn a_client_that_does_not_read_gets_one_fresh_answer_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = RoomManager::new(dir.path().to_owned(), None);
+        let room = manager.get_or_open("room-asks").unwrap();
+        let (out_a, mut inbox_a) = outbox();
+        join(&room, 1, out_a, &mut inbox_a).await;
+        room.frame(
+            1,
+            Bytes::from(Message::Sync(SyncMessage::Update(update_with("key", "one"))).encode_v1()),
+        );
+        let (out_b, mut inbox_b) = outbox();
+        room.attach(
+            2,
+            Uuid::new_v4(),
+            "viewer@example.org".to_owned(),
+            Role::Viewer,
+            out_b,
+        )
+        .unwrap();
+        inbox_b.frames.recv().await.unwrap();
+        let mut unknown = StateVector::default();
+        unknown.set_max(yrs::block::ClientID::new(999), 1);
+
+        for _ in 0..5 {
+            room.frame(2, state_request(unknown.clone()));
+        }
+        let mut answers = Vec::new();
+        for _ in 0..5 {
+            answers.push(timeout(WAIT, inbox_b.frames.recv()).await.unwrap().unwrap());
+        }
+
+        let shared = answers[1].as_ptr();
+        assert!(
+            answers[2..].iter().all(|answer| answer.as_ptr() == shared),
+            "every ask beyond the unread first one was encoded again"
+        );
+        for answer in &answers {
+            let doc = Doc::new();
+            let Ok(Message::Sync(SyncMessage::SyncStep2(payload))) = Message::decode_v1(answer)
+            else {
+                panic!("a state request is answered with an update");
+            };
+            doc.transact_mut()
+                .apply_update(Update::decode_v1(&payload).unwrap())
+                .unwrap();
+            assert!(has_key(&doc, "key"), "an answer lacks the room's state");
+        }
         room.detach(1).await;
         room.detach(2).await;
     }
