@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use yrs::{Doc, ReadTxn, Transact, TransactionMut};
 
 use super::members::catalogue_events;
+use super::provenance::{comment, set_comment};
 use super::registry::{attribute_types, register_attribute, set_attribute_info};
 use super::restore::restore;
 use super::write::mark_layout;
@@ -22,6 +23,7 @@ pub fn extract(source: &Doc, catalogue: &str) -> Doc {
         let mut txn = doc.transact_mut();
         mark_layout(&mut txn);
         restore(&mut txn, source, Some(catalogue));
+        take_comments(&mut txn, &source.transact(), catalogue);
         let keys = attribute_keys(&txn, catalogue);
         let types = attribute_types(&source.transact());
         register(
@@ -36,6 +38,7 @@ pub fn extract(source: &Doc, catalogue: &str) -> Doc {
 /// the trash. Attribute types the room lacks are taken from `proposed`; those it has stay.
 pub fn adopt(txn: &mut TransactionMut<'_>, proposed: &Doc, catalogue: &str) {
     restore(txn, proposed, Some(catalogue));
+    take_comments(txn, &proposed.transact(), catalogue);
     let known = attribute_types(txn);
     let types = attribute_types(&proposed.transact());
     register(
@@ -44,6 +47,21 @@ pub fn adopt(txn: &mut TransactionMut<'_>, proposed: &Doc, catalogue: &str) {
             .into_iter()
             .filter(|(key, _)| !known.contains_key(key)),
     );
+}
+
+/// Gives each event `source`'s catalogue lists the comment it has there, or none. A restore
+/// leaves comments alone, but a submission carries them: they are part of what a curator
+/// reviews. Only a comment that differs is written.
+fn take_comments<T: ReadTxn>(txn: &mut TransactionMut<'_>, source: &T, catalogue: &str) {
+    let Some(Ok(events)) = catalogue_events(source, catalogue) else {
+        return;
+    };
+    for event in events {
+        let wanted = comment(source, &event.uuid);
+        if comment(txn, &event.uuid) != wanted {
+            set_comment(txn, &event.uuid, wanted.as_deref());
+        }
+    }
 }
 
 fn register(txn: &mut TransactionMut<'_>, types: impl Iterator<Item = (String, AttributeInfo)>) {
@@ -71,8 +89,8 @@ mod tests {
 
     use super::super::{
         AttributeType, EventField, EventRecord, NewCatalogue, Status, add_catalogue_events,
-        attribute_types, catalogue, catalogue_events, catalogues, create_catalogue, create_event,
-        event, set_event_attributes, set_event_field,
+        attribute_types, catalogue, catalogue_events, catalogues, comment, create_catalogue,
+        create_event, event, set_comment, set_event_attributes, set_event_field,
     };
     use super::*;
     use crate::time::Timestamp;
@@ -183,5 +201,47 @@ mod tests {
         adopt(&mut txn, &proposed, "c");
 
         assert_eq!(txn.encode_update_v1(), [0, 0]);
+    }
+
+    #[test]
+    fn an_extract_carries_the_comments_of_its_events_only() {
+        let source = project();
+        {
+            let mut txn = source.transact_mut();
+            set_comment(&mut txn, "a", Some("checked against the plasma data"));
+            set_comment(&mut txn, "x", Some("not in this catalogue"));
+        }
+
+        let alone = extract(&source, "c");
+
+        let txn = alone.transact();
+        assert_eq!(
+            comment(&txn, "a").as_deref(),
+            Some("checked against the plasma data")
+        );
+        assert_eq!(comment(&txn, "x"), None);
+    }
+
+    #[test]
+    fn adopting_takes_the_comments_of_the_proposal() {
+        let public = project();
+        {
+            let mut txn = public.transact_mut();
+            set_comment(&mut txn, "a", Some("old remark"));
+            set_comment(&mut txn, "b", Some("dropped by the submitter"));
+        }
+        let copy = extract(&public, "c");
+        {
+            let mut txn = copy.transact_mut();
+            set_comment(&mut txn, "a", Some("new remark"));
+            set_comment(&mut txn, "b", None);
+        }
+        let proposed = extract(&copy, "c");
+
+        adopt(&mut public.transact_mut(), &proposed, "c");
+
+        let txn = public.transact();
+        assert_eq!(comment(&txn, "a").as_deref(), Some("new remark"));
+        assert_eq!(comment(&txn, "b"), None);
     }
 }
