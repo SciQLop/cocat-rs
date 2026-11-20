@@ -458,3 +458,16 @@ def test_room_id_is_an_unknown_keyword(cache):
         cc.Project.open(cache, room_id="lab")
     with pytest.raises(TypeError):
         cc.raw.history("http://127.0.0.1:1", "cookie", room_id="lab")
+
+
+def test_creating_an_event_with_a_uuid_in_use_refuses_and_keeps_the_event(project):
+    event = an_event(project)
+    event.comment = "checked by hand"
+
+    with pytest.raises(ValueError, match="already"):
+        project.create_event(start=START, stop=STOP, uuid=event.uuid)
+
+    kept = project.event(event.uuid)
+    assert kept.tags == {"t1"}
+    assert kept.attributes == {"q": 1.5, "flag": True}
+    assert kept.comment == "checked by hand"

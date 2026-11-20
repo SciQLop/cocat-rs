@@ -1916,11 +1916,14 @@ impl Project {
         comment: Option<String>,
         shape: Option<&Bound<'_, PyAny>>,
     ) -> Result<Py<Event>> {
-        let mut event = EventRecord::new(
-            uuid_argument(uuid)?,
-            to_timestamp(start)?,
-            to_timestamp(stop)?,
-        );
+        let uuid = uuid_argument(uuid)?;
+        if model::event(&self.room.doc().transact(), &uuid).is_some() {
+            return Err(PyValueError::new_err(format!(
+                "an event with uuid {uuid} already exists: change it through \
+                 project.event({uuid:?}), or leave uuid out to make a new one"
+            )));
+        }
+        let mut event = EventRecord::new(uuid, to_timestamp(start)?, to_timestamp(stop)?);
         event.created = match (optional_timestamp(created)?, &origin) {
             (Some(created), _) => Some(created),
             (None, None) => Some(now()?),
