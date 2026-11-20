@@ -44,6 +44,11 @@ class Server:
     email: str
     cookie: str
     directory: Path
+    process: subprocess.Popen
+
+    def stop(self) -> None:
+        self.process.terminate()
+        self.process.wait(timeout=15)
 
 
 @pytest.fixture
@@ -93,7 +98,7 @@ def server(tmp_path):
     try:
         wait_for_port(port)
         url = f"http://127.0.0.1:{port}"
-        yield Server(url, project_id, email, login(url, email), tmp_path)
+        yield Server(url, project_id, email, login(url, email), tmp_path, process)
     finally:
         process.terminate()
         process.wait(timeout=15)

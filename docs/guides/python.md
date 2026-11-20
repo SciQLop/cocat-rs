@@ -246,7 +246,9 @@ cocat.save()
 | `NotSignedIn` | no sign-in for this server, or it was revoked | run `cc.login()` again |
 | `Forbidden: You cannot open …` | the project doesn't exist or you're not in it | check `cc.projects()` |
 | `RuntimeError: this project is read-only for you (viewer)` | you are a viewer | ask the owner for the editor role |
-| warning `Not synced with … yet: working on the local copy` | the server is out of reach, or still busy with a big change | keep working; it syncs in the background |
+| warning `Cannot reach …: working on the local copy` | the server is out of reach; `cc.open` opened the copy on this computer | keep working; it syncs when the server answers |
+| warning `Not synced with … yet: working on the local copy` | the server answers but is still busy with a big change | keep working; it syncs in the background |
+| `ConnectionError: Cannot reach …` | the server is out of reach, and there is nothing local to work on (a sign-in, or a project never opened here) | check the address and your network |
 | `a change of … MB is larger than the … MB the server takes at once` | one transaction or import holds more than the server takes in one message (64 MB, about 250 000 events) | import in smaller parts |
 | `ValueError` from `search` | the search has a typo | the message says where, and suggests a fix |
 

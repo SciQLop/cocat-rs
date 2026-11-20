@@ -3,7 +3,7 @@
 
 use cocat_client::LoginError;
 use pyo3::create_exception;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyConnectionError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyDict, PyTuple, PyType};
@@ -85,12 +85,21 @@ fn refused_as(
     Ok(error)
 }
 
-/// A refusal becomes its typed class; anything else (no connection, a bad url) stays a
-/// `ValueError`.
+/// A refusal becomes its typed class, a server out of reach a `ConnectionError`; anything
+/// else (a bad url, an answer no client understands) stays a `ValueError`.
 pub fn http_error(error: LoginError) -> PyErr {
     match error {
         LoginError::Refused { status, detail } => {
             Python::attach(|py| refused(py, status, detail).unwrap_or_else(|failure| failure))
+        }
+        LoginError::Http(error) if error.is_connect() || error.is_timeout() => {
+            let server = error.url().map_or_else(
+                || "the server".to_owned(),
+                |url| url.origin().ascii_serialization(),
+            );
+            PyConnectionError::new_err(format!(
+                "Cannot reach {server}: check the address (or COCAT_SERVER) and your network."
+            ))
         }
         other => PyValueError::new_err(other.to_string()),
     }

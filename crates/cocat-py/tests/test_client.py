@@ -218,6 +218,31 @@ def test_open_by_name_returns_a_synced_project_in_the_users_cache(server, signed
         project.close()
 
 
+def test_with_the_server_down_open_works_on_the_local_copy(server, signed_in, monkeypatch, tmp_path):
+    monkeypatch.setattr(client_module.platformdirs, "user_cache_dir", lambda name: str(tmp_path / name))
+    project = signed_in.open("bench")
+    project.create_catalogue(name="kept")
+    project.save()
+    project.close()
+    server.stop()
+
+    later = cc.Client(server.url)
+    with pytest.warns(UserWarning, match="local copy"):
+        project = later.open("bench")
+    try:
+        assert [catalogue.name for catalogue in project.catalogues()] == ["kept"]
+    finally:
+        project.close()
+
+
+def test_a_server_that_does_not_answer_is_a_connection_error():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    with pytest.raises(ConnectionError, match="Cannot reach"):
+        cc.Client(f"http://127.0.0.1:{port}").login("someone@example.org", "a password")
+
+
 def test_a_project_commits_and_lists_its_history_through_its_client(server, signed_in, cache):
     project = signed_in.open(server.project_id, cache=cache)
     try:

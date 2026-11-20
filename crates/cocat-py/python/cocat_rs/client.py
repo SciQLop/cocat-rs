@@ -7,6 +7,8 @@ The module functions of `cocat_rs` (`login`, `open`, `projects`...) use one defa
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import socket
@@ -17,6 +19,7 @@ import webbrowser
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar, TypeVar
 from urllib.parse import urlparse
 
@@ -161,11 +164,26 @@ class Client:
 
         Its copy is kept in `cache`, by default in this account's folder of the user cache.
         """
-        projects = self.projects()
+        try:
+            projects = self.projects()
+            folder = Path(cache or self._cache_folder())
+            _remember_projects(folder, projects)
+            reachable = True
+        except ConnectionError:
+            folder = Path(cache or self._cache_folder())
+            projects = _remembered_projects(folder, self.server)
+            reachable = False
         project_id = self._project_id(projects, project_id)
-        project = Project.open(str(cache or self._cache_folder()), project_id)
+        project = Project.open(str(folder), project_id)
         project._opened_with(self, project_id)
         project.connect(self.server, self._require_session(), self._credentials)
+        if not reachable:
+            warnings.warn(
+                f"Cannot reach {self.server}: working on the local copy, "
+                "it syncs when the server answers.",
+                stacklevel=2,
+            )
+            return project
         try:
             project.wait_synced(OPEN_TIMEOUT)
         except RuntimeError as error:
@@ -204,7 +222,15 @@ class Client:
 
     def account_id(self, fresh: bool = False) -> str:
         if self._account is None or fresh:
-            self._account = self._call(_native.account_id)
+            accounts = self._server_folder() / "accounts.json"
+            key = hashlib.sha256(self._require_session().encode()).hexdigest()
+            try:
+                self._account = self._call(_native.account_id)
+                _write_json(accounts, {**_read_json(accounts, {}), key: self._account})
+            except ConnectionError:
+                self._account = _read_json(accounts, {}).get(key)
+                if self._account is None:
+                    raise
         return self._account
 
     def account(self) -> dict[str, Any]:
@@ -479,11 +505,10 @@ class Client:
     def _cache_folder(self) -> Path:
         """One folder per server and account: a viewer's connect drops the changes the server
         never took, and must not reach another account's offline edits."""
-        return (
-            Path(platformdirs.user_cache_dir("cocat_rs"))
-            / _folder_name(self.server)
-            / self.account_id()
-        )
+        return self._server_folder() / self.account_id()
+
+    def _server_folder(self) -> Path:
+        return Path(platformdirs.user_cache_dir("cocat_rs")) / _folder_name(self.server)
 
     def _project_id(self, projects: list[ProjectInfo], wanted: str | None) -> str:
         """The id, among `projects`, of the one with this id or name; `None` is your own."""
@@ -534,6 +559,34 @@ def _open_browser(url: str) -> None:
         webbrowser.open(url)
     except webbrowser.Error:
         pass  # the printed link is enough
+
+
+def _remember_projects(folder: Path, projects: list[ProjectInfo]) -> None:
+    """Keeps the project list beside the copies, so `open` finds a project by name offline."""
+    kept = [{"id": p.id, "name": p.name, "personal": p.personal} for p in projects]
+    _write_json(folder / "projects.json", kept)
+
+
+def _remembered_projects(folder: Path, server: str) -> list[SimpleNamespace]:
+    kept = _read_json(folder / "projects.json", None)
+    if kept is None:
+        raise ConnectionError(
+            f"Cannot reach {server}, and this computer has no copy of your projects yet: "
+            "open them once while the server answers."
+        )
+    return [SimpleNamespace(**project) for project in kept]
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def _write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value))
 
 
 def _folder_name(server: str) -> str:
