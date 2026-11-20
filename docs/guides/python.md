@@ -153,6 +153,9 @@ with project.transaction():
     candidates.add_events(events)
 ```
 
+If the code inside the block raises, the transaction keeps nothing: the project is as it was
+before the block, and the error goes on as usual.
+
 ### Make sure it reached the server
 
 Changes leave in the background, as you make them. Before your script ends, wait for the

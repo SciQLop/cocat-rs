@@ -190,8 +190,7 @@ impl Loading {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use cocat_core::model::{self, NewCatalogue};
@@ -278,25 +277,27 @@ mod tests {
     #[test]
     fn what_the_server_sends_is_applied_as_remote() {
         let client = Doc::new();
-        let origins = Rc::new(RefCell::new(Vec::new()));
+        let origins = Arc::new(Mutex::new(Vec::new()));
         let seen = origins.clone();
         client
-            .observe_update_v1("test", move |txn, _| seen.borrow_mut().push(is_remote(txn)))
+            .observe_update_v1("test", move |txn, _| {
+                seen.lock().unwrap().push(is_remote(txn))
+            })
             .unwrap();
         let server = server_with_a_catalogue();
         let (step2, _) = deliver(&server, vec![hello(&client)]);
         deliver(&client, step2);
-        assert_eq!(*origins.borrow(), [true]);
+        assert_eq!(*origins.lock().unwrap(), [true]);
     }
 
     #[test]
     fn a_local_update_reaches_the_server() {
         let client = Doc::new();
-        let frames = Rc::new(RefCell::new(Vec::new()));
+        let frames = Arc::new(Mutex::new(Vec::new()));
         let sent = frames.clone();
         client
             .observe_update_v1("test", move |_, event| {
-                sent.borrow_mut().push(update_frame(&event.update));
+                sent.lock().unwrap().push(update_frame(&event.update));
             })
             .unwrap();
         let catalogue = NewCatalogue {
@@ -306,7 +307,7 @@ mod tests {
         };
         model::create_catalogue(&mut client.transact_mut(), &catalogue).unwrap();
         let server = Doc::new();
-        deliver(&server, frames.take());
+        deliver(&server, std::mem::take(&mut *frames.lock().unwrap()));
         assert_eq!(
             model::catalogues(&server.transact())[0].name,
             "Training set"
@@ -327,13 +328,15 @@ mod tests {
             .transact()
             .encode_state_as_update_v1(&yrs::StateVector::default());
         let client = Doc::new();
-        let origins = Rc::new(RefCell::new(Vec::new()));
+        let origins = Arc::new(Mutex::new(Vec::new()));
         let seen = origins.clone();
         client
-            .observe_update_v1("test", move |txn, _| seen.borrow_mut().push(is_remote(txn)))
+            .observe_update_v1("test", move |txn, _| {
+                seen.lock().unwrap().push(is_remote(txn))
+            })
             .unwrap();
         assert!(apply_state(&client, &state));
-        assert_eq!(*origins.borrow(), [true]);
+        assert_eq!(*origins.lock().unwrap(), [true]);
         let (step2, _) = deliver(&server, vec![hello(&client)]);
         let Ok(Message::Sync(SyncMessage::SyncStep2(diff))) = Message::decode_v1(&step2[0]) else {
             panic!("the server did not answer with its state");

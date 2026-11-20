@@ -19,7 +19,7 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync",
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 tracing.workspace = true
 url = "2"
-yrs.workspace = true
+yrs = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 axum = "0.8"

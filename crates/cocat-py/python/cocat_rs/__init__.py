@@ -183,7 +183,11 @@ class _Transaction:
         return self._project
 
     def __exit__(self, kind, value, traceback):
-        self._project._native.end_batch()
+        # A body that raised leaves nothing behind: half an import is worse than none.
+        if kind is None:
+            self._project._native.end_batch()
+        else:
+            self._project._native.abandon_batch()
         return False
 
 

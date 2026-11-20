@@ -471,3 +471,20 @@ def test_creating_an_event_with_a_uuid_in_use_refuses_and_keeps_the_event(projec
     assert kept.tags == {"t1"}
     assert kept.attributes == {"q": 1.5, "flag": True}
     assert kept.comment == "checked by hand"
+
+
+def test_a_transaction_that_raises_leaves_the_project_as_it_was(project):
+    kept = an_event(project)
+    catalogue = a_catalogue(project)
+
+    with pytest.raises(KeyError):
+        with project.transaction():
+            made = project.create_event(start=START, stop=STOP).uuid
+            catalogue.name = "renamed"
+            kept.purge()
+            raise KeyError("a bug in the middle of the import")
+
+    assert project.event(kept.uuid).tags == {"t1"}
+    with pytest.raises(LookupError):
+        project.event(made)
+    assert project.catalogue(catalogue.uuid).name == "alpha"

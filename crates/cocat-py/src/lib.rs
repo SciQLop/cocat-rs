@@ -1609,6 +1609,11 @@ impl Project {
         self.room.end_batch();
     }
 
+    /// Ends the batch with its edits taken back, for a transaction whose body raised.
+    fn abandon_batch(&self) {
+        self.room.abandon_batch();
+    }
+
     fn catalogues(&self, py: Python<'_>) -> Result<Vec<Py<Catalogue>>> {
         let doc = self.room.doc();
         let txn = doc.transact();

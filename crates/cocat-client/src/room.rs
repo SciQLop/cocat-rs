@@ -17,7 +17,9 @@ use tokio::sync::{Notify, broadcast};
 use url::Url;
 use yrs::types::DeepObservable;
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, Origin, ReadTxn, StateVector, Transact, TransactionMut, Update, WriteTxn};
+use yrs::{
+    Doc, Origin, ReadTxn, StateVector, Transact, TransactionMut, UndoManager, Update, WriteTxn,
+};
 
 use crate::access::Access;
 use crate::changes::{self, Change, Observation, Root};
@@ -129,6 +131,9 @@ pub(crate) struct Inner {
     /// While a batch is open, local updates are collected here instead of queued at once.
     pub(crate) batching: Arc<AtomicBool>,
     pub(crate) batched: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// While a batch is open, what takes its edits back. It watches the batch as it happens:
+    /// a deleted value is gone once its transaction ends, unless an undo manager kept it.
+    undo: Mutex<Option<UndoManager>>,
     pub(crate) status: StatusCell,
     pub(crate) ack: AckCell,
     /// Read when a session starts; tests shorten it.
@@ -382,6 +387,7 @@ impl Room {
             subscribers: Arc::new(Mutex::new(Vec::new())),
             batching: Arc::new(AtomicBool::new(false)),
             batched: Arc::new(Mutex::new(Vec::new())),
+            undo: Mutex::new(None),
             status: StatusCell::new(),
             ack: AckCell::new(),
             heartbeat: Mutex::new(crate::sync::HEARTBEAT),
@@ -488,11 +494,26 @@ impl Room {
     /// so the others see them in one transaction.
     pub fn begin_batch(&self) {
         lock(&self.inner.batched).clear();
+        *lock(&self.inner.undo) = Some(batch_undo(&self.doc()));
         self.inner.batching.store(true, Ordering::Relaxed);
+    }
+
+    /// Ends the batch opened by [`Room::begin_batch`] with its edits taken back: the room
+    /// holds what it held before the batch, and the server gets the batch and its undoing as
+    /// one update, which changes nothing there either.
+    pub fn abandon_batch(&self) {
+        // Taken out first: undoing is a transaction, and the room's observers must not find
+        // the lock held.
+        let undo = lock(&self.inner.undo).take();
+        if let Some(mut undo) = undo {
+            while undo.undo_blocking() {}
+        }
+        self.end_batch();
     }
 
     /// Ends the batch opened by [`Room::begin_batch`] and queues its merged update.
     pub fn end_batch(&self) {
+        lock(&self.inner.undo).take();
         self.inner.batching.store(false, Ordering::Relaxed);
         let updates = std::mem::take(&mut *lock(&self.inner.batched));
         if updates.is_empty() {
@@ -658,6 +679,42 @@ fn replay(records: Vec<Bytes>) -> Result<Doc, RoomError> {
     }
     Ok(doc)
 }
+
+/// An undo manager that gathers every local edit from now on into one step, over every root
+/// the model writes and any other root the document already holds.
+fn batch_undo(doc: &Doc) -> UndoManager {
+    let mut undo = UndoManager::with_options(yrs::undo::Options {
+        capture_timeout_millis: u64::MAX,
+        tracked_origins: [Origin::from(LOCAL_ORIGIN)].into(),
+        ..Default::default()
+    });
+    let roots = {
+        let mut txn = doc.transact_mut_with(REPLAY_ORIGIN);
+        let mut names: Vec<String> = txn.root_refs().map(|(name, _)| name.to_owned()).collect();
+        names.extend(MODEL_ROOTS.iter().map(|name| (*name).to_owned()));
+        names.sort();
+        names.dedup();
+        names
+            .iter()
+            .map(|name| txn.get_or_insert_map(name.as_str()))
+            .collect::<Vec<_>>()
+    };
+    for root in &roots {
+        undo.expand_scope(doc, root);
+    }
+    undo
+}
+
+/// The roots the catalogue model writes; a batch may create one the document lacks so far.
+const MODEL_ROOTS: [&str; 7] = [
+    model::CATALOGUES,
+    model::EVENTS,
+    model::ORIGINS,
+    model::COMMENTS,
+    model::REGISTRY,
+    model::META,
+    model::LINKS,
+];
 
 /// One update holding what every update holds, so the others see one transaction.
 fn merge(updates: &[Vec<u8>]) -> Option<Vec<u8>> {

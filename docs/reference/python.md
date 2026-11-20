@@ -29,7 +29,7 @@ import cocat_rs as cc
 | `project.close()` | stop syncing |
 | `project.status` | `offline`, `connecting`, `synced`, `unauthorized`, `no_access`, `too_large` |
 | `project.role`, `project.read_only` | your role in it |
-| `with project.transaction(): ...` | group many changes into one |
+| `with project.transaction(): ...` | group many changes into one; an error inside keeps none |
 
 ## Catalogues
 
