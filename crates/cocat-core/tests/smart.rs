@@ -493,3 +493,38 @@ fn a_search_of_the_public_catalogues_holds_only_its_picked_events_in_the_room() 
     catalogue(&doc, SMART, &uuids(&[2]), Some(rule));
     assert_eq!(event_uuids(&doc, SMART), uuids(&[2]));
 }
+
+#[test]
+fn an_unsaved_rule_previews_how_many_it_holds_and_the_first_ones() {
+    let doc = room();
+    catalogue(&doc, OTHER, &uuids(&[1, 2, 3]), None);
+    let txn = doc.transact();
+    let all = filter(json!({"and": []}));
+    let preview = model::rule_members_at(&txn, &all, Timestamp::now(), None).unwrap();
+    assert_eq!(preview.count, 3);
+    let firsts: Vec<String> = preview
+        .members
+        .iter()
+        .map(|member| match member {
+            Member::Event { record, .. } => record.uuid.clone(),
+            Member::Derived { .. } => panic!("no derived interval here"),
+        })
+        .collect();
+    assert_eq!(firsts, uuids(&[1, 2, 3]), "in time order");
+    let preview = model::rule_members_at(&txn, &all, Timestamp::now(), Some(1)).unwrap();
+    assert_eq!((preview.count, preview.members.len()), (3, 1));
+    let alice = json!({"filter": {"catalogue": OTHER}, "where": {"match": ["author", "alice"]}});
+    let preview = model::rule_members_at(&txn, &alice, Timestamp::now(), None).unwrap();
+    assert_eq!(preview.count, 2);
+    let merged = json!({"merge": {"all": true}, "gap": 60});
+    let preview = model::rule_members_at(&txn, &merged, Timestamp::now(), None).unwrap();
+    assert!(matches!(preview.members[..], [Member::Derived { .. }]));
+    let broken = json!({"filter": {"all": true}, "where": {"nonsense": 1}});
+    assert!(model::rule_members_at(&txn, &broken, Timestamp::now(), None).is_err());
+    drop(txn);
+    assert_eq!(
+        model::catalogue(&doc.transact(), OTHER).unwrap().rule,
+        None,
+        "nothing saved"
+    );
+}

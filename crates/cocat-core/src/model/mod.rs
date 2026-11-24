@@ -34,7 +34,8 @@ pub use copies::{Hop, copy_chain, set_copied_from};
 pub use links::{LINKS, Link, LinkError, NewLink, add_link, links, remove_link};
 pub use materialize::materialize;
 pub use members::{
-    Member, catalogue_events, catalogue_events_at, catalogue_members, catalogue_members_at,
+    Member, Preview, catalogue_events, catalogue_events_at, catalogue_members,
+    catalogue_members_at, rule_members_at,
 };
 pub use migrate::{Migration, migrate_v1};
 pub use provenance::{comment, create_origin, origin, set_comment};

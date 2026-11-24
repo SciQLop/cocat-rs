@@ -54,6 +54,36 @@ pub fn catalogue_members_at<T: ReadTxn>(
     Some(items.map(|items| items.iter().filter_map(|item| member(txn, item)).collect()))
 }
 
+/// What a rule would hold, before it is saved: how many members, and the first `limit` of
+/// them in time order (all with `None`). Only those are read out of the room, so counting a
+/// search over a big project stays cheap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Preview {
+    pub count: usize,
+    pub members: Vec<Member>,
+}
+
+/// The [`Preview`] of `rule` at `now`. The public catalogues are not in the room: a rule
+/// over them previews empty here.
+pub fn rule_members_at<T: ReadTxn>(
+    txn: &T,
+    rule: &Value,
+    now: Timestamp,
+    limit: Option<usize>,
+) -> Result<Preview, RuleError> {
+    let mut items = Evaluator::new(txn, now).set(&rules::parse(rule)?)?;
+    items.sort();
+    let members = items
+        .iter()
+        .take(limit.unwrap_or(usize::MAX))
+        .filter_map(|item| member(txn, item))
+        .collect();
+    Ok(Preview {
+        count: items.len(),
+        members,
+    })
+}
+
 /// The members of a catalogue that are events, in time order.
 pub fn catalogue_events<T: ReadTxn>(
     txn: &T,
