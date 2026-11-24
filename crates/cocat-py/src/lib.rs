@@ -3,6 +3,7 @@
 //! Everything that can be done without Python types happens in Rust; the Python wrapper
 //! (`cocat_rs/__init__.py`) adds the asyncio and listener plumbing that needs a loop.
 
+mod editor;
 mod rounds;
 mod server_errors;
 mod sharing;
@@ -25,6 +26,7 @@ use cocat_core::model::{
 };
 use cocat_core::time::Timestamp;
 use cocat_core::{csv_table, hpevent, query, tfcat, tscat_json, votable};
+use editor::{query_error, rows_to_python};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyLookupError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -417,8 +419,27 @@ fn catalogue_uuid(catalogue: &Bound<'_, PyAny>) -> Result<String> {
 fn search_rule(room: &ClientRoom, text: &str, source: Option<&str>) -> Result<Value> {
     let doc = room.doc();
     let txn = doc.transact();
-    let predicate = query::parse(text, &model::catalogue_names(&txn)).map_err(value_error)?;
+    let predicate = query::parse(text, &model::catalogue_names(&txn)).map_err(query_error)?;
     Ok(query::rule(&predicate, source))
+}
+
+/// The rule of the search `text` over all events, over the events of `source` (a
+/// `Catalogue` or a uuid), or with `public` over every public catalogue on the server.
+fn rule_of_search(
+    py: Python<'_>,
+    room: &ClientRoom,
+    text: &str,
+    source: Option<&Bound<'_, PyAny>>,
+    public: bool,
+) -> Result<Value> {
+    let source = source.map(catalogue_uuid).transpose()?;
+    match (public, source) {
+        (true, Some(_)) => Err(value_error(
+            "a search of the public catalogues takes no source catalogue",
+        )),
+        (true, None) => public_rule(py, room, text),
+        (false, source) => search_rule(room, text, source.as_deref()),
+    }
 }
 
 /// The rule searching the public catalogues, whose names `catalogue:` takes from the server.
@@ -435,7 +456,7 @@ fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
         .into_iter()
         .map(|catalogue| (catalogue.id, catalogue.name))
         .collect();
-    let predicate = query::parse(text, &names).map_err(value_error)?;
+    let predicate = query::parse(text, &names).map_err(query_error)?;
     Ok(query::public_rule(&predicate))
 }
 
@@ -736,10 +757,43 @@ impl Catalogue {
     }
 
     /// Makes this catalogue the search `text` over all events.
-    #[setter]
-    fn set_query(&self, text: &str) -> Result<()> {
+    #[setter(query)]
+    fn set_query_text(&self, text: &str) -> Result<()> {
         let rule = search_rule(&self.room, text, None)?;
         self.store_rule(Some(&rule))
+    }
+
+    /// Makes this catalogue the search `text` over all events, over the events of `source`
+    /// (a `Catalogue` or a uuid), or with `public=True` over every public catalogue.
+    #[pyo3(signature = (text, source=None, public=false))]
+    fn set_query(
+        &self,
+        py: Python<'_>,
+        text: &str,
+        source: Option<&Bound<'_, PyAny>>,
+        public: bool,
+    ) -> Result<()> {
+        let rule = rule_of_search(py, &self.room, text, source, public)?;
+        self.store_rule(Some(&rule))
+    }
+
+    /// The catalogue whose events its search goes through, or `None` when it searches all
+    /// events, the public catalogues (see `searches_public`), or has no search.
+    #[getter]
+    fn query_source(&self, py: Python<'_>) -> Result<Option<Py<Catalogue>>> {
+        let source =
+            self.summary()?
+                .rule
+                .and_then(|rule| match cocat_core::rules::parse(&rule).ok()? {
+                    cocat_core::rules::Set::Filter { filter, .. } => match *filter {
+                        cocat_core::rules::Set::Catalogue { catalogue } => Some(catalogue),
+                        _ => None,
+                    },
+                    _ => None,
+                });
+        source
+            .map(|uuid| Py::new(py, Catalogue::of(&self.room, &self.identity, &uuid)))
+            .transpose()
     }
 
     /// The events as a pandas DataFrame, a row each in time order (needs pandas).
@@ -1733,7 +1787,7 @@ impl Project {
             let doc = self.room.doc();
             let txn = doc.transact();
             let predicate =
-                query::parse(query, &model::catalogue_names(&txn)).map_err(value_error)?;
+                query::parse(query, &model::catalogue_names(&txn)).map_err(query_error)?;
             model::search(&txn, &predicate, now()?).map_err(value_error)?
         };
         records
@@ -1752,6 +1806,72 @@ impl Project {
         event_arrays_of(py, &[], &found, &[], true)
     }
 
+    /// The rule of the search `text`, its `catalogue:` names read as this project names its
+    /// catalogues: over all events, over the events of `source` (a `Catalogue` or a uuid),
+    /// or with `public=True` over every public catalogue. Nothing is saved.
+    #[pyo3(signature = (text, source=None, public=false))]
+    fn parse_query(
+        &self,
+        py: Python<'_>,
+        text: &str,
+        source: Option<&Bound<'_, PyAny>>,
+        public: bool,
+    ) -> Result<Py<PyAny>> {
+        to_python(py, &rule_of_search(py, &self.room, text, source, public)?)
+    }
+
+    /// What a smart catalogue with this search (text, as `parse_query` reads it) or rule (a
+    /// dict) would hold, saving nothing: the arrays `Catalogue.event_arrays` gives for the
+    /// first `limit` members in time order (all with `None`), plus `count`, how many there
+    /// are in all. Only the rows asked for are read out, so counting a big project is cheap.
+    #[pyo3(signature = (search, source=None, public=false, limit=None, attributes=false))]
+    fn preview(
+        &self,
+        py: Python<'_>,
+        search: &Bound<'_, PyAny>,
+        source: Option<&Bound<'_, PyAny>>,
+        public: bool,
+        limit: Option<usize>,
+        attributes: bool,
+    ) -> Result<Py<PyAny>> {
+        let rule = match search.extract::<String>() {
+            Ok(text) => rule_of_search(py, &self.room, &text, source, public)?,
+            Err(_) if source.is_some() || public => {
+                return Err(value_error(
+                    "a rule names what it searches: give source or public only with a search text",
+                ));
+            }
+            Err(_) => to_json(search)?,
+        };
+        let at = now()?;
+        let room = &self.room;
+        let (preview, dates) = py.detach(|| {
+            let doc = room.doc();
+            let txn = doc.transact();
+            let preview = model::rule_members_at(&txn, &rule, at, limit);
+            (preview, date_keys(&txn))
+        });
+        let preview = preview.map_err(value_error)?;
+        let mut found = match public_predicate(&rule) {
+            Some(predicate) => public_events(py, &self.room, PublicQuery::Predicate(&predicate))?
+                .ok_or_else(|| PyRuntimeError::new_err(NO_PUBLIC_SERVER))?,
+            None => Vec::new(),
+        };
+        let count = preview.count + found.len();
+        found.truncate(limit.map_or(usize::MAX, |limit| limit - preview.members.len()));
+        let arrays = event_arrays_of(py, &preview.members, &found, &dates, attributes)?;
+        arrays.bind(py).set_item("count", count)?;
+        Ok(arrays)
+    }
+
+    /// The rows of a rule's search, `(any, rows)`, its catalogues named as this project
+    /// names them; `None` when it is not a flat search (see `cocat_rs.builder_rows`).
+    fn builder_rows(&self, py: Python<'_>, rule: &Bound<'_, PyAny>) -> Result<Py<PyAny>> {
+        let rule = to_json(rule)?;
+        let names = model::catalogue_names(&self.room.doc().transact());
+        rows_to_python(py, query::builder::rule_rows(&rule, &names))
+    }
+
     /// A smart catalogue whose rule is the search `query` over all events, over the events
     /// of `source` (a `Catalogue` or a uuid), or with `public=True` over every public
     /// catalogue on the server.
@@ -1764,11 +1884,7 @@ impl Project {
         source: Option<&Bound<'_, PyAny>>,
         public: bool,
     ) -> Result<Py<Catalogue>> {
-        let source = source.map(catalogue_uuid).transpose()?;
-        let rule = match public {
-            true => public_rule(py, &self.room, query)?,
-            false => search_rule(&self.room, query, source.as_deref())?,
-        };
+        let rule = rule_of_search(py, &self.room, query, source, public)?;
         let catalogue = NewCatalogue {
             uuid: uuid_argument(None)?,
             name,
@@ -2582,7 +2698,7 @@ fn forward_logs_to_python(py: Python<'_>) -> PyResult<()> {
 /// by uuid here: there is no project to look names up in.
 #[pyfunction]
 fn parse_query(py: Python<'_>, text: &str) -> Result<Py<PyAny>> {
-    let predicate = query::parse(text, &[]).map_err(value_error)?;
+    let predicate = query::parse(text, &[]).map_err(query_error)?;
     to_python(py, &query::rule(&predicate, None))
 }
 
@@ -2621,6 +2737,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     server_errors::register(module)?;
     sharing::register(module)?;
     rounds::register(module)?;
+    editor::register(module)?;
     submissions::register(module)?;
     sign_in::register(module)?;
     Ok(())

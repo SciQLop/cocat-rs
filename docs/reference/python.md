@@ -66,7 +66,23 @@ import cocat_rs as cc
 | `project.search("tag:shock confidence:>=0.8")` | matching events, in time order |
 | `project.create_smart_catalogue("name", "query")` | a catalogue that updates itself |
 | `catalogue.query` | a smart catalogue's search |
+| `catalogue.set_query("query", source=other)` | search the events of another catalogue; `catalogue.query_source` reads it back |
+| `catalogue.rule = None` | remove the search: the catalogue keeps the events it lists |
 | `catalogue.materialize("name")` | a frozen copy of a smart catalogue |
+| `project.parse_query("query", source=None)` | the rule of a search, catalogue names read in this project |
+| `project.preview("query", limit=50)` | what a search would hold, nothing saved: arrays of the first 50, and `count` |
+
+### Building a search from rows
+
+What a search editor needs, in the same words as the browser's builder:
+
+| Call | Gives |
+|---|---|
+| `cc.query_fields()` | each field's `name`, `kind` and `label` |
+| `cc.query_tests("time")` | the tests a kind offers: `test`, `label`, `needs_value` |
+| `cc.clause("confidence", "at_least", "0.8")` | `"confidence:>=0.8"` |
+| `cc.search_text(clauses, any=True)` | the rows joined with OR (all of them: with spaces) |
+| `project.builder_rows(rule)` | `(any, rows)` back from a rule, or `None` when the search is too rich for rows |
 
 ## History
 
@@ -134,5 +150,6 @@ import cocat_rs as cc
 | `cc.NotSignedIn` | run `cc.login()` |
 | `cc.Forbidden` | not allowed: not a member, or not the right role |
 | `cc.NotFound` | no such catalogue, event or project |
+| `cc.QueryError` | a search that does not read; `position`, `length`, `message` and `suggestion` say where and what was meant |
 | `cc.Conflict` | the server refused it in the current state, for example copying an empty public catalogue |
 | `RuntimeError` "read-only" | you are a viewer here |

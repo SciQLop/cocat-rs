@@ -195,6 +195,17 @@ strong = project.search("tag:shock confidence:>=0.8 NOT status:rejected")
 project.create_smart_catalogue("Strong shocks", "tag:shock confidence:>=0.8")
 ```
 
+To see what a search would hold before saving it, preview it. It counts every match and
+gives the first ones as arrays, so it stays fast on a big project:
+
+```python
+found = project.preview("tag:shock confidence:>=0.8", limit=50)
+print(found["count"], "events match")
+```
+
+A search that does not read raises `cc.QueryError`. Its `position` and `length` say which
+characters are wrong, and `suggestion` names the field you likely meant.
+
 ## Import and export files
 
 ```python

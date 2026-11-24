@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 Status = Literal["preliminary", "confirmed", "reviewed", "final", "rejected", "deleted"]
 # unauthorized: sign in again. no_access: this account is no longer in the project.
@@ -9,6 +9,14 @@ Vertex = tuple[datetime, float]
 ShapeAxis = tuple[str, str]
 
 class NotFound(LookupError, RuntimeError): ...
+
+class QueryError(ValueError):
+    """A search that does not read."""
+
+    position: int  # where, a character index from 0
+    length: int | None  # how many characters the wrong part spans, when known
+    message: str  # what is wrong, without the position
+    suggestion: str | None  # the field likely meant
 
 class ServerError(ValueError):
     status: int
@@ -33,6 +41,11 @@ class Catalogue:
     @property
     def searches_public(self) -> bool: ...
     query: str | None
+    def set_query(
+        self, text: str, source: Catalogue | str | None = None, public: bool = False
+    ) -> None: ...
+    @property
+    def query_source(self) -> Catalogue | None: ...
     shape_axis: ShapeAxis | None
     events: set[Event]
     @property
@@ -124,6 +137,18 @@ class Project:
     def event(self, uuid: str) -> Event: ...
     def search(self, query: str) -> list[Event]: ...
     def search_public(self, query: str) -> dict[str, Any]: ...
+    def parse_query(
+        self, text: str, source: Catalogue | str | None = None, public: bool = False
+    ) -> dict[str, Any]: ...
+    def preview(
+        self,
+        search: str | dict[str, Any],
+        source: Catalogue | str | None = None,
+        public: bool = False,
+        limit: int | None = None,
+        attributes: bool = False,
+    ) -> dict[str, Any]: ...
+    def builder_rows(self, rule: dict[str, Any]) -> tuple[bool, list[BuilderRow]] | None: ...
     def create_smart_catalogue(
         self,
         name: str,
@@ -306,3 +331,33 @@ def tfcat_json(
 ) -> str: ...
 def rule_from_tscat(predicate: dict[str, Any]) -> dict[str, Any]: ...
 def parse_query(text: str) -> dict[str, Any]: ...
+
+FieldKind = Literal[
+    "text", "number", "time", "duration", "choice", "tags", "catalogue", "attribute", "presence"
+]
+Test = Literal[
+    "contains", "is", "is_not", "matches", "more_than", "at_least", "less_than", "at_most",
+    "on", "after", "before", "in_last_days", "is_set", "is_not_set",
+]
+
+class QueryField(TypedDict, total=False):
+    name: str
+    kind: FieldKind
+    label: str
+    values: list[str]  # only for a "choice"
+
+class QueryTest(TypedDict):
+    test: Test
+    label: str
+    needs_value: bool
+
+class BuilderRow(TypedDict):
+    field: str
+    test: Test
+    value: str
+
+def query_fields() -> list[QueryField]: ...
+def query_tests(kind: FieldKind) -> list[QueryTest]: ...
+def clause(field: str, test: Test, value: str = "") -> str: ...
+def search_text(clauses: list[str], any: bool = False) -> str: ...
+def builder_rows(rule: dict[str, Any]) -> tuple[bool, list[BuilderRow]] | None: ...
