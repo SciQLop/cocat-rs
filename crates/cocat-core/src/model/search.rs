@@ -1,14 +1,18 @@
 //! Searching events with a predicate, without a smart catalogue: the events of the room
 //! that match, or a test of one table row at a time.
 
-use serde_json::Value;
-use yrs::ReadTxn;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use super::members::{Evaluator, item_field};
-use super::read::event;
-use super::{ATTRIBUTE_PREFIX, EventRecord};
+use serde_json::{Map, Value};
+use yrs::{Map as _, Out, ReadTxn};
+
+use super::members::{Evaluator, event_field, item_field};
+use super::read::{catalogue_names, event, existing_tags, is_deleted};
+use super::registry::attribute_types;
+use super::{ATTRIBUTE_PREFIX, EVENTS, EventRecord, Status, origin};
+use crate::query::search_box::{Shown, Vocabulary, Words};
 use crate::rules::intervals::{Item, Source};
-use crate::rules::{self, ANY_TEXT, Lookups, Predicate, RuleError};
+use crate::rules::{self, ANY_TEXT, Lookups, Predicate, RuleError, Set};
 use crate::time::Timestamp;
 
 /// The events not in the trash that match `predicate` at `now`, in time order.
@@ -56,6 +60,132 @@ impl Search {
         };
         let field = |name: &str| item_field(txn, &item, name);
         rules::test(&self.predicate, uuid, &field, &self.lookups)
+    }
+}
+
+/// One row of a table to test: an event of the room, or an interval a rule derived, which
+/// has only its range (nanoseconds).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Probe {
+    Event(String),
+    Interval { start: i64, stop: i64 },
+}
+
+impl Search {
+    /// Whether each probe matches, as a smart catalogue over all events would hold it: an
+    /// event in the trash or not in the room never does. Each event map is looked up once.
+    pub fn mask<T: ReadTxn>(&self, txn: &T, probes: &[Probe]) -> Vec<bool> {
+        let events = txn.get_map(EVENTS);
+        let event_matches = |uuid: &str| {
+            let Some(Out::YMap(map)) = events.as_ref().and_then(|events| events.get(txn, uuid))
+            else {
+                return false;
+            };
+            let field = |name: &str| event_field(txn, uuid, &map, name);
+            !is_deleted(txn, &map)
+                && rules::test(&self.predicate, Some(uuid), &field, &self.lookups)
+        };
+        probes
+            .iter()
+            .map(|probe| match probe {
+                Probe::Event(uuid) => event_matches(uuid),
+                Probe::Interval { start, stop } => self.matches(txn, None, *start, *stop),
+            })
+            .collect()
+    }
+}
+
+/// Whether each probe matches `predicate` at `now`, as a smart catalogue with this search
+/// would hold it: over all events, or among the members of catalogue `source` (one missing
+/// or in the trash holds nothing).
+pub fn search_mask<T: ReadTxn>(
+    txn: &T,
+    predicate: &Predicate,
+    source: Option<&str>,
+    now: Timestamp,
+    probes: &[Probe],
+) -> Result<Vec<bool>, RuleError> {
+    let mut mask = Search::new(txn, predicate, now)?.mask(txn, probes);
+    if let Some(source) = source {
+        let catalogue = Set::Catalogue {
+            catalogue: source.to_owned(),
+        };
+        let items = Evaluator::new(txn, now).set(&catalogue)?;
+        let mut events = HashSet::new();
+        let mut intervals = HashSet::new();
+        for item in &items {
+            match &item.source {
+                Source::Event(uuid) => events.insert(uuid.as_str()),
+                Source::Derived(_) => intervals.insert((item.start, item.stop)),
+            };
+        }
+        for (kept, probe) in mask.iter_mut().zip(probes) {
+            *kept &= match probe {
+                Probe::Event(uuid) => events.contains(uuid.as_str()),
+                Probe::Interval { start, stop } => intervals.contains(&(*start, *stop)),
+            };
+        }
+    }
+    Ok(mask)
+}
+
+/// Whether each probe passes the table's plain-words filter ([`Words`]), read as the table
+/// shows it: an event in the trash too; its author, else the name of what made it.
+pub fn words_mask<T: ReadTxn>(txn: &T, text: &str, probes: &[Probe]) -> Vec<bool> {
+    let words = Words::new(text);
+    let mut origins: HashMap<String, Option<String>> = HashMap::new();
+    let mut origin_name = |id: &str| {
+        origins
+            .entry(id.to_owned())
+            .or_insert_with(|| origin(txn, id).map(|found| found.name))
+            .clone()
+    };
+    let nothing = Map::new();
+    probes
+        .iter()
+        .map(|probe| match probe {
+            Probe::Event(uuid) => event(txn, uuid).is_some_and(|record| {
+                let author = record
+                    .author
+                    .clone()
+                    .or_else(|| origin_name(record.origin.as_deref()?));
+                words.matches(&Shown {
+                    start: record.start.unix_nanos().unwrap_or_default(),
+                    tags: &record.tags,
+                    status: record.status,
+                    author: author.as_deref(),
+                    attributes: &record.attributes,
+                })
+            }),
+            Probe::Interval { start, .. } => words.matches(&Shown {
+                start: *start,
+                tags: &[],
+                status: Status::default(),
+                author: None,
+                attributes: &nothing,
+            }),
+        })
+        .collect()
+}
+
+/// What the room holds that a search can name, for completions: tags, the authors of live
+/// events, catalogue names and attribute keys, each sorted.
+pub fn vocabulary<T: ReadTxn>(txn: &T) -> Vocabulary {
+    let has_author = Predicate::Has("author".to_owned());
+    let authors: BTreeSet<String> = search(txn, &has_author, Timestamp::now())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|event| event.author)
+        .collect();
+    let catalogues: BTreeSet<String> = catalogue_names(txn)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    Vocabulary {
+        tags: existing_tags(txn),
+        authors: authors.into_iter().collect(),
+        catalogues: catalogues.into_iter().collect(),
+        attributes: attribute_types(txn).into_keys().collect(),
     }
 }
 

@@ -528,3 +528,82 @@ fn an_unsaved_rule_previews_how_many_it_holds_and_the_first_ones() {
         "nothing saved"
     );
 }
+
+fn probes(numbers: &[u32]) -> Vec<model::Probe> {
+    numbers
+        .iter()
+        .map(|n| model::Probe::Event(uuid(*n)))
+        .collect()
+}
+
+fn mask(predicate: &str, source: Option<&str>, probes: &[model::Probe]) -> Vec<bool> {
+    let doc = room();
+    catalogue(&doc, OTHER, &uuids(&[2, 3]), None);
+    let txn = doc.transact();
+    let names = model::catalogue_names(&txn);
+    let predicate = cocat_core::query::parse(predicate, &names).unwrap();
+    model::search_mask(&txn, &predicate, source, Timestamp::now(), probes).unwrap()
+}
+
+#[test]
+fn a_search_mask_says_what_a_smart_catalogue_with_that_search_would_hold() {
+    let shown = probes(&[3, 1, 4, 2, 99]);
+    assert_eq!(
+        mask("author:alice", None, &shown),
+        [true, true, false, false, false],
+        "aligned to the probes; an event in the trash or not in the room never matches"
+    );
+    assert_eq!(
+        mask("author:alice", Some(OTHER), &shown),
+        [true, false, false, false, false],
+        "with a source, only its members"
+    );
+    assert_eq!(mask("", Some("nowhere"), &shown), [false; 5]);
+    let interval = model::Probe::Interval {
+        start: BASE + 15 * SECOND,
+        stop: BASE + 16 * SECOND,
+    };
+    let later = format!("start:>={}", at(12).rfc3339().unwrap());
+    assert_eq!(
+        mask(&later, None, std::slice::from_ref(&interval)),
+        [true],
+        "a derived interval is tested by its range"
+    );
+    assert_eq!(mask("tag:t1", None, &[interval]), [false]);
+}
+
+#[test]
+fn the_words_filter_reads_what_the_table_shows() {
+    let doc = room();
+    let txn = doc.transact();
+    let shown = probes(&[1, 2, 3, 4, 99]);
+    let words = |text: &str| model::words_mask(&txn, text, &shown);
+    assert_eq!(words("ALICE"), [true, false, true, false, false]);
+    assert_eq!(words("t2"), [false, true, false, false, false]);
+    assert_eq!(words("rejected ev-3"), [false, false, true, false, false]);
+    assert_eq!(
+        words("2025-01-31 10:00:2"),
+        [false, true, false, false, false]
+    );
+    assert_eq!(
+        words(" "),
+        [true, true, true, true, false],
+        "the trash is shown too"
+    );
+    let interval = model::Probe::Interval {
+        start: BASE,
+        stop: BASE + SECOND,
+    };
+    assert_eq!(model::words_mask(&txn, "2025-01-31", &[interval]), [true]);
+}
+
+#[test]
+fn the_vocabulary_is_what_a_search_can_name() {
+    let doc = room();
+    catalogue(&doc, OTHER, &[], None);
+    let vocabulary = model::vocabulary(&doc.transact());
+    assert_eq!(vocabulary.authors, ["alice", "bob"]);
+    assert_eq!(vocabulary.catalogues, [OTHER]);
+    assert_eq!(vocabulary.attributes, ["label", "q"]);
+    assert!(vocabulary.tags.contains(&"t1".to_owned()));
+}

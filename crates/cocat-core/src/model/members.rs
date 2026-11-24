@@ -154,7 +154,7 @@ impl<'t, T: ReadTxn> Evaluator<'t, T> {
         }
     }
 
-    fn set(&mut self, set: &Set) -> Result<Vec<Item>, RuleError> {
+    pub(super) fn set(&mut self, set: &Set) -> Result<Vec<Item>, RuleError> {
         Ok(match set {
             Set::All { .. } => all(self.txn),
             Set::Public { .. } => Vec::new(),
@@ -306,7 +306,12 @@ pub(super) fn item_field<T: ReadTxn>(txn: &T, item: &Item, name: &str) -> Option
 
 /// A field of an event as a predicate sees it: times as integer nanoseconds, the status by
 /// name (`confirmed` when unset), attributes under their `#key`.
-fn event_field<T: ReadTxn>(txn: &T, uuid: &str, map: &MapRef, name: &str) -> Option<Value> {
+pub(super) fn event_field<T: ReadTxn>(
+    txn: &T,
+    uuid: &str,
+    map: &MapRef,
+    name: &str,
+) -> Option<Value> {
     let stored = get(map, txn, name);
     match name {
         "uuid" => Some(uuid.into()),

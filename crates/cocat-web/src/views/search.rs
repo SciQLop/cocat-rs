@@ -516,24 +516,7 @@ pub fn SearchBuilder(
 
 /// What the project holds that a search can name: read when the completions open.
 fn vocabulary(room: &Room) -> Vocabulary {
-    room.read(|txn| {
-        let has_author = cocat_core::rules::Predicate::Has("author".to_owned());
-        let now = cocat_core::time::Timestamp::now();
-        let authors: std::collections::BTreeSet<String> = model::search(txn, &has_author, now)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|event| event.author)
-            .collect();
-        Vocabulary {
-            tags: model::existing_tags(txn),
-            authors: authors.into_iter().collect(),
-            catalogues: model::catalogue_names(txn)
-                .into_iter()
-                .map(|(_, name)| name)
-                .collect(),
-            attributes: model::attribute_types(txn).into_keys().collect(),
-        }
-    })
+    room.read(|txn| model::vocabulary(txn))
 }
 
 /// The search box: it suggests fields and the project's own values as one types, and holds
