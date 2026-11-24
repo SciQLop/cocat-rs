@@ -6,6 +6,7 @@
 //! Catalogues are named in a query and kept by uuid in a rule, so reading and printing take
 //! the room's catalogues as `(uuid, name)` pairs.
 
+pub mod builder;
 mod grammar;
 mod meaning;
 mod print;
@@ -17,12 +18,15 @@ use crate::rules::{self, Predicate, Set};
 
 pub use print::print;
 
-/// A query that does not read: where (a character index from 0) and what is wrong.
+/// A query that does not read: where (a character index from 0), how many characters the
+/// wrong part spans when known, what is wrong, and the field that was likely meant.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{message} (at character {})", .position + 1)]
 pub struct QueryError {
     pub position: usize,
+    pub length: Option<usize>,
     pub message: String,
+    pub suggestion: Option<String>,
 }
 
 impl QueryError {
@@ -31,7 +35,17 @@ impl QueryError {
         let at = at.min(text.len());
         Self {
             position: text[..at].chars().count(),
+            length: None,
             message,
+            suggestion: None,
+        }
+    }
+
+    /// The error on bytes `range` of `text`.
+    fn spanning(text: &str, range: &std::ops::Range<usize>, message: String) -> Self {
+        Self {
+            length: text.get(range.clone()).map(|part| part.chars().count()),
+            ..Self::at(text, range.start, message)
         }
     }
 }
@@ -56,6 +70,40 @@ pub enum Kind {
     Attribute,
     /// Only `_exists_:` tests it.
     Presence,
+}
+
+/// Every kind of field, in no particular order.
+pub const KINDS: [Kind; 9] = [
+    Kind::Text,
+    Kind::Number,
+    Kind::Time,
+    Kind::Duration,
+    Kind::Enum(&STATUSES),
+    Kind::Tags,
+    Kind::Catalogue,
+    Kind::Attribute,
+    Kind::Presence,
+];
+
+impl Kind {
+    /// The name scripts use for it; the one set of fixed values, the statuses, is `choice`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Text => "text",
+            Kind::Number => "number",
+            Kind::Time => "time",
+            Kind::Duration => "duration",
+            Kind::Enum(_) => "choice",
+            Kind::Tags => "tags",
+            Kind::Catalogue => "catalogue",
+            Kind::Attribute => "attribute",
+            Kind::Presence => "presence",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Kind> {
+        KINDS.into_iter().find(|kind| kind.name() == name)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

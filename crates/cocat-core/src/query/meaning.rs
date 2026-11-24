@@ -29,7 +29,7 @@ struct Meaning<'q> {
 
 impl Meaning<'_> {
     fn error(&self, at: &Range<usize>, message: String) -> QueryError {
-        QueryError::at(self.text, at.start, message)
+        QueryError::spanning(self.text, at, message)
     }
 
     fn of(&self, tree: &Ast) -> Result<Predicate> {
@@ -48,7 +48,13 @@ impl Meaning<'_> {
     }
 
     fn resolve(&self, name: &Name) -> Result<(String, Kind)> {
-        resolve(&name.text).ok_or_else(|| self.error(&name.at, unknown_field(&name.text)))
+        resolve(&name.text).ok_or_else(|| {
+            let closest = closest_field(&name.text);
+            QueryError {
+                suggestion: Some(closest.to_owned()),
+                ..self.error(&name.at, unknown_field(&name.text, closest))
+            }
+        })
     }
 
     /// Present; for `catalogue`, listed by some catalogue.
@@ -271,15 +277,17 @@ pub fn contains(field: String, text: &str) -> Predicate {
     Predicate::Match(field, format!("(?i){}", regex::escape(text)))
 }
 
-fn unknown_field(name: &str) -> String {
-    let closest = FIELDS
+/// The field whose name is closest to `name`.
+fn closest_field(name: &str) -> &'static str {
+    FIELDS
         .iter()
         .map(|field| field.name)
-        .min_by_key(|known| strsim::levenshtein(name, known));
-    match closest {
-        Some(closest) => format!("there is no field “{name}”: did you mean “{closest}”?"),
-        None => format!("there is no field “{name}”"),
-    }
+        .min_by_key(|known| strsim::levenshtein(name, known))
+        .unwrap_or(FIELDS[0].name)
+}
+
+fn unknown_field(name: &str, closest: &str) -> String {
+    format!("there is no field “{name}”: did you mean “{closest}”?")
 }
 
 fn bad_time(text: &str) -> String {

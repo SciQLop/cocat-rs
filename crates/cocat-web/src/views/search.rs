@@ -2,6 +2,7 @@
 //! into the open one, and the builder that writes a search from rows.
 
 use cocat_core::model;
+use cocat_core::query::builder::{Test, clause, field_label, label, search_text, tests};
 use cocat_core::query::{self, FIELDS, Kind};
 use leptos::prelude::*;
 use serde_json::Value;
@@ -9,10 +10,7 @@ use serde_json::Value;
 use crate::edit;
 use crate::public_events::names;
 use crate::route::Route;
-use crate::search::{
-    Choice, Completion, Piece, Query, Side, Vocabulary, accept, choices, clause, complete, label,
-    needs_value, pieces, search_text,
-};
+use crate::search::{Completion, Piece, Query, Side, Vocabulary, accept, complete, pieces};
 use crate::state::Room;
 use crate::views::controls::{Error, commit, error_line};
 use crate::views::projects::Projects;
@@ -355,7 +353,7 @@ fn SideSwitch(boxed: Boxed, scopes: Signal<Scopes>, disabled: bool) -> impl Into
 struct Condition {
     id: usize,
     field: String,
-    choice: Choice,
+    choice: Test,
     value: String,
 }
 
@@ -364,14 +362,14 @@ impl Condition {
         let field = "tag".to_owned();
         Self {
             id,
-            choice: choices(kind(&field))[0],
+            choice: tests(kind(&field))[0],
             field,
             value: String::new(),
         }
     }
 
     fn text(&self) -> String {
-        let complete = !needs_value(self.choice) || !self.value.trim().is_empty();
+        let complete = !self.choice.needs_value() || !self.value.trim().is_empty();
         match complete {
             true => clause(&self.field, self.choice, &self.value),
             false => String::new(),
@@ -381,32 +379,6 @@ impl Condition {
 
 fn kind(field: &str) -> Kind {
     query::kind_of(field).unwrap_or(Kind::Text)
-}
-
-/// How a field reads in the builder's menu.
-fn field_label(field: &str) -> String {
-    match field {
-        "start" => "Start".into(),
-        "stop" => "Stop".into(),
-        "duration" => "Duration".into(),
-        "tag" => "Tag".into(),
-        "status" => "Status".into(),
-        "confidence" => "Confidence".into(),
-        "author" => "Author".into(),
-        "catalogue" => "Catalogue".into(),
-        "created" => "Added".into(),
-        "origin" => "Made by".into(),
-        "source_id" => "Source id".into(),
-        "product" => "Product".into(),
-        "start_err" => "Start uncertainty (s)".into(),
-        "stop_err" => "Stop uncertainty (s)".into(),
-        "uuid" => "Event id".into(),
-        "shape" => "Shape".into(),
-        other => match other.strip_prefix('#') {
-            Some(key) => format!("{key} (attribute)"),
-            None => other.into(),
-        },
-    }
 }
 
 /// Rows of field, test and value that write a search into the box.
@@ -448,7 +420,7 @@ pub fn SearchBuilder(
         let current =
             move || conditions.with(|all| all.iter().find(|found| found.id == id).cloned());
         let field = move || current().map(|found| found.field).unwrap_or_default();
-        let choice = move || current().map_or(Choice::Is, |found| found.choice);
+        let choice = move || current().map_or(Test::Is, |found| found.choice);
         let value = move || current().map(|found| found.value).unwrap_or_default();
         let catalogues = catalogues.clone();
         view! {
@@ -456,7 +428,7 @@ pub fn SearchBuilder(
                 <select aria-label="Field" on:change=move |event| {
                     let picked = event_target_value(&event);
                     update(&|found| {
-                        found.choice = choices(kind(&picked))[0];
+                        found.choice = tests(kind(&picked))[0];
                         found.field = picked.clone();
                         found.value.clear();
                     });
@@ -471,9 +443,9 @@ pub fn SearchBuilder(
                     view! {
                         <select aria-label="Test" on:change=move |event| {
                             let index: usize = event_target_value(&event).parse().unwrap_or(0);
-                            update(&|found| found.choice = choices(kind)[index]);
+                            update(&|found| found.choice = tests(kind)[index]);
                         }>
-                            {choices(kind).iter().enumerate().map(|(index, &option)| view! {
+                            {tests(kind).iter().enumerate().map(|(index, &option)| view! {
                                 <option value=index.to_string() selected=option == choice()>{label(kind, option)}</option>
                             }).collect_view()}
                         </select>
@@ -483,7 +455,7 @@ pub fn SearchBuilder(
                     let catalogues = catalogues.clone();
                     let (kind, choice) = (kind(&field()), choice());
                     let set = move |event| update(&|found| found.value = event_target_value(&event));
-                    needs_value(choice).then(|| match (kind, choice) {
+                    choice.needs_value().then(|| match (kind, choice) {
                         (Kind::Enum(values), _) => view! {
                             <select aria-label="Value" on:change=set>
                                 <option value="">"…"</option>
@@ -500,7 +472,7 @@ pub fn SearchBuilder(
                                 }).collect_view()}
                             </select>
                         }.into_any(),
-                        (Kind::Time, Choice::InLastDays) => view! {
+                        (Kind::Time, Test::InLastDays) => view! {
                             <input type="number" min="1" aria-label="Days" placeholder="days" prop:value=value on:input=set/>
                         }.into_any(),
                         (Kind::Time, _) => view! {

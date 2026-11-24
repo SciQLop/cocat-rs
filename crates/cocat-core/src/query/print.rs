@@ -91,23 +91,29 @@ impl Printer<'_> {
 
     /// `start:2015` for the bounds a year, a month or a day reads into.
     fn span(&self, first: &Predicate, second: &Predicate) -> Option<String> {
-        let (Predicate::Cmp(field, Op::Ge, low), Predicate::Cmp(other, Op::Lt, high)) =
-            (first, second)
-        else {
-            return None;
-        };
-        let (name, kind) = named(field)?;
-        if field != other || kind != Kind::Time {
-            return None;
-        }
-        let (low, high) = (low.as_i64()?, high.as_i64()?);
-        let date = Timestamp::from_unix_nanos(low)?.rfc3339().ok()?;
-        let text = [4, 7, 10]
-            .into_iter()
-            .filter_map(|length| date.get(..length))
-            .find(|text| span(text) == Some(Time::Span(low, high)))?;
+        let (name, text) = span_of(first, second)?;
         Some(format!("{name}:{text}"))
     }
+}
+
+/// The field and the year, month or day (`2015`, `2015-03`, `2015-03-01`) whose bounds
+/// `first` and `second` are.
+pub(super) fn span_of<'p>(first: &'p Predicate, second: &Predicate) -> Option<(&'p str, String)> {
+    let (Predicate::Cmp(field, Op::Ge, low), Predicate::Cmp(other, Op::Lt, high)) = (first, second)
+    else {
+        return None;
+    };
+    let (name, kind) = named(field)?;
+    if field != other || kind != Kind::Time {
+        return None;
+    }
+    let (low, high) = (low.as_i64()?, high.as_i64()?);
+    let date = Timestamp::from_unix_nanos(low)?.rfc3339().ok()?;
+    let text = [4, 7, 10]
+        .into_iter()
+        .filter_map(|length| date.get(..length))
+        .find(|text| span(text) == Some(Time::Span(low, high)))?;
+    Some((name, text.to_owned()))
 }
 
 fn joined(parts: impl Iterator<Item = Option<String>>, joint: &str) -> Option<String> {
@@ -152,7 +158,7 @@ fn time_text(op: Op, value: &Value) -> Option<String> {
     }
 }
 
-fn duration_text(seconds: f64) -> String {
+pub(super) fn duration_text(seconds: f64) -> String {
     let unit = DURATION_UNITS
         .iter()
         .find(|(_, size)| seconds != 0.0 && (seconds / size).fract() == 0.0);
@@ -164,14 +170,19 @@ fn duration_text(seconds: f64) -> String {
 
 /// The contains form, `field:text`, for the pattern a query writes for it; else `/regex/`.
 fn pattern_text(pattern: &str) -> String {
-    let contained = pattern
-        .strip_prefix("(?i)")
-        .map(unescaped)
-        .filter(|text| pattern == format!("(?i){}", regex::escape(text)));
-    match contained {
+    match contained(pattern) {
         Some(text) => value_text(&text),
         None => format!("/{}/", pattern.replace('/', "\\/")),
     }
+}
+
+/// The text a contains pattern (`(?i)` and the text escaped) looks for, or `None` for any
+/// other pattern.
+pub(super) fn contained(pattern: &str) -> Option<String> {
+    pattern
+        .strip_prefix("(?i)")
+        .map(unescaped)
+        .filter(|text| pattern == format!("(?i){}", regex::escape(text)))
 }
 
 /// `regex::escape` undone: a backslash keeps the character after it.
@@ -197,7 +208,7 @@ fn word_text(word: &str) -> String {
 
 /// Quoted unless it reads alone as the same value: not a number, an operator, `*` or a
 /// keyword.
-fn value_text(value: &str) -> String {
+pub(super) fn value_text(value: &str) -> String {
     let bare = !value.is_empty()
         && value
             .chars()
