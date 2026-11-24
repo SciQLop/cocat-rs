@@ -1,5 +1,5 @@
 //! What an editor can do to the catalogue on screen: add an event, edit the rule,
-//! freeze it, move it to the trash.
+//! freeze it, remove its search, move it to the trash.
 
 use cocat_core::model;
 use cocat_core::time::Timestamp;
@@ -26,6 +26,7 @@ pub enum Form {
     Closed,
     Rule,
     Freeze,
+    RemoveSearch,
     Submit,
     Update,
     Propose,
@@ -114,6 +115,7 @@ pub fn Actions(
                         <button type="button" on:click=move |_| toggle(Form::Rule)>"Edit rule as JSON…"</button>
                         <Show when=move || smart.get() == Some(true)>
                             <button type="button" on:click=move |_| toggle(Form::Freeze)>"Freeze…"</button>
+                            <button type="button" on:click=move |_| toggle(Form::RemoveSearch)>"Remove the search…"</button>
                         </Show>
                     })}
                     <button type="button" on:click=move |_| toggle(Form::Export)>"Export…"</button>
@@ -217,6 +219,33 @@ pub fn Freeze(uuid: String, form: RwSignal<Form>) -> impl IntoView {
         <div class="inline-form">
             <p class="quiet">"A normal catalogue holding the events this one picks now. Joined intervals become events you can edit. This smart catalogue stays as it is."</p>
             <NameForm label="Name of the new catalogue" action="Freeze" initial=name open submit/>
+        </div>
+    }
+}
+
+/// Asks before the smart catalogue on screen loses its search, in the words SciQLop uses too.
+#[component]
+pub fn RemoveSearch(uuid: String, form: RwSignal<Form>) -> impl IntoView {
+    let room = expect_context::<Room>();
+    let name = room
+        .read_untracked(|txn| model::catalogue(txn, &uuid))
+        .map(|found| found.name)
+        .unwrap_or_default();
+    let error: Error = RwSignal::new(None);
+    let remove = move |_| match room.write(|txn| edit::remove_search(txn, &uuid)) {
+        Ok(()) => form.set(Form::Closed),
+        Err(failure) => error.set(Some(failure.to_string())),
+    };
+    view! {
+        <div class="inline-form">
+            <p class="quiet">{format!(
+                "“{name}” keeps the events it lists and stops adding events. The events the search picked leave it."
+            )}</p>
+            {error_line(error)}
+            <div class="row-buttons">
+                <button type="button" class="button danger" on:click=remove>"Remove the search"</button>
+                <button type="button" class="button" on:click=move |_| form.set(Form::Closed)>"Cancel"</button>
+            </div>
         </div>
     }
 }

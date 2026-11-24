@@ -312,10 +312,7 @@ pub fn save_search(
     public: bool,
 ) -> Result<(), EditError> {
     if text.trim().is_empty() {
-        return found(
-            model::set_catalogue_rule(txn, uuid, None)?,
-            EditError::NoCatalogue,
-        );
+        return remove_search(txn, uuid);
     }
     let predicate = cocat_core::query::parse(text, catalogues)?;
     let rule = match public {
@@ -323,6 +320,14 @@ pub fn save_search(
         false => cocat_core::query::rule(&predicate, None),
     };
     replace_rule(txn, uuid, &rule)
+}
+
+/// Catalogue `uuid` without its search: it keeps the events it lists and stops adding any.
+pub fn remove_search(txn: &mut TransactionMut<'_>, uuid: &str) -> Result<(), EditError> {
+    found(
+        model::set_catalogue_rule(txn, uuid, None)?,
+        EditError::NoCatalogue,
+    )
 }
 
 pub fn replace_rule(
@@ -1041,6 +1046,25 @@ mod tests {
         assert_eq!(rule(&doc), None);
         let listed = model::listed_events(&doc.transact(), "c-static");
         assert_eq!(listed, ["e1", "e3", "e4"], "the picked events stay");
+    }
+
+    #[test]
+    fn removing_the_search_keeps_the_picked_events_only() {
+        let doc = room();
+        let names = model::catalogue_names(&doc.transact());
+        edited(&doc, |txn| {
+            save_search(txn, "c-static", "tag:sw", &names, false)
+        })
+        .unwrap();
+        edited(&doc, |txn| remove_search(txn, "c-static")).unwrap();
+        let catalogue = model::catalogue(&doc.transact(), "c-static").unwrap();
+        assert_eq!(catalogue.rule, None);
+        let listed = model::listed_events(&doc.transact(), "c-static");
+        assert_eq!(listed, ["e1", "e3", "e4"]);
+        assert!(matches!(
+            edited(&doc, |txn| remove_search(txn, "nowhere")),
+            Err(EditError::NoCatalogue)
+        ));
     }
 
     #[test]

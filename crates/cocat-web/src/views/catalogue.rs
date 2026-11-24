@@ -18,7 +18,7 @@ use crate::search::{self, Listing, Query, Side, listing, public_query};
 use crate::state::Room;
 use crate::submissions::{Proposal, proposal_for};
 use crate::sync::Loading;
-use crate::views::actions::{Actions, Form, Freeze, PublicButtons};
+use crate::views::actions::{Actions, Form, Freeze, PublicButtons, RemoveSearch};
 use crate::views::controls::Hint;
 use crate::views::projects::Projects;
 use crate::views::rule::{Heading, TitleEdit, live_about, live_counts};
@@ -353,6 +353,7 @@ fn CatalogueView(
         {move || match (form.get(), shown.get()) {
             (Form::Rule, Route::Catalogue(uuid)) => Some(view! { <RuleEditor uuid form/> }.into_any()),
             (Form::Freeze, Route::Catalogue(uuid)) => Some(view! { <Freeze uuid form/> }.into_any()),
+            (Form::RemoveSearch, Route::Catalogue(uuid)) => Some(view! { <RemoveSearch uuid form/> }.into_any()),
             (Form::Submit, Route::Catalogue(uuid)) => Some(view! { <SubmitForm uuid form/> }.into_any()),
             (Form::Update, Route::Catalogue(uuid)) => proposals
                 .with(|listed| proposal_for(listed, &uuid).cloned())

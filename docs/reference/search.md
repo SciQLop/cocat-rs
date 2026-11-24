@@ -120,3 +120,6 @@ change, and the page then says in words what the rule picks.
 
 Rules that make new intervals (merging, shifting) give read-only intervals. **Catalogue → Freeze…**
 turns them into normal events you can edit.
+
+To make a smart catalogue plain again, use **Catalogue → Remove the search…**. It keeps the
+events it lists and stops adding events; the events the search picked leave it.
