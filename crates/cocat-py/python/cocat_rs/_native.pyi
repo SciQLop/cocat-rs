@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 
+import numpy as np
+
 Status = Literal["preliminary", "confirmed", "reviewed", "final", "rejected", "deleted"]
 # unauthorized: sign in again. no_access: this account is no longer in the project.
 Connection = Literal["offline", "connecting", "synced", "unauthorized", "no_access"]
@@ -149,6 +151,17 @@ class Project:
         attributes: bool = False,
     ) -> dict[str, Any]: ...
     def builder_rows(self, rule: dict[str, Any]) -> tuple[bool, list[BuilderRow]] | None: ...
+    def matches(
+        self,
+        query: str,
+        uuids: list[str | Event | tuple[Any, Any]],
+        source: Catalogue | str | None = None,
+    ) -> np.ndarray: ...  # bool, aligned to uuids
+    def filter_words(
+        self, text: str, uuids: list[str | Event | tuple[Any, Any]]
+    ) -> np.ndarray: ...  # bool, aligned to uuids
+    def query_kind(self, text: str) -> QueryKind: ...
+    def vocabulary(self) -> Vocabulary: ...
     def create_smart_catalogue(
         self,
         name: str,
@@ -361,3 +374,36 @@ def query_tests(kind: FieldKind) -> list[QueryTest]: ...
 def clause(field: str, test: Test, value: str = "") -> str: ...
 def search_text(clauses: list[str], any: bool = False) -> str: ...
 def builder_rows(rule: dict[str, Any]) -> tuple[bool, list[BuilderRow]] | None: ...
+
+QueryKind = Literal["empty", "words", "rule", "broken"]
+
+class Vocabulary(TypedDict, total=False):
+    tags: list[str]
+    authors: list[str]
+    catalogues: list[str]
+    attributes: list[str]
+
+class Piece(TypedDict, total=False):
+    kind: Literal["space", "keyword", "bracket", "word", "term"]
+    text: str
+    field: str  # a term only
+    op: str  # a term only: ":" and any comparison, e.g. ":>="
+    value: str  # a term only
+
+class Suggestion(TypedDict):
+    insert: str
+    kind: str  # "field", "attribute", "tag", "author", "catalogue", "status", "time", "length"
+
+Completion = TypedDict(
+    "Completion", {"from": int, "to": int, "suggestions": list[Suggestion]}
+)
+
+class Preset(TypedDict):
+    name: str
+    query: str
+
+def query_kind(text: str) -> QueryKind: ...
+def pieces(text: str) -> list[Piece]: ...
+def complete(text: str, cursor: int, vocabulary: Vocabulary) -> Completion | None: ...
+def accept(text: str, completion: Completion, suggestion: Suggestion) -> tuple[str, int]: ...
+def presets(me: str) -> list[Preset]: ...

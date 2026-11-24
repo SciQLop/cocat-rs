@@ -5,6 +5,7 @@
 
 mod editor;
 mod rounds;
+mod search_box;
 mod server_errors;
 mod sharing;
 mod sign_in;
@@ -1478,6 +1479,12 @@ impl Project {
             identity: Arc::default(),
         }
     }
+
+    /// The predicate of the search `text`, catalogues named as this project names them.
+    fn read_search(&self, text: &str) -> Result<cocat_core::rules::Predicate> {
+        let names = model::catalogue_names(&self.room.doc().transact());
+        query::parse(text, &names).map_err(query_error)
+    }
 }
 
 /// How many catalogues and events the project holds, the trash included.
@@ -1783,13 +1790,9 @@ impl Project {
 
     /// The events not in the trash that the search `query` matches, in time order.
     fn search(&self, py: Python<'_>, query: &str) -> Result<Vec<Py<Event>>> {
-        let records = {
-            let doc = self.room.doc();
-            let txn = doc.transact();
-            let predicate =
-                query::parse(query, &model::catalogue_names(&txn)).map_err(query_error)?;
-            model::search(&txn, &predicate, now()?).map_err(value_error)?
-        };
+        let predicate = self.read_search(query)?;
+        let records =
+            model::search(&self.room.doc().transact(), &predicate, now()?).map_err(value_error)?;
         records
             .iter()
             .map(|record| Py::new(py, Event::of(&self.room, &record.uuid)))
@@ -1870,6 +1873,67 @@ impl Project {
         let rule = to_json(rule)?;
         let names = model::catalogue_names(&self.room.doc().transact());
         rows_to_python(py, query::builder::rule_rows(&rule, &names))
+    }
+
+    /// Which of `uuids` the search `query` keeps, as a numpy bool array aligned to them:
+    /// what a smart catalogue with this search would hold, over all events or among the
+    /// members of `source`. `uuids` are uuids or `Event`s, and `(start, stop)` for an
+    /// interval a rule derived, which is tested by its range. Runs without the GIL.
+    #[pyo3(signature = (query, uuids, source=None))]
+    fn matches(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        uuids: &Bound<'_, PyAny>,
+        source: Option<&Bound<'_, PyAny>>,
+    ) -> Result<Py<PyAny>> {
+        let probes = search_box::probes(uuids)?;
+        let source = source.map(catalogue_uuid).transpose()?;
+        let predicate = self.read_search(query)?;
+        let at = now()?;
+        let room = &self.room;
+        let mask = py
+            .detach(|| {
+                let doc = room.doc();
+                let txn = doc.transact();
+                model::search_mask(&txn, &predicate, source.as_deref(), at, &probes)
+            })
+            .map_err(value_error)?;
+        Ok(search_box::mask_array(py, mask))
+    }
+
+    /// Which of `uuids` (as for `matches`) the table's plain-words filter keeps, as a numpy
+    /// bool array: every word part of a tag, the status, the author or an attribute value,
+    /// or the start of the start time. Runs without the GIL.
+    fn filter_words(
+        &self,
+        py: Python<'_>,
+        text: &str,
+        uuids: &Bound<'_, PyAny>,
+    ) -> Result<Py<PyAny>> {
+        let probes = search_box::probes(uuids)?;
+        let room = &self.room;
+        let mask = py.detach(|| model::words_mask(&room.doc().transact(), text, &probes));
+        Ok(search_box::mask_array(py, mask))
+    }
+
+    /// What the text in a search box is, its catalogue names read in this project:
+    /// `"empty"`, `"words"`, `"rule"` or `"broken"`.
+    fn query_kind(&self, text: &str) -> &'static str {
+        let names = model::catalogue_names(&self.room.doc().transact());
+        search_box::kind_of(text, &names)
+    }
+
+    /// What a search can name here, for `cocat_rs.complete`: `tags`, `authors` (of live
+    /// events), `catalogues` (names) and `attributes` (keys), each sorted.
+    fn vocabulary(&self, py: Python<'_>) -> Result<Py<PyAny>> {
+        let found = model::vocabulary(&self.room.doc().transact());
+        let vocabulary = PyDict::new(py);
+        vocabulary.set_item("tags", found.tags)?;
+        vocabulary.set_item("authors", found.authors)?;
+        vocabulary.set_item("catalogues", found.catalogues)?;
+        vocabulary.set_item("attributes", found.attributes)?;
+        Ok(vocabulary.into_any().unbind())
     }
 
     /// A smart catalogue whose rule is the search `query` over all events, over the events
@@ -2738,6 +2802,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     sharing::register(module)?;
     rounds::register(module)?;
     editor::register(module)?;
+    search_box::register(module)?;
     submissions::register(module)?;
     sign_in::register(module)?;
     Ok(())

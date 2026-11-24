@@ -84,6 +84,20 @@ What a search editor needs, in the same words as the browser's builder:
 | `cc.search_text(clauses, any=True)` | the rows joined with OR (all of them: with spaces) |
 | `project.builder_rows(rule)` | `(any, rows)` back from a rule, or `None` when the search is too rich for rows |
 
+### A search box over an event table
+
+What the browser's filter box does, for an app that shows events in a table:
+
+| Call | Gives |
+|---|---|
+| `project.query_kind(text)` | `"empty"`, `"words"`, `"rule"` or `"broken"` |
+| `project.matches("tag:shock", uuids, source=None)` | a numpy bool mask aligned to `uuids`: what a smart catalogue with that search would hold; `(start, stop)` for an interval with no uuid |
+| `project.filter_words("shock alice", uuids)` | the plain-words filter's mask |
+| `cc.pieces(text)` | the text in parts to colour; joined, they give the text back |
+| `cc.complete(text, cursor, project.vocabulary())` | suggestions for the word at the cursor |
+| `cc.accept(text, completion, suggestion)` | the new text and cursor |
+| `cc.presets("me@lab.fr")` | the preset searches, as `name` and `query` |
+
 ## History
 
 | Call | Does |
