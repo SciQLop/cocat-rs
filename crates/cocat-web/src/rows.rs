@@ -6,12 +6,13 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use cocat_core::model::{self, EventRecord, Member, Status};
+use cocat_core::query::search_box::{Shown, Words};
 use cocat_core::rules::{Lookups, Predicate, RuleError};
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value};
 use yrs::ReadTxn;
 
-use crate::format::{time_text, value_text};
+use crate::format::value_text;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
@@ -184,17 +185,20 @@ pub fn search_rows<T: ReadTxn>(
         .collect())
 }
 
-/// The positions of the rows every word of `query` matches, in order. A word matches a
-/// tag, the status, the author or an attribute value it is part of, or the start time it
-/// begins; the whole query may also begin the start time ("2019-11-03 14:02").
+/// The positions of the rows the table's plain-words filter keeps, in order (see
+/// `cocat_core::query::search_box::Words`).
 pub fn filter(rows: &[Row], query: &str) -> Vec<usize> {
-    let query = query.trim().to_lowercase();
-    let words: Vec<&str> = query.split_whitespace().collect();
+    let words = Words::new(query);
     (0..rows.len())
         .filter(|&index| {
             let row = &rows[index];
-            let start = time_text(row.start);
-            start.starts_with(&query) || words.iter().all(|word| matches(row, &start, word))
+            words.matches(&Shown {
+                start: row.start,
+                tags: &row.tags,
+                status: row.status,
+                author: row.author.as_deref(),
+                attributes: &row.attributes,
+            })
         })
         .collect()
 }
@@ -269,18 +273,6 @@ pub fn left_out(shown: &[SortKey]) -> Option<String> {
 pub fn attribute_keys(rows: &[Row]) -> Vec<String> {
     let keys: BTreeSet<&String> = rows.iter().flat_map(|row| row.attributes.keys()).collect();
     keys.into_iter().cloned().collect()
-}
-
-fn matches(row: &Row, start: &str, word: &str) -> bool {
-    let contains = |text: &str| text.to_lowercase().contains(word);
-    start.starts_with(word)
-        || row.tags.iter().any(|tag| contains(tag))
-        || contains(row.status.name())
-        || row.author.as_deref().is_some_and(contains)
-        || row
-            .attributes
-            .values()
-            .any(|value| contains(&value_text(value)))
 }
 
 #[derive(PartialEq, PartialOrd)]

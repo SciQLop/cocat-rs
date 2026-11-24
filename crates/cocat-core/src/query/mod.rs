@@ -10,6 +10,7 @@ pub mod builder;
 mod grammar;
 mod meaning;
 mod print;
+pub mod search_box;
 
 use serde_json::{Value, json};
 use thiserror::Error;
