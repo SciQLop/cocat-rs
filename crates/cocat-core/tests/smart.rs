@@ -607,3 +607,43 @@ fn the_vocabulary_is_what_a_search_can_name() {
     assert_eq!(vocabulary.attributes, ["label", "q"]);
     assert!(vocabulary.tags.contains(&"t1".to_owned()));
 }
+
+/// The names and authors a search box needs are read without reading whole catalogues and
+/// events (a project of 100,000 events made them slow), and are the same as before.
+#[test]
+fn names_and_authors_read_fast_are_those_of_the_full_records() {
+    let doc = room();
+    catalogue(&doc, THIRD, &[uuid(1), uuid(2)], None);
+    catalogue(&doc, OTHER, &[uuid(3)], None);
+    catalogue(&doc, SMART, &[], None);
+    {
+        let mut txn = doc.transact_mut();
+        model::rename_catalogue(&mut txn, THIRD, "Same");
+        model::rename_catalogue(&mut txn, OTHER, "Same");
+        model::delete_catalogue(&mut txn, SMART);
+        let mut gone = EventRecord::new(uuid(5), at(50), at(51));
+        gone.author = Some("dora".to_owned());
+        model::create_event(&mut txn, &gone).unwrap();
+        model::delete_event(&mut txn, &uuid(5));
+        let events = yrs::WriteTxn::get_or_insert_map(&mut txn, model::EVENTS);
+        let no_range = yrs::MapPrelim::from([("author".to_owned(), yrs::In::from("eve"))]);
+        events.insert(&mut txn, uuid(6), no_range);
+    }
+    let txn = doc.transact();
+    let named: Vec<(String, String)> = model::catalogues(&txn)
+        .into_iter()
+        .map(|catalogue| (catalogue.uuid, catalogue.name))
+        .collect();
+    assert_eq!(model::catalogue_names(&txn), named);
+    assert_eq!(named.len(), 2);
+    let has_author = cocat_core::rules::Predicate::Has("author".to_owned());
+    let mut authors: Vec<String> = model::search(&txn, &has_author, Timestamp::now())
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| event.author)
+        .collect();
+    authors.sort();
+    authors.dedup();
+    assert_eq!(model::vocabulary(&txn).authors, authors);
+    assert_eq!(authors, ["alice", "bob"]);
+}

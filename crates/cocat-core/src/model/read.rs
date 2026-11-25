@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
-use yrs::{Map as _, MapRef, Out, ReadTxn};
+use yrs::{Any, Map as _, MapRef, Out, ReadTxn};
 
 use super::copies::chain_in;
 use super::values::{get, json, number, shape, strings, text, time, typed};
@@ -33,12 +33,19 @@ pub fn all_catalogues<T: ReadTxn>(txn: &T) -> Vec<CatalogueSummary> {
     catalogues
 }
 
-/// The catalogues not in the trash as `(uuid, name)`: how a search names them.
+/// The catalogues not in the trash as `(uuid, name)`, in `catalogues`' order: how a search
+/// names them. Only the name and status are read: a whole summary counts the events.
 pub fn catalogue_names<T: ReadTxn>(txn: &T) -> Vec<(String, String)> {
-    catalogues(txn)
+    let mut names: Vec<(String, String)> = entries(txn, CATALOGUES)
         .into_iter()
-        .map(|catalogue| (catalogue.uuid, catalogue.name))
-        .collect()
+        .filter(|(_, map)| !is_deleted(txn, map))
+        .map(|(uuid, map)| {
+            let name = get(&map, txn, "name").as_ref().and_then(text);
+            (uuid, name.unwrap_or_default())
+        })
+        .collect();
+    names.sort_by(|left, right| (&left.1, &left.0).cmp(&(&right.1, &right.0)));
+    names
 }
 
 /// One catalogue by uuid, deleted or not.
@@ -92,15 +99,38 @@ pub fn event_catalogues<T: ReadTxn>(txn: &T, uuid: &str) -> Vec<String> {
 
 /// Every tag an event or a catalogue not in the trash carries, sorted.
 pub fn existing_tags<T: ReadTxn>(txn: &T) -> Vec<String> {
-    let tagged = [EVENTS, CATALOGUES]
+    let mut tags = BTreeSet::new();
+    for map in [EVENTS, CATALOGUES]
         .into_iter()
-        .flat_map(|root| entries(txn, root))
-        .filter(|(_, map)| !is_deleted(txn, map))
-        .flat_map(|(_, map)| match map.get(txn, "tags") {
-            Some(Out::Any(tags)) => strings(&tags),
-            _ => Vec::new(),
-        });
-    tagged.collect::<BTreeSet<String>>().into_iter().collect()
+        .flat_map(|root| live(txn, root))
+    {
+        if let Some(Any::Array(items)) = get(&map, txn, "tags") {
+            items.iter().for_each(|tag| add_text(&mut tags, tag));
+        }
+    }
+    tags.into_iter().collect()
+}
+
+/// Adds a text to a set, copying it only when it is new: a project holds many events and
+/// few distinct tags and authors.
+fn add_text(set: &mut BTreeSet<String>, any: &Any) {
+    if let Any::String(text) = any
+        && !set.contains(text.as_ref())
+    {
+        set.insert(text.to_string());
+    }
+}
+
+/// The objects of a root not in the trash.
+pub(super) fn live<'a, T: ReadTxn>(txn: &'a T, root: &str) -> impl Iterator<Item = MapRef> + 'a {
+    txn.get_map(root)
+        .into_iter()
+        .flat_map(move |root| root.iter(txn).map(|(_, value)| value).collect::<Vec<_>>())
+        .filter_map(|value| match value {
+            Out::YMap(map) => Some(map),
+            _ => None,
+        })
+        .filter(move |map| !is_deleted(txn, map))
 }
 
 /// Whether the room holds content written in the first layout: something in it, and no

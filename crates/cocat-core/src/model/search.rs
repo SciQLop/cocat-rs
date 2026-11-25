@@ -4,11 +4,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde_json::{Map, Value};
-use yrs::{Map as _, Out, ReadTxn};
+use yrs::{Any, Map as _, MapRef, Out, ReadTxn};
 
 use super::members::{Evaluator, event_field, item_field};
-use super::read::{catalogue_names, event, existing_tags, is_deleted};
+use super::read::{catalogue_names, event, existing_tags, is_deleted, live};
 use super::registry::attribute_types;
+use super::values::{get, time};
 use super::{ATTRIBUTE_PREFIX, EVENTS, EventRecord, Status, origin};
 use crate::query::search_box::{Shown, Vocabulary, Words};
 use crate::rules::intervals::{Item, Source};
@@ -171,22 +172,34 @@ pub fn words_mask<T: ReadTxn>(txn: &T, text: &str, probes: &[Probe]) -> Vec<bool
 /// What the room holds that a search can name, for completions: tags, the authors of live
 /// events, catalogue names and attribute keys, each sorted.
 pub fn vocabulary<T: ReadTxn>(txn: &T) -> Vocabulary {
-    let has_author = Predicate::Has("author".to_owned());
-    let authors: BTreeSet<String> = search(txn, &has_author, Timestamp::now())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|event| event.author)
-        .collect();
     let catalogues: BTreeSet<String> = catalogue_names(txn)
         .into_iter()
         .map(|(_, name)| name)
         .collect();
     Vocabulary {
         tags: existing_tags(txn),
-        authors: authors.into_iter().collect(),
+        authors: live_authors(txn).into_iter().collect(),
         catalogues: catalogues.into_iter().collect(),
         attributes: attribute_types(txn).into_keys().collect(),
     }
+}
+
+/// The authors of the events `search` reads: outside the trash, with a start and a stop.
+/// Only those fields are read, and the times only for an author not seen yet: a whole
+/// record reads every field.
+fn live_authors<T: ReadTxn>(txn: &T) -> BTreeSet<String> {
+    let timed = |map: &MapRef, key| get(map, txn, key).as_ref().and_then(time).is_some();
+    let mut authors = BTreeSet::new();
+    for map in live(txn, EVENTS) {
+        if let Some(Any::String(author)) = get(&map, txn, "author")
+            && !authors.contains(author.as_ref())
+            && timed(&map, "start")
+            && timed(&map, "stop")
+        {
+            authors.insert(author.to_string());
+        }
+    }
+    authors
 }
 
 /// Whether an event read out of its room matches, as it would in the room. A term naming a
