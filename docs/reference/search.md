@@ -30,8 +30,9 @@ Name a field to be precise:
 | `created:>now-7d` | added in the last 7 days (`s`, `m`, `h`, `d`, `M` months, `y`) |
 | `duration:>10min` | lasts more than 10 minutes (`s`, `min`, `h`, `d`) |
 | `duration:[1h TO 2d]` | lasts between one hour and two days |
-| `#density:>10` | an attribute, by its name after `#` |
-| `#spacecraft:MMS1` | an attribute with that text |
+| `density:>10` | an attribute, by its name |
+| `spacecraft:MMS1` | an attribute with that text |
+| `#status:x` | the attribute `status`, not the field: `#` picks the attribute when a field has its name |
 | `catalogue:"Bow shocks"` | listed in that catalogue |
 | `NOT _exists_:catalogue` | listed in no catalogue |
 | `_exists_:shape` | has a time–frequency shape |
@@ -48,8 +49,10 @@ Name a field to be precise:
 The box suggests as you type: field names first, then the tags, statuses, authors, catalogues
 and attributes already in the project. Arrow keys pick a suggestion, Enter or Tab takes it.
 
-Each term shows as a coloured token. A field cocat doesn't know shows in red. A typo gives a
-plain message: `there is no field "auhtor": did you mean "author"?`.
+Each term shows as a coloured token. A name that is neither a field nor an attribute of the
+project shows in red: such a search reads as an attribute nobody has, and matches nothing.
+In Python, a project refuses it with the closest name:
+`there is no field "auhtor": did you mean "author"?`.
 
 Not sure how to write it? **Build a search**, at the right of the box, writes it for you from
 rows of field, test and value.

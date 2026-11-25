@@ -20,8 +20,9 @@ fn read(text: &str) -> Predicate {
     query::parse(text, &catalogues()).unwrap_or_else(|error| panic!("{text}: {error}"))
 }
 
+/// Refused as a project reads it, knowing its attributes (here: none).
 fn refused(text: &str) -> QueryError {
-    query::parse(text, &catalogues()).unwrap_err()
+    query::parse_with_attributes(text, &catalogues(), &[]).unwrap_err()
 }
 
 fn printed(predicate: &Predicate) -> Option<String> {
@@ -505,4 +506,36 @@ fn a_search_of_the_public_catalogues_reads_back_and_no_other_rule_does() {
             .to_string()
             .contains("\"public\" must be true")
     );
+}
+
+#[test]
+fn a_bare_name_is_a_field_if_one_has_it_and_an_attribute_otherwise() {
+    assert_eq!(read("B_jump:>1"), read("#B_jump:>1"));
+    assert_eq!(read("_exists_:B_jump"), read("_exists_:#B_jump"));
+    assert_ne!(
+        read("status:final"),
+        read("#status:final"),
+        "# forces the attribute"
+    );
+    let known = ["B_jump".to_owned(), "B_us_abs".to_owned()];
+    let project = |text| query::parse_with_attributes(text, &catalogues(), &known);
+    assert_eq!(project("B_jump:>1").unwrap(), read("#B_jump:>1"));
+    assert_eq!(
+        project("#nobody:1").unwrap(),
+        read("#nobody:1"),
+        "# needs no key known"
+    );
+    let error = project("B_jmp:>1").unwrap_err();
+    assert_eq!(error.suggestion.as_deref(), Some("B_jump"));
+    assert_eq!(
+        error.message,
+        "there is no field “B_jmp”: did you mean “B_jump”?"
+    );
+    assert_eq!(
+        project("auhtor:x").unwrap_err().suggestion.as_deref(),
+        Some("author")
+    );
+    let clashing = ["status".to_owned(), "statsu".to_owned()];
+    let error = query::parse_with_attributes("statsx:1", &[], &clashing).unwrap_err();
+    assert_eq!(error.suggestion.as_deref(), Some("statsu"));
 }

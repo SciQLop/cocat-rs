@@ -225,7 +225,7 @@ fn a_rule_reads_back_into_rows_with_its_catalogues_named() {
 
 #[test]
 fn an_error_says_where_how_long_and_what_was_meant() {
-    let error = query::parse("tag:shock auhtor:bob", &[]).unwrap_err();
+    let error = query::parse_with_attributes("tag:shock auhtor:bob", &[], &[]).unwrap_err();
     assert_eq!(error.position, 10);
     assert_eq!(error.length, Some(6));
     assert_eq!(error.suggestion.as_deref(), Some("author"));

@@ -80,7 +80,8 @@ def test_the_kind_of_text_says_which_filter_applies(project, events):
     assert cc.query_kind("  ") == "empty"
     assert cc.query_kind("shock alice") == "words"
     assert cc.query_kind("tag:shock") == "rule"
-    assert cc.query_kind("tga:shock") == "broken"
+    assert cc.query_kind("tag:shock OR") == "broken"
+    assert cc.query_kind("tga:shock") == "rule", "an attribute nobody has"
     assert cc.query_kind("catalogue:Picked") == "broken", "no project names it"
     assert project.query_kind("catalogue:Picked") == "rule"
 
@@ -124,3 +125,23 @@ def test_the_presets_are_data():
     assert presets[0] == {"name": "Recently added", "query": "created:now-7d"}
     assert {"name": "Mine", "query": "author:=bob@lab.fr"} in presets
     assert all(cc.query_kind(preset["query"]) == "rule" for preset in presets)
+
+
+
+def test_an_attribute_needs_no_hash(project, events):
+    shock, wave, gone, picked = events
+    jump = project.create_event(start=at(0), stop=at(1), attributes={"B_jump": 2.0, "status": "x"})
+    vocabulary = project.vocabulary()
+    found = cc.complete("B", 1, vocabulary)
+    assert {"insert": "B_jump:", "kind": "attribute"} in found["suggestions"]
+    chosen = next(s for s in found["suggestions"] if s["insert"] == "B_jump:")
+    assert cc.accept("B", found, chosen) == ("B_jump:", 7)
+    statuses = [s["insert"] for s in cc.complete("statu", 5, vocabulary)["suggestions"]]
+    assert statuses == ["status:", "#status:"], "a field's name forces the #"
+    shown = [shock.uuid, jump.uuid]
+    assert project.matches("B_jump:>1", shown).tolist() == [False, True]
+    assert project.matches("#B_jump:>1", shown).tolist() == [False, True]
+    assert cc.query_kind("B_jump:>1") == "rule"
+    with pytest.raises(cc.QueryError) as error:
+        project.parse_query("B_jmp:>1")
+    assert error.value.suggestion == "B_jump"

@@ -539,6 +539,10 @@ pub fn SearchBox(
     let open = RwSignal::new(false);
     let cursor = RwSignal::new(0usize);
     let active = RwSignal::new(0usize);
+    let attributes = {
+        let room = room.clone();
+        Memo::new(move |_| room.read(|txn| model::attribute_types(txn).into_keys().collect()))
+    };
     let words = Memo::new(move |_| open.get().then(|| vocabulary(&room)));
     let completion = Memo::new(move |_| {
         let vocabulary = words.get()?;
@@ -602,8 +606,11 @@ pub fn SearchBox(
             scroll.set(input.scroll_left());
         }
     };
-    let painted =
-        move || query.with(|text| pieces(text).into_iter().map(painted_piece).collect_view());
+    let painted = move || {
+        let attributes: Vec<String> = attributes.get();
+        let paint = |piece| painted_piece(piece, &attributes);
+        query.with(|text| pieces(text).into_iter().map(paint).collect_view())
+    };
     view! {
         <label class="search" class:own-search=move || own.get()>
             {children()}
@@ -661,11 +668,12 @@ pub fn SearchBox(
 }
 
 /// One piece of the search, coloured: a term as a token in its field's colour, keywords and
-/// brackets in their own, an unknown field in red.
-fn painted_piece(piece: Piece) -> AnyView {
+/// brackets in their own, a name that is neither a field nor one of the project's
+/// `attributes` in red.
+fn painted_piece(piece: Piece, attributes: &[String]) -> AnyView {
     match piece {
         Piece::Term { field, op, value } => {
-            let kind = term_kind(&field);
+            let kind = term_kind(&field, attributes);
             view! {
                 <span class=format!("term term-{kind}")>
                     <span class="term-field">{field}</span>
@@ -682,9 +690,10 @@ fn painted_piece(piece: Piece) -> AnyView {
     }
 }
 
-fn term_kind(field: &str) -> &'static str {
+fn term_kind(field: &str, attributes: &[String]) -> &'static str {
     match (field, query::kind_of(field)) {
         ("_exists_", _) => "exists",
+        (_, None) if attributes.iter().any(|key| key == field) => "attribute",
         (_, None) => "unknown",
         (_, Some(Kind::Tags)) => "tag",
         (_, Some(Kind::Enum(_))) => "status",
@@ -693,5 +702,19 @@ fn term_kind(field: &str) -> &'static str {
         (_, Some(Kind::Number)) => "number",
         (_, Some(Kind::Attribute)) => "attribute",
         _ => "text",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::term_kind;
+
+    #[test]
+    fn a_bare_name_the_project_has_as_an_attribute_is_painted_as_one() {
+        let attributes = ["B_jump".to_owned()];
+        assert_eq!(term_kind("B_jump", &attributes), "attribute");
+        assert_eq!(term_kind("#B_jump", &attributes), "attribute");
+        assert_eq!(term_kind("B_jmp", &attributes), "unknown");
+        assert_eq!(term_kind("status", &attributes), "status");
     }
 }

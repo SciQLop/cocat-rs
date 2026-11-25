@@ -420,8 +420,15 @@ fn catalogue_uuid(catalogue: &Bound<'_, PyAny>) -> Result<String> {
 fn search_rule(room: &ClientRoom, text: &str, source: Option<&str>) -> Result<Value> {
     let doc = room.doc();
     let txn = doc.transact();
-    let predicate = query::parse(text, &model::catalogue_names(&txn)).map_err(query_error)?;
-    Ok(query::rule(&predicate, source))
+    Ok(query::rule(&project_search(&txn, text)?, source))
+}
+
+/// A search as this project reads it: its catalogue names, and its attributes, so a name
+/// that is neither a field nor an attribute is refused, naming the closest.
+fn project_search<T: yrs::ReadTxn>(txn: &T, text: &str) -> Result<cocat_core::rules::Predicate> {
+    let attributes: Vec<String> = model::attribute_types(txn).into_keys().collect();
+    query::parse_with_attributes(text, &model::catalogue_names(txn), &attributes)
+        .map_err(query_error)
 }
 
 /// The rule of the search `text` over all events, over the events of `source` (a
@@ -1482,8 +1489,7 @@ impl Project {
 
     /// The predicate of the search `text`, catalogues named as this project names them.
     fn read_search(&self, text: &str) -> Result<cocat_core::rules::Predicate> {
-        let names = model::catalogue_names(&self.room.doc().transact());
-        query::parse(text, &names).map_err(query_error)
+        project_search(&self.room.doc().transact(), text)
     }
 }
 

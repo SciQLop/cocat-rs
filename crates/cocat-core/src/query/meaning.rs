@@ -6,7 +6,7 @@ use std::ops::Range;
 use serde_json::{Value, json};
 
 use super::grammar::{Ast, Name, Scalar, Term};
-use super::{FIELDS, Kind, QueryError, resolve};
+use super::{FIELDS, Kind, QueryError, attribute_name, resolve};
 use crate::rules::{Op, Predicate, relative};
 use crate::time::Timestamp;
 
@@ -17,14 +17,27 @@ const DAY: i64 = 86_400_000_000_000;
 const DURATION_UNITS: [(&str, f64); 4] =
     [("s", 1.0), ("min", 60.0), ("h", 3_600.0), ("d", 86_400.0)];
 
-/// The predicate of a query's tree; `text` is the query, for error positions.
-pub fn predicate(tree: &Ast, text: &str, catalogues: &[(String, String)]) -> Result<Predicate> {
-    Meaning { text, catalogues }.of(tree)
+/// The predicate of a query's tree; `text` is the query, for error positions. A bare name
+/// that is no field is an attribute: any one without `attributes` (the project's keys), one
+/// of them with it.
+pub fn predicate(
+    tree: &Ast,
+    text: &str,
+    catalogues: &[(String, String)],
+    attributes: Option<&[String]>,
+) -> Result<Predicate> {
+    Meaning {
+        text,
+        catalogues,
+        attributes,
+    }
+    .of(tree)
 }
 
 struct Meaning<'q> {
     text: &'q str,
     catalogues: &'q [(String, String)],
+    attributes: Option<&'q [String]>,
 }
 
 impl Meaning<'_> {
@@ -48,12 +61,17 @@ impl Meaning<'_> {
     }
 
     fn resolve(&self, name: &Name) -> Result<(String, Kind)> {
-        resolve(&name.text).ok_or_else(|| {
-            let closest = closest_field(&name.text);
-            QueryError {
-                suggestion: Some(closest.to_owned()),
-                ..self.error(&name.at, unknown_field(&name.text, closest))
-            }
+        if let Some(found) = resolve(&name.text) {
+            return Ok(found);
+        }
+        let known = |attributes: &[String]| attributes.contains(&name.text);
+        if self.attributes.is_none_or(known) {
+            return Ok((format!("#{}", name.text), Kind::Attribute));
+        }
+        let closest = closest_name(&name.text, self.attributes.unwrap_or_default());
+        Err(QueryError {
+            suggestion: Some(closest.clone()),
+            ..self.error(&name.at, unknown_field(&name.text, &closest))
         })
     }
 
@@ -277,13 +295,15 @@ pub fn contains(field: String, text: &str) -> Predicate {
     Predicate::Match(field, format!("(?i){}", regex::escape(text)))
 }
 
-/// The field whose name is closest to `name`.
-fn closest_field(name: &str) -> &'static str {
-    FIELDS
-        .iter()
-        .map(|field| field.name)
-        .min_by_key(|known| strsim::levenshtein(name, known))
-        .unwrap_or(FIELDS[0].name)
+/// The field or attribute whose name is closest to `name`, as a search writes it; a field
+/// wins a tie.
+fn closest_name(name: &str, attributes: &[String]) -> String {
+    let fields = FIELDS.iter().map(|field| field.name.to_owned());
+    let attributes = attributes.iter().map(|key| attribute_name(key));
+    fields
+        .chain(attributes)
+        .min_by_key(|known| strsim::levenshtein(name, known.trim_start_matches('#')))
+        .unwrap_or_default()
 }
 
 fn unknown_field(name: &str, closest: &str) -> String {

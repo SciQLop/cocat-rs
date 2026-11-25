@@ -165,6 +165,14 @@ fn resolve(name: &str) -> Option<(String, Kind)> {
     attribute.then(|| (name.to_owned(), Kind::Attribute))
 }
 
+/// How a search names the attribute `key`: bare, or `#key` when a field has that name.
+pub fn attribute_name(key: &str) -> String {
+    match resolve(key) {
+        Some(_) => format!("#{key}"),
+        None => key.to_owned(),
+    }
+}
+
 /// The query name of a rule field and its kind.
 fn named(rule: &str) -> Option<(&str, Kind)> {
     if let Some(field) = FIELDS.iter().find(|field| field.rule == rule) {
@@ -173,10 +181,29 @@ fn named(rule: &str) -> Option<(&str, Kind)> {
     rule.starts_with('#').then_some((rule, Kind::Attribute))
 }
 
-/// Reads a query into a predicate. An empty query matches every event.
+/// Reads a query into a predicate. An empty query matches every event. A name that is no
+/// field is an attribute: one nobody has matches nothing.
 pub fn parse(text: &str, catalogues: &[(String, String)]) -> Result<Predicate, QueryError> {
+    read(text, catalogues, None)
+}
+
+/// `parse` knowing the project's `attributes` (keys, without `#`): a name that is neither a
+/// field nor one of them is refused, naming the closest.
+pub fn parse_with_attributes(
+    text: &str,
+    catalogues: &[(String, String)],
+    attributes: &[String],
+) -> Result<Predicate, QueryError> {
+    read(text, catalogues, Some(attributes))
+}
+
+fn read(
+    text: &str,
+    catalogues: &[(String, String)],
+    attributes: Option<&[String]>,
+) -> Result<Predicate, QueryError> {
     let predicate = match grammar::tree(text)? {
-        Some(tree) => meaning::predicate(&tree, text, catalogues)?,
+        Some(tree) => meaning::predicate(&tree, text, catalogues, attributes)?,
         None => Predicate::And(Vec::new()),
     };
     Ok(canonical(predicate))

@@ -923,8 +923,14 @@ async fn one_search_finds_events_in_every_public_catalogue() {
         "a stored predicate"
     );
 
-    let (status, _) = search("auhtor:x").await;
+    let (status, _) = search("tag:x OR").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, found) = search("auhtor:x").await;
+    assert_eq!(
+        (status, found["total"].clone()),
+        (StatusCode::OK, json!(0)),
+        "a name that is no field is an attribute, which nobody has"
+    );
     let (status, _) = world
         .call(None, Method::GET, "/api/public/events?q=shock", None)
         .await;

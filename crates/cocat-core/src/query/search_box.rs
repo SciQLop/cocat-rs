@@ -2,8 +2,8 @@
 //! search or plain words, its colours, its completions, the preset searches, and the plain
 //! words filter.
 
-use crate::query;
 use crate::query::builder::value as quote;
+use crate::query::{self, attribute_name};
 use serde_json::{Map, Value};
 use time::OffsetDateTime;
 use time::format_description::BorrowedFormatItem;
@@ -91,11 +91,14 @@ mod tests {
 
     #[test]
     fn broken_text_says_why() {
-        let Query::Broken(why) = read("tga:shock", &names()) else {
-            panic!("a typo reads");
+        let Query::Broken(why) = read("tag:shock OR", &names()) else {
+            panic!("a dangling OR reads");
         };
-        assert!(why.starts_with("There is no field"), "{why}");
-        assert!(why.contains("tag"), "{why}");
+        assert!(!why.is_empty());
+        assert!(
+            matches!(read("tga:shock", &names()), Query::Rule(_)),
+            "a name that is no field is an attribute, which nobody may have"
+        );
     }
 
     #[test]
@@ -168,7 +171,8 @@ fn word_start(chars: &[char], cursor: usize) -> usize {
     start
 }
 
-/// A field name, an attribute, or a known value, for a word with no `:` yet.
+/// A field name, an attribute (bare unless a field has its name, or after a typed `#`), or
+/// a known value, for a word with no `:` yet.
 fn names(word: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> {
     let typed = word.to_lowercase();
     if let Some(key) = typed.strip_prefix('#') {
@@ -183,12 +187,15 @@ fn names(word: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> {
         .filter(|name| name.starts_with(&typed))
         .map(|name| suggestion(format!("{name}:"), "field"));
     let known = (!typed.is_empty()).then(|| {
+        let attributes = matching(&vocabulary.attributes, &typed)
+            .map(|name| suggestion(format!("{}:", attribute_name(name)), "attribute"));
         let tags = matching(&vocabulary.tags, &typed).map(|tag| ("tag", tag, "tag"));
         let catalogues =
             matching(&vocabulary.catalogues, &typed).map(|name| ("catalogue", name, "catalogue"));
-        tags.chain(catalogues)
-            .map(|(field, value, kind)| suggestion(format!("{field}:{} ", quote(value)), kind))
-            .collect::<Vec<_>>()
+        let values = tags
+            .chain(catalogues)
+            .map(|(field, value, kind)| suggestion(format!("{field}:{} ", quote(value)), kind));
+        attributes.chain(values).collect::<Vec<_>>()
     });
     fields.chain(known.into_iter().flatten()).collect()
 }
@@ -204,7 +211,7 @@ fn values(field: &str, typed: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> 
     let fields: Vec<String> = crate::query::FIELDS
         .iter()
         .map(|field| field.name.to_owned())
-        .chain(vocabulary.attributes.iter().map(|key| format!("#{key}")))
+        .chain(vocabulary.attributes.iter().map(|key| attribute_name(key)))
         .collect();
     let (pool, kind): (&[String], &'static str) = match field {
         "tag" | "tags" => (&vocabulary.tags, "tag"),
@@ -369,6 +376,34 @@ mod completion_tests {
         assert!(inserts("tag:shock NOT").is_empty());
         let found = complete("catalogue:\"Bow sh", 17, &vocabulary()).unwrap();
         assert_eq!(found.from, 0);
+    }
+
+    #[test]
+    fn a_bare_word_suggests_the_attributes_it_begins_bare_unless_a_field_has_the_name() {
+        assert_eq!(inserts("dens"), ["density:"]);
+        assert!(inserts("s").contains(&"speed:".to_owned()));
+        assert_eq!(inserts("#sp"), ["#speed:"]);
+        let found = complete("tag:shock Spe", 13, &vocabulary()).unwrap();
+        assert_eq!(found.suggestions[0].kind, "attribute");
+        assert_eq!(
+            accept("tag:shock Spe", &found, &found.suggestions[0]),
+            ("tag:shock speed:".to_owned(), 16)
+        );
+        let clashing = Vocabulary {
+            attributes: vec!["status".into()],
+            ..vocabulary()
+        };
+        let found = complete("statu", 5, &clashing).unwrap();
+        let inserts: Vec<&str> = found
+            .suggestions
+            .iter()
+            .map(|s| s.insert.as_str())
+            .collect();
+        assert_eq!(inserts, ["status:", "#status:"]);
+        assert!(
+            query::parse("density:>1", &[]).is_ok(),
+            "a bare attribute reads"
+        );
     }
 
     #[test]
