@@ -41,7 +41,7 @@ pub use migrate::{Migration, migrate_v1};
 pub use provenance::{comment, create_origin, origin, set_comment};
 pub use read::{
     all_catalogues, catalogue, catalogue_names, catalogues, event, event_catalogues, existing_tags,
-    is_v1, listed_events, live_event_count, trash,
+    is_v1, listed_events, live_event_count, search_text, trash,
 };
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
 pub use relay::{Counts, Wanted, hold};
@@ -55,12 +55,15 @@ pub use write::{
     add_catalogue_events, create_catalogue, create_event, delete_catalogue, delete_event,
     purge_catalogue, purge_event, remove_catalogue_attributes, remove_catalogue_events,
     remove_event_attributes, rename_catalogue, restore_catalogue, restore_event,
-    set_catalogue_attributes, set_catalogue_columns, set_catalogue_rule, set_catalogue_shape_axis,
-    set_catalogue_tags, set_event_attributes, set_event_field, set_event_range,
+    set_catalogue_attributes, set_catalogue_columns, set_catalogue_rule, set_catalogue_search,
+    set_catalogue_shape_axis, set_catalogue_tags, set_event_attributes, set_event_field,
+    set_event_range,
 };
 
 pub const CATALOGUES: &str = "catalogues";
 pub const EVENTS: &str = "events";
+/// The key of a catalogue's search as typed, beside its `rule`.
+pub const SEARCH_TEXT: &str = "query";
 pub const ORIGINS: &str = "origins";
 pub const COMMENTS: &str = "comments";
 pub const REGISTRY: &str = "attributes";

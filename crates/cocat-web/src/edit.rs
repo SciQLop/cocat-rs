@@ -301,6 +301,23 @@ pub fn new_smart_catalogue(
     Ok(uuid)
 }
 
+/// A smart catalogue named `name` whose search is `rule`, typed as `text`: it shows again
+/// as typed. Answers its uuid.
+pub fn new_smart_search(
+    txn: &mut TransactionMut<'_>,
+    name: &str,
+    author: &str,
+    rule: &Value,
+    text: &str,
+) -> Result<String, EditError> {
+    let uuid = new_catalogue(txn, name, author)?;
+    found(
+        model::set_catalogue_search(txn, &uuid, rule, text.trim())?,
+        EditError::NoCatalogue,
+    )?;
+    Ok(uuid)
+}
+
 /// Makes `text` the search of catalogue `uuid`, beside its picked events: it then also holds
 /// every event the search finds in the project, or with `public` in the public catalogues,
 /// which `catalogues` then names. An empty text removes its search.
@@ -319,7 +336,10 @@ pub fn save_search(
         true => cocat_core::query::public_rule(&predicate),
         false => cocat_core::query::rule(&predicate, None),
     };
-    replace_rule(txn, uuid, &rule)
+    found(
+        model::set_catalogue_search(txn, uuid, &rule, text.trim())?,
+        EditError::NoCatalogue,
+    )
 }
 
 /// Catalogue `uuid` without its search: it keeps the events it lists and stops adding any.
@@ -1065,6 +1085,45 @@ mod tests {
             edited(&doc, |txn| remove_search(txn, "nowhere")),
             Err(EditError::NoCatalogue)
         ));
+    }
+
+    #[test]
+    fn a_smart_catalogue_made_from_a_search_shows_it_as_typed() {
+        let doc = room();
+        let rule =
+            cocat_core::query::rule(&cocat_core::query::parse("start:>2018", &[]).unwrap(), None);
+        let made = edited(&doc, |txn| {
+            new_smart_search(txn, "Late", "me", &rule, "start:>2018 ")
+        })
+        .unwrap();
+        let txn = doc.transact();
+        let rule = model::catalogue(&txn, &made).unwrap().rule;
+        let typed = model::search_text(&txn, &made);
+        let shown = crate::search::own_of(rule.as_ref(), typed.as_deref(), &[], &[]);
+        assert_eq!(shown.flatten().unwrap().text, "start:>2018");
+    }
+
+    #[test]
+    fn a_saved_search_shows_again_as_it_was_typed_whatever_it_searches() {
+        let doc = room();
+        let names = model::catalogue_names(&doc.transact());
+        let public = [("public.donki.cme".to_owned(), "DONKI CMEs".to_owned())];
+        for (text, public_side) in [
+            ("start:>2018", false),
+            ("start:<2020 catalogue:\"DONKI CMEs\"", true),
+        ] {
+            let scope: &[(String, String)] = if public_side { &public } else { &names };
+            edited(&doc, |txn| {
+                save_search(txn, "c-static", text, scope, public_side)
+            })
+            .unwrap();
+            let own = doc.transact();
+            let rule = model::catalogue(&own, "c-static").unwrap().rule;
+            let typed = model::search_text(&own, "c-static");
+            let shown = crate::search::own_of(rule.as_ref(), typed.as_deref(), &names, &public);
+            let shown = shown.flatten().expect("the search shows");
+            assert_eq!((shown.text.as_str(), shown.public), (text, public_side));
+        }
     }
 
     #[test]

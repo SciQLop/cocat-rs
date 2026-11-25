@@ -14,6 +14,7 @@ use crate::period::Period;
 use crate::preview::{FIRST_PAGE, NEXT_PAGE, PreviewState, keeps_preview, wanted};
 use crate::route::Route;
 use crate::rows::{Row, SortKey, attribute_keys};
+use crate::search::own_of;
 use crate::search::{self, Side};
 use crate::session::RoomConfig;
 use crate::state::Room;
@@ -21,7 +22,7 @@ use crate::submissions::public_actions;
 use crate::views::catalogue::{Members, SearchIcon};
 use crate::views::public::relay_of;
 use crate::views::rule::{About, Heading, catalogue_about};
-use crate::views::search::{Boxed, SearchBox, SearchLine, own_of};
+use crate::views::search::{Boxed, SearchBox, SearchLine};
 use crate::views::table::Table;
 use crate::views::timeline::{PeriodLine, Timeline};
 use cocat_core::room_id::is_public_id;
@@ -207,7 +208,7 @@ pub fn PreviewView(
         state.with(|state| {
             state
                 .as_ref()
-                .and_then(|state| own_of(state.catalogue.rule.as_ref(), &state.names, &[]))
+                .and_then(|state| own_of(state.catalogue.rule.as_ref(), None, &state.names, &[]))
         })
     });
     let name = Signal::derive(move || {

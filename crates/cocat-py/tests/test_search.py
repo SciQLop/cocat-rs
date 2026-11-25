@@ -72,7 +72,7 @@ def test_the_query_of_a_catalogue_reads_and_sets_its_rule(project, events):
     catalogue = project.create_catalogue(name="smart")
     assert catalogue.query is None
     catalogue.query = 'catalogue:Picked OR status:"rejected"'
-    assert catalogue.query == "catalogue:Picked OR status:rejected"
+    assert catalogue.query == 'catalogue:Picked OR status:"rejected"', "as typed"
     assert catalogue.rule["where"]["or"][0] == {"in_catalogue": picked.uuid}
     assert catalogue.events == {shock}
     catalogue.rule = {"merge": {"all": True}, "gap": 10}

@@ -751,25 +751,27 @@ impl Catalogue {
         self.store_rule(rule.as_ref())
     }
 
-    /// The rule as search text, or `None` when there is no rule or it has no search form
-    /// (the time operations: merge, shift, tile, window, closest, set algebra).
+    /// The rule's search as text, as it was typed while it still reads as the rule, whatever
+    /// it searches (all events, `query_source`, or the public catalogues: `searches_public`);
+    /// `None` when there is no rule or it has no search form (the time operations: merge,
+    /// shift, tile, window, closest, set algebra).
     #[getter]
     fn query(&self) -> Result<Option<String>> {
         let doc = self.room.doc();
         let txn = doc.transact();
         let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
+        let typed = model::search_text(&txn, &self.uuid);
         let names = model::catalogue_names(&txn);
         Ok(catalogue
             .rule
-            .and_then(|rule| query::rule_query(&rule, &names))
-            .map(|(text, _)| text))
+            .and_then(|rule| query::where_text(&rule, typed.as_deref(), &names)))
     }
 
     /// Makes this catalogue the search `text` over all events.
     #[setter(query)]
     fn set_query_text(&self, text: &str) -> Result<()> {
         let rule = search_rule(&self.room, text, None)?;
-        self.store_rule(Some(&rule))
+        self.store_search(&rule, text)
     }
 
     /// Makes this catalogue the search `text` over all events, over the events of `source`
@@ -783,7 +785,7 @@ impl Catalogue {
         public: bool,
     ) -> Result<()> {
         let rule = rule_of_search(py, &self.room, text, source, public)?;
-        self.store_rule(Some(&rule))
+        self.store_search(&rule, text)
     }
 
     /// The catalogue whose events its search goes through, or `None` when it searches all
@@ -970,6 +972,18 @@ impl Catalogue {
 }
 
 impl Catalogue {
+    /// Stores the rule of a search and the text it was typed as.
+    fn store_search(&self, rule: &Value, text: &str) -> Result<()> {
+        let found = write(&self.room, |txn| {
+            model::set_catalogue_search(txn, &self.uuid, rule, text)
+        })?
+        .map_err(value_error)?;
+        if !found {
+            return Err(unknown("catalogue"));
+        }
+        Ok(())
+    }
+
     fn store_rule(&self, rule: Option<&Value>) -> Result<()> {
         let found = write(&self.room, |txn| {
             model::set_catalogue_rule(txn, &self.uuid, rule)
@@ -2006,7 +2020,7 @@ impl Project {
         };
         write(&self.room, |txn| {
             model::create_catalogue(txn, &catalogue)?;
-            model::set_catalogue_rule(txn, &catalogue.uuid, Some(&rule))
+            model::set_catalogue_search(txn, &catalogue.uuid, &rule, query)
         })?
         .map_err(value_error)?;
         Py::new(

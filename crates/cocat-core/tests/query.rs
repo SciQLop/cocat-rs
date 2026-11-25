@@ -579,3 +579,82 @@ fn a_quoted_name_is_a_field_or_an_attribute() {
     assert_eq!(query::unquoted("\"B jump\""), "B jump");
     assert_eq!(query::unquoted("tag"), "tag");
 }
+
+/// Every term kind, in a search over every scope a rule can have: all events, a catalogue's
+/// events, the public catalogues. The scope is not in the text; the search is.
+#[test]
+fn every_search_reads_back_as_text_whatever_it_searches() {
+    let searches = [
+        "shock",
+        "\"bow wave\"",
+        "author:alice",
+        "author:=alice@lab.fr",
+        "confidence:>=0.8",
+        "confidence:[0.2 TO 0.5]",
+        "start:2015",
+        "start:>2018",
+        "start:<2020",
+        "start:[2015-01-01 TO 2016-06-30]",
+        "created:>now-7d",
+        "duration:>10min",
+        "status:reviewed",
+        "tag:shock",
+        "catalogue:\"Bow shocks\"",
+        "NOT _exists_:catalogue",
+        "_exists_:shape",
+        "#density:>10",
+        "\"B jump\":>1",
+        "author:/^al.*/",
+        "tag:shock OR (confidence:<0.5 NOT status:rejected)",
+    ];
+    let scopes = [
+        json!({"all": true}),
+        json!({"catalogue": SHOCKS}),
+        json!({"public": true}),
+    ];
+    for scope in &scopes {
+        for search in searches {
+            let rule = json!({"filter": scope, "where": read(search)});
+            let text = query::where_text(&rule, None, &catalogues())
+                .unwrap_or_else(|| panic!("{search} over {scope} has no text"));
+            assert_eq!(
+                read(&text),
+                read(search),
+                "{search} over {scope} printed {text}"
+            );
+        }
+    }
+    let merged = json!({"merge": {"all": true}, "gap": 60});
+    assert_eq!(query::where_text(&merged, None, &catalogues()), None);
+}
+
+#[test]
+fn a_search_reads_back_as_it_was_typed() {
+    for (typed, printed) in [
+        ("start:>2018", "start:>=2019-01-01"),
+        ("start:<2020", "start:<2020-01-01"),
+    ] {
+        let rule = query::public_rule(&read(typed));
+        assert_eq!(
+            query::where_text(&rule, None, &catalogues()).as_deref(),
+            Some(printed)
+        );
+        assert_eq!(
+            query::where_text(&rule, Some(typed), &catalogues()).as_deref(),
+            Some(typed)
+        );
+    }
+    let rule = query::rule(&read("start:>2018"), None);
+    let other = "start:>2017";
+    assert_eq!(
+        query::where_text(&rule, Some(other), &catalogues()).as_deref(),
+        Some("start:>=2019-01-01"),
+        "a typed text that no longer reads as the rule is not shown"
+    );
+    let unreadable = "catalogue:Gone";
+    let rule = query::rule(&read("catalogue:\"Bow shocks\""), None);
+    assert_eq!(
+        query::where_text(&rule, Some(unreadable), &catalogues()).as_deref(),
+        Some("catalogue:\"Bow shocks\"")
+    );
+}

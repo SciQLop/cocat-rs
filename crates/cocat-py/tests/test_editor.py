@@ -169,3 +169,22 @@ def test_rows_read_back_with_all_or_any_and_rich_searches_have_none(project, eve
     assert project.builder_rows(project.parse_query("tag:a (tag:b OR tag:c)")) is None
     assert project.builder_rows({"merge": {"all": True}, "gap": 10}) is None
     assert project.builder_rows(project.parse_query("")) == (False, [])
+
+
+def test_a_search_reads_back_as_it_was_typed(project, events):
+    shock, wave, picked = events
+    smart = project.create_smart_catalogue("Late", "start:>2018")
+    assert smart.query == "start:>2018"
+    smart.query = "start:<2020"
+    assert smart.query == "start:<2020"
+    smart.set_query("tag:shock start:>2018", source=picked)
+    assert smart.query == "tag:shock start:>2018"
+    smart.rule = smart.rule
+    assert smart.query == "tag:shock start:>=2019-01-01", "a rule set as a rule is printed"
+
+
+def test_a_public_rule_still_has_its_text(project):
+    smart = project.create_catalogue("Old")
+    smart.rule = {"filter": {"public": True}, "where": project.parse_query("start:<2020")["where"]}
+    assert smart.searches_public
+    assert smart.query == "start:<2020-01-01"

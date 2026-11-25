@@ -11,7 +11,7 @@ use super::registry;
 use super::values::{json_any, shape_any, strings_any, time_any, typed_any};
 use super::{
     ATTRIBUTE_PREFIX, CATALOGUES, COMMENTS, EVENTS, EventField, EventRecord, LAYOUT, META,
-    NewCatalogue, ShapeAxis, Status, TypeWarning, Vertex, WriteError,
+    NewCatalogue, SEARCH_TEXT, ShapeAxis, Status, TypeWarning, Vertex, WriteError,
 };
 use crate::rules;
 use crate::time::Timestamp;
@@ -92,7 +92,32 @@ pub fn set_catalogue_rule(
         rules::parse(rule)?;
     }
     let rule = rule.map(|rule| json_any("rule", rule)).transpose()?;
-    Ok(set(txn, CATALOGUES, uuid, &[("rule", rule)]))
+    Ok(set(
+        txn,
+        CATALOGUES,
+        uuid,
+        &[("rule", rule), (SEARCH_TEXT, None)],
+    ))
+}
+
+/// Sets the rule of a search typed as `text`, and keeps the text: shown again as typed
+/// (see `query::where_text`), not as the rule prints. Returns false when the room holds no
+/// catalogue `uuid`.
+pub fn set_catalogue_search(
+    txn: &mut TransactionMut<'_>,
+    uuid: &str,
+    rule: &Value,
+    text: &str,
+) -> Result<bool, WriteError> {
+    rules::parse(rule)?;
+    let rule = json_any("rule", rule)?;
+    let text = Any::from(text);
+    Ok(set(
+        txn,
+        CATALOGUES,
+        uuid,
+        &[("rule", Some(rule)), (SEARCH_TEXT, Some(text))],
+    ))
 }
 
 /// Sets or, with `None`, removes what the catalogue's shapes measure. Returns false when

@@ -681,3 +681,38 @@ fn names_and_authors_read_fast_are_those_of_the_full_records() {
     assert_eq!(authors, ["alice", "bob"]);
     assert_eq!(model::vocabulary(&txn).tags, model::existing_tags(&txn));
 }
+
+#[test]
+fn a_search_keeps_the_text_it_was_typed_as_and_syncs_it() {
+    use yrs::updates::decoder::Decode as _;
+    let doc = room();
+    catalogue(&doc, SMART, &[], None);
+    let typed = "start:>2018";
+    let rule = cocat_core::query::public_rule(&cocat_core::query::parse(typed, &[]).unwrap());
+    {
+        let mut txn = doc.transact_mut();
+        assert!(model::set_catalogue_search(&mut txn, SMART, &rule, typed).unwrap());
+    }
+    let copy = Doc::new();
+    let update = doc
+        .transact()
+        .encode_state_as_update_v1(&yrs::StateVector::default());
+    copy.transact_mut()
+        .apply_update(yrs::Update::decode_v1(&update).unwrap())
+        .unwrap();
+    for doc in [&doc, &copy] {
+        let txn = doc.transact();
+        assert_eq!(model::search_text(&txn, SMART).as_deref(), Some(typed));
+        let stored = model::catalogue(&txn, SMART).unwrap().rule.unwrap();
+        assert_eq!(stored, rule);
+    }
+    {
+        let mut txn = doc.transact_mut();
+        model::set_catalogue_rule(&mut txn, SMART, Some(&rule)).unwrap();
+    }
+    assert_eq!(
+        model::search_text(&doc.transact(), SMART),
+        None,
+        "a rule set as a rule has no typed text"
+    );
+}

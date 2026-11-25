@@ -8,7 +8,9 @@ use yrs::{Any, Map as _, MapRef, Out, ReadTxn};
 
 use super::copies::chain_in;
 use super::values::{get, json, number, shape, strings, text, time, typed};
-use super::{ATTRIBUTE_PREFIX, CATALOGUES, CatalogueSummary, EVENTS, EventRecord, META, Status};
+use super::{
+    ATTRIBUTE_PREFIX, CATALOGUES, CatalogueSummary, EVENTS, EventRecord, META, SEARCH_TEXT, Status,
+};
 
 /// The catalogues not in the trash, sorted by name then uuid.
 pub fn catalogues<T: ReadTxn>(txn: &T) -> Vec<CatalogueSummary> {
@@ -46,6 +48,14 @@ pub fn catalogue_names<T: ReadTxn>(txn: &T) -> Vec<(String, String)> {
         .collect();
     names.sort_by(|left, right| (&left.1, &left.0).cmp(&(&right.1, &right.0)));
     names
+}
+
+/// The text a catalogue's search was typed as, when it was set from text (see
+/// `query::where_text`, which checks it still reads as the rule).
+pub fn search_text<T: ReadTxn>(txn: &T, uuid: &str) -> Option<String> {
+    get(&object(txn, CATALOGUES, uuid)?, txn, SEARCH_TEXT)
+        .as_ref()
+        .and_then(text)
 }
 
 /// One catalogue by uuid, deleted or not.

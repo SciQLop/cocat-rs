@@ -270,6 +270,34 @@ pub fn rule_query(
     Some((print(&predicate, catalogues)?, source))
 }
 
+/// The text of a rule's search (its `where`), whatever it searches: all events, a
+/// catalogue's events, or the public catalogues (the scope is not in the text). `typed` is
+/// the text it was set from: it comes back as typed (`start:>2018`, not the equivalent
+/// `start:>=2019-01-01`) while it still reads as the same search with these `catalogues`;
+/// else the search is printed. `None` for a rule with no search form (time operations).
+pub fn where_text(
+    rule: &Value,
+    typed: Option<&str>,
+    catalogues: &[(String, String)],
+) -> Option<String> {
+    let Ok(Set::Filter { filter, predicate }) = rules::parse(rule) else {
+        return None;
+    };
+    if !matches!(
+        *filter,
+        Set::All { .. } | Set::Catalogue { .. } | Set::Public { .. }
+    ) {
+        return None;
+    }
+    let predicate = canonical(predicate);
+    let reads_the_same =
+        |typed: &&str| parse(typed, catalogues).is_ok_and(|read| read == predicate);
+    match typed.filter(reads_the_same) {
+        Some(typed) => Some(typed.to_owned()),
+        None => print(&predicate, catalogues),
+    }
+}
+
 /// A rule's query as one search of all events, its source catalogue written as a
 /// `catalogue:` clause, or `None` when the rule has no query form.
 pub fn rule_search(rule: &Value, catalogues: &[(String, String)]) -> Option<String> {

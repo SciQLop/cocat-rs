@@ -88,3 +88,10 @@ def test_an_answer_that_holds_everything_is_not_capped(tmp_path, server):
     assert project.search_public("start:>1900")["capped"] is False
     assert project.preview("start:>1900")["capped"] is False, "nothing public asked"
     project.close()
+
+
+def test_a_search_of_the_public_catalogues_reads_back_as_typed(project):
+    smart = project.create_smart_catalogue("Old", "start:>2018", public=True)
+    assert (smart.searches_public, smart.query) == (True, "start:>2018")
+    smart.set_query("start:<2020", public=True)
+    assert smart.query == "start:<2020"

@@ -4,6 +4,46 @@
 
 pub use cocat_core::query::search_box::*;
 
+use cocat_core::query;
+use cocat_core::rules::{self, Set};
+use serde_json::Value;
+
+/// A catalogue's own search: its text, and whether it searches the public catalogues rather
+/// than the project.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OwnSearch {
+    pub text: String,
+    pub public: bool,
+}
+
+/// `None` when the box cannot edit the search (not a catalogue, or a rule with time
+/// operations), `Some(None)` when there is none yet.
+pub type Own = Option<Option<OwnSearch>>;
+
+/// A catalogue's own search, from its rule and the text it was `typed` as, shown as typed
+/// while it still reads as the rule. `names` are the project's catalogues, `public` the
+/// public ones; a search of a catalogue's events reads as a search of all with a
+/// `catalogue:` clause, since the box has no other way to say it.
+pub fn own_of(
+    rule: Option<&Value>,
+    typed: Option<&str>,
+    names: &[(String, String)],
+    public: &[(String, String)],
+) -> Own {
+    let Some(rule) = rule else {
+        return Some(None);
+    };
+    let own = |text, public| Some(OwnSearch { text, public });
+    let Ok(Set::Filter { filter, .. }) = rules::parse(rule) else {
+        return None;
+    };
+    match *filter {
+        Set::Public { .. } => query::where_text(rule, typed, public).map(|text| own(text, true)),
+        Set::All { .. } => query::where_text(rule, typed, names).map(|text| own(text, false)),
+        _ => query::rule_search(rule, names).map(|text| own(text, false)),
+    }
+}
+
 /// What the box on a catalogue's page does: filter what the catalogue holds, or edit the
 /// search that brings events into it, from the whole project or from every public catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

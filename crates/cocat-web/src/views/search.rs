@@ -5,27 +5,16 @@ use cocat_core::model;
 use cocat_core::query::builder::{Test, clause, field_label, label, search_text, tests};
 use cocat_core::query::{self, FIELDS, Kind};
 use leptos::prelude::*;
-use serde_json::Value;
 
 use crate::edit;
 use crate::public_events::names;
 use crate::route::Route;
-use crate::search::{Completion, Piece, Query, Side, Vocabulary, accept, complete, pieces};
+use crate::search::{
+    Completion, Own, Piece, Query, Side, Vocabulary, accept, complete, own_of, pieces,
+};
 use crate::state::Room;
 use crate::views::controls::{Error, commit, error_line};
 use crate::views::projects::Projects;
-
-/// A catalogue's own search: its text, and whether it searches the public catalogues rather
-/// than the project.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OwnSearch {
-    pub text: String,
-    pub public: bool,
-}
-
-/// `None` when the box cannot edit the search (not a catalogue, or a rule with time
-/// operations), `Some(None)` when there is none yet.
-pub type Own = Option<Option<OwnSearch>>;
 
 /// The shown catalogue's own search; `public` names the public catalogues.
 pub fn own_search(room: &Room, shown: &Route, public: &[(String, String)]) -> Own {
@@ -34,23 +23,14 @@ pub fn own_search(room: &Room, shown: &Route, public: &[(String, String)]) -> Ow
     };
     room.read(|txn| {
         let rule = model::catalogue(txn, uuid)?.rule;
-        own_of(rule.as_ref(), &model::catalogue_names(txn), public)
+        let typed = model::search_text(txn, uuid);
+        own_of(
+            rule.as_ref(),
+            typed.as_deref(),
+            &model::catalogue_names(txn),
+            public,
+        )
     })
-}
-
-/// A catalogue's own search, from its rule.
-pub fn own_of(
-    rule: Option<&Value>,
-    names: &[(String, String)],
-    public: &[(String, String)],
-) -> Own {
-    let Some(rule) = rule else {
-        return Some(None);
-    };
-    let own = |text, public| Some(OwnSearch { text, public });
-    query::rule_search(rule, names)
-        .map(|text| own(text, false))
-        .or_else(|| query::public_search(rule, public).map(|text| own(text, true)))
 }
 
 /// The side the box opens on for a catalogue's own search.
@@ -292,7 +272,7 @@ fn SaveSearch(
                     query::rule(&predicate, source.as_deref())
                 }
             };
-            edit::new_smart_catalogue(txn, &name, &author, &rule)
+            edit::new_smart_search(txn, &name, &author, &rule, &text)
         });
         match made {
             Ok(uuid) => {

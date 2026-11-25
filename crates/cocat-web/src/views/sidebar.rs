@@ -132,7 +132,7 @@ fn NewCatalogue() -> impl IntoView {
                 let names = cocat_core::model::catalogue_names(txn);
                 let predicate = cocat_core::query::parse(text, &names)?;
                 let rule = cocat_core::query::rule(&predicate, None);
-                edit::new_smart_catalogue(txn, name, &author, &rule)
+                edit::new_smart_search(txn, name, &author, &rule, text)
             });
             if let Ok(made) = made {
                 go_to(&Route::Catalogue(made).hash());
