@@ -41,16 +41,39 @@ Name a field to be precise:
 ## Combining
 
 - A space between two terms means **both**: `tag:shock confidence:>=0.8`
+- `AND` means both too, written out: `tag:shock AND confidence:>=0.8`
 - `OR` means either: `tag:shock OR tag:discontinuity`
 - `NOT` excludes: `tag:shock NOT status:rejected`
 - Parentheses group: `(tag:shock OR tag:discontinuity) start:2019`
 
+`AND`, `OR` and `NOT` are keywords only in capitals: `or` is a plain word.
+
+`NOT` binds tightest, then `AND` (or a space), then `OR`, as in most search languages:
+
+| Search | Reads as |
+|---|---|
+| `NOT tag:a tag:b` | `(NOT tag:a) AND tag:b` |
+| `tag:a tag:b OR tag:c` | `(tag:a AND tag:b) OR tag:c` |
+| `tag:a OR tag:b AND tag:c` | `tag:a OR (tag:b AND tag:c)` |
+| `tag:a OR NOT tag:b` | `tag:a OR (NOT tag:b)` |
+
+Use parentheses to read it another way: `(tag:a OR tag:b) tag:c`.
+
 ## Help while typing
 
-The box suggests as you type: `OR` and `NOT` where they fit (after a term or a `)`; only
-`NOT` at the start or after a keyword), then field names, then the tags, statuses, authors,
-catalogues and attributes already in the project. After an attribute's name it suggests the
-values the project's events have for it, the most frequent first. Arrow keys pick a suggestion, Enter or Tab takes it.
+The box suggests as you type, each suggestion with a word saying what it is (field,
+attribute, tag, catalogue, author, value or keyword):
+
+- `OR`, `AND` and `NOT` where they fit: after a term or a `)`. Only `NOT` at the start or
+  after a keyword.
+- Then the names your word **begins**: built-in fields first, then the project's attributes,
+  then its tags and catalogues.
+- From three letters on, then the names that only **contain** your word, in the same order.
+  With fewer letters, a word is inside too many names to help.
+- After a field's name, its values: tags, statuses, authors, catalogues. After an
+  attribute's name, the values the project's events have for it, the most frequent first.
+
+Arrow keys pick a suggestion, Enter or Tab takes it.
 
 Each term shows as a coloured token. A name that is neither a field nor an attribute of the
 project shows in red: such a search reads as an attribute nobody has, and matches nothing.

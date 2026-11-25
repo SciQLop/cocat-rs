@@ -284,6 +284,16 @@ fn not_binds_tighter_than_and_than_or() {
     );
     assert_eq!(read("NOT a b"), and(vec![not(text("a")), text("b")]));
     assert_eq!(read("a AND b"), read("a b"));
+    assert_eq!(read("a OR b AND c"), read("a OR b c"));
+    assert_eq!(
+        read("a OR NOT b"),
+        Predicate::Or(vec![text("a"), not(text("b"))])
+    );
+    assert_eq!(
+        read("a or b"),
+        and(vec![text("a"), text("or"), text("b")]),
+        "keywords are capitals"
+    );
     assert_eq!(
         read("(a OR b) c"),
         and(vec![Predicate::Or(vec![text("a"), text("b")]), text("c")])

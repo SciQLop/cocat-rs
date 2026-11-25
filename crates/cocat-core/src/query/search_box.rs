@@ -130,6 +130,17 @@ pub struct Suggestion {
     pub kind: &'static str,
 }
 
+impl Suggestion {
+    /// What it is, in a word a person reads beside it: `field`, `attribute`, `tag`,
+    /// `catalogue`, `author`, `value` or `keyword`.
+    pub fn detail(&self) -> &'static str {
+        match self.kind {
+            "status" | "time" | "length" => "value",
+            kind => kind,
+        }
+    }
+}
+
 /// The suggestions for the word at `cursor` (a char index), and the chars `from..to` they
 /// replace.
 #[derive(Debug, Clone, PartialEq)]
@@ -164,8 +175,9 @@ pub fn complete(text: &str, cursor: usize, vocabulary: &Vocabulary) -> Option<Co
     })
 }
 
-/// The keywords that fit the word `typed` after the text `before` it: `OR` after a term or
-/// a `)`, `NOT` there too and where a term starts (at the start, after `(` or a keyword).
+/// The keywords that fit the word `typed` after the text `before` it: `OR` and `AND` after
+/// a term or a `)`, `NOT` there too and where a term starts (at the start, after `(` or a
+/// keyword).
 fn keywords(before: &[char], typed: &str) -> impl Iterator<Item = Suggestion> {
     let before: String = before.iter().collect();
     let before = before.trim_end();
@@ -174,7 +186,7 @@ fn keywords(before: &[char], typed: &str) -> impl Iterator<Item = Suggestion> {
     let fitting: &[&str] = if term_starts {
         &["NOT"]
     } else {
-        &["OR", "NOT"]
+        &["OR", "AND", "NOT"]
     };
     let typed = typed.to_uppercase();
     fitting
@@ -213,33 +225,79 @@ fn word_start(chars: &[char], cursor: usize) -> usize {
 fn names(word: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> {
     let typed = word.to_lowercase();
     if let Some(key) = typed.strip_prefix('#') {
-        return matching(&vocabulary.attributes, key.trim_start_matches('"'))
-            .map(|name| {
-                suggestion(
-                    format!("{}:", written_name(&format!("#{name}"))),
-                    "attribute",
-                )
-            })
-            .collect();
+        let key = key.trim_start_matches('"');
+        return ranked(vocabulary.attributes.iter().map(|name| {
+            let insert = format!("{}:", written_name(&format!("#{name}")));
+            (name.as_str(), key, suggestion(insert, "attribute"))
+        }));
     }
     let fields = crate::query::FIELDS
         .iter()
         .map(|field| field.name)
         .chain(["_exists_"])
-        .filter(|name| name.starts_with(&typed))
-        .map(|name| suggestion(format!("{name}:"), "field"));
-    let known = (!typed.is_empty()).then(|| {
-        let attributes = matching(&vocabulary.attributes, typed.trim_start_matches('"'))
-            .map(|name| suggestion(format!("{}:", attribute_name(name)), "attribute"));
-        let tags = matching(&vocabulary.tags, &typed).map(|tag| ("tag", tag, "tag"));
-        let catalogues =
-            matching(&vocabulary.catalogues, &typed).map(|name| ("catalogue", name, "catalogue"));
-        let values = tags
-            .chain(catalogues)
-            .map(|(field, value, kind)| suggestion(format!("{field}:{} ", quote(value)), kind));
-        attributes.chain(values).collect::<Vec<_>>()
+        .map(|name| {
+            (
+                name,
+                typed.as_str(),
+                suggestion(format!("{name}:"), "field"),
+            )
+        });
+    let known = (!typed.is_empty()).then(|| known_names(&typed, vocabulary));
+    ranked(fields.chain(known.into_iter().flatten()))
+}
+
+/// The attributes, tags and catalogues a bare word may name, each with what it is matched
+/// against and the typed word to match.
+fn known_names<'a>(
+    typed: &'a str,
+    vocabulary: &'a Vocabulary,
+) -> impl Iterator<Item = (&'a str, &'a str, Suggestion)> {
+    let attributes = vocabulary.attributes.iter().map(move |name| {
+        let insert = format!("{}:", attribute_name(name));
+        (
+            name.as_str(),
+            typed.trim_start_matches('"'),
+            suggestion(insert, "attribute"),
+        )
     });
-    fields.chain(known.into_iter().flatten()).collect()
+    let value = move |field: &str, kind, value: &'a String| {
+        let insert = format!("{field}:{} ", quote(value));
+        (value.as_str(), typed, suggestion(insert, kind))
+    };
+    let tags = vocabulary
+        .tags
+        .iter()
+        .map(move |tag| value("tag", "tag", tag));
+    let catalogues = vocabulary
+        .catalogues
+        .iter()
+        .map(move |name| value("catalogue", "catalogue", name));
+    attributes.chain(tags).chain(catalogues)
+}
+
+/// The candidates `(name, typed, suggestion)` whose name matches, those it begins first;
+/// then by what they are: keywords, fields, attributes, values; else in the order given.
+fn ranked<'a>(candidates: impl Iterator<Item = (&'a str, &'a str, Suggestion)>) -> Vec<Suggestion> {
+    let mut found: Vec<_> = candidates
+        .filter_map(|(name, typed, suggestion)| {
+            let rank = (closeness(name, typed)?, kind_rank(suggestion.kind));
+            Some((rank, suggestion))
+        })
+        .collect();
+    found.sort_by_key(|(rank, _)| *rank);
+    found
+        .into_iter()
+        .map(|(_, suggestion)| suggestion)
+        .collect()
+}
+
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "keyword" => 0,
+        "field" => 1,
+        "attribute" => 2,
+        _ => 3,
+    }
 }
 
 /// The values a field takes, for a word `field:value` being typed.
@@ -270,16 +328,21 @@ fn values(field: &str, typed: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> 
     };
     let prefix_only = kind == "status" || kind == "value";
     matching(pool, &typed)
+        .into_iter()
         .filter(|value| !prefix_only || value.to_lowercase().starts_with(&typed))
-        .map(|value| {
-            let value = if field == "_exists_" {
-                value.to_owned()
-            } else {
-                quote(value)
-            };
-            suggestion(format!("{field}:{op}{value} "), kind)
+        .map(|value| match field {
+            "_exists_" => suggestion(format!("{field}:{value} "), existing_kind(value)),
+            _ => suggestion(format!("{field}:{op}{} ", quote(value)), kind),
         })
         .collect()
+}
+
+/// What a name after `_exists_:` is: a built-in field or an attribute.
+fn existing_kind(name: &str) -> &'static str {
+    match crate::query::FIELDS.iter().any(|field| field.name == name) {
+        true => "field",
+        false => "attribute",
+    }
 }
 
 const STATUSES_SHOWN: [&str; 5] = ["preliminary", "confirmed", "reviewed", "final", "rejected"];
@@ -313,17 +376,30 @@ fn split_operator(typed: &str) -> (&str, &str) {
         .unwrap_or(("", typed))
 }
 
+/// A word contained in a name, not at its start, is offered from this many characters on:
+/// shorter, it is in too many names to help.
+const CONTAINED_FROM: usize = 3;
+
+/// 0 when `name` begins with `typed`, 1 when it only contains it, without case.
+fn closeness(name: &str, typed: &str) -> Option<u8> {
+    let name = name.to_lowercase();
+    if name.starts_with(typed) {
+        Some(0)
+    } else if typed.chars().count() >= CONTAINED_FROM && name.contains(typed) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 /// The values that begin with `typed`, then those that only contain it, without case.
-fn matching<'a>(pool: &'a [String], typed: &'a str) -> impl Iterator<Item = &'a String> {
-    let lower = |value: &String| value.to_lowercase();
-    let starts = pool
+fn matching<'a>(pool: &'a [String], typed: &str) -> Vec<&'a String> {
+    let mut found: Vec<_> = pool
         .iter()
-        .filter(move |value| lower(value).starts_with(typed));
-    let contains = pool.iter().filter(move |value| {
-        let value = lower(value);
-        !value.starts_with(typed) && value.contains(typed)
-    });
-    starts.chain(contains)
+        .filter_map(|value| Some((closeness(value, typed)?, value)))
+        .collect();
+    found.sort_by_key(|(closeness, _)| *closeness);
+    found.into_iter().map(|(_, value)| value).collect()
 }
 
 fn suggestion(insert: String, kind: &'static str) -> Suggestion {
@@ -364,6 +440,74 @@ mod completion_tests {
             .unwrap_or_default()
     }
 
+    fn alexis() -> Vocabulary {
+        Vocabulary {
+            tags: vec!["origin_test".into()],
+            catalogues: vec!["orbits".into()],
+            attributes: ["origin", "Orbit No.", "normal_x", "normal_y", "suborbital"]
+                .map(Into::into)
+                .into(),
+            ..Vocabulary::default()
+        }
+    }
+
+    fn shown(text: &str, vocabulary: &Vocabulary) -> Vec<(String, &'static str)> {
+        complete(text, text.chars().count(), vocabulary)
+            .map(|found| {
+                let detail = |s: &Suggestion| s.detail();
+                found
+                    .suggestions
+                    .iter()
+                    .map(|s| (s.insert.clone(), detail(s)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn beginnings_come_first_then_fields_attributes_and_values() {
+        let pair = |insert: &str, detail| (insert.to_owned(), detail);
+        assert_eq!(
+            shown("tag:a AND Or", &alexis()),
+            [
+                pair("origin:", "field"),
+                pair("#origin:", "attribute"),
+                pair("\"Orbit No.\":", "attribute"),
+                pair("tag:origin_test ", "tag"),
+                pair("catalogue:orbits ", "catalogue"),
+            ],
+            "two letters: only the names they begin"
+        );
+        assert_eq!(
+            shown("orb", &alexis()),
+            [
+                pair("\"Orbit No.\":", "attribute"),
+                pair("catalogue:orbits ", "catalogue"),
+                pair("suborbital:", "attribute"),
+            ],
+            "from three letters, a name containing them, after every name they begin"
+        );
+        assert_eq!(inserts("tag:sh"), ["tag:shock ", "tag:sheath "]);
+        assert_eq!(inserts("tag:sho"), ["tag:shock ", "tag:foreshock "]);
+    }
+
+    #[test]
+    fn each_suggestion_says_what_it_is() {
+        let details = |text: &str| -> Vec<&'static str> {
+            shown(text, &vocabulary())
+                .into_iter()
+                .map(|(_, d)| d)
+                .collect()
+        };
+        assert_eq!(details("tag:a ")[..3], ["keyword"; 3]);
+        assert_eq!(details("author:"), ["author"; 2]);
+        assert_eq!(details("status:f"), ["value"]);
+        assert_eq!(details("created:now-1"), ["value"; 2]);
+        assert_eq!(details("duration:1"), ["value"; 4]);
+        assert_eq!(details("_exists_:sha"), ["field"]);
+        assert_eq!(details("_exists_:dens"), ["attribute"]);
+    }
+
     #[test]
     fn an_empty_box_lists_not_then_the_fields() {
         let all = inserts("");
@@ -375,10 +519,12 @@ mod completion_tests {
     fn after_a_term_or_a_bracket_the_keywords_come_first() {
         let found = complete("tag:a ", 6, &vocabulary()).unwrap();
         assert_eq!(found.suggestions[0], suggestion("OR ".into(), "keyword"));
-        assert_eq!(found.suggestions[1], suggestion("NOT ".into(), "keyword"));
-        assert_eq!(found.suggestions[2].insert, "start:");
-        assert_eq!(inserts("(tag:a OR tag:b) ")[..2], ["OR ", "NOT "]);
-        assert_eq!(inserts("shock ")[..2], ["OR ", "NOT "]);
+        assert_eq!(found.suggestions[1], suggestion("AND ".into(), "keyword"));
+        assert_eq!(found.suggestions[2], suggestion("NOT ".into(), "keyword"));
+        assert_eq!(found.suggestions[3].insert, "start:");
+        assert_eq!(inserts("tag:a a")[..2], ["AND ", "author:"]);
+        assert_eq!(inserts("(tag:a OR tag:b) ")[..3], ["OR ", "AND ", "NOT "]);
+        assert_eq!(inserts("shock ")[..3], ["OR ", "AND ", "NOT "]);
         assert_eq!(inserts("tag:a o")[..2], ["OR ", "origin:"]);
         assert_eq!(inserts("tag:a n")[0], "NOT ");
         let text = "tag:a o";
@@ -470,6 +616,7 @@ mod completion_tests {
             let all = inserts(text);
             assert_eq!(all[0], "NOT ", "{text:?}");
             assert!(!all.contains(&"OR ".to_owned()), "{text:?}");
+            assert!(!all.contains(&"AND ".to_owned()), "{text:?}");
         }
         assert!(inserts("st").iter().all(|insert| insert != "NOT "));
         assert!(
@@ -480,25 +627,17 @@ mod completion_tests {
 
     #[test]
     fn a_word_offers_fields_then_known_tags_and_catalogues() {
+        assert_eq!(inserts("sh"), ["shape:", "tag:shock ", "tag:sheath "]);
         assert_eq!(
-            inserts("sh"),
-            [
-                "shape:",
-                "tag:shock ",
-                "tag:sheath ",
-                "tag:foreshock ",
-                "catalogue:\"Bow shocks\" "
-            ]
+            inserts("sho"),
+            ["tag:shock ", "tag:foreshock ", "catalogue:\"Bow shocks\" "]
         );
         assert_eq!(inserts("conf"), ["confidence:"]);
     }
 
     #[test]
     fn after_a_field_its_values_follow() {
-        assert_eq!(
-            inserts("tag:sh"),
-            ["tag:shock ", "tag:sheath ", "tag:foreshock "]
-        );
+        assert_eq!(inserts("tag:sho"), ["tag:shock ", "tag:foreshock "]);
         assert_eq!(
             inserts("status:r"),
             ["status:reviewed ", "status:rejected "]

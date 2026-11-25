@@ -574,7 +574,7 @@ pub fn SearchBox(
                         on:mousedown=move |event| { event.prevent_default(); take(index); }
                         on:mouseenter=move |_| active.set(index)>
                         <code>{suggestion.insert.trim_end().to_owned()}</code>
-                        <span class="kind">{suggestion.kind}</span>
+                        <span class="kind">{suggestion.detail()}</span>
                     </li>
                 }).collect_view()}
             </ul>

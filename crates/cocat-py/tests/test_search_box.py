@@ -110,12 +110,12 @@ def test_completion_suggests_from_the_project_and_accepting_replaces_the_word(
     text = "confidence:>=0.8 tag:sh status:final"
     found = cc.complete(text, 23, vocabulary)
     assert (found["from"], found["to"]) == (17, 23)
-    assert found["suggestions"][0] == {"insert": "tag:shock ", "kind": "tag"}
+    assert found["suggestions"][0] == {"insert": "tag:shock ", "kind": "tag", "detail": "tag"}
     assert cc.accept(text, found, found["suggestions"][0]) == (
         "confidence:>=0.8 tag:shock status:final", 27,
     )
     assert cc.complete("catalogue:pi", 12, {"catalogues": ["Picked"]})["suggestions"] == [
-        {"insert": "catalogue:Picked ", "kind": "catalogue"}
+        {"insert": "catalogue:Picked ", "kind": "catalogue", "detail": "catalogue"}
     ]
     assert cc.complete("tag:shock NOT", 13, vocabulary) is None
 
@@ -133,7 +133,7 @@ def test_an_attribute_needs_no_hash(project, events):
     jump = project.create_event(start=at(0), stop=at(1), attributes={"B_jump": 2.0, "status": "x"})
     vocabulary = project.vocabulary()
     found = cc.complete("B", 1, vocabulary)
-    assert {"insert": "B_jump:", "kind": "attribute"} in found["suggestions"]
+    assert {"insert": "B_jump:", "kind": "attribute", "detail": "attribute"} in found["suggestions"]
     chosen = next(s for s in found["suggestions"] if s["insert"] == "B_jump:")
     assert cc.accept("B", found, chosen) == ("B_jump:", 7)
     statuses = [s["insert"] for s in cc.complete("statu", 5, vocabulary)["suggestions"]]
@@ -149,12 +149,34 @@ def test_an_attribute_needs_no_hash(project, events):
 
 def test_keywords_are_offered_where_they_fit():
     found = cc.complete("tag:a ", 6, {})
-    assert found["suggestions"][:2] == [
-        {"insert": "OR ", "kind": "keyword"},
-        {"insert": "NOT ", "kind": "keyword"},
+    assert found["suggestions"][:3] == [
+        {"insert": "OR ", "kind": "keyword", "detail": "keyword"},
+        {"insert": "AND ", "kind": "keyword", "detail": "keyword"},
+        {"insert": "NOT ", "kind": "keyword", "detail": "keyword"},
     ]
     after_or = [s["insert"] for s in cc.complete("tag:a OR ", 9, {})["suggestions"]]
-    assert after_or[0] == "NOT " and "OR " not in after_or
+    assert after_or[0] == "NOT " and "OR " not in after_or and "AND " not in after_or
+
+
+def test_names_begun_come_first_by_kind_and_say_what_they_are():
+    vocabulary = {
+        "tags": ["origin_test"],
+        "catalogues": ["orbits"],
+        "attributes": ["origin", "Orbit No.", "normal_x", "normal_y", "normal_z"],
+    }
+    text = "tag:a AND Or"
+    found = cc.complete(text, len(text), vocabulary)["suggestions"]
+    assert [(s["insert"], s["detail"]) for s in found] == [
+        ("origin:", "field"),
+        ("#origin:", "attribute"),
+        ('"Orbit No.":', "attribute"),
+        ("tag:origin_test ", "tag"),
+        ("catalogue:orbits ", "catalogue"),
+    ], "two letters begin a name; normal_x only contains them"
+    found = cc.complete("rma", 3, vocabulary)["suggestions"]
+    assert [s["insert"] for s in found] == ["normal_x:", "normal_y:", "normal_z:"]
+    status = cc.complete("status:f", 8, {})["suggestions"]
+    assert status == [{"insert": "status:final ", "kind": "status", "detail": "value"}]
 
 
 def test_attribute_values_complete_after_the_name(project, events):
@@ -163,5 +185,7 @@ def test_attribute_values_complete_after_the_name(project, events):
     for text in ["mode:b", "#mode:", '"mode":bu']:
         found = cc.complete(text, len(text), vocabulary)
         name = text.split(":")[0]
-        assert found["suggestions"] == [{"insert": f"{name}:burst ", "kind": "value"}], text
+        assert found["suggestions"] == [
+            {"insert": f"{name}:burst ", "kind": "value", "detail": "value"}
+        ], text
     assert cc.complete("mode:b", 6, {"attributes": ["mode"]}) is None, "no values given"

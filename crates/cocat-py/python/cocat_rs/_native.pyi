@@ -396,6 +396,7 @@ class Piece(TypedDict, total=False):
 class Suggestion(TypedDict):
     insert: str
     kind: str  # "keyword", "field", "attribute", "value", "tag", "author", "catalogue", "status", "time", "length"
+    detail: Literal["field", "attribute", "tag", "catalogue", "author", "value", "keyword"]
 
 Completion = TypedDict(
     "Completion", {"from": int, "to": int, "suggestions": list[Suggestion]}

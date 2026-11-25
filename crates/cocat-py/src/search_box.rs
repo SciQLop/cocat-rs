@@ -57,8 +57,9 @@ fn pieces(py: Python<'_>, text: &str) -> Result<Py<PyList>> {
 }
 
 /// The suggestions for the word at `cursor` (a character index): a dict with `from` and
-/// `to`, the characters they replace, and `suggestions`, each an `insert` and its `kind`;
-/// `None` when there are none. `vocabulary` is `Project.vocabulary()`'s dict; after a text
+/// `to`, the characters they replace, and `suggestions`, each an `insert`, its `kind` and
+/// a `detail` to show beside it (`field`, `attribute`, `tag`, `catalogue`, `author`,
+/// `value` or `keyword`); `None` when there are none. `vocabulary` is `Project.vocabulary()`'s dict; after a text
 /// attribute's name, its `attribute_values` are suggested.
 #[pyfunction]
 fn complete(
@@ -85,6 +86,7 @@ fn complete(
         let entry = PyDict::new(py);
         entry.set_item("insert", &suggestion.insert)?;
         entry.set_item("kind", suggestion.kind)?;
+        entry.set_item("detail", suggestion.detail())?;
         suggestions.append(entry)?;
     }
     let completion = PyDict::new(py);
