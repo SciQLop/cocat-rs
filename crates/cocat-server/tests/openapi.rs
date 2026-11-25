@@ -343,3 +343,29 @@ async fn every_signed_in_route_takes_a_bearer_token_too() {
     let login = &document["paths"]["/auth/jwt/login"]["post"]["security"];
     assert!(login.is_null(), "a public route asks for nothing: {login}");
 }
+
+/// The release number, as the workspace `Cargo.toml` holds it: the one place it is written.
+fn release_version() -> String {
+    let manifest = include_str!("../../../Cargo.toml");
+    let package = manifest
+        .split("[workspace.package]")
+        .nth(1)
+        .expect("the workspace has a [workspace.package] table");
+    let line = package
+        .lines()
+        .find(|line| line.trim_start().starts_with("version"))
+        .expect("[workspace.package] has a version");
+    line.split('"')
+        .nth(1)
+        .expect("the version is quoted")
+        .to_owned()
+}
+
+#[tokio::test]
+async fn the_server_reports_the_release_version() {
+    let fixture = Fixture::start().await;
+    let document = document_of(&fixture).await;
+    let release = release_version();
+    assert_ne!(release, "0.0.0", "the workspace carries the release number");
+    assert_eq!(document["info"]["version"], release.as_str());
+}

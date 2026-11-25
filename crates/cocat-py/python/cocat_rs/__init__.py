@@ -5,6 +5,7 @@ import logging
 import threading
 
 from . import _native, round_review
+from ._native import __version__
 from ._native import (
     Catalogue,
     Conflict,
@@ -61,6 +62,7 @@ from ._native import (
 )
 
 __all__ = [
+    "__version__",
     "Catalogue",
     "Conflict",
     "Event",

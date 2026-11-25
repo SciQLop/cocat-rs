@@ -2825,6 +2825,7 @@ fn rule_from_tscat(py: Python<'_>, predicate: &Bound<'_, PyAny>) -> Result<Py<Py
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     forward_logs_to_python(module.py())?;
+    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add_class::<Project>()?;
     module.add_class::<Catalogue>()?;
     module.add_class::<Event>()?;

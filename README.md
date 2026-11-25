@@ -49,6 +49,18 @@ Each release publishes the image as `ghcr.io/sciqlop/cocat-server:<version>` and
 Running a server (reverse proxy, mail, metrics, backups, moving from a Python server) is
 documented step by step in [docs/deploy.md](docs/deploy.md).
 
+## Releasing
+
+The release number is written in one place: `version` under `[workspace.package]` in the
+top `Cargo.toml`. The server (`openapi.json`, the admin page), its image and the Python
+package (`cocat_rs.__version__`, the wheel) all take it from there.
+
+1. Set that `version`, run `cargo check` so `Cargo.lock` follows, and commit
+   ("cocat-rs X.Y.Z").
+2. Tag it with the release notes as the message: `git tag -a vX.Y.Z`.
+3. Push the commit and the tag. The publish workflow refuses a tag that does not match
+   `Cargo.toml`, then uploads the wheels to PyPI and the image to ghcr.io.
+
 ## Seeding
 
 ```sh

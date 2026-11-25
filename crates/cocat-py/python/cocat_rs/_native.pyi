@@ -10,6 +10,8 @@ Vertex = tuple[datetime, float]
 # (quantity, unit), e.g. ("frequency", "kHz") or ("energy", "eV").
 ShapeAxis = tuple[str, str]
 
+__version__: str
+
 class NotFound(LookupError, RuntimeError): ...
 
 class QueryError(ValueError):

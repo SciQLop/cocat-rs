@@ -16,8 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: |
-          version=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/cocat-py/pyproject.toml", "rb"))["project"]["version"])')
-          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but pyproject says $version"; exit 1; }
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $version"; exit 1; }
 
   wheels:
     name: Wheel ${{ matrix.target }}
