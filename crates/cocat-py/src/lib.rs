@@ -19,7 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use cocat_client::{
-    Change, Credentials, PublicEvent, PublicQuery, Room as ClientRoom, RoomInfo as ClientRoomInfo,
+    Change, Credentials, PublicEvent, PublicQuery, PublicSearch, Room as ClientRoom,
+    RoomInfo as ClientRoomInfo,
 };
 use cocat_core::model::{
     self, AttributeType, EventField, EventRecord, Hop, Member, NewCatalogue, Origin, OriginKind,
@@ -1016,10 +1017,12 @@ impl Catalogue {
         let public = match rule.as_ref().and_then(public_predicate) {
             Some(predicate) => {
                 let found = public_events(py, &self.room, PublicQuery::Predicate(&predicate))?;
-                if found.is_none() {
-                    warn(py, &[NO_PUBLIC_SERVER])?;
+                match &found {
+                    None => warn(py, &[NO_PUBLIC_SERVER])?,
+                    Some(found) if capped(found) => warn(py, &[only_the_first(found)])?,
+                    Some(_) => {}
                 }
-                found.unwrap_or_default()
+                found.map(|found| found.events).unwrap_or_default()
             }
             None => Vec::new(),
         };
@@ -1423,17 +1426,41 @@ fn public_predicate(rule: &Value) -> Option<cocat_core::rules::Predicate> {
     }
 }
 
+/// What a smart catalogue whose search the server capped says.
+fn only_the_first(found: &PublicSearch) -> String {
+    format!(
+        "the server sends only the first {} of {} events this search finds in the public \
+         catalogues, by start time: narrow the search to see the others",
+        thousands(found.events.len()),
+        thousands(found.total),
+    )
+}
+
+/// `25000` as `25,000`.
+fn thousands(count: usize) -> String {
+    let digits = count.to_string();
+    let mut grouped = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
 /// Why a search of the public catalogues has nothing to show.
 const NO_PUBLIC_SERVER: &str = "sign in to search the public catalogues: no server to ask \
      (connect the project, or Project.use_server), and no answer kept from an earlier search";
 
 /// What `query` finds in the public catalogues, the server asked without the GIL; with no
-/// server, the answer kept the last time; `None` when there is neither.
+/// server, the answer kept the last time; `None` when there is neither. The answer holds at
+/// most `PUBLIC_LIMIT` events, the first by start time, and `total`, how many there are.
 fn public_events(
     py: Python<'_>,
     room: &ClientRoom,
     query: PublicQuery<'_>,
-) -> Result<Option<Vec<PublicEvent>>> {
+) -> Result<Option<PublicSearch>> {
     let found = py.detach(|| block_on(room.search_public(query)))?;
     let Some(found) = found else {
         return Ok(None);
@@ -1446,7 +1473,12 @@ fn public_events(
         );
         warn(py, &[note])?;
     }
-    Ok(Some(found.events))
+    Ok(Some(found))
+}
+
+/// Whether the server held back some of what it found.
+fn capped(found: &PublicSearch) -> bool {
+    found.total > found.events.len()
 }
 
 /// An event's attributes; a derived interval has none.
@@ -1807,12 +1839,16 @@ impl Project {
 
     /// What the search `query` finds in every public catalogue on the server, as the arrays
     /// `Catalogue.event_arrays(attributes=True)` gives, with each event's public catalogue in
-    /// `catalogue`; at most 10,000 events, the first by start time. The last answer is kept,
-    /// for when the server cannot be reached.
+    /// `catalogue`; at most 10,000 events, the first by start time, with `total`, how many
+    /// it found, and `capped`, whether some were left out. The last answer is kept, for when
+    /// the server cannot be reached.
     fn search_public(&self, py: Python<'_>, query: &str) -> Result<Py<PyAny>> {
         let found = public_events(py, &self.room, PublicQuery::Text(query))?
             .ok_or_else(|| PyRuntimeError::new_err(NO_PUBLIC_SERVER))?;
-        event_arrays_of(py, &[], &found, &[], true)
+        let arrays = event_arrays_of(py, &[], &found.events, &[], true)?;
+        arrays.bind(py).set_item("total", found.total)?;
+        arrays.bind(py).set_item("capped", capped(&found))?;
+        Ok(arrays)
     }
 
     /// The rule of the search `text`, its `catalogue:` names read as this project names its
@@ -1832,7 +1868,9 @@ impl Project {
     /// What a smart catalogue with this search (text, as `parse_query` reads it) or rule (a
     /// dict) would hold, saving nothing: the arrays `Catalogue.event_arrays` gives for the
     /// first `limit` members in time order (all with `None`), plus `count`, how many there
-    /// are in all. Only the rows asked for are read out, so counting a big project is cheap.
+    /// are in all, and `capped`: true when the server sent only the first 10,000 public
+    /// events of more (`count` still counts them all). Only the rows asked for are read out,
+    /// so counting a big project is cheap.
     #[pyo3(signature = (search, source=None, public=false, limit=None, attributes=false))]
     fn preview(
         &self,
@@ -1864,12 +1902,14 @@ impl Project {
         let mut found = match public_predicate(&rule) {
             Some(predicate) => public_events(py, &self.room, PublicQuery::Predicate(&predicate))?
                 .ok_or_else(|| PyRuntimeError::new_err(NO_PUBLIC_SERVER))?,
-            None => Vec::new(),
+            None => PublicSearch::default(),
         };
-        let count = preview.count + found.len();
-        found.truncate(limit.map_or(usize::MAX, |limit| limit - preview.members.len()));
-        let arrays = event_arrays_of(py, &preview.members, &found, &dates, attributes)?;
+        let (count, held_back) = (preview.count + found.total, capped(&found));
+        let shown = limit.map_or(usize::MAX, |limit| limit - preview.members.len());
+        found.events.truncate(shown);
+        let arrays = event_arrays_of(py, &preview.members, &found.events, &dates, attributes)?;
         arrays.bind(py).set_item("count", count)?;
+        arrays.bind(py).set_item("capped", held_back)?;
         Ok(arrays)
     }
 

@@ -70,7 +70,8 @@ import cocat_rs as cc
 | `catalogue.rule = None` | remove the search: the catalogue keeps the events it lists |
 | `catalogue.materialize("name")` | a frozen copy of a smart catalogue |
 | `project.parse_query("query", source=None)` | the rule of a search, catalogue names read in this project |
-| `project.preview("query", limit=50)` | what a search would hold, nothing saved: arrays of the first 50, and `count` |
+| `project.preview("query", limit=50)` | what a search would hold, nothing saved: arrays of the first 50, `count` (all of them), and `capped`: true when the server sent only the first 10,000 public events of more |
+| `project.search_public("query")` | the public events a search finds, at most 10,000, the first by start time; `total` says how many there are, `capped` whether some were left out |
 
 ### Building a search from rows
 

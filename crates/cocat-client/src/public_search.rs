@@ -19,7 +19,7 @@ pub const PUBLIC_LIMIT: usize = 10_000;
 /// The folder, in the client's cache folder, that keeps the answers.
 const ANSWERS: &str = "public-searches";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PublicSearch {
     pub total: usize,
     /// How many public catalogues the server left out: their index is still being written.
