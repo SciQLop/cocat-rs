@@ -165,12 +165,56 @@ fn resolve(name: &str) -> Option<(String, Kind)> {
     attribute.then(|| (name.to_owned(), Kind::Attribute))
 }
 
-/// How a search names the attribute `key`: bare, or `#key` when a field has that name.
+/// How a search names the attribute `key`: bare, or `#key` when a field has that name;
+/// quoted when the name needs it.
 pub fn attribute_name(key: &str) -> String {
     match resolve(key) {
-        Some(_) => format!("#{key}"),
-        None => key.to_owned(),
+        Some(_) => hashed(key),
+        None if grammar::is_identifier(key) => key.to_owned(),
+        None => quoted(key),
     }
+}
+
+/// How a search writes a rule field: an attribute as `#key`, quoted when the key needs it.
+pub fn written_name(field: &str) -> String {
+    match field.strip_prefix('#') {
+        Some(key) => hashed(key),
+        None => field.to_owned(),
+    }
+}
+
+/// A name as a search writes it (`tag`, `"B jump"`, `#"B jump"`), without its quotes.
+pub fn unquoted(name: &str) -> String {
+    let (hash, body) = name
+        .strip_prefix('#')
+        .map_or(("", name), |body| ("#", body));
+    let Some(inner) = body
+        .strip_prefix('"')
+        .and_then(|body| body.strip_suffix('"'))
+    else {
+        return name.to_owned();
+    };
+    let mut key = hash.to_owned();
+    let mut characters = inner.chars();
+    while let Some(character) = characters.next() {
+        key.extend(match character {
+            '\\' => characters.next(),
+            _ => Some(character),
+        });
+    }
+    key
+}
+
+fn hashed(key: &str) -> String {
+    match grammar::is_bare_attribute(key) {
+        true => format!("#{key}"),
+        false => format!("#{}", quoted(key)),
+    }
+}
+
+/// `"name"`, where a quote or a backslash is escaped.
+fn quoted(name: &str) -> String {
+    format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// The query name of a rule field and its kind.

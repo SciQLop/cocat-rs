@@ -169,20 +169,35 @@ fn field(input: &mut Input) -> ModalResult<Ast> {
     Ok(Ast::Field(name, term))
 }
 
-/// A field (`author`) or an attribute (`#density`).
+/// A field (`author`) or an attribute (`#density`), either quoted when its name needs it
+/// (`"B jump"`, `#"B jump"`).
 fn name(input: &mut Input) -> ModalResult<Name> {
     let identifier = (
         one_of(|c: char| c.is_ascii_alphabetic() || c == '_'),
         take_while(0.., |c: char| c.is_ascii_alphanumeric() || c == '_'),
     );
     let attribute = ('#', take_while(1.., |c: char| is_word_char(c) && c != ':'));
-    alt((attribute.take(), identifier.take()))
+    let written = alt((attribute.take(), identifier.take())).map(str::to_owned);
+    let quoted_attribute = preceded('#', phrase).map(|key| format!("#{}", key.text));
+    let quoted = phrase.map(|name| name.text);
+    alt((quoted_attribute, quoted, written))
         .with_span()
-        .map(|(text, at): (&str, _)| Name {
-            text: text.to_owned(),
-            at,
-        })
+        .map(|(text, at)| Name { text, at })
         .parse_next(input)
+}
+
+/// Whether a name after `#` reads without quotes.
+pub fn is_bare_attribute(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|c| is_word_char(c) && c != ':')
+}
+
+/// Whether a name reads as a field name without quotes.
+pub fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn term(input: &mut Input) -> ModalResult<Term> {

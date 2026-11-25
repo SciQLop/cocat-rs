@@ -382,6 +382,7 @@ class Vocabulary(TypedDict, total=False):
     authors: list[str]
     catalogues: list[str]
     attributes: list[str]
+    attribute_values: dict[str, list[str]]
 
 class Piece(TypedDict, total=False):
     kind: Literal["space", "keyword", "bracket", "word", "term"]
@@ -392,7 +393,7 @@ class Piece(TypedDict, total=False):
 
 class Suggestion(TypedDict):
     insert: str
-    kind: str  # "field", "attribute", "tag", "author", "catalogue", "status", "time", "length"
+    kind: str  # "keyword", "field", "attribute", "value", "tag", "author", "catalogue", "status", "time", "length"
 
 Completion = TypedDict(
     "Completion", {"from": int, "to": int, "suggestions": list[Suggestion]}

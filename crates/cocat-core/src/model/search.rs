@@ -2,15 +2,16 @@
 //! that match, or a test of one table row at a time.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use yrs::{Any, Map as _, MapRef, Out, ReadTxn};
+use yrs::{Any, Map as _, Out, ReadTxn};
 
 use super::members::{Evaluator, event_field, item_field};
-use super::read::{catalogue_names, event, existing_tags, is_deleted, live};
+use super::read::{add_text, catalogue_names, event, is_deleted, live};
 use super::registry::attribute_types;
 use super::values::{get, time};
-use super::{ATTRIBUTE_PREFIX, EVENTS, EventRecord, Status, origin};
+use super::{ATTRIBUTE_PREFIX, AttributeType, CATALOGUES, EVENTS, EventRecord, Status, origin};
 use crate::query::search_box::{Shown, Vocabulary, Words};
 use crate::rules::intervals::{Item, Source};
 use crate::rules::{self, ANY_TEXT, Lookups, Predicate, RuleError, Set};
@@ -176,30 +177,101 @@ pub fn vocabulary<T: ReadTxn>(txn: &T) -> Vocabulary {
         .into_iter()
         .map(|(_, name)| name)
         .collect();
+    let types = attribute_types(txn);
+    let texts: Vec<String> = types
+        .iter()
+        .filter(|(_, info)| info.kind == AttributeType::Text)
+        .map(|(key, _)| format!("{ATTRIBUTE_PREFIX}{key}"))
+        .collect();
+    let mut words = event_words(txn, &texts);
+    for catalogue in live(txn, CATALOGUES) {
+        if let Some(Any::Array(tags)) = get(&catalogue, txn, "tags") {
+            tags.iter().for_each(|tag| add_text(&mut words.tags, tag));
+        }
+    }
+    let attribute_values = texts
+        .iter()
+        .zip(words.values)
+        .filter(|(_, counted)| !counted.is_empty())
+        .map(|(field, counted)| {
+            (
+                field[ATTRIBUTE_PREFIX.len_utf8()..].to_owned(),
+                most_frequent(counted),
+            )
+        })
+        .collect();
     Vocabulary {
-        tags: existing_tags(txn),
-        authors: live_authors(txn).into_iter().collect(),
+        tags: words.tags.into_iter().collect(),
+        authors: words.authors.into_iter().collect(),
         catalogues: catalogues.into_iter().collect(),
-        attributes: attribute_types(txn).into_keys().collect(),
+        attributes: types.into_keys().collect(),
+        attribute_values,
     }
 }
 
-/// The authors of the events `search` reads: outside the trash, with a start and a stop.
-/// Only those fields are read, and the times only for an author not seen yet: a whole
-/// record reads every field.
-fn live_authors<T: ReadTxn>(txn: &T) -> BTreeSet<String> {
-    let timed = |map: &MapRef, key| get(map, txn, key).as_ref().and_then(time).is_some();
-    let mut authors = BTreeSet::new();
-    for map in live(txn, EVENTS) {
-        if let Some(Any::String(author)) = get(&map, txn, "author")
-            && !authors.contains(author.as_ref())
-            && timed(&map, "start")
-            && timed(&map, "stop")
+/// How many values of one text attribute the vocabulary keeps, the most frequent: enough for
+/// any list a person picks from, few enough that a free-text attribute (a comment, an id)
+/// does not carry its every value to the completions.
+pub const ATTRIBUTE_VALUES_KEPT: usize = 200;
+
+/// What the events outside the trash hold that a search names.
+struct EventWords {
+    tags: BTreeSet<String>,
+    /// Those of the events `search` reads: with a start and a stop.
+    authors: BTreeSet<String>,
+    /// How often each value comes, for each of the text attribute `fields` asked for.
+    values: Vec<HashMap<Arc<str>, usize>>,
+}
+
+/// One walk over each event's fields: a project holds many events, and looking a field up
+/// by name costs about as much as walking them all, once per field asked for.
+fn event_words<T: ReadTxn>(txn: &T, fields: &[String]) -> EventWords {
+    let column: HashMap<&str, usize> = fields
+        .iter()
+        .enumerate()
+        .map(|(at, field)| (field.as_str(), at))
+        .collect();
+    let mut words = EventWords {
+        tags: BTreeSet::new(),
+        authors: BTreeSet::new(),
+        values: vec![HashMap::new(); fields.len()],
+    };
+    for event in live(txn, EVENTS) {
+        let (mut author, mut times) = (None, 0);
+        for (key, value) in event.iter(txn) {
+            let Out::Any(any) = value else { continue };
+            match (key, any) {
+                ("tags", Any::Array(tags)) => {
+                    tags.iter().for_each(|tag| add_text(&mut words.tags, tag));
+                }
+                ("author", Any::String(name)) => author = Some(name),
+                ("start" | "stop", any) => times += usize::from(time(&any).is_some()),
+                (key, Any::String(value)) => {
+                    if let Some(&at) = column.get(key) {
+                        *words.values[at].entry(value).or_default() += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(author) = author
+            && times == 2
+            && !words.authors.contains(author.as_ref())
         {
-            authors.insert(author.to_string());
+            words.authors.insert(author.to_string());
         }
     }
-    authors
+    words
+}
+
+fn most_frequent(counts: HashMap<Arc<str>, usize>) -> Vec<String> {
+    let mut ranked: Vec<(Arc<str>, usize)> = counts.into_iter().collect();
+    ranked.sort_by(|(left, many), (right, more)| more.cmp(many).then_with(|| left.cmp(right)));
+    ranked
+        .into_iter()
+        .take(ATTRIBUTE_VALUES_KEPT)
+        .map(|(value, _)| value.to_string())
+        .collect()
 }
 
 /// Whether an event read out of its room matches, as it would in the room. A term naming a

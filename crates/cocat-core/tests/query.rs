@@ -539,3 +539,43 @@ fn a_bare_name_is_a_field_if_one_has_it_and_an_attribute_otherwise() {
     let error = query::parse_with_attributes("statsx:1", &[], &clashing).unwrap_err();
     assert_eq!(error.suggestion.as_deref(), Some("statsu"));
 }
+
+#[test]
+fn a_quoted_name_is_a_field_or_an_attribute() {
+    let jump = cmp("#B jump", Op::Gt, 1.into());
+    assert_eq!(read("\"B jump\":>1"), jump);
+    assert_eq!(read("#\"B jump\":>1"), jump);
+    assert_eq!(
+        read("_exists_:\"B jump\""),
+        Predicate::Has("#B jump".to_owned())
+    );
+    assert_eq!(
+        read("\"status\":final"),
+        read("status:final"),
+        "a field first"
+    );
+    assert_eq!(
+        read("#\"say \\\"hi\\\"\":1"),
+        cmp("#say \"hi\"", Op::Eq, 1.into())
+    );
+    assert_eq!(
+        read("\"B jump\""),
+        text("B jump"),
+        "a phrase stays a phrase"
+    );
+    let known = ["B jump".to_owned()];
+    assert!(query::parse_with_attributes("\"B jump\":>1", &[], &known).is_ok());
+    assert_eq!(printed(&jump).as_deref(), Some("#\"B jump\":>1"));
+    assert_eq!(
+        printed(&cmp("#B-jump", Op::Gt, 1.into())).as_deref(),
+        Some("#B-jump:>1")
+    );
+    let has = Predicate::Has("#B jump".to_owned());
+    assert_eq!(printed(&has).as_deref(), Some("_exists_:#\"B jump\""));
+    assert_eq!(query::attribute_name("B jump"), "\"B jump\"");
+    assert_eq!(query::attribute_name("B-jump"), "\"B-jump\"");
+    assert_eq!(query::attribute_name("status"), "#status");
+    assert_eq!(query::unquoted("#\"say \\\"hi\\\"\""), "#say \"hi\"");
+    assert_eq!(query::unquoted("\"B jump\""), "B jump");
+    assert_eq!(query::unquoted("tag"), "tag");
+}

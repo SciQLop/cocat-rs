@@ -691,7 +691,8 @@ fn painted_piece(piece: Piece, attributes: &[String]) -> AnyView {
 }
 
 fn term_kind(field: &str, attributes: &[String]) -> &'static str {
-    match (field, query::kind_of(field)) {
+    let field = &query::unquoted(field);
+    match (field.as_str(), query::kind_of(field)) {
         ("_exists_", _) => "exists",
         (_, None) if attributes.iter().any(|key| key == field) => "attribute",
         (_, None) => "unknown",
@@ -716,5 +717,10 @@ mod tests {
         assert_eq!(term_kind("#B_jump", &attributes), "attribute");
         assert_eq!(term_kind("B_jmp", &attributes), "unknown");
         assert_eq!(term_kind("status", &attributes), "status");
+        let spaced = ["B jump".to_owned()];
+        assert_eq!(term_kind("\"B jump\"", &spaced), "attribute");
+        assert_eq!(term_kind("#\"B jump\"", &spaced), "attribute");
+        assert_eq!(term_kind("\"status\"", &spaced), "status");
+        assert_eq!(term_kind("\"B jmp\"", &spaced), "unknown");
     }
 }

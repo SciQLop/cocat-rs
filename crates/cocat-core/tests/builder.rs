@@ -235,3 +235,10 @@ fn an_error_says_where_how_long_and_what_was_meant() {
     let error = query::parse("confidence:>=high", &[]).unwrap_err();
     assert_eq!((error.position, error.length), (13, Some(4)));
 }
+
+#[test]
+fn a_name_that_needs_quotes_is_written_quoted() {
+    let clause = builder::clause("#B jump", Test::Greater, "1");
+    assert_eq!(clause, "#\"B jump\":>1");
+    assert!(query::parse(&clause, &[]).is_ok());
+}

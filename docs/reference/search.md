@@ -33,6 +33,7 @@ Name a field to be precise:
 | `density:>10` | an attribute, by its name |
 | `spacecraft:MMS1` | an attribute with that text |
 | `#status:x` | the attribute `status`, not the field: `#` picks the attribute when a field has its name |
+| `"B jump":>1` | an attribute whose name has a space or a sign: quote the name (`#"B jump"` too) |
 | `catalogue:"Bow shocks"` | listed in that catalogue |
 | `NOT _exists_:catalogue` | listed in no catalogue |
 | `_exists_:shape` | has a time–frequency shape |
@@ -48,7 +49,8 @@ Name a field to be precise:
 
 The box suggests as you type: `OR` and `NOT` where they fit (after a term or a `)`; only
 `NOT` at the start or after a keyword), then field names, then the tags, statuses, authors,
-catalogues and attributes already in the project. Arrow keys pick a suggestion, Enter or Tab takes it.
+catalogues and attributes already in the project. After an attribute's name it suggests the
+values the project's events have for it, the most frequent first. Arrow keys pick a suggestion, Enter or Tab takes it.
 
 Each term shows as a coloured token. A name that is neither a field nor an attribute of the
 project shows in red: such a search reads as an attribute nobody has, and matches nothing.

@@ -58,7 +58,8 @@ fn pieces(py: Python<'_>, text: &str) -> Result<Py<PyList>> {
 
 /// The suggestions for the word at `cursor` (a character index): a dict with `from` and
 /// `to`, the characters they replace, and `suggestions`, each an `insert` and its `kind`;
-/// `None` when there are none. `vocabulary` is `Project.vocabulary()`'s dict.
+/// `None` when there are none. `vocabulary` is `Project.vocabulary()`'s dict; after a text
+/// attribute's name, its `attribute_values` are suggested.
 #[pyfunction]
 fn complete(
     py: Python<'_>,
@@ -71,6 +72,10 @@ fn complete(
         authors: words(vocabulary, "authors")?,
         catalogues: words(vocabulary, "catalogues")?,
         attributes: words(vocabulary, "attributes")?,
+        attribute_values: match vocabulary.get_item("attribute_values") {
+            Ok(found) => found.extract()?,
+            Err(_) => Default::default(),
+        },
     };
     let Some(found) = search_box::complete(text, cursor, &vocabulary) else {
         return Ok(py.None());

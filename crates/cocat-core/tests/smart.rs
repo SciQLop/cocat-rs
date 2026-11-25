@@ -606,6 +606,39 @@ fn the_vocabulary_is_what_a_search_can_name() {
     assert_eq!(vocabulary.catalogues, [OTHER]);
     assert_eq!(vocabulary.attributes, ["label", "q"]);
     assert!(vocabulary.tags.contains(&"t1".to_owned()));
+    let values: Vec<(&str, Vec<&str>)> = vocabulary
+        .attribute_values
+        .iter()
+        .map(|(key, values)| (key.as_str(), values.iter().map(String::as_str).collect()))
+        .collect();
+    assert_eq!(
+        values,
+        [("label", vec!["ev-1", "ev-2", "ev-3"])],
+        "text attributes only, of events outside the trash"
+    );
+}
+
+#[test]
+fn the_attribute_values_come_most_frequent_first_and_are_capped() {
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        for n in 0..(2 * model::ATTRIBUTE_VALUES_KEPT as u32 + 50) {
+            let mut event = EventRecord::new(uuid(n), at(i64::from(n)), at(i64::from(n) + 1));
+            let label = if n % 2 == 0 {
+                "common".to_owned()
+            } else {
+                format!("v{n:04}")
+            };
+            event.attributes = object(json!({"label": label, "flag": true}));
+            model::create_event(&mut txn, &event).unwrap();
+        }
+    }
+    let vocabulary = model::vocabulary(&doc.transact());
+    let labels = &vocabulary.attribute_values["label"];
+    assert_eq!(labels.len(), model::ATTRIBUTE_VALUES_KEPT);
+    assert_eq!(labels[..3], ["common", "v0001", "v0003"]);
+    assert!(!vocabulary.attribute_values.contains_key("flag"));
 }
 
 /// The names and authors a search box needs are read without reading whole catalogues and
@@ -646,4 +679,5 @@ fn names_and_authors_read_fast_are_those_of_the_full_records() {
     authors.dedup();
     assert_eq!(model::vocabulary(&txn).authors, authors);
     assert_eq!(authors, ["alice", "bob"]);
+    assert_eq!(model::vocabulary(&txn).tags, model::existing_tags(&txn));
 }

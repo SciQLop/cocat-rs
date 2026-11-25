@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::grammar::{KEYWORDS, VALUE_STOPS, is_word_char};
 use super::meaning::{Time, span};
-use super::{Kind, canonical, named};
+use super::{Kind, canonical, named, written_name};
 use crate::rules::{Op, Predicate, relative};
 use crate::time::Timestamp;
 
@@ -67,17 +67,17 @@ impl Printer<'_> {
     fn atom(&self, predicate: &Predicate) -> Option<String> {
         match predicate {
             Predicate::Text(word) => Some(word_text(word)),
-            Predicate::Has(field) => Some(format!("_exists_:{}", named(field)?.0)),
+            Predicate::Has(field) => Some(format!("_exists_:{}", written(field)?.0)),
             Predicate::InCatalogue(None) => Some("NOT _exists_:catalogue".to_owned()),
             Predicate::InCatalogue(Some(uuid)) => {
                 Some(format!("catalogue:{}", self.catalogue(uuid)))
             }
             Predicate::Contains(field, Value::String(word)) => {
-                let (name, kind) = named(field)?;
+                let (name, kind) = written(field)?;
                 (kind == Kind::Tags).then(|| format!("{name}:{}", value_text(word)))
             }
             Predicate::Match(field, pattern) => {
-                Some(format!("{}:{}", named(field)?.0, pattern_text(pattern)))
+                Some(format!("{}:{}", written(field)?.0, pattern_text(pattern)))
             }
             Predicate::Cmp(field, op, value) => comparison(field, *op, value),
             _ => None,
@@ -116,12 +116,17 @@ pub(super) fn span_of<'p>(first: &'p Predicate, second: &Predicate) -> Option<(&
     Some((name, text.to_owned()))
 }
 
+/// The name of a rule field as a search writes it, quoted when it needs it, and its kind.
+fn written(field: &str) -> Option<(String, Kind)> {
+    named(field).map(|(name, kind)| (written_name(name), kind))
+}
+
 fn joined(parts: impl Iterator<Item = Option<String>>, joint: &str) -> Option<String> {
     Some(parts.collect::<Option<Vec<_>>>()?.join(joint))
 }
 
 fn comparison(field: &str, op: Op, value: &Value) -> Option<String> {
-    let (name, kind) = named(field)?;
+    let (name, kind) = written(field)?;
     let text = match kind {
         Kind::Time => time_text(op, value)?,
         Kind::Duration => duration_text(value.as_f64()?),

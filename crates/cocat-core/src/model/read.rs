@@ -113,7 +113,7 @@ pub fn existing_tags<T: ReadTxn>(txn: &T) -> Vec<String> {
 
 /// Adds a text to a set, copying it only when it is new: a project holds many events and
 /// few distinct tags and authors.
-fn add_text(set: &mut BTreeSet<String>, any: &Any) {
+pub(super) fn add_text(set: &mut BTreeSet<String>, any: &Any) {
     if let Any::String(text) = any
         && !set.contains(text.as_ref())
     {

@@ -1931,7 +1931,9 @@ impl Project {
     }
 
     /// What a search can name here, for `cocat_rs.complete`: `tags`, `authors` (of live
-    /// events), `catalogues` (names) and `attributes` (keys), each sorted.
+    /// events), `catalogues` (names) and `attributes` (keys), each sorted, and
+    /// `attribute_values`: per text attribute, the values of live events, the most frequent
+    /// first, at most 200.
     fn vocabulary(&self, py: Python<'_>) -> Result<Py<PyAny>> {
         let found = model::vocabulary(&self.room.doc().transact());
         let vocabulary = PyDict::new(py);
@@ -1939,6 +1941,7 @@ impl Project {
         vocabulary.set_item("authors", found.authors)?;
         vocabulary.set_item("catalogues", found.catalogues)?;
         vocabulary.set_item("attributes", found.attributes)?;
+        vocabulary.set_item("attribute_values", found.attribute_values)?;
         Ok(vocabulary.into_any().unbind())
     }
 

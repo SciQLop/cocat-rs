@@ -155,3 +155,13 @@ def test_keywords_are_offered_where_they_fit():
     ]
     after_or = [s["insert"] for s in cc.complete("tag:a OR ", 9, {})["suggestions"]]
     assert after_or[0] == "NOT " and "OR " not in after_or
+
+
+def test_attribute_values_complete_after_the_name(project, events):
+    vocabulary = project.vocabulary()
+    assert vocabulary["attribute_values"] == {"mode": ["burst"]}
+    for text in ["mode:b", "#mode:", '"mode":bu']:
+        found = cc.complete(text, len(text), vocabulary)
+        name = text.split(":")[0]
+        assert found["suggestions"] == [{"insert": f"{name}:burst ", "kind": "value"}], text
+    assert cc.complete("mode:b", 6, {"attributes": ["mode"]}) is None, "no values given"

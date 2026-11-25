@@ -3,7 +3,9 @@
 //! words filter.
 
 use crate::query::builder::value as quote;
-use crate::query::{self, attribute_name};
+use crate::query::{self, attribute_name, written_name};
+use std::collections::BTreeMap;
+
 use serde_json::{Map, Value};
 use time::OffsetDateTime;
 use time::format_description::BorrowedFormatItem;
@@ -116,6 +118,8 @@ pub struct Vocabulary {
     pub authors: Vec<String>,
     pub catalogues: Vec<String>,
     pub attributes: Vec<String>,
+    /// The values a text attribute takes, by key, the most frequent first.
+    pub attribute_values: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -146,8 +150,9 @@ pub fn complete(text: &str, cursor: usize, vocabulary: &Vocabulary) -> Option<Co
     if KEYWORDS.contains(&word.as_str()) {
         return None;
     }
-    let suggestions = match word.split_once(':') {
+    let suggestions = match term_parts(&word) {
         Some((field, value)) => values(field, value, vocabulary),
+        None if word.contains(':') => Vec::new(),
         None => keywords(&chars[..from], &word)
             .chain(names(&word, vocabulary))
             .collect(),
@@ -178,6 +183,17 @@ fn keywords(before: &[char], typed: &str) -> impl Iterator<Item = Suggestion> {
         .map(|keyword| suggestion(format!("{keyword} "), "keyword"))
 }
 
+/// The key of the attribute a term's name (`spacecraft`, `#spacecraft`, `"B jump"`) names,
+/// or `None` for a field.
+fn attribute_key(name: &str) -> Option<String> {
+    let name = query::unquoted(name);
+    match query::kind_of(&name) {
+        Some(query::Kind::Attribute) => name.strip_prefix('#').map(str::to_owned),
+        Some(_) => None,
+        None => Some(name),
+    }
+}
+
 /// Where the word at `cursor` starts: after the last space or bracket outside quotes.
 fn word_start(chars: &[char], cursor: usize) -> usize {
     let mut start = 0;
@@ -197,8 +213,13 @@ fn word_start(chars: &[char], cursor: usize) -> usize {
 fn names(word: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> {
     let typed = word.to_lowercase();
     if let Some(key) = typed.strip_prefix('#') {
-        return matching(&vocabulary.attributes, key)
-            .map(|name| suggestion(format!("#{name}:"), "attribute"))
+        return matching(&vocabulary.attributes, key.trim_start_matches('"'))
+            .map(|name| {
+                suggestion(
+                    format!("{}:", written_name(&format!("#{name}"))),
+                    "attribute",
+                )
+            })
             .collect();
     }
     let fields = crate::query::FIELDS
@@ -208,7 +229,7 @@ fn names(word: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> {
         .filter(|name| name.starts_with(&typed))
         .map(|name| suggestion(format!("{name}:"), "field"));
     let known = (!typed.is_empty()).then(|| {
-        let attributes = matching(&vocabulary.attributes, &typed)
+        let attributes = matching(&vocabulary.attributes, typed.trim_start_matches('"'))
             .map(|name| suggestion(format!("{}:", attribute_name(name)), "attribute"));
         let tags = matching(&vocabulary.tags, &typed).map(|tag| ("tag", tag, "tag"));
         let catalogues =
@@ -242,11 +263,14 @@ fn values(field: &str, typed: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> 
         "_exists_" => (&fields, "field"),
         "start" | "stop" | "created" => return times(field, op, &typed),
         "duration" => return durations(op, &typed),
-        _ => return Vec::new(),
+        _ => match attribute_key(field).and_then(|key| vocabulary.attribute_values.get(&key)) {
+            Some(values) => (values, "value"),
+            None => return Vec::new(),
+        },
     };
-    let prefix_only = field == "status";
+    let prefix_only = kind == "status" || kind == "value";
     matching(pool, &typed)
-        .filter(|value| !prefix_only || value.starts_with(&typed))
+        .filter(|value| !prefix_only || value.to_lowercase().starts_with(&typed))
         .map(|value| {
             let value = if field == "_exists_" {
                 value.to_owned()
@@ -330,6 +354,7 @@ mod completion_tests {
             authors: vec!["alice@lab.fr".into(), "bob@lab.fr".into()],
             catalogues: vec!["Bow shocks".into(), "Solitons".into()],
             attributes: vec!["density".into(), "speed".into()],
+            attribute_values: BTreeMap::new(),
         }
     }
 
@@ -362,6 +387,74 @@ mod completion_tests {
             accept(text, &found, &found.suggestions[0]),
             ("tag:a OR ".to_owned(), 9)
         );
+    }
+
+    #[test]
+    fn an_attribute_value_completes_after_its_name() {
+        let values = [
+            ("spacecraft", vec!["MMS1", "MMS2", "Cluster 3"]),
+            ("B jump", vec!["big"]),
+        ];
+        let with = Vocabulary {
+            attributes: vec!["spacecraft".into(), "B jump".into()],
+            attribute_values: values
+                .into_iter()
+                .map(|(key, values)| (key.into(), values.into_iter().map(Into::into).collect()))
+                .collect(),
+            ..vocabulary()
+        };
+        let inserts = |text: &str| -> Vec<String> {
+            complete(text, text.chars().count(), &with)
+                .map(|found| found.suggestions.into_iter().map(|s| s.insert).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            inserts("spacecraft:"),
+            [
+                "spacecraft:MMS1 ",
+                "spacecraft:MMS2 ",
+                "spacecraft:\"Cluster 3\" "
+            ]
+        );
+        assert_eq!(
+            inserts("#spacecraft:mms"),
+            ["#spacecraft:MMS1 ", "#spacecraft:MMS2 "]
+        );
+        assert_eq!(inserts("spacecraft:=cl"), ["spacecraft:=\"Cluster 3\" "]);
+        assert_eq!(inserts("\"B jump\":b"), ["\"B jump\":big "]);
+        assert_eq!(inserts("#\"B jump\":"), ["#\"B jump\":big "]);
+        assert!(
+            inserts("spacecraft:3").is_empty(),
+            "values are matched by their start"
+        );
+        assert!(inserts("density:").is_empty(), "no values known");
+        let found = complete("spacecraft:M", 12, &with).unwrap();
+        assert_eq!(found.suggestions[0].kind, "value");
+        for insert in inserts("spacecraft:")
+            .into_iter()
+            .chain(inserts("\"B jump\":"))
+        {
+            assert!(query::parse(&insert, &[]).is_ok(), "{insert} does not read");
+        }
+    }
+
+    #[test]
+    fn a_name_that_needs_quotes_is_suggested_quoted() {
+        let spaced = Vocabulary {
+            attributes: vec!["B jump".into()],
+            ..vocabulary()
+        };
+        let suggested = |text: &str| {
+            let found = complete(text, text.chars().count(), &spaced).unwrap();
+            let first = found.suggestions[0].clone();
+            (first.insert.clone(), accept(text, &found, &first).0)
+        };
+        let quoted = "#\"B jump\":".to_owned();
+        assert_eq!(suggested("#B"), (quoted.clone(), quoted));
+        let bare = "\"B jump\":".to_owned();
+        assert_eq!(suggested("B"), (bare.clone(), bare.clone()));
+        assert_eq!(suggested("\"B j"), (bare.clone(), bare));
+        assert!(query::parse("\"B jump\":>1", &[]).is_ok());
     }
 
     #[test]
@@ -576,10 +669,7 @@ fn classify(piece: &str) -> Piece {
         _ if piece.starts_with(' ') => Piece::Space(owned),
         "(" | ")" => Piece::Bracket(owned),
         _ if KEYWORDS.contains(&piece) => Piece::Keyword(owned),
-        _ => match piece
-            .split_once(':')
-            .filter(|(field, _)| is_field_name(field))
-        {
+        _ => match term_parts(piece) {
             Some((field, value)) => {
                 let (op, value) = split_operator(value);
                 Piece::Term {
@@ -591,6 +681,34 @@ fn classify(piece: &str) -> Piece {
             None => Piece::Word(owned),
         },
     }
+}
+
+/// A term's name and what follows its `:`; a quoted name (`"B jump"`, `#"B jump"`) runs to
+/// its closing quote.
+fn term_parts(word: &str) -> Option<(&str, &str)> {
+    let body = word.strip_prefix('#').unwrap_or(word);
+    if !body.starts_with('"') {
+        return word
+            .split_once(':')
+            .filter(|(field, _)| is_field_name(field));
+    }
+    let end = word.len() - body.len() + closing_quote(body)? + 1;
+    let rest = word[end..].strip_prefix(':')?;
+    Some((&word[..end], rest))
+}
+
+/// Where the quote opening `quoted` closes, `\"` being a quote inside.
+fn closing_quote(quoted: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (index, character) in quoted.char_indices().skip(1) {
+        match character {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return Some(index),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// What the search language reads as a field name: a letter, `_` or `#` first.
@@ -606,6 +724,18 @@ mod piece_tests {
 
     fn joined(text: &str) -> String {
         pieces(text).iter().map(Piece::text).collect()
+    }
+
+    #[test]
+    fn a_quoted_name_is_the_field_of_a_term() {
+        let term = |field: &str, op: &str, value: &str| Piece::Term {
+            field: field.to_owned(),
+            op: op.to_owned(),
+            value: value.to_owned(),
+        };
+        assert_eq!(pieces("\"B jump\":>1"), [term("\"B jump\"", ":>", "1")]);
+        assert_eq!(pieces("#\"a:b\":x"), [term("#\"a:b\"", ":", "x")]);
+        assert_eq!(pieces("\"a:b\""), [Piece::Word("\"a:b\"".to_owned())]);
     }
 
     #[test]

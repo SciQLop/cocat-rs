@@ -155,6 +155,7 @@ pub fn field_label(field: &str) -> String {
 pub fn clause(field: &str, test: Test, value: &str) -> String {
     use Test::*;
     let kind = kind_of(field).unwrap_or(Kind::Text);
+    let field = &super::written_name(field);
     let value = value.trim();
     match test {
         Contains => format!("{field}:{}", value_text(value)),
