@@ -46,8 +46,9 @@ Name a field to be precise:
 
 ## Help while typing
 
-The box suggests as you type: field names first, then the tags, statuses, authors, catalogues
-and attributes already in the project. Arrow keys pick a suggestion, Enter or Tab takes it.
+The box suggests as you type: `OR` and `NOT` where they fit (after a term or a `)`; only
+`NOT` at the start or after a keyword), then field names, then the tags, statuses, authors,
+catalogues and attributes already in the project. Arrow keys pick a suggestion, Enter or Tab takes it.
 
 Each term shows as a coloured token. A name that is neither a field nor an attribute of the
 project shows in red: such a search reads as an attribute nobody has, and matches nothing.

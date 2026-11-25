@@ -148,13 +148,34 @@ pub fn complete(text: &str, cursor: usize, vocabulary: &Vocabulary) -> Option<Co
     }
     let suggestions = match word.split_once(':') {
         Some((field, value)) => values(field, value, vocabulary),
-        None => names(&word, vocabulary),
+        None => keywords(&chars[..from], &word)
+            .chain(names(&word, vocabulary))
+            .collect(),
     };
     (!suggestions.is_empty()).then(|| Completion {
         from,
         to: cursor,
         suggestions: suggestions.into_iter().take(SHOWN).collect(),
     })
+}
+
+/// The keywords that fit the word `typed` after the text `before` it: `OR` after a term or
+/// a `)`, `NOT` there too and where a term starts (at the start, after `(` or a keyword).
+fn keywords(before: &[char], typed: &str) -> impl Iterator<Item = Suggestion> {
+    let before: String = before.iter().collect();
+    let before = before.trim_end();
+    let last = before.rsplit(' ').next().unwrap_or_default();
+    let term_starts = before.is_empty() || before.ends_with('(') || KEYWORDS.contains(&last);
+    let fitting: &[&str] = if term_starts {
+        &["NOT"]
+    } else {
+        &["OR", "NOT"]
+    };
+    let typed = typed.to_uppercase();
+    fitting
+        .iter()
+        .filter(move |keyword| keyword.starts_with(&typed))
+        .map(|keyword| suggestion(format!("{keyword} "), "keyword"))
 }
 
 /// Where the word at `cursor` starts: after the last space or bracket outside quotes.
@@ -319,10 +340,49 @@ mod completion_tests {
     }
 
     #[test]
-    fn an_empty_box_lists_the_fields() {
+    fn an_empty_box_lists_not_then_the_fields() {
         let all = inserts("");
-        assert_eq!(all[0], "start:");
+        assert_eq!(all[..2], ["NOT ", "start:"]);
         assert_eq!(all.len(), SHOWN);
+    }
+
+    #[test]
+    fn after_a_term_or_a_bracket_the_keywords_come_first() {
+        let found = complete("tag:a ", 6, &vocabulary()).unwrap();
+        assert_eq!(found.suggestions[0], suggestion("OR ".into(), "keyword"));
+        assert_eq!(found.suggestions[1], suggestion("NOT ".into(), "keyword"));
+        assert_eq!(found.suggestions[2].insert, "start:");
+        assert_eq!(inserts("(tag:a OR tag:b) ")[..2], ["OR ", "NOT "]);
+        assert_eq!(inserts("shock ")[..2], ["OR ", "NOT "]);
+        assert_eq!(inserts("tag:a o")[..2], ["OR ", "origin:"]);
+        assert_eq!(inserts("tag:a n")[0], "NOT ");
+        let text = "tag:a o";
+        let found = complete(text, 7, &vocabulary()).unwrap();
+        assert_eq!(
+            accept(text, &found, &found.suggestions[0]),
+            ("tag:a OR ".to_owned(), 9)
+        );
+    }
+
+    #[test]
+    fn at_the_start_or_after_a_keyword_only_not_is_offered() {
+        for text in [
+            "",
+            "(",
+            "tag:a OR ",
+            "tag:a NOT ",
+            "tag:a AND ",
+            "(tag:a OR (",
+        ] {
+            let all = inserts(text);
+            assert_eq!(all[0], "NOT ", "{text:?}");
+            assert!(!all.contains(&"OR ".to_owned()), "{text:?}");
+        }
+        assert!(inserts("st").iter().all(|insert| insert != "NOT "));
+        assert!(
+            inserts("tag:a NOT").is_empty(),
+            "a typed keyword is complete"
+        );
     }
 
     #[test]
@@ -435,7 +495,7 @@ mod completion_tests {
             "#",
         ] {
             for insert in inserts(typed) {
-                if insert.ends_with(':') {
+                if insert.ends_with(':') || KEYWORDS.contains(&insert.trim_end()) {
                     continue;
                 }
                 let names = vec![

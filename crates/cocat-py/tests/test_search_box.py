@@ -145,3 +145,13 @@ def test_an_attribute_needs_no_hash(project, events):
     with pytest.raises(cc.QueryError) as error:
         project.parse_query("B_jmp:>1")
     assert error.value.suggestion == "B_jump"
+
+
+def test_keywords_are_offered_where_they_fit():
+    found = cc.complete("tag:a ", 6, {})
+    assert found["suggestions"][:2] == [
+        {"insert": "OR ", "kind": "keyword"},
+        {"insert": "NOT ", "kind": "keyword"},
+    ]
+    after_or = [s["insert"] for s in cc.complete("tag:a OR ", 9, {})["suggestions"]]
+    assert after_or[0] == "NOT " and "OR " not in after_or
