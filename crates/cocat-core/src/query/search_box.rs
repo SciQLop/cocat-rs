@@ -240,7 +240,7 @@ pub fn complete(text: &str, cursor: usize, vocabulary: &Vocabulary) -> Option<Co
     };
     (!suggestions.is_empty()).then(|| Completion {
         from,
-        to: cursor,
+        to: word_end(&chars, from, cursor),
         suggestions: suggestions.into_iter().take(SHOWN).collect(),
     })
 }
@@ -277,6 +277,21 @@ fn attribute_key(name: &str) -> Option<String> {
 }
 
 /// Where the word at `cursor` starts: after the last space or bracket outside quotes.
+/// Where the word the cursor is in ends, so that taking a suggestion replaces all of it.
+fn word_end(chars: &[char], from: usize, cursor: usize) -> usize {
+    let mut quoted = chars[from..cursor].iter().filter(|&&c| c == '"').count() % 2 == 1;
+    let mut end = cursor;
+    while let Some(&character) = chars.get(end) {
+        match character {
+            '"' => quoted = !quoted,
+            ' ' | '(' | ')' if !quoted => break,
+            _ => {}
+        }
+        end += 1;
+    }
+    end
+}
+
 fn word_start(chars: &[char], cursor: usize) -> usize {
     let mut start = 0;
     let mut quoted = false;
@@ -815,6 +830,23 @@ mod completion_tests {
             accept("tag:fo", &found, &found.suggestions[0]),
             ("tag:foreshock ".to_owned(), 14)
         );
+    }
+
+    /// Vibe, 2026-11-26: accepted with the cursor inside a word, a suggestion kept the
+    /// word's end after it: `tag:shock k`.
+    #[test]
+    fn accepting_inside_a_word_replaces_all_of_it() {
+        let found = complete("tag:shock", 8, &vocabulary()).unwrap();
+        assert_eq!((found.from, found.to), (0, 9));
+        assert_eq!(
+            accept("tag:shock", &found, &found.suggestions[0]),
+            ("tag:shock ".to_owned(), 10)
+        );
+        let text = "tag:fo status:final";
+        let found = complete(text, 5, &vocabulary()).unwrap();
+        assert_eq!(found.to, 6, "the word ends at the space");
+        let found = complete(r#"catalogue:"Bow sh x"#, 14, &vocabulary()).unwrap();
+        assert_eq!(found.to, 19, "a quoted word runs to its end");
     }
 
     #[test]
