@@ -144,8 +144,11 @@ pub(crate) struct Inner {
     /// While a batch is open, local updates are collected here instead of queued at once.
     pub(crate) batching: Arc<AtomicBool>,
     pub(crate) batched: Arc<Mutex<Vec<Vec<u8>>>>,
-    /// While a batch is open, what takes its edits back. It watches the batch as it happens:
-    /// a deleted value is gone once its transaction ends, unless an undo manager kept it.
+    /// What takes a batch's edits back. It watches the batch as it happens: a deleted value
+    /// is gone once its transaction ends, unless an undo manager kept it. Made at the first
+    /// batch and kept, recording only while `batching` is set: dropping an undo manager
+    /// unhooks it from the document without waiting, and panics if another thread reads
+    /// the document at that moment (yrs 0.28, `UndoManager::drop`).
     undo: Mutex<Option<UndoManager>>,
     pub(crate) status: StatusCell,
     pub(crate) ack: AckCell,
@@ -334,6 +337,17 @@ struct Session {
 impl Drop for Room {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        // simplify: the batches' undo manager is leaked, never dropped: its drop panics when
+        // another thread holds the document (yrs 0.28 unwraps a lock it does not wait for).
+        // It costs a few small maps per room opened; drop it once yrs waits or returns.
+        if let Some(undo) = lock(&self.undo).take() {
+            std::mem::forget(undo);
+        }
     }
 }
 
@@ -544,7 +558,18 @@ impl Room {
     /// so the others see them in one transaction.
     pub fn begin_batch(&self) {
         lock(&self.inner.batched).clear();
-        *lock(&self.inner.undo) = Some(batch_undo(&self.doc()));
+        let doc = self.doc();
+        // Taken out while it works: its transactions run the room's observers.
+        let kept = lock(&self.inner.undo).take();
+        let undo = match kept {
+            None => batch_undo(&doc, Arc::clone(&self.inner.batching)),
+            Some(mut undo) => {
+                undo.clear_all();
+                widen(&mut undo, &doc);
+                undo
+            }
+        };
+        *lock(&self.inner.undo) = Some(undo);
         self.inner.batching.store(true, Ordering::Relaxed);
     }
 
@@ -557,14 +582,19 @@ impl Room {
         let undo = lock(&self.inner.undo).take();
         if let Some(mut undo) = undo {
             while undo.undo_blocking() {}
+            *lock(&self.inner.undo) = Some(undo);
         }
         self.end_batch();
     }
 
     /// Ends the batch opened by [`Room::begin_batch`] and queues its merged update.
     pub fn end_batch(&self) {
-        lock(&self.inner.undo).take();
         self.inner.batching.store(false, Ordering::Relaxed);
+        let kept = lock(&self.inner.undo).take();
+        if let Some(mut undo) = kept {
+            undo.clear_all();
+            *lock(&self.inner.undo) = Some(undo);
+        }
         let updates = std::mem::take(&mut *lock(&self.inner.batched));
         if updates.is_empty() {
             return;
@@ -730,12 +760,13 @@ fn replay(records: Vec<Bytes>) -> Result<Doc, RoomError> {
     Ok(doc)
 }
 
-/// An undo manager that gathers every local edit from now on into one step, over every root
-/// the model writes and any other root the document already holds.
-fn batch_undo(doc: &Doc) -> UndoManager {
+/// An undo manager that gathers every local edit made while `batching` is set into one step,
+/// over every root the model writes and any other root the document already holds.
+fn batch_undo(doc: &Doc, batching: Arc<AtomicBool>) -> UndoManager {
     let mut undo = UndoManager::with_options(yrs::undo::Options {
         capture_timeout_millis: u64::MAX,
         tracked_origins: [Origin::from(LOCAL_ORIGIN)].into(),
+        capture_transaction: Some(Arc::new(move |_| batching.load(Ordering::Relaxed))),
         ..Default::default()
     });
     let roots = {
@@ -753,6 +784,21 @@ fn batch_undo(doc: &Doc) -> UndoManager {
         undo.expand_scope(doc, root);
     }
     undo
+}
+
+/// Adds the roots the document gained since the undo manager was made. Done inside one
+/// transaction, so no other thread's transaction reads the manager's scope meanwhile; the
+/// manager already watches this document, so it registers nothing on it.
+fn widen(undo: &mut UndoManager, doc: &Doc) {
+    let mut txn = doc.transact_mut_with(REPLAY_ORIGIN);
+    let mut names: Vec<String> = txn.root_refs().map(|(name, _)| name.to_owned()).collect();
+    names.extend(MODEL_ROOTS.iter().map(|name| (*name).to_owned()));
+    names.sort();
+    names.dedup();
+    for name in &names {
+        let root = txn.get_or_insert_map(name.as_str());
+        undo.expand_scope(doc, &root);
+    }
 }
 
 /// The roots the catalogue model writes; a batch may create one the document lacks so far.

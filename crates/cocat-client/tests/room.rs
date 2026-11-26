@@ -121,3 +121,38 @@ fn an_abandoned_batch_leaves_the_room_as_it_was() {
 fn holds(room: &Room, event: &str) -> bool {
     cocat_core::model::event(&room.doc().transact(), event).is_some()
 }
+
+/// SciQLop, 2026-11-26: ending a batch while another thread read the document panicked
+/// (ExclusiveAcqFailed, a BaseException Python cannot catch): the batch's undo manager was
+/// dropped, and its drop needs the document to itself, without waiting.
+#[test]
+fn a_batch_ends_while_another_thread_reads_the_document() {
+    let dir = cache();
+    let room = Room::open(dir.path(), ROOM).unwrap();
+    for round in 0..3 {
+        room.begin_batch();
+        create_catalogue(
+            &room,
+            &format!("6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f6{round}"),
+            "alpha",
+        );
+        let doc = room.doc();
+        let (held, release) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _reading = doc.transact();
+                held.wait();
+                release.wait();
+            });
+            held.wait();
+            let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| room.end_batch()));
+            release.wait();
+            assert!(ended.is_ok(), "end_batch panicked in round {round}");
+        });
+    }
+    room.begin_batch();
+    create_catalogue(&room, CATALOGUE, "beta");
+    room.abandon_batch();
+    assert_eq!(names(&room).len(), 3, "the abandoned batch is taken back");
+    room.close();
+}
