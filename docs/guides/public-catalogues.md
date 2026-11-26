@@ -68,7 +68,8 @@ you may find:
   GSEP GOES list; ICMEs at Mercury (Winslow et al. 2015); Van Allen Probes EMIC waves (Inglis et
   al. 2024; Remya et al. 2023); the HELIO type III radio bursts at Wind and STEREO,
   1996-2011; the 3D directions of Solar Cycle 25 CMEs from their coronal dimmings (DIRECD,
-  Jain et al. 2026); the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004); and TUMS,
+  Jain et al. 2026); the fine structures of six type IV radio bursts seen at ETH Zurich in 1977-1978
+  (Bernold 1980); the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004); and TUMS,
   UNAM's database of transient upstream mesoscale structures (SLAMS, hot flow anomalies,
   foreshock bubbles, cavities, cavitons, density holes) at Earth, Mars, Mercury, Venus, Saturn
   and Jupiter, one list per type and planet, kept up to date from the site.

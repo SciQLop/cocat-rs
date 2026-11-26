@@ -152,7 +152,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 131] = [
+static LISTS: [List; 132] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -460,6 +460,17 @@ static LISTS: [List; 131] = [
         credit: "Lee, Sibeck, Omidi et al. (2023), Ion Acceleration by Foreshock Bubbles: Magnetospheric Multiscale Observations, JGR Space Physics 128, e2023JA031770, https://doi.org/10.1029/2023JA031770, Table 1; copyright AGU (no open licence): the event times and values are given here with this citation.",
         url: "https://doi.org/10.1029/2023JA031770",
         files: Files::Kept(include_str!("data/lee_2023_foreshock_bubbles.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "eth-type-iv-fine-structures-bernold",
+        folder: "Literature/Sun",
+        name: "Fine structures in type IV radio bursts, ETH Zurich 1977-1978 (Bernold 1980)",
+        about: "Twenty-nine intervals of fine structure in six type IV solar radio bursts, 24 December 1977 to 13 October 1978, from the ETH Zurich digital spectrometer (100-1000 MHz in 1 MHz steps): the most typical ones, not every one recorded. Each event is a selected period of the digital recording, UT to the second. Attributes from Table I: the characteristic as printed; its class in Table II (variation in time, variation in frequency, combinations, diffuse); the frequency band recorded (MHz) and the sweeps per second; the whole burst's start, end and band from the analog recording; and the paper's figure showing it. Table II defines the characteristics: broad band fluctuations (>100 MHz, fluctuations in flux, not periodic), quasi periodic pulsations (>50 MHz, 0.5 to 5 s, almost sinusoidal modulation), sudden reductions (>50 MHz, high emission interrupted by steep absorptions), spikes (>20 MHz, <1 s, a band of enhanced emission), zebra pattern (2-5 MHz, slowly varying bands of enhanced flux), tadpoles (<5 MHz, <1 s, emission with absorption at higher frequencies and a dot of emission in it), fibres (>50 MHz, about 0.1 s, emission followed by absorption, drifting), rain (<10 MHz, <1/8 s, single drops of emission over the burst), clouds (>10 MHz, >1 s, fuzzy structures) and spots (<10 MHz, about 1 s, short intense emissions). Transcribed from the scan twice, independently, and checked against the times on the figures: every row matches its figure but the last clouds (78/10/13), which Table I starts at 12:54:35 and Figure 29 shows from 12:59:35; the table's time is kept. Converted once from Tables I and II of the paper.",
+        credit: "Bernold, T. (1980), A catalogue of fine structures in type IV solar radio bursts, Astronomy and Astrophysics Supplement Series 42, 43-58, https://ui.adsabs.harvard.edu/abs/1980A%26AS...42...43B (Tables I and II); scan © European Southern Observatory, provided by the NASA Astrophysics Data System, no licence stated.",
+        url: "https://ui.adsabs.harvard.edu/abs/1980A%26AS...42...43B",
+        files: Files::Kept(include_str!("data/bernold_1980_type4_fine_structures.csv")),
         read: kept_table,
         part: "",
     },
@@ -3566,6 +3577,30 @@ mod tests {
                 .iter()
                 .any(|list| list.key == "mms-foreshock-bubbles-turner")
         );
+    }
+
+    #[test]
+    fn the_bernold_fine_structures_are_table_one_as_printed() {
+        let items = kept_table(
+            include_str!("data/bernold_1980_type4_fine_structures.csv"),
+            "",
+        )
+        .unwrap();
+        assert_eq!(items.len(), 29);
+        assert_eq!(items[0].start, at("1977-12-24T13:03:55Z"));
+        assert_eq!(items[0].stop, at("1977-12-24T13:05:35Z"));
+        assert_eq!(items[0].attributes["characteristic"], json!("rain"));
+        assert_eq!(items[0].attributes["sweeps_per_s"], json!(8.0));
+        assert_eq!(items[26].attributes["figure"], json!("Fig. 26"));
+        assert_eq!(
+            items[28].start,
+            at("1978-10-13T12:54:35Z"),
+            "as Table I prints it"
+        );
+        let list = LISTS
+            .iter()
+            .find(|list| list.key == "eth-type-iv-fine-structures-bernold");
+        assert!(list.unwrap().about.contains("12:59:35"));
     }
 
     #[test]
