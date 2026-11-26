@@ -195,3 +195,17 @@ def test_a_public_search_reads_back_beside_a_project_catalogue_of_the_same_name(
 
     assert smart.query == TYPED
     project.close()
+
+
+# Vibe, 2026-11-26: the server's refusal came back as a ServerError, which `except
+# cc.QueryError` does not catch, and with no position to mark.
+def test_a_public_search_with_a_mistake_raises_a_query_error(tmp_path, server):
+    url, _, _ = server
+    project = opened(tmp_path, url)
+
+    with pytest.raises(cc.QueryError) as refused:
+        project.search_public("tag:shock AND")
+    assert refused.value.position == 13
+    with pytest.raises(cc.QueryError):
+        project.search_public('catalogue:"Nope"')
+    project.close()

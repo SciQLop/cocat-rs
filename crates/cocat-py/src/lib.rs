@@ -1559,6 +1559,20 @@ impl Project {
         project_search(&self.room.doc().transact(), text)
     }
 
+    /// A search of the public catalogues read here first, so its mistakes raise `QueryError`
+    /// with their place, as everywhere else; without a server, or a list of the public
+    /// catalogues, the server's kept answer is still shown.
+    fn check_public(&self, py: Python<'_>, text: &str) -> Result<()> {
+        if self.room.server().is_none() {
+            return Ok(());
+        }
+        let room = &self.room;
+        if let Some(names) = py.detach(|| block_on(room.listed_public_names()))? {
+            query::parse(text, &names).map_err(query_error)?;
+        }
+        Ok(())
+    }
+
     /// The (id, name) of the catalogues a search's `catalogue:` names: this project's, or
     /// the public ones as the server lists them.
     fn catalogue_names(&self, py: Python<'_>, public: bool) -> Result<Vec<(String, String)>> {
@@ -1887,6 +1901,7 @@ impl Project {
     /// it found, and `capped`, whether some were left out. The last answer is kept, for when
     /// the server cannot be reached.
     fn search_public(&self, py: Python<'_>, query: &str) -> Result<Py<PyAny>> {
+        self.check_public(py, query)?;
         let found = public_events(py, &self.room, PublicQuery::Text(query))?
             .ok_or_else(|| PyRuntimeError::new_err(NO_PUBLIC_SERVER))?;
         let arrays = event_arrays_of(py, &[], &found.events, &[], true)?;
