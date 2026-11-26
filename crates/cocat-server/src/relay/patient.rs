@@ -27,19 +27,30 @@ enum Try {
 /// The body at `url`. A 429, a 5xx or a broken connection is asked again after the server's
 /// `Retry-After`, else after `pause` doubled each time; any other refusal fails at once.
 pub async fn fetch(http: &reqwest::Client, url: &str, pause: Duration) -> Result<Vec<u8>, String> {
-    fetch_within(http, url, pause, MAX_BODY).await
+    ask(|| http.get(url), pause, MAX_BODY).await
 }
 
-async fn fetch_within(
+/// The answer to `form` posted to `url`, for a site that hands its table out only through a
+/// form's button; asked again as [`fetch`] is.
+pub async fn post_form(
     http: &reqwest::Client,
     url: &str,
+    form: &[(&str, &str)],
+    pause: Duration,
+) -> Result<Vec<u8>, String> {
+    ask(|| http.post(url).form(form), pause, MAX_BODY).await
+}
+
+/// The body of the request `build` makes, built again for each try.
+async fn ask(
+    build: impl Fn() -> reqwest::RequestBuilder,
     pause: Duration,
     limit: usize,
 ) -> Result<Vec<u8>, String> {
     let mut pause = pause;
     let mut last = String::new();
     for _ in 0..ATTEMPTS {
-        match attempt(http, url, limit).await {
+        match attempt(build(), limit).await {
             Try::Done(answer) => return answer,
             Try::Again { error, wait: asked } => {
                 tokio::time::sleep(wait(asked, pause)).await;
@@ -56,8 +67,8 @@ fn wait(asked: Option<Duration>, pause: Duration) -> Duration {
     asked.unwrap_or(pause).min(MAX_WAIT)
 }
 
-async fn attempt(http: &reqwest::Client, url: &str, limit: usize) -> Try {
-    let response = match http.get(url).send().await {
+async fn attempt(request: reqwest::RequestBuilder, limit: usize) -> Try {
+    let response = match request.send().await {
         Ok(response) => response,
         Err(error) => return again(super::fetch_error(error), None),
     };
@@ -189,16 +200,44 @@ mod tests {
         let url = format!("http://{}/", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        let error = fetch_within(
-            &reqwest::Client::new(),
-            &url,
-            Duration::from_millis(1),
-            1024,
-        )
-        .await
-        .unwrap_err();
+        let http = reqwest::Client::new();
+        let error = ask(|| http.get(&url), Duration::from_millis(1), 1024)
+            .await
+            .unwrap_err();
 
         assert!(error.contains("larger than"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_form_is_posted_and_posted_again_when_the_provider_fails_for_a_moment() {
+        let asked = Arc::new(AtomicU32::new(0));
+        let seen = asked.clone();
+        let app = Router::new().route(
+            "/",
+            axum::routing::post(move |form: axum::Form<Vec<(String, String)>>| {
+                let seen = seen.clone();
+                async move {
+                    match seen.fetch_add(1, Ordering::SeqCst) {
+                        0 => (StatusCode::SERVICE_UNAVAILABLE, String::new()),
+                        _ => (StatusCode::OK, format!("{:?}", form.0)),
+                    }
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let body = post_form(
+            &reqwest::Client::new(),
+            &url,
+            &[("export", "CSV")],
+            Duration::from_millis(1),
+        )
+        .await;
+
+        assert_eq!(body.unwrap(), br#"[("export", "CSV")]"#);
+        assert_eq!(asked.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

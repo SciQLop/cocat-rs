@@ -67,7 +67,10 @@ you may find:
   STEREO-A and L1 counterparts (Allen et al. 2021); SEP events above 30 MeV since 1956 and the
   GSEP GOES list; ICMEs at Mercury (Winslow et al. 2015); Van Allen Probes EMIC waves (Inglis et
   al. 2024; Remya et al. 2023); the HELIO type III radio bursts at Wind and STEREO,
-  1996-2011; and the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004).
+  1996-2011; the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004); and TUMS,
+  UNAM's database of transient upstream mesoscale structures (SLAMS, hot flow anomalies,
+  foreshock bubbles, cavities, cavitons, density holes) at Earth, Mars, Mercury, Venus, Saturn
+  and Jupiter, one list per type and planet, kept up to date from the site.
 - **VizieR**, under the same *Literature* folders: 27 event tables published with papers and
   kept by CDS, for instance CME source regions, halo and limb CMEs, EIT waves, white-light and
   Lyman-α flares, ICME heavy ions, Forbush decreases, ³He-rich periods, extremely slow solar

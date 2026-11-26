@@ -64,6 +64,12 @@ enum Files {
     /// Files that only make sense together: downloaded on each run, they reach `read` as one
     /// text, each after a [`FILE_BREAK`].
     Together(&'static [&'static str]),
+    /// The answer to `form` posted to `url`, for a site that exports its table only through a
+    /// form's button (TUMS): asked on each run, once however many lists read it.
+    Posted {
+        url: &'static str,
+        form: &'static [(&'static str, &'static str)],
+    },
 }
 
 #[derive(Clone)]
@@ -103,6 +109,35 @@ const LASSOS: &str = "LASSOS ICME catalogues, NASA GSFC Heliophysics Science Div
 const LASSOS_FOLDER: &str = "Literature/Heliosphere/LASSOS ICME catalogues (NASA GSFC)";
 const LASSOS_ABOUT: &str = "ICMEs in situ, from the ICME start (its shock when it has one) to its end, kept up to date by the LASSOS working group: magnetic obstacle start and class (Fr flux rope, F- small and F+ large rotation flux rope, Cx complex, E ejecta), its mean field, mean speed and expansion speed (left out when no plasma was measured), distortion parameter, distance in au and whether a shock led it.";
 
+const TUMS_SITE: &str = "https://tums.unam.mx/";
+/// The site's "Export table to CSV" button: every row, whatever the page's filters.
+const TUMS_EXPORT: &[(&str, &str)] = &[("export_table_to_csv", "Export table to CSV")];
+const TUMS_CREDIT: &str = "Acknowledge: \"This paper uses data from the Database of Transient Upstream Mesoscale Structures, generated and maintained by the Universidad Nacional Autónoma de México.\" Also cite the paper in each event's Reference (all at https://tums.unam.mx/Sources). TUMS, https://tums.unam.mx/; no licence stated; its maintainers ask for an electronic copy of each publication that acknowledges it.";
+
+/// One TUMS list: the structures of one type (`*`: the rare ones) seen at one planet.
+macro_rules! tums {
+    ($planet:literal, $kind:literal, $key:literal, $name:literal, $about:literal) => {
+        List {
+            key: concat!("tums-", $key),
+            folder: concat!("Literature/Upstream structures (TUMS)/", $planet),
+            name: concat!($name, " at ", $planet, " (TUMS)"),
+            about: concat!(
+                $about,
+                " From the Database of Transient Upstream Mesoscale Structures (UNAM), which collects them from published lists, read again on each run. ",
+                "Each event is the structure's time, as TUMS gives it (no end). `mission` is the spacecraft, `type` TUMS's code for the structure, `reference` and `doi` the paper that listed it, when TUMS names one."
+            ),
+            credit: TUMS_CREDIT,
+            url: TUMS_SITE,
+            files: Files::Posted {
+                url: TUMS_SITE,
+                form: TUMS_EXPORT,
+            },
+            read: tums,
+            part: concat!($planet, ":", $kind),
+        }
+    };
+}
+
 macro_rules! lpp_mms_run {
     ($region:literal) => {
         concat!(
@@ -117,7 +152,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 111] = [
+static LISTS: [List; 130] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -1454,6 +1489,139 @@ static LISTS: [List; 111] = [
         read: lassos_icmes,
         part: "",
     },
+    tums!(
+        "Earth",
+        "SLAMS",
+        "earth-slams",
+        "Short large-amplitude magnetic structures (SLAMS)",
+        "Short large-amplitude magnetic structures (SLAMS): steepened magnetic pulsations of the quasi-parallel foreshock, several times the ambient field."
+    ),
+    tums!(
+        "Earth",
+        "HFA",
+        "earth-hfa",
+        "Hot flow anomalies",
+        "Hot flow anomalies (HFAs): cores of hot, deflected and depleted plasma formed where an interplanetary discontinuity meets the bow shock."
+    ),
+    tums!(
+        "Earth",
+        "HFA/EOF",
+        "earth-hfa-eof",
+        "Edge-of-foreshock hot flow anomalies (HFA/EOF)",
+        "The structures TUMS types \"HFA/Edge of Foreshock (EOF)\"."
+    ),
+    tums!(
+        "Earth",
+        "SHFA",
+        "earth-shfa",
+        "Spontaneous hot flow anomalies",
+        "Spontaneous hot flow anomalies (SHFAs): structures like hot flow anomalies that form in the foreshock without an interplanetary discontinuity."
+    ),
+    tums!(
+        "Earth",
+        "FC",
+        "earth-fc",
+        "Foreshock cavities and traveling foreshocks",
+        "The structures TUMS types \"Foreshock cavity/Traveling foreshock (FC)\"."
+    ),
+    tums!(
+        "Earth",
+        "FB",
+        "earth-fb",
+        "Foreshock bubbles",
+        "Foreshock bubbles (FBs): large structures formed upstream of the bow shock where foreshock ions meet an interplanetary discontinuity, with a shock ahead of them."
+    ),
+    tums!(
+        "Earth",
+        "Caviton",
+        "earth-caviton",
+        "Foreshock cavitons",
+        "Foreshock cavitons: small depressions of the magnetic field and density in the foreshock, bounded by compressions."
+    ),
+    tums!(
+        "Earth",
+        "DH",
+        "earth-dh",
+        "Foreshock density holes",
+        "Foreshock density holes (DH): short drops of the plasma density in the foreshock."
+    ),
+    tums!(
+        "Earth",
+        "Unknown",
+        "earth-unknown",
+        "Unclassified upstream transients",
+        "Upstream transients TUMS lists without a type (\"Unknown\")."
+    ),
+    tums!(
+        "Mars",
+        "SLAMS",
+        "mars-slams",
+        "Short large-amplitude magnetic structures (SLAMS)",
+        "Short large-amplitude magnetic structures (SLAMS): steepened magnetic pulsations of the quasi-parallel foreshock, several times the ambient field."
+    ),
+    tums!(
+        "Mars",
+        "HFA",
+        "mars-hfa",
+        "Hot flow anomalies",
+        "Hot flow anomalies (HFAs): cores of hot, deflected and depleted plasma formed where an interplanetary discontinuity meets the bow shock."
+    ),
+    tums!(
+        "Mars",
+        "*",
+        "mars-other",
+        "Other upstream structures",
+        "The structures TUMS lists at Mars too rarely for a list of their own; `type` says which (TUMS's code: FB foreshock bubble, FC foreshock cavity, SHFA spontaneous hot flow anomaly, HFA/EOF, Unknown...)."
+    ),
+    tums!(
+        "Mercury",
+        "SLAMS",
+        "mercury-slams",
+        "Short large-amplitude magnetic structures (SLAMS)",
+        "Short large-amplitude magnetic structures (SLAMS): steepened magnetic pulsations of the quasi-parallel foreshock, several times the ambient field."
+    ),
+    tums!(
+        "Mercury",
+        "HFA",
+        "mercury-hfa",
+        "Hot flow anomalies",
+        "Hot flow anomalies (HFAs): cores of hot, deflected and depleted plasma formed where an interplanetary discontinuity meets the bow shock."
+    ),
+    tums!(
+        "Venus",
+        "FC",
+        "venus-fc",
+        "Foreshock cavities and traveling foreshocks",
+        "The structures TUMS types \"Foreshock cavity/Traveling foreshock (FC)\"."
+    ),
+    tums!(
+        "Venus",
+        "HFA",
+        "venus-hfa",
+        "Hot flow anomalies",
+        "Hot flow anomalies (HFAs): cores of hot, deflected and depleted plasma formed where an interplanetary discontinuity meets the bow shock."
+    ),
+    tums!(
+        "Venus",
+        "*",
+        "venus-other",
+        "Other upstream structures",
+        "The structures TUMS lists at Venus too rarely for a list of their own; `type` says which (TUMS's code: SLAMS, SHFA spontaneous hot flow anomaly...)."
+    ),
+    tums!(
+        "Saturn",
+        "HFA",
+        "saturn-hfa",
+        "Hot flow anomalies",
+        "Hot flow anomalies (HFAs): cores of hot, deflected and depleted plasma formed where an interplanetary discontinuity meets the bow shock."
+    ),
+    tums!(
+        "Jupiter",
+        "*",
+        "jupiter-other",
+        "Upstream structures",
+        "The few structures TUMS lists at Jupiter; `type` says which (TUMS's code: SLAMS, HFA hot flow anomaly)."
+    ),
 ];
 
 /// Every list: those read from their own sources, then those VizieR keeps.
@@ -1744,6 +1912,106 @@ fn vertices(coordinates: &Value, into: &mut Vec<(f64, f64)>) {
         Some(nested) => nested.iter().for_each(|inner| vertices(inner, into)),
         None => {}
     }
+}
+
+/// One row of TUMS's export.
+#[derive(serde::Deserialize)]
+struct TumsRow {
+    #[serde(rename = "Date")]
+    date: String,
+    #[serde(rename = "Type")]
+    kind: String,
+    #[serde(rename = "Mission")]
+    mission: String,
+    #[serde(rename = "Planet")]
+    planet: String,
+    #[serde(rename = "Reference")]
+    reference: String,
+    #[serde(rename = "Doi")]
+    doi: String,
+}
+
+impl TumsRow {
+    /// The whole row: TUMS gives no key of its own.
+    fn id(&self) -> String {
+        [
+            &self.date,
+            &self.kind,
+            &self.mission,
+            &self.planet,
+            &self.reference,
+            &self.doi,
+        ]
+        .map(String::as_str)
+        .join("|")
+    }
+
+    /// The `part` of the list that takes it: its planet and type's own, else its planet's
+    /// other structures.
+    fn part<'a>(&self, parts: &[&'a str]) -> Option<&'a str> {
+        let own = format!("{}:{}", self.planet, self.kind);
+        let other = format!("{}:*", self.planet);
+        let find = |wanted: &str| parts.iter().copied().find(|part| *part == wanted);
+        find(&own).or_else(|| find(&other))
+    }
+}
+
+/// TUMS's missions as their teams write them.
+const TUMS_MISSIONS: [(&str, &str); 4] = [
+    ("Maven", "MAVEN"),
+    ("Messenger", "MESSENGER"),
+    ("Themis", "THEMIS"),
+    ("VEX", "Venus Express"),
+];
+
+/// TUMS's export: one structure per row, `Date` (UT, `1988-07-22 14:18:00.00`), `Type`,
+/// `Mission`, `Planet`, `Reference` and `Doi`. `part` is `Planet:Type`, or `Planet:*` for the
+/// planet's types no list of their own takes. A row no list takes fails the read, so a new
+/// type or planet at TUMS shows instead of being dropped; a repeated row counts once.
+fn tums(text: &str, part: &str) -> Result<Vec<Item>, String> {
+    let parts: Vec<&str> = LISTS
+        .iter()
+        .filter(|list| list.key.starts_with("tums-"))
+        .map(|list| list.part)
+        .collect();
+    let rows: Vec<TumsRow> = csv::ReaderBuilder::new()
+        .trim(csv::Trim::All)
+        .from_reader(text.as_bytes())
+        .deserialize()
+        .collect::<Result<_, _>>()
+        .map_err(|error| format!("TUMS export: {error}"))?;
+    if let Some(row) = rows.iter().find(|row| row.part(&parts).is_none()) {
+        return Err(format!(
+            "no TUMS list takes {} at {}: add one",
+            row.kind, row.planet
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter(|row| row.part(&parts) == Some(part))
+        .filter(|row| seen.insert(row.id()))
+        .map(tums_item)
+        .collect()
+}
+
+fn tums_item(row: TumsRow) -> Result<Item, String> {
+    let at = Timestamp::parse(&format!("{}Z", row.date.replacen(' ', "T", 1)))
+        .ok_or_else(|| format!("bad TUMS date {}", row.date))?;
+    let mission = TUMS_MISSIONS
+        .iter()
+        .find(|(given, _)| *given == row.mission)
+        .map_or(row.mission.as_str(), |(_, name)| name);
+    let mut attributes = Map::new();
+    keep(
+        &mut attributes,
+        [
+            ("type", row.kind.as_str()),
+            ("mission", mission),
+            ("reference", &row.reference),
+            ("doi", &row.doi),
+        ],
+    );
+    Ok(point(row.id(), at, attributes))
 }
 
 /// A table kept in this crate: a header, `start` and `stop` in RFC 3339, then the attributes.
@@ -3004,7 +3272,22 @@ async fn texts(
             let texts = remote(http, urls, downloaded).await?;
             Ok(vec![texts.join(FILE_BREAK)])
         }
+        Files::Posted { url, form } => {
+            if !downloaded.contains_key(url) {
+                downloaded.insert(url, posted(http, url, form).await);
+            }
+            Ok(vec![downloaded[url].clone()?])
+        }
     }
+}
+
+async fn posted(
+    http: &reqwest::Client,
+    url: &str,
+    form: &[(&str, &str)],
+) -> Result<String, String> {
+    let bytes = super::patient::post_form(http, url, form, BUSY_PAUSE).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Each of `urls`, downloaded once per run however many lists read it.
@@ -3061,6 +3344,9 @@ fn fingerprint<'a>(lists: impl IntoIterator<Item = &'a List>) -> String {
             Files::Mirrored { urls, .. } => urls.to_vec(),
             Files::Kept(text) => vec![text],
             Files::Linked { index, pattern } => vec![index, pattern],
+            Files::Posted { url, form } => std::iter::once(*url)
+                .chain(form.iter().flat_map(|(name, value)| [*name, *value]))
+                .collect(),
         };
         let described = [
             list.key,
@@ -3304,6 +3590,120 @@ mod tests {
             .iter()
             .find(|list| list.key == "mms-foreshock-bubbles-lee");
         assert!(list.unwrap().credit.contains("no open licence"));
+    }
+
+    /// Rows of TUMS's export, as it gives them: a row repeated, blank references.
+    const TUMS_SAMPLE: &str = r#"Date,Type,Mission,Planet,Reference,Doi
+"1988-07-22 14:18:00.00",HFA,MGS,Mars,"Oieroset et al. (2001)",https://doi.org/10.1029/2000GL012289
+"2015-01-01 19:55:35.00",SLAMS,Maven,Mars,"Wong Chan et al. (2026)",https://doi.org/10.1029/2025JA034918
+"2007-08-09 17:58:18.00",HFA,Themis,Earth," "," "
+"2008-10-04 14:30:55.00",SHFA,Themis,Earth," "," "
+"2008-10-04 14:30:55.00",SHFA,Themis,Earth," "," "
+"2006-09-15 04:18:00.00",FC,VEX,Venus,"Collinson et al. (2020)",https://doi.org/10.1029/2020JA028023
+"2009-04-11 02:44:00.00",SLAMS,VEX,Venus," "," "
+"1992-02-02 18:44:00.00",SLAMS,Ulysses,Jupiter,"Tsurutani et al. (1993)",https://doi.org/10.1029/93JA02586
+"2016-06-15 17:15:00.00",HFA,Juno,Jupiter,"Valek et al. (2009)",https://doi.org/10.1029/2009GL037128
+"#;
+
+    fn tums_lists() -> impl Iterator<Item = &'static List> {
+        LISTS.iter().filter(|list| list.key.starts_with("tums-"))
+    }
+
+    #[test]
+    fn a_tums_row_goes_to_the_list_of_its_planet_and_type_with_its_mission_and_reference() {
+        let hfa = tums(TUMS_SAMPLE, "Mars:HFA").unwrap();
+        assert_eq!(hfa.len(), 1);
+        assert_eq!(hfa[0].start, at("1988-07-22T14:18:00Z"));
+        assert_eq!(hfa[0].stop, hfa[0].start);
+        assert_eq!(hfa[0].attributes["mission"], json!("MGS"));
+        assert_eq!(
+            hfa[0].attributes["reference"],
+            json!("Oieroset et al. (2001)")
+        );
+        assert_eq!(
+            hfa[0].attributes["doi"],
+            json!("https://doi.org/10.1029/2000GL012289")
+        );
+        let earth = tums(TUMS_SAMPLE, "Earth:HFA").unwrap();
+        assert_eq!(earth[0].attributes["mission"], json!("THEMIS"));
+        assert!(!earth[0].attributes.contains_key("reference"));
+    }
+
+    #[test]
+    fn a_planets_rare_structures_go_to_its_other_list_and_a_repeated_row_counts_once() {
+        let venus = tums(TUMS_SAMPLE, "Venus:*").unwrap();
+        assert_eq!(venus.len(), 1);
+        assert_eq!(venus[0].attributes["type"], json!("SLAMS"));
+        assert_eq!(venus[0].attributes["mission"], json!("Venus Express"));
+        assert_eq!(tums(TUMS_SAMPLE, "Jupiter:*").unwrap().len(), 2);
+        assert_eq!(tums(TUMS_SAMPLE, "Earth:SHFA").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn every_tums_row_is_in_exactly_one_list() {
+        let read: usize = tums_lists()
+            .map(|list| tums(TUMS_SAMPLE, list.part).unwrap().len())
+            .sum();
+        assert_eq!(read, 8, "nine rows, one of them twice");
+    }
+
+    #[test]
+    fn a_tums_row_no_list_takes_fails_the_read() {
+        let more = format!("{TUMS_SAMPLE}\"2024-01-01 00:00:00.00\",FCB,MMS,Earth,\" \",\" \"\n");
+        let error = tums(&more, "Earth:HFA").unwrap_err();
+        assert!(error.contains("FCB at Earth"), "{error}");
+    }
+
+    #[test]
+    fn the_tums_lists_post_for_the_export_and_credit_unam_word_for_word() {
+        const SENTENCE: &str = "\"This paper uses data from the Database of Transient Upstream Mesoscale Structures, generated and maintained by the Universidad Nacional Autónoma de México.\"";
+        assert_eq!(tums_lists().count(), 19);
+        for list in tums_lists() {
+            assert!(matches!(
+                list.files,
+                Files::Posted {
+                    url: "https://tums.unam.mx/",
+                    ..
+                }
+            ));
+            assert!(list.credit.contains(SENTENCE), "{}", list.key);
+            assert!(
+                list.credit
+                    .contains("cite the paper in each event's Reference")
+            );
+            assert!(
+                list.folder
+                    .starts_with("Literature/Upstream structures (TUMS)/")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_posted_file_is_downloaded_once_however_many_lists_read_it() {
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let seen = asked.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |form: axum::Form<Vec<(String, String)>>| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move { format!("{:?}", form.0) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url: &'static str = format!("http://{}/", listener.local_addr().unwrap()).leak();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let files = Files::Posted {
+            url,
+            form: &[("export", "CSV")],
+        };
+        let (http, mut downloaded) = (reqwest::Client::new(), HashMap::new());
+
+        let first = texts(&http, &files, &mut downloaded).await.unwrap();
+        let second = texts(&http, &files, &mut downloaded).await.unwrap();
+
+        assert_eq!(first, [r#"[("export", "CSV")]"#]);
+        assert_eq!(first, second);
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
