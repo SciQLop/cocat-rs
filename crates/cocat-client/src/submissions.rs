@@ -137,22 +137,31 @@ pub async fn submissions(
     Ok(send(request).await?.json().await?)
 }
 
-/// A curator accepts (the public catalogue takes it) or declines a pending submission.
+/// A curator accepts (the public catalogue takes it) or declines a pending submission. A
+/// request marked as added can name the public `catalogue` it became, for its author's link.
 pub async fn review_submission(
     url: &str,
     cookie: &str,
     id: i64,
     accept: bool,
     note: Option<&str>,
+    catalogue: Option<&str>,
 ) -> Result<Submission, LoginError> {
     #[derive(Serialize)]
     struct Body<'a> {
         accept: bool,
         note: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        catalogue: Option<&'a str>,
     }
     let id = id.to_string();
     let path = ["public", "submissions", id.as_str(), "review"];
-    let request = api_request(Method::POST, url, cookie, &path)?.json(&Body { accept, note });
+    let body = Body {
+        accept,
+        note,
+        catalogue,
+    };
+    let request = api_request(Method::POST, url, cookie, &path)?.json(&body);
     Ok(send(request).await?.json().await?)
 }
 

@@ -304,8 +304,12 @@ class Client:
     def submit_update(self, project_id: str, catalogue_uuid: str, note: str | None = None) -> int:
         return self._call(_native.submit_update, project_id, catalogue_uuid, note)
 
-    def review_submission(self, id: int, accept: bool, note: str | None = None) -> dict[str, Any]:
-        return self._call(_native.review_submission, id, accept, note)
+    def review_submission(
+        self, id: int, accept: bool, note: str | None = None, catalogue: str | None = None
+    ) -> dict[str, Any]:
+        """Accepts or declines a submission; a request marked as added can name the public
+        catalogue it became, so its author gets a link to it."""
+        return self._call(_native.review_submission, id, accept, note, catalogue)
 
     def withdraw_submission(self, id: int) -> dict[str, Any]:
         return self._call(_native.withdraw_submission, id)

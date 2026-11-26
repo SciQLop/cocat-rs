@@ -42,6 +42,8 @@ const NOT_A_COPY: &str = "This catalogue is not a copy of a public catalogue";
 const ONLY_CURATORS: &str = "Only curators review submissions";
 const ONLY_THE_AUTHOR: &str = "Only its author can withdraw a submission";
 const DECIDED: &str = "This submission was already decided or withdrawn";
+const ONLY_ADDED_REQUESTS: &str =
+    "Only a request marked as added names the public catalogue it became";
 const TARGET_GONE: &str = "The public catalogue this submission changes was deleted";
 const EMPTY_PUBLIC: &str = "This public catalogue holds no catalogue yet";
 const INTO_PUBLIC: &str =
@@ -185,6 +187,9 @@ struct RequestBody {
 struct ReviewBody {
     accept: bool,
     note: Option<String>,
+    /// For a request marked as added: the public catalogue it became, so its author gets a
+    /// link to it.
+    catalogue: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
@@ -430,10 +435,10 @@ async fn one(
     security(("cookie" = [])),
     responses(
         (status = 200, description = "Accepted (the public catalogue now holds it) or declined", body = SubmissionOut),
-        (status = 400, description = "The note is too long", body = Detail),
+        (status = 400, description = "The note is too long, or a catalogue is named for anything but a request marked as added", body = Detail),
         (status = 401, description = "No valid session", body = Detail),
         (status = 403, description = "The caller is its author, not a curator", body = Detail),
-        (status = 404, description = "No such submission, or the caller is neither its author nor a curator", body = Detail),
+        (status = 404, description = "No such submission, or the caller is neither its author nor a curator; or no such public catalogue", body = Detail),
         (status = 409, description = "It was decided or withdrawn already, its public catalogue was deleted or follows a provider, or it does not fit", body = Detail),
         (status = 422, description = "The body is not a review", body = Detail),
     )
@@ -451,6 +456,7 @@ async fn review(
     if let (true, Some(target)) = (body.accept, &submission.target) {
         lifecycle::refuse_relayed(&state, target).await?;
     }
+    let became = became(&state, &submission, body.accept, body.catalogue).await?;
     let note = note(body.note)?;
     let decision = Decision {
         status: if body.accept { ACCEPTED } else { DECLINED },
@@ -467,7 +473,27 @@ async fn review(
         submissions::reopen(&state.pool, id).await?;
         return Err(error);
     }
+    if let Some(room) = became {
+        submissions::set_target(&state.pool, id, &room).await?;
+    }
     Ok(Json(stored(&state, id, true).await?))
+}
+
+/// The public catalogue a request marked as added became, when the curator names one: only
+/// an accepted request names one, and it must be public.
+async fn became(
+    state: &AppState,
+    submission: &Submission,
+    accept: bool,
+    catalogue: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let Some(room) = catalogue else {
+        return Ok(None);
+    };
+    if !accept || submission.kind != REQUEST {
+        return Err(ApiError::BadRequest(ONLY_ADDED_REQUESTS.to_owned()));
+    }
+    Ok(Some(public_room(state, &room).await?.id))
 }
 
 #[utoipa::path(

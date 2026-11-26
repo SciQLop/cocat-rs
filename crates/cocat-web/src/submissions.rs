@@ -206,8 +206,30 @@ pub fn update_body(room: &str, catalogue: &str, note: &str) -> Value {
     json!({ "room": room, "catalogue": catalogue, "note": given(note) })
 }
 
-pub fn review_body(accept: bool, note: &str) -> Value {
-    json!({ "accept": accept, "note": given(note) })
+/// The review; `catalogue`, the public catalogue a request became, goes only with a yes.
+pub fn review_body(accept: bool, note: &str, catalogue: &str) -> Value {
+    let mut body = json!({ "accept": accept, "note": given(note) });
+    if let (true, Some(catalogue)) = (accept, given(catalogue)) {
+        body["catalogue"] = json!(catalogue);
+    }
+    body
+}
+
+/// The public catalogues a request can be linked to, as id and "folder / name" label, sorted
+/// by label.
+pub fn linkable(index: &[PublicCatalogue]) -> Vec<(String, String)> {
+    let mut choices: Vec<(String, String)> = index
+        .iter()
+        .map(|catalogue| {
+            let label = match &catalogue.folder {
+                Some(folder) => format!("{folder} / {}", catalogue.name),
+                None => catalogue.name.clone(),
+            };
+            (catalogue.id.clone(), label)
+        })
+        .collect();
+    choices.sort_by(|a, b| a.1.cmp(&b.1));
+    choices
 }
 
 /// Copies into `project`, or a new project when it is `None`.
@@ -387,8 +409,16 @@ mod tests {
             json!({"room": "r", "catalogue": "c", "note": null})
         );
         assert_eq!(
-            review_body(false, "needs sources"),
+            review_body(false, "needs sources", "public.x"),
             json!({"accept": false, "note": "needs sources"})
+        );
+        assert_eq!(
+            review_body(true, " ", "public.x"),
+            json!({"accept": true, "note": null, "catalogue": "public.x"})
+        );
+        assert_eq!(
+            review_body(true, "done", ""),
+            json!({"accept": true, "note": "done"})
         );
         assert_eq!(copy_body(None), json!({"room": null}));
         assert_eq!(copy_body(Some("lab")), json!({"room": "lab"}));
@@ -414,6 +444,37 @@ mod tests {
             entry(Some("B")),
         ];
         assert_eq!(folders(&index), ["A", "B"]);
+    }
+
+    #[test]
+    fn a_request_is_linked_to_a_public_catalogue_picked_by_folder_and_name() {
+        let entry = |id: &str, name: &str, folder: Option<&str>| PublicCatalogue {
+            id: id.into(),
+            name: name.into(),
+            folder: folder.map(str::to_owned),
+            source: None,
+            description: None,
+            role: Role::Viewer,
+            changed: None,
+            count: None,
+            relay: None,
+        };
+        let index = [
+            entry("public.b", "Bubbles", Some("Literature/Earth")),
+            entry("public.s", "Shocks", None),
+            entry("public.a", "AKR", Some("Literature/Earth")),
+        ];
+        assert_eq!(
+            linkable(&index),
+            [
+                ("public.a".to_owned(), "Literature/Earth / AKR".to_owned()),
+                (
+                    "public.b".to_owned(),
+                    "Literature/Earth / Bubbles".to_owned()
+                ),
+                ("public.s".to_owned(), "Shocks".to_owned()),
+            ]
+        );
     }
 
     #[test]

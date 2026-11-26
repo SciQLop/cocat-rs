@@ -17,7 +17,7 @@ use crate::route::Route;
 use crate::state::Room;
 use crate::submissions::{
     Detail, Proposal, RequestFields, Submission, SubmitFields, copy_body, copy_href, copy_target,
-    folders, pending, request_body, review_body, submit_body, update_body,
+    folders, linkable, pending, request_body, review_body, submit_body, update_body,
 };
 use crate::views::actions::Form;
 use crate::views::controls::{Error, Hint, confirm, error_line};
@@ -609,7 +609,7 @@ fn SubmissionView(
         {open.map(|target| view! { <OpenPublic target title curator/> })}
         {(pending && mine).then(|| view! { <Withdraw id reload/> })}
         <Show when=move || pending && curator.get()>
-            <Review id accept reload/>
+            <Review id accept request reload/>
         </Show>
         {(!request).then(|| view! { <Changes changes compared/> })}
     }
@@ -666,20 +666,28 @@ fn Review(
     id: i64,
     /// What the yes button says.
     accept: &'static str,
+    /// A request: the curator can say which public catalogue it became.
+    request: bool,
     reload: Callback<()>,
 ) -> impl IntoView {
     let api = expect_context::<Projects>().api();
     let note = NodeRef::<Textarea>::new();
+    let became = NodeRef::<Select>::new();
     let error: Error = RwSignal::new(None);
     let busy = RwSignal::new(false);
     let decide = move |accept: bool| {
         let typed = note.get().map(|area| area.value()).unwrap_or_default();
+        let picked = became
+            .get()
+            .map(|select| select.value())
+            .unwrap_or_default();
         let api = api.clone();
         busy.set(true);
         spawn_local(async move {
             let id = id.to_string();
             let path = ["public", "submissions", id.as_str(), "review"];
-            let decided = api::create::<Submission>(&api, &path, review_body(accept, &typed)).await;
+            let body = review_body(accept, &typed, &picked);
+            let decided = api::create::<Submission>(&api, &path, body).await;
             busy.try_set(false);
             match decided {
                 Ok(_) => reload.run(()),
@@ -692,6 +700,7 @@ fn Review(
     let decline = decide.clone();
     view! {
         <div class="inline-form name-form review-form">
+            {request.then(|| view! { <BecamePicker became/> })}
             <label>
                 <span class="field-label">"Note to the author (optional)"</span>
                 <textarea rows="2" maxlength="2000" node_ref=note></textarea>
@@ -704,6 +713,29 @@ fn Review(
                     on:click=move |_| decline(false)>"Decline"</button>
             </div>
         </div>
+    }
+}
+
+/// Which public catalogue a request became, so its author gets a link once it is marked added.
+#[component]
+fn BecamePicker(became: NodeRef<Select>) -> impl IntoView {
+    let api = expect_context::<Projects>().api();
+    let choices = RwSignal::new(Vec::<(String, String)>::new());
+    spawn_local(async move {
+        if let Ok(index) = api::read::<Vec<PublicCatalogue>>(&api, &["public"]).await {
+            choices.try_set(linkable(&index));
+        }
+    });
+    view! {
+        <label>
+            <span class="field-label">"The public catalogue it became (optional)"</span>
+            <select node_ref=became>
+                <option value="">"None: say it in the note"</option>
+                <For each=move || choices.get() key=|(id, _)| id.clone() let((id, label))>
+                    <option value=id>{label}</option>
+                </For>
+            </select>
+        </label>
     }
 }
 

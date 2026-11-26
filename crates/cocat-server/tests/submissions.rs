@@ -1451,6 +1451,90 @@ async fn accepting_a_request_records_the_answer_and_publishes_nothing() {
     assert_eq!(index, json!([]));
 }
 
+async fn a_request(world: &World) -> i64 {
+    let (_, made) = request(
+        world,
+        world.author,
+        json!({"title": "Shocks", "source": "https://example.org"}),
+    )
+    .await;
+    made["id"].as_i64().unwrap()
+}
+
+#[tokio::test]
+async fn marking_a_request_added_links_the_public_catalogue_it_became() {
+    let world = World::start().await;
+    let public = world.public().await;
+    let id = a_request(&world).await;
+
+    let (status, decided) = world
+        .review(
+            world.curator,
+            id,
+            json!({"accept": true, "catalogue": public}),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    assert_eq!(decided["status"], "accepted");
+    assert_eq!(decided["target"], public);
+    let (_, detail) = world.detail(world.author, id).await;
+    assert_eq!(detail["target"], public, "its author gets the link");
+}
+
+#[tokio::test]
+async fn a_request_links_only_a_public_catalogue_and_stays_waiting_otherwise() {
+    let world = World::start().await;
+    let id = a_request(&world).await;
+    let project = world.project.clone();
+
+    let (status, _) = world
+        .review(
+            world.curator,
+            id,
+            json!({"accept": true, "catalogue": project}),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, detail) = world.detail(world.author, id).await;
+    assert_eq!(detail["status"], "pending");
+}
+
+#[tokio::test]
+async fn only_a_request_marked_added_names_a_catalogue() {
+    let world = World::start().await;
+    let public = world.public().await;
+    let declined = a_request(&world).await;
+    world
+        .edit(&world.project, world.author, |txn| {
+            catalogue(txn, "mine", &["a"]);
+        })
+        .await;
+    let (_, made) = world
+        .submit(json!({"room": world.project, "catalogue": "mine"}))
+        .await;
+    let submitted = made["id"].as_i64().unwrap();
+
+    let (declining, _) = world
+        .review(
+            world.curator,
+            declined,
+            json!({"accept": false, "catalogue": public}),
+        )
+        .await;
+    let (accepting, _) = world
+        .review(
+            world.curator,
+            submitted,
+            json!({"accept": true, "catalogue": public}),
+        )
+        .await;
+
+    assert_eq!(declining, StatusCode::BAD_REQUEST);
+    assert_eq!(accepting, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn a_request_says_what_and_where_from() {
     let world = World::start().await;

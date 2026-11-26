@@ -117,9 +117,10 @@ fn submissions(py: Python<'_>, url: String, cookie: String, mine: bool) -> Resul
 }
 
 /// A curator accepts (the public catalogue takes it) or declines a pending submission,
-/// with an optional note for its author; the submission as decided.
+/// with an optional note for its author; a request marked as added can name the public
+/// catalogue it became. The submission as decided.
 #[pyfunction]
-#[pyo3(signature = (url, cookie, id, accept, note=None))]
+#[pyo3(signature = (url, cookie, id, accept, note=None, catalogue=None))]
 fn review_submission(
     py: Python<'_>,
     url: String,
@@ -127,11 +128,17 @@ fn review_submission(
     id: i64,
     accept: bool,
     note: Option<String>,
+    catalogue: Option<String>,
 ) -> Result<Py<PyAny>> {
-    answer(
-        py,
-        cocat_client::review_submission(&url, &cookie, id, accept, note.as_deref()),
-    )
+    let review = cocat_client::review_submission(
+        &url,
+        &cookie,
+        id,
+        accept,
+        note.as_deref(),
+        catalogue.as_deref(),
+    );
+    answer(py, review)
 }
 
 /// Its author takes back a pending submission; the submission as withdrawn.

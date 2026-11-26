@@ -150,7 +150,8 @@ accepted or declined, with the curator's note.
 Found an event list in a paper, a supplement or on a website that isn't here yet? Choose
 **Request a catalogue…** at the top of the public catalogues, or **Ask the curators to add it**
 when a search finds nothing. Say what list it is and where it is: the paper's DOI, a link to
-the table or supplement. The curators add it and say where it went, in **My submissions**.
+the table or supplement. The curators add it and say where it went, in **My submissions**:
+when they link the catalogue it became, **Open the public catalogue** takes you there.
 
 ## Fix a public catalogue
 

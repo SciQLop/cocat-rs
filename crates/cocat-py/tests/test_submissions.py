@@ -123,6 +123,22 @@ def test_a_declined_submission_tells_its_author_why(server, tmp_path):
     assert cc.raw.public_catalogues(server.url, server.cookie) == []
 
 
+def test_only_a_request_marked_added_names_the_catalogue_it_became(server, tmp_path):
+    curator = account(server, "curator@example.org", "set-curator")
+    mine = connected(tmp_path / "mine", server.project_id, server.url, server.cookie)
+    catalogue = mine.create_catalogue(name="Waves")
+    mine.save(15)
+    mine.close()
+    submitted = cc.raw.submit_catalogue(server.url, server.cookie, server.project_id, catalogue.uuid)
+
+    with pytest.raises(cc.ServerError) as refused:
+        cc.raw.review_submission(server.url, curator, submitted, True, catalogue="public.waves")
+
+    assert refused.value.status == 400
+    [waiting] = cc.raw.submissions(server.url, server.cookie, mine=True)
+    assert waiting["status"] == "pending"
+
+
 def test_a_public_catalogue_copies_into_a_project_to_use_it(server, tmp_path):
     curator = account(server, "curator@example.org", "set-curator")
     public_id = cc.raw.create_public_catalogue(server.url, curator, "Shocks")
