@@ -27,10 +27,27 @@ pub enum Query {
 
 /// Reads the box's text; `catalogues` are the project's (uuid, name) pairs.
 pub fn read(text: &str, catalogues: &[(String, String)]) -> Query {
+    kind_of(text, query::parse(text, catalogues))
+}
+
+/// The same, for a search of a project, which also knows its attributes: a name that is
+/// neither a field nor one of them is a mistake, as the project's search says.
+pub fn read_in_project(
+    text: &str,
+    catalogues: &[(String, String)],
+    attributes: &[String],
+) -> Query {
+    kind_of(
+        text,
+        query::parse_with_attributes(text, catalogues, attributes),
+    )
+}
+
+fn kind_of(text: &str, parsed: Result<Predicate, query::QueryError>) -> Query {
     if text.trim().is_empty() {
         return Query::Empty;
     }
-    match query::parse(text, catalogues) {
+    match parsed {
         Ok(predicate) if plain_words(&predicate) => Query::Words,
         Ok(predicate) => Query::Rule(predicate),
         Err(error) => Query::Broken(sentence(&error.to_string())),
@@ -80,6 +97,25 @@ mod tests {
             query::parse(text, &names()).is_ok(),
             "“{text}” does not read: {:?}",
             query::parse(text, &names())
+        );
+    }
+
+    /// Vibe, 2026-11-26: the check took `auhtor:x` for a rule while the project's search
+    /// refused it, since only the search knew the project's attributes.
+    #[test]
+    fn a_project_text_reads_with_its_attributes() {
+        let attributes = ["density".to_owned()];
+        assert!(matches!(
+            read_in_project("auhtor:x", &names(), &attributes),
+            Query::Broken(_)
+        ));
+        assert!(matches!(
+            read_in_project("density:>1", &names(), &attributes),
+            Query::Rule(_)
+        ));
+        assert_eq!(
+            read_in_project("shock", &names(), &attributes),
+            Query::Words
         );
     }
 

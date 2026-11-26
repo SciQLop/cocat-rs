@@ -84,6 +84,8 @@ def test_the_kind_of_text_says_which_filter_applies(project, events):
     assert cc.query_kind("tga:shock") == "rule", "an attribute nobody has"
     assert cc.query_kind("catalogue:Picked") == "broken", "no project names it"
     assert project.query_kind("catalogue:Picked") == "rule"
+    assert project.query_kind("auhtor:alice") == "broken", "the project's search refuses it"
+    assert project.query_kind("mode:burst") == "rule", "an attribute of the project"
 
 
 def test_pieces_colour_the_text_and_give_it_back_exactly():

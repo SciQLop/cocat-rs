@@ -14,7 +14,20 @@ use crate::{Event, Result, to_timestamp, value_error};
 /// `"empty"`, `"words"` (plain words: the plain filter), `"rule"` or `"broken"`; a
 /// `catalogue:` name reads against `catalogues`, the project's `(uuid, name)` pairs.
 pub fn kind_of(text: &str, catalogues: &[(String, String)]) -> &'static str {
-    match search_box::read(text, catalogues) {
+    name_of(search_box::read(text, catalogues))
+}
+
+/// The same for a search of a project, which also knows its attributes.
+pub fn kind_in_project(
+    text: &str,
+    catalogues: &[(String, String)],
+    attributes: &[String],
+) -> &'static str {
+    name_of(search_box::read_in_project(text, catalogues, attributes))
+}
+
+fn name_of(query: Query) -> &'static str {
+    match query {
         Query::Empty => "empty",
         Query::Words => "words",
         Query::Rule(_) => "rule",

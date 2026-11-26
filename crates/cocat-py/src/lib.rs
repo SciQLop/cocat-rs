@@ -2007,14 +2007,20 @@ impl Project {
         Ok(search_box::mask_array(py, mask))
     }
 
-    /// What the text in a search box is: `"empty"`, `"words"`, `"rule"` or `"broken"`. Its
-    /// `catalogue:` names this project's catalogues, or with `public=True` the public ones.
+    /// What the text in a search box is: `"empty"`, `"words"`, `"rule"` or `"broken"`, as the
+    /// search reads it: its `catalogue:` names this project's catalogues, or with
+    /// `public=True` the public ones, and a field that is neither a field nor one of the
+    /// project's attributes is a mistake (the public events' attributes the server checks).
     #[pyo3(signature = (text, public=false))]
     fn query_kind(&self, py: Python<'_>, text: &str, public: bool) -> Result<&'static str> {
-        Ok(search_box::kind_of(
-            text,
-            &self.catalogue_names(py, public)?,
-        ))
+        if public {
+            return Ok(search_box::kind_of(text, &self.catalogue_names(py, true)?));
+        }
+        let doc = self.room.doc();
+        let txn = doc.transact();
+        let attributes: Vec<String> = model::attribute_types(&txn).into_keys().collect();
+        let names = model::catalogue_names(&txn);
+        Ok(search_box::kind_in_project(text, &names, &attributes))
     }
 
     /// What a search can name here, for `cocat_rs.complete`: `tags`, `authors` (of live

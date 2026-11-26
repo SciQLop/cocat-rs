@@ -157,7 +157,21 @@ fn CatalogueView(
         Side::Public => public_names.get(),
         _ => reader.read(|txn| cocat_core::model::catalogue_names(txn)),
     });
-    let parsed = Memo::new(move |_| query.with(|text| search::read(text, &scope_names.get())));
+    let reader = room.clone();
+    let parsed = Memo::new(move |_| {
+        let names = scope_names.get();
+        query.with(|text| match boxed.side.get() {
+            Side::Public => search::read(text, &names),
+            _ => {
+                let attributes: Vec<String> = reader.read(|txn| {
+                    cocat_core::model::attribute_types(txn)
+                        .into_keys()
+                        .collect()
+                });
+                search::read_in_project(text, &names, &attributes)
+            }
+        })
+    });
     let hits = Memo::new(move |_| parsed.with(|parsed| query.with(|text| Hits::of(parsed, text))));
     let saved = Memo::new(move |_| own.get().flatten().map(|own| (own.text, own.public)));
     let how = Memo::new(move |_| {
