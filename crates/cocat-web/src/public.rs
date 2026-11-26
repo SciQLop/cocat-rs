@@ -19,6 +19,10 @@ pub struct PublicCatalogue {
     pub changed: Option<String>,
     #[serde(default)]
     pub count: Option<i64>,
+    /// The attribute keys its events carry, which a search of the public catalogues can name;
+    /// `None` when the server did not read them.
+    #[serde(default)]
+    pub attributes: Option<Vec<String>>,
     /// The provider it follows, when the server keeps it in step with one.
     #[serde(default)]
     pub relay: Option<Relay>,
@@ -260,6 +264,7 @@ mod tests {
             role: Role::Viewer,
             changed: Some("2026-11-08T10:00:00Z".into()),
             count: Some(1),
+            attributes: None,
             relay: None,
         }
     }

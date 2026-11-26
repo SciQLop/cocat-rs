@@ -104,15 +104,37 @@ pub struct Room {
     server: Mutex<Option<(String, String)>>,
     /// The last answer of each search of the public catalogues, and when it was read.
     public_answers: Mutex<HashMap<(&'static str, String), PublicAnswer>>,
-    /// The public catalogues' (id, name) as the server last listed them, and when.
-    public_names: Mutex<Option<PublicNames>>,
+    /// The public catalogues' names and attribute keys as the server last listed them, and when.
+    public_names: Mutex<Option<(Instant, PublicListing)>>,
 }
 
 /// An answer of the public catalogues, and when it was read.
 type PublicAnswer = (Instant, crate::PublicSearch);
 
-/// The public catalogues' (id, name), and when the server listed them.
-type PublicNames = (Instant, Vec<(String, String)>);
+/// What a search of the public catalogues can name, as the server listed them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PublicListing {
+    /// Each catalogue's (id, name).
+    pub names: Vec<(String, String)>,
+    /// Every attribute key their events carry, sorted; `None` unless the server sent each
+    /// catalogue's (an older server sends none).
+    pub attributes: Option<Vec<String>>,
+}
+
+impl PublicListing {
+    fn of(listed: Vec<crate::PublicCatalogue>) -> Self {
+        let attributes = listed
+            .iter()
+            .map(|catalogue| catalogue.attributes.clone())
+            .collect::<Option<Vec<_>>>()
+            .map(|keys| {
+                let keys: std::collections::BTreeSet<String> = keys.into_iter().flatten().collect();
+                keys.into_iter().collect()
+            });
+        let names = listed.into_iter().map(|c| (c.id, c.name)).collect();
+        Self { names, attributes }
+    }
+}
 
 /// How long an answer of the public catalogues is shown before the server is asked again.
 /// A smart catalogue is read after every edit of its project, which never changes this
@@ -454,8 +476,9 @@ impl Room {
     /// The public catalogues' (id, name), to print a saved search of them as it was typed:
     /// [`Room::listed_public_names`], waited for 5 s at most; empty when unknown.
     pub async fn public_names(&self) -> Vec<(String, String)> {
-        self.public_names_within(PUBLIC_NAMES_WAIT)
+        self.public_listing_within(PUBLIC_NAMES_WAIT)
             .await
+            .map(|listing| listing.names)
             .unwrap_or_default()
     }
 
@@ -464,25 +487,31 @@ impl Room {
     /// the answers are; when the server cannot answer, the last list kept. None with no
     /// server, or when it never listed them.
     pub async fn listed_public_names(&self) -> Option<Vec<(String, String)>> {
-        self.public_names_within(PUBLIC_LIST_WAIT).await
+        Some(self.listed_public().await?.names)
     }
 
-    async fn public_names_within(&self, wait: Duration) -> Option<Vec<(String, String)>> {
+    /// The public catalogues' names and their events' attribute keys, as
+    /// [`Room::listed_public_names`] asks for them.
+    pub async fn listed_public(&self) -> Option<PublicListing> {
+        self.public_listing_within(PUBLIC_LIST_WAIT).await
+    }
+
+    async fn public_listing_within(&self, wait: Duration) -> Option<PublicListing> {
         let kept = lock(&self.public_names).clone();
-        if let Some((read, names)) = &kept
+        if let Some((read, listing)) = &kept
             && read.elapsed() < PUBLIC_FRESH
         {
-            return Some(names.clone());
+            return Some(listing.clone());
         }
         let (url, cookie) = self.server()?;
         let listed = crate::public_catalogues(&url, &cookie);
         match tokio::time::timeout(wait, listed).await {
             Ok(Ok(listed)) => {
-                let names: Vec<_> = listed.into_iter().map(|c| (c.id, c.name)).collect();
-                *lock(&self.public_names) = Some((Instant::now(), names.clone()));
-                Some(names)
+                let listing = PublicListing::of(listed);
+                *lock(&self.public_names) = Some((Instant::now(), listing.clone()));
+                Some(listing)
             }
-            Ok(Err(_)) | Err(_) => kept.map(|(_, names)| names),
+            Ok(Err(_)) | Err(_) => kept.map(|(_, listing)| listing),
         }
     }
 

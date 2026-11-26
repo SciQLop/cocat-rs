@@ -31,7 +31,7 @@ pub use projects::{
 pub use public_search::{
     PUBLIC_LIMIT, PublicEvent, PublicQuery, PublicSearch, kept_public, search_public,
 };
-pub use room::{PUBLIC_FRESH, Room, RoomError, Status};
+pub use room::{PUBLIC_FRESH, PublicListing, Room, RoomError, Status};
 pub use rounds::{
     create_round, move_round, my_proposal, round, rounds, set_round_members, set_verdict,
     set_verdicts, set_votes, update_round, verdicts, votes,

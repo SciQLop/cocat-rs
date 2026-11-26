@@ -435,6 +435,7 @@ mod tests {
             role: Role::Viewer,
             changed: None,
             count: None,
+            attributes: None,
             relay: None,
         };
         let index = [
@@ -457,6 +458,7 @@ mod tests {
             role: Role::Viewer,
             changed: None,
             count: None,
+            attributes: None,
             relay: None,
         };
         let index = [

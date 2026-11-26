@@ -1035,3 +1035,56 @@ async fn a_search_seen_before_scans_only_the_catalogues_that_changed() {
     );
     assert_eq!(other["indexing"], 0);
 }
+
+/// Vibe, 2026-11-26: `auhtor:alice` in a public search found nothing and said nothing. Once
+/// the index has read the catalogues' attribute keys, a name that is neither a field nor one
+/// of them is refused, with the closest; until then nothing is refused for it.
+#[tokio::test]
+async fn a_public_search_refuses_a_name_no_public_event_has() {
+    let world = World::start().await;
+    let shocks = world.public(json!({"name": "Shocks"})).await;
+    let doc = Doc::new();
+    let update = {
+        let mut txn = doc.transact_mut();
+        let at = Timestamp::parse("2020-01-02T00:00:00Z").unwrap();
+        let mut record = EventRecord::new("s1", at, at);
+        record.attributes = serde_json::from_value(json!({"speed": 900})).unwrap();
+        model::create_event(&mut txn, &record).unwrap();
+        txn.encode_update_v1()
+    };
+    let (mut store, _) = FileRoomStore::open(&world.update_dir, &shocks).unwrap();
+    store.append(bytes::Bytes::from(update)).unwrap();
+    store.flush().unwrap();
+    let search = |query: &'static str| {
+        let encoded: String = form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let world = &world;
+        async move {
+            let path = format!("/api/public/events?q={encoded}");
+            world
+                .call(Some(world.reader), Method::GET, &path, None)
+                .await
+        }
+    };
+
+    let (status, _) = search("auhtor:x").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "not listed yet: nothing to check against"
+    );
+
+    let (status, listed) = world
+        .call(Some(world.reader), Method::GET, "/api/public", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed[0]["attributes"], json!(["speed"]));
+
+    let (status, refused) = search("auhtor:x").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(
+        refused["detail"].as_str().unwrap().contains("author"),
+        "{refused}"
+    );
+    let (status, found) = search("speed:>800").await;
+    assert_eq!((status, found["total"].clone()), (StatusCode::OK, json!(1)));
+}

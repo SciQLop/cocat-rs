@@ -170,6 +170,18 @@ impl Vocabulary {
     }
 }
 
+impl Vocabulary {
+    /// The vocabulary of a search whose attributes are other events' than the project's, as
+    /// a search of the public catalogues is: those keys, and no values known for them.
+    pub fn with_attributes(self, attributes: Vec<String>) -> Self {
+        Self {
+            attributes,
+            attribute_values: BTreeMap::new(),
+            ..self
+        }
+    }
+}
+
 /// What `catalogue:` can name among these (id, name), sorted: each name once, but the ids of
 /// catalogues sharing a name, since a search refuses a name that is not one catalogue's.
 pub fn nameable(catalogues: &[(String, String)]) -> Vec<String> {

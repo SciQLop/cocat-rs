@@ -78,6 +78,22 @@ pub fn listed_events<T: ReadTxn>(txn: &T, uuid: &str) -> Vec<String> {
 }
 
 /// How many events the room holds outside the trash.
+/// The attribute keys a search of the room can name: those its registry types and those its
+/// live events carry, sorted. A relayed list may write events without registering their keys.
+pub fn attribute_keys<T: ReadTxn>(txn: &T) -> Vec<String> {
+    let mut keys: BTreeSet<String> = super::attribute_types(txn).into_keys().collect();
+    for (_, event) in entries(txn, EVENTS) {
+        if is_deleted(txn, &event) {
+            continue;
+        }
+        let carried = event
+            .keys(txn)
+            .filter_map(|key| key.strip_prefix(ATTRIBUTE_PREFIX));
+        keys.extend(carried.map(str::to_owned));
+    }
+    keys.into_iter().collect()
+}
+
 pub fn live_event_count<T: ReadTxn>(txn: &T) -> usize {
     entries(txn, EVENTS)
         .iter()

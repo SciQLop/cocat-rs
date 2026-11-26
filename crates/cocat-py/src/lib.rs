@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use cocat_client::{
-    Change, Credentials, PublicEvent, PublicQuery, PublicSearch, Room as ClientRoom,
+    Change, Credentials, PublicEvent, PublicListing, PublicQuery, PublicSearch, Room as ClientRoom,
     RoomInfo as ClientRoomInfo,
 };
 use cocat_core::model::{
@@ -454,20 +454,33 @@ fn rule_of_search(
 /// The rule searching the public catalogues: `catalogue:` names them from the one list their
 /// completions and `query_kind` read too.
 fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
-    let names = listed_public_names(py, room)?;
-    let predicate = query::parse(text, &names).map_err(query_error)?;
+    let predicate = read_public(text, &listed_public(py, room)?).map_err(query_error)?;
     Ok(query::public_rule(&predicate))
 }
 
-/// The public catalogues' (id, name) a search of them reads; an error, not an empty list,
-/// when there is no server or it never listed them, so no name is called a mistake.
-fn listed_public_names(py: Python<'_>, room: &ClientRoom) -> Result<Vec<(String, String)>> {
+/// A search of the public catalogues as their listing reads it: its catalogue names, and
+/// their events' attribute keys when the server sent them, so a name that is neither a field
+/// nor one of them is a mistake.
+fn read_public(
+    text: &str,
+    listing: &PublicListing,
+) -> std::result::Result<cocat_core::rules::Predicate, query::QueryError> {
+    match &listing.attributes {
+        Some(attributes) => query::parse_with_attributes(text, &listing.names, attributes),
+        None => query::parse(text, &listing.names),
+    }
+}
+
+/// The public catalogues' names and attribute keys a search of them reads; an error, not an
+/// empty list, when there is no server or it never listed them, so no name is called a
+/// mistake.
+fn listed_public(py: Python<'_>, room: &ClientRoom) -> Result<PublicListing> {
     if room.server().is_none() {
         return Err(PyRuntimeError::new_err(
             "sign in to search the public catalogues (connect the project, or Project.use_server)",
         ));
     }
-    py.detach(|| block_on(room.listed_public_names()))?
+    py.detach(|| block_on(room.listed_public()))?
         .ok_or_else(|| {
             PyRuntimeError::new_err(
                 "the server did not list the public catalogues: try again when it answers",
@@ -1567,19 +1580,10 @@ impl Project {
             return Ok(());
         }
         let room = &self.room;
-        if let Some(names) = py.detach(|| block_on(room.listed_public_names()))? {
-            query::parse(text, &names).map_err(query_error)?;
+        if let Some(listing) = py.detach(|| block_on(room.listed_public()))? {
+            read_public(text, &listing).map_err(query_error)?;
         }
         Ok(())
-    }
-
-    /// The (id, name) of the catalogues a search's `catalogue:` names: this project's, or
-    /// the public ones as the server lists them.
-    fn catalogue_names(&self, py: Python<'_>, public: bool) -> Result<Vec<(String, String)>> {
-        match public {
-            true => listed_public_names(py, &self.room),
-            false => Ok(model::catalogue_names(&self.room.doc().transact())),
-        }
     }
 }
 
@@ -2029,7 +2033,11 @@ impl Project {
     #[pyo3(signature = (text, public=false))]
     fn query_kind(&self, py: Python<'_>, text: &str, public: bool) -> Result<&'static str> {
         if public {
-            return Ok(search_box::kind_of(text, &self.catalogue_names(py, true)?));
+            let listing = listed_public(py, &self.room)?;
+            return Ok(match &listing.attributes {
+                Some(attributes) => search_box::kind_in_project(text, &listing.names, attributes),
+                None => search_box::kind_of(text, &listing.names),
+            });
         }
         let doc = self.room.doc();
         let txn = doc.transact();
@@ -2047,8 +2055,12 @@ impl Project {
     fn vocabulary(&self, py: Python<'_>, public: bool) -> Result<Py<PyAny>> {
         let mut found = model::vocabulary(&self.room.doc().transact());
         if public {
-            let listed = py.detach(|| block_on(self.room.listed_public_names()))?;
-            found = found.naming(&listed.unwrap_or_default());
+            let listing = py.detach(|| block_on(self.room.listed_public()))?;
+            let listing = listing.unwrap_or_default();
+            found = found.naming(&listing.names);
+            if let Some(attributes) = listing.attributes {
+                found = found.with_attributes(attributes);
+            }
         }
         let vocabulary = PyDict::new(py);
         vocabulary.set_item("tags", found.tags)?;

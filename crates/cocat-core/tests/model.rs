@@ -8,7 +8,7 @@ use cocat_core::model::{
 };
 use cocat_core::time::Timestamp;
 use serde_json::{Map, Value, json};
-use yrs::{Any, Doc, Map as _, Out, ReadTxn as _, Transact};
+use yrs::{Any, Doc, Map as _, Out, ReadTxn as _, Transact, WriteTxn as _};
 
 const ALPHA: &str = "6f9c1a52-0b0d-4f4e-9d5e-1b2c3d4e5f60";
 const BETA: &str = "0e4d2c31-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
@@ -657,4 +657,26 @@ fn a_catalogue_describes_the_axis_of_its_shapes() {
         None
     );
     assert!(!model::set_catalogue_shape_axis(&mut doc.transact_mut(), UNKNOWN, None).unwrap());
+}
+
+/// What a search of a public catalogue can name: the keys its live events carry, as well as
+/// those its registry types (a relayed list may write events without registering their keys).
+#[test]
+fn the_attribute_keys_are_those_of_the_live_events() {
+    let doc = Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        model::create_event(&mut txn, &hand_made(EVENT)).unwrap();
+        let mut gone = hand_made(OTHER);
+        gone.attributes = object(json!({"only_in_the_trash": 1}));
+        model::create_event(&mut txn, &gone).unwrap();
+        model::delete_event(&mut txn, OTHER);
+        model::register_attribute(&mut txn, "registered", AttributeType::Text);
+        let registry = txn.get_or_insert_map(model::REGISTRY);
+        registry.remove(&mut txn, "q");
+    }
+    assert_eq!(
+        model::attribute_keys(&doc.transact()),
+        ["flag", "only_in_the_trash", "q", "registered"]
+    );
 }

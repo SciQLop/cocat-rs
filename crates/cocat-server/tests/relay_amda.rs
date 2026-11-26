@@ -226,6 +226,7 @@ impl ScriptList {
             description: Some(self.description.to_owned()),
             public_count: None,
             counted_file: None,
+            public_attributes: None,
         }
     }
 }

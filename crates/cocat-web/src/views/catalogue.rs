@@ -148,6 +148,11 @@ fn CatalogueView(
             .public
             .with(|all| all.as_deref().map(public_events::names).unwrap_or_default())
     });
+    let public_attributes = Memo::new(move |_| {
+        projects
+            .public
+            .with(|all| all.as_deref().and_then(public_events::attributes))
+    });
     let reader = room.clone();
     let own =
         Memo::new(move |_| public_names.with(|public| own_search(&reader, &shown.get(), public)));
@@ -161,7 +166,10 @@ fn CatalogueView(
     let parsed = Memo::new(move |_| {
         let names = scope_names.get();
         query.with(|text| match boxed.side.get() {
-            Side::Public => search::read(text, &names),
+            Side::Public => match public_attributes.get() {
+                Some(attributes) => search::read_in_project(text, &names, &attributes),
+                None => search::read(text, &names),
+            },
             _ => {
                 let attributes: Vec<String> = reader.read(|txn| {
                     cocat_core::model::attribute_types(txn)
@@ -354,7 +362,8 @@ fn CatalogueView(
             <div class="tools">
                 <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
                     <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())
-                        names=scope_names>
+                        names=scope_names
+                        scope_attributes=Signal::derive(move || (boxed.side.get() == Side::Public).then(|| public_attributes.get()).flatten())>
                         <SearchIcon/>
                     </SearchBox>
                 </Show>

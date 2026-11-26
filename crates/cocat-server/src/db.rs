@@ -1177,6 +1177,8 @@ pub struct PublicRoom {
     /// How many events it held when last counted, from the room file `counted_file` names.
     pub public_count: Option<i64>,
     pub counted_file: Option<String>,
+    /// The attribute keys its events carried at that count, as a JSON list.
+    pub public_attributes: Option<String>,
 }
 
 /// Makes a public catalogue: no owner and no members, so `created_by` only records who, or
@@ -1210,7 +1212,7 @@ pub async fn create_public_room(
 /// Every public catalogue, by folder then name.
 pub async fn public_rooms(pool: &SqlitePool) -> Result<Vec<PublicRoom>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, name, folder, source, description, public_count, counted_file FROM room
+        "SELECT id, name, folder, source, description, public_count, counted_file, public_attributes FROM room
          WHERE public ORDER BY folder IS NULL, folder, name, id",
     )
     .fetch_all(pool)
@@ -1219,7 +1221,7 @@ pub async fn public_rooms(pool: &SqlitePool) -> Result<Vec<PublicRoom>, DbError>
 
 pub async fn public_room(pool: &SqlitePool, room_id: &str) -> Result<Option<PublicRoom>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT id, name, folder, source, description, public_count, counted_file FROM room
+        "SELECT id, name, folder, source, description, public_count, counted_file, public_attributes FROM room
          WHERE public AND id = ?",
     )
     .bind(room_id)
@@ -1247,14 +1249,20 @@ pub async fn store_public_count(
     pool: &SqlitePool,
     room_id: &str,
     count: i64,
+    attributes: &[String],
     counted_file: &str,
 ) -> Result<(), DbError> {
-    sqlx::query("UPDATE room SET public_count = ?, counted_file = ? WHERE public AND id = ?")
-        .bind(count)
-        .bind(counted_file)
-        .bind(room_id)
-        .execute(pool)
-        .await?;
+    let attributes = serde_json::to_string(attributes).unwrap_or_else(|_| "[]".to_owned());
+    sqlx::query(
+        "UPDATE room SET public_count = ?, public_attributes = ?, counted_file = ?
+         WHERE public AND id = ?",
+    )
+    .bind(count)
+    .bind(attributes)
+    .bind(counted_file)
+    .bind(room_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

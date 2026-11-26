@@ -40,8 +40,8 @@ pub use members::{
 pub use migrate::{Migration, migrate_v1};
 pub use provenance::{comment, create_origin, origin, set_comment};
 pub use read::{
-    all_catalogues, catalogue, catalogue_names, catalogues, event, event_catalogues, existing_tags,
-    is_v1, listed_events, live_event_count, search_text, trash,
+    all_catalogues, attribute_keys, catalogue, catalogue_names, catalogues, event,
+    event_catalogues, existing_tags, is_v1, listed_events, live_event_count, search_text, trash,
 };
 pub use registry::{attribute_types, register_attribute, set_attribute_info};
 pub use relay::{Counts, Wanted, hold};

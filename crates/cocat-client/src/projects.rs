@@ -93,6 +93,10 @@ pub struct PublicCatalogue {
     pub changed: Option<String>,
     /// How many events it holds outside the trash; `None` when the server could not count.
     pub count: Option<i64>,
+    /// The attribute keys its events carry, which a search of the public catalogues can name;
+    /// `None` when the server did not read them (or is older than this field).
+    #[serde(default)]
+    pub attributes: Option<Vec<String>>,
 }
 
 /// What a new public catalogue says; `key` makes its id `public.<key>`.

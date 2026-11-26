@@ -44,6 +44,17 @@ pub fn names(public: &[PublicCatalogue]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Every attribute key the public catalogues' events carry, sorted; `None` unless the server
+/// sent each catalogue's, and then a search of them refuses no name for not being one.
+pub fn attributes(public: &[PublicCatalogue]) -> Option<Vec<String>> {
+    let keys: Option<Vec<&Vec<String>>> = public
+        .iter()
+        .map(|catalogue| catalogue.attributes.as_ref())
+        .collect();
+    let keys: std::collections::BTreeSet<&String> = keys?.into_iter().flatten().collect();
+    Some(keys.into_iter().cloned().collect())
+}
+
 /// The table's rows, each naming its catalogue (by id when the index does not list it).
 pub fn rows(found: Found, public: &[PublicCatalogue]) -> Vec<Row> {
     let name = |id: &str| {
@@ -79,8 +90,22 @@ mod tests {
             role: Role::Viewer,
             changed: None,
             count: None,
+            attributes: None,
             relay: None,
         }
+    }
+
+    #[test]
+    fn the_attribute_keys_are_known_only_when_every_catalogue_sent_its_own() {
+        let with = |keys: &[&str]| PublicCatalogue {
+            attributes: Some(keys.iter().map(|key| (*key).to_owned()).collect()),
+            ..donki()
+        };
+        assert_eq!(
+            attributes(&[with(&["speed", "width"]), with(&["speed", "mass"])]),
+            Some(vec!["mass".into(), "speed".into(), "width".into()])
+        );
+        assert_eq!(attributes(&[with(&["speed"]), donki()]), None);
     }
 
     #[test]

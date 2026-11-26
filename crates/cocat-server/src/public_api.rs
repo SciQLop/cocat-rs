@@ -55,6 +55,9 @@ struct PublicOut {
     changed: Option<String>,
     /// How many events it holds outside the trash; `null` when it could not be counted.
     count: Option<i64>,
+    /// The attribute keys its events carry, which a search of the public catalogues can
+    /// name; `null` when it could not be read.
+    attributes: Option<Vec<String>>,
     /// The provider it follows; `null` for a catalogue people keep.
     relay: Option<RelayOut>,
 }
@@ -235,7 +238,7 @@ async fn out(
         .rooms
         .room_changed(&room.id)
         .and_then(|at| OffsetDateTime::from(at).format(&Rfc3339).ok());
-    let count = counted(state, &room).await;
+    let (count, attributes) = counted(state, &room).await;
     PublicOut {
         id: room.id,
         name: room.name,
@@ -245,37 +248,50 @@ async fn out(
         role: role.as_str(),
         changed,
         count,
+        attributes,
         relay: relay.map(RelayOut::from),
     }
 }
 
-/// The events the catalogue holds: the stored count while the room file is the one it was
-/// taken from, else a fresh count, stored for the next look. A failed count answers the
-/// stored one.
+/// The events the catalogue holds and the attribute keys they carry: those stored while the
+/// room file is the one they were read from, else read afresh and stored for the next look.
+/// A failed read answers what is stored.
 // simplify: the index counts each changed catalogue while it answers, so the first look after
 // a bulk import loads every room the import wrote, once. Count when a room unloads instead if
 // that wait shows.
-async fn counted(state: &AppState, room: &PublicRoom) -> Option<i64> {
+async fn counted(state: &AppState, room: &PublicRoom) -> (Option<i64>, Option<Vec<String>>) {
+    let stored = (room.public_count, stored_attributes(room));
     let file = file_stamp(state, &room.id);
-    if room.counted_file.as_deref() == Some(file.as_str()) {
-        return room.public_count;
+    if room.counted_file.as_deref() == Some(file.as_str()) && stored.1.is_some() {
+        return stored;
     }
     let read = state
         .rooms
-        .read(&room.id, |doc| model::live_event_count(&doc.transact()))
+        .read(&room.id, |doc| {
+            let txn = doc.transact();
+            (model::live_event_count(&txn), model::attribute_keys(&txn))
+        })
         .await;
-    let count = match read.map(i64::try_from) {
-        Ok(Ok(count)) => count,
-        Ok(Err(_)) => return room.public_count,
+    let (count, attributes) = match read {
+        Ok((count, attributes)) => match i64::try_from(count) {
+            Ok(count) => (count, attributes),
+            Err(_) => return stored,
+        },
         Err(error) => {
             tracing::warn!(room = %room.id, %error, "the public catalogue could not be counted");
-            return room.public_count;
+            return stored;
         }
     };
-    if let Err(error) = db::store_public_count(&state.pool, &room.id, count, &file).await {
+    let kept = db::store_public_count(&state.pool, &room.id, count, &attributes, &file).await;
+    if let Err(error) = kept {
         tracing::warn!(room = %room.id, %error, "the public catalogue count was not stored");
     }
-    Some(count)
+    (Some(count), Some(attributes))
+}
+
+/// The attribute keys stored with the room's last count.
+pub(crate) fn stored_attributes(room: &PublicRoom) -> Option<Vec<String>> {
+    serde_json::from_str(room.public_attributes.as_deref()?).ok()
 }
 
 /// Names the room file as it is now. The file only grows between compactions, so its size
@@ -303,6 +319,7 @@ fn checked(body: NewPublic) -> Result<PublicRoom, ApiError> {
         description: description(body.description)?,
         public_count: None,
         counted_file: None,
+        public_attributes: None,
     })
 }
 

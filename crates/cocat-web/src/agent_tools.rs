@@ -127,6 +127,7 @@ mod tests {
             role: Role::Viewer,
             changed: Some("2026-11-13T10:00:00Z".into()),
             count: Some(146),
+            attributes: None,
             relay: None,
         }
     }

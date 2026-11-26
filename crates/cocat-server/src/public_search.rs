@@ -242,7 +242,8 @@ async fn events(
         .iter()
         .map(|room| (room.id.clone(), room.name.clone()))
         .collect();
-    let predicate = asked(&query, &names)?;
+    let attributes = known_attributes(&state, &rooms);
+    let predicate = asked(&query, &names, attributes.as_deref())?;
     lookups(&predicate)?;
     let snapshots = current_snapshots(&state, &names).await;
     let indexing = snapshots
@@ -282,13 +283,36 @@ fn limit(text: Option<&str>) -> Result<usize, ApiError> {
     }
 }
 
-/// The search `q` writes, or `where` gives as a predicate.
-fn asked(query: &EventsQuery, names: &[(String, String)]) -> Result<Predicate, ApiError> {
+/// Every attribute key the public catalogues' events carry, while each catalogue's keys
+/// were read from its file as it is now; `None` otherwise, and then no name is refused for
+/// not being one of them: a key a stale list lacks would be called a mistake.
+fn known_attributes(state: &AppState, rooms: &[db::PublicRoom]) -> Option<Vec<String>> {
+    let mut keys = std::collections::BTreeSet::new();
+    for room in rooms {
+        let current = room.counted_file.as_deref() == Some(file_stamp(state, &room.id).as_str());
+        if !current {
+            return None;
+        }
+        keys.extend(crate::public_api::stored_attributes(room)?);
+    }
+    Some(keys.into_iter().collect())
+}
+
+/// The search `q` writes, or `where` gives as a predicate. With the catalogues' `attributes`,
+/// a name that is neither a field nor one of them is refused, as a project's search does.
+fn asked(
+    query: &EventsQuery,
+    names: &[(String, String)],
+    attributes: Option<&[String]>,
+) -> Result<Predicate, ApiError> {
     let unreadable = |error: String| ApiError::Unprocessable(error);
     let Some(predicate) = &query.predicate else {
         let text = query.q.as_deref().unwrap_or_default();
-        return cocat_core::query::parse(text, names)
-            .map_err(|error| unreadable(error.to_string()));
+        let read = match attributes {
+            Some(attributes) => cocat_core::query::parse_with_attributes(text, names, attributes),
+            None => cocat_core::query::parse(text, names),
+        };
+        return read.map_err(|error| unreadable(error.to_string()));
     };
     let predicate: serde_json::Value =
         serde_json::from_str(predicate).map_err(|error| unreadable(error.to_string()))?;

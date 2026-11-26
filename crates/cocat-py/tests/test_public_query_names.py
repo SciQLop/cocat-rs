@@ -49,6 +49,8 @@ def server():
                     return
                 time.sleep(asked.get("slow", 0))
                 body = [BEPI, *ODD] if asked.get("odd") else [BEPI]
+                if asked.get("attributes"):
+                    body = [dict(entry, attributes=["Col 1", "speed"]) for entry in body]
             elif path.endswith("/api/public/events"):
                 body = {"total": 0, "indexing": 0, "events": []}
             else:
@@ -208,4 +210,32 @@ def test_a_public_search_with_a_mistake_raises_a_query_error(tmp_path, server):
     assert refused.value.position == 13
     with pytest.raises(cc.QueryError):
         project.search_public('catalogue:"Nope"')
+    project.close()
+
+
+# Vibe, 2026-11-26: in a search of the public catalogues `auhtor:alice` found nothing and
+# said nothing. A server that lists their attribute keys has them read as the project's are.
+def test_a_public_search_refuses_a_name_no_public_event_has(tmp_path, server):
+    url, asked, _ = server
+    asked["attributes"] = True
+    project = opened(tmp_path, url)
+
+    assert project.query_kind("auhtor:alice", public=True) == "broken"
+    assert project.query_kind('"Col 1":Parker speed:>1', public=True) == "rule"
+    for refused in (
+        lambda: project.parse_query("auhtor:alice", public=True),
+        lambda: project.preview("auhtor:alice", public=True),
+        lambda: project.search_public("auhtor:alice"),
+    ):
+        with pytest.raises(cc.QueryError, match="author"):
+            refused()
+    assert project.vocabulary(public=True)["attributes"] == ["Col 1", "speed"]
+    project.close()
+
+
+def test_a_server_that_lists_no_attribute_keys_refuses_no_name(tmp_path, server):
+    url, _, _ = server
+    project = opened(tmp_path, url)
+
+    assert project.query_kind("auhtor:alice", public=True) == "rule"
     project.close()
