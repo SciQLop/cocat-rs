@@ -191,3 +191,14 @@ def test_attribute_values_complete_after_the_name(project, events):
             {"insert": f"{name}:burst ", "kind": "value", "detail": "value"}
         ], text
     assert cc.complete("mode:b", 6, {"attributes": ["mode"]}) is None, "no values given"
+
+
+def test_a_true_or_false_attribute_is_found_by_its_value(project):
+    """Vibe, 2026-11-26: `flag:true` read, and found nothing, silently."""
+    flagged = project.create_event(start=at(0), stop=at(1), attributes={"flag": True})
+    project.create_event(start=at(2), stop=at(3), attributes={"flag": False})
+
+    for text in ["flag:true", "flag:TRUE", "flag:=true", "#flag:true"]:
+        assert [e.uuid for e in project.search(text)] == [flagged.uuid], text
+    assert len(project.search("flag:false")) == 1
+    assert len(project.search("NOT flag:true")) == 1

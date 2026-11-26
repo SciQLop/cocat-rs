@@ -114,6 +114,7 @@ pub fn test(
         }
         Predicate::Match(name, pattern) => match (value(name), lookups.regexes.get(pattern)) {
             (Some(Value::String(text)), Some(regex)) => regex.is_match(&text),
+            (Some(Value::Bool(flag)), Some(regex)) => regex.is_match(&flag.to_string()),
             _ => false,
         },
         Predicate::Has(name) => value(name).is_some(),
@@ -195,8 +196,15 @@ fn order(left: &Value, right: &Value) -> Option<Ordering> {
         },
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
+        (Value::Bool(a), Value::String(text)) => Some(a.cmp(&truth(text)?)),
+        (Value::String(text), Value::Bool(b)) => Some(truth(text)?.cmp(b)),
         _ => None,
     }
+}
+
+/// `true` or `false` as a search writes it, any case: a yes-or-no attribute's value.
+fn truth(text: &str) -> Option<bool> {
+    text.to_lowercase().parse().ok()
 }
 
 fn time(text: &str) -> Option<i64> {
