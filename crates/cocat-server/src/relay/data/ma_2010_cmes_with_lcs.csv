@@ -1,0 +1,24 @@
+start,stop,nr,note,pa_deg,width_deg,speed_km_s,spacecraft,lcs,disk_spacecraft,disk_note,disk_cme_time,disk_pa_deg,disk_width_deg,disk_speed_km_s
+2009-01-04T18:07:00Z,2009-01-04T18:07:00Z,1,**,270,10,217,B,Post-eruptive arcade,A,,,,,
+2009-01-14T05:07:00Z,2009-01-14T05:07:00Z,2,**,86,50,324,A,"Filament eruption, brightening",B,c,2009-01-14T10:07:00Z,270,40,227
+2009-01-17T05:07:00Z,2009-01-17T05:07:00Z,3,*,260,10,239,B,Sigmoid eruption,A,,,,,
+2009-01-21T17:52:00Z,2009-01-21T17:52:00Z,4,*,267,52,277,B,Brightening,A,,,,,
+2009-01-27T06:37:00Z,2009-01-27T06:37:00Z,5,,270,10,729,B,Filament eruption,A,,,,,
+2009-01-29T05:07:00Z,2009-01-29T05:07:00Z,6,c,93,10,397,A mid,Filament eruption,B mid,,,,,
+2009-02-11T00:37:00Z,2009-02-11T00:37:00Z,7,,95,56,320,A,"Coronal wave, dimming, flare",B,,,,,
+2009-02-12T18:07:00Z,2009-02-12T18:07:00Z,8,a,83,10,450,A,"Coronal wave, dimming, flare",B,,,,,
+2009-02-13T06:37:00Z,2009-02-13T06:37:00Z,9,,89,44,328,A,"Coronal wave, dimming, flare",B,,,,,
+2009-02-18T06:37:00Z,2009-02-18T06:37:00Z,10,*c,73,42,231,A,Brightening,B,c,2009-02-18T16:07:00Z,4,160,178
+2009-02-27T18:38:00Z,2009-02-27T18:38:00Z,11,**,276,14,248,B,"Coronal wave, dimming",A,,,,,
+2009-03-02T22:07:00Z,2009-03-02T22:07:00Z,12,,84,30,431,A,Filament eruption,B,,,,,
+2009-03-10T08:07:00Z,2009-03-10T08:07:00Z,13,c,240,53,211,B,Faint brightening,A,,,,,
+2009-03-17T14:07:00Z,2009-03-17T14:07:00Z,14,**c,78,49,158,A,Filament eruption,B,c,2009-03-18T08:37:00Z,305,42,192
+2009-05-30T23:07:00Z,2009-05-30T23:07:00Z,15,**,84,30,188,A,Filament eruption,B,,,,,
+2009-06-03T03:08:00Z,2009-06-03T03:08:00Z,16,,268,34,403,B mid,"Filament eruption, brightening",A mid,,,,,
+2009-06-16T03:07:00Z,2009-06-16T03:07:00Z,17,*,96,38,205,A,Filament eruption,B,,,,,
+2009-06-23T11:37:00Z,2009-06-23T11:37:00Z,18,**,96,18,233,A,Filament eruption,B,,,,,
+2009-06-27T21:08:00Z,2009-06-27T21:08:00Z,19,**,260,22,211,B,"Coronal wave, dimming",A,,,,,
+2009-07-02T23:38:00Z,2009-07-02T23:38:00Z,20,*,269,32,337,B mid,Filament eruption,A mid,c,2009-07-03T00:37:00Z,116,12,263
+2009-07-26T12:37:00Z,2009-07-26T12:37:00Z,21,,77,36,446,A,Brightening,B,,,,,
+2009-07-28T17:37:00Z,2009-07-28T17:37:00Z,22,,101,8,735,A,Filament eruption,B,,,,,
+2009-08-04T18:37:00Z,2009-08-04T18:37:00Z,23,**,107,64,347,A mid,Filament eruption,B mid,,2009-08-04T13:38:00Z,260,46,290

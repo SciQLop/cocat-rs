@@ -152,7 +152,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 132] = [
+static LISTS: [List; 137] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -461,6 +461,63 @@ static LISTS: [List; 132] = [
         url: "https://doi.org/10.1029/2023JA031770",
         files: Files::Kept(include_str!("data/lee_2023_foreshock_bubbles.csv")),
         read: kept_table,
+        part: "",
+    },
+    List {
+        key: "stereo-stealth-cmes-ma",
+        folder: "Literature/Sun",
+        name: "Stealth CMEs seen by STEREO, 2009 (Ma et al. 2010)",
+        about: "Eleven Earth-sided CMEs of 2009 January to August, seen at the limb by one STEREO spacecraft and on the disk by the other, with no low coronal signature on the disk: stealth CMEs, a third of the 34 Earth-sided CMEs of the period. A low coronal signature (LCS) is a sign of the eruption on the solar disk in STEREO/EUVI 171, 195 or 304 A images: a filament eruption, a sigmoid eruption, a flare, an EIT (coronal) wave, a coronal dimming, or a post-eruptive arcade or brightening. Each event is the CME's first appearance in the COR2 field of view (CACTus time). Attributes: the paper's event number; its notes (two asterisks: the CME speed the authors measured by tracking its core is quite reliable, one asterisk: reliable; c: the CACTus record was corrected, mainly its width; a: added to CACTus by the authors); the CACTus position angle, angular width (deg) and speed (km/s) and the STEREO spacecraft seeing it at the limb (mid: not purely at the limb); and the other spacecraft, seeing it on the disk, with its own CACTus entry when it has one; and the CME's character as seen from each side. Converted once from Table 1 of the paper.",
+        credit: "Ma, Attrill, Golub and Lin (2010), Statistical Study of Coronal Mass Ejections With and Without Distinct Low Coronal Signatures, ApJ 722, 289-301, https://doi.org/10.1088/0004-637X/722/1/289, no licence stated (Table 1).",
+        url: "https://doi.org/10.1088/0004-637X/722/1/289",
+        files: Files::Kept(include_str!("data/ma_2010_stealth_cmes.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "stereo-cmes-with-lcs-ma",
+        folder: "Literature/Sun",
+        name: "CMEs with low coronal signatures seen by STEREO, 2009 (Ma et al. 2010)",
+        about: "Twenty-three Earth-sided CMEs of 2009 January to August, seen at the limb by one STEREO spacecraft and on the disk by the other, whose eruption shows on the disk: the counterpart of the stealth CMEs of the same paper. A low coronal signature (LCS) is a sign of the eruption on the solar disk in STEREO/EUVI 171, 195 or 304 A images: a filament eruption, a sigmoid eruption, a flare, an EIT (coronal) wave, a coronal dimming, or a post-eruptive arcade or brightening. Each event is the CME's first appearance in the COR2 field of view (CACTus time). Attributes: the paper's event number; its notes (two asterisks: the CME speed the authors measured by tracking its core is quite reliable, one asterisk: reliable; c: the CACTus record was corrected, mainly its width; a: added to CACTus by the authors); the CACTus position angle, angular width (deg) and speed (km/s) and the STEREO spacecraft seeing it at the limb (mid: not purely at the limb); and the other spacecraft, seeing it on the disk, with its own CACTus entry when it has one; and the low coronal signatures identified. Converted once from Table 2 of the paper.",
+        credit: "Ma, Attrill, Golub and Lin (2010), Statistical Study of Coronal Mass Ejections With and Without Distinct Low Coronal Signatures, ApJ 722, 289-301, https://doi.org/10.1088/0004-637X/722/1/289, no licence stated (Table 2).",
+        url: "https://doi.org/10.1088/0004-637X/722/1/289",
+        files: Files::Kept(include_str!("data/ma_2010_cmes_with_lcs.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "voyager2-hcs-crossings-choi",
+        folder: "Literature/Heliosphere",
+        name: "Heliospheric current sheet crossings by Voyager 2, 1977-1990 (Choi and Lee 2025)",
+        about: "The 188 crossings of the heliospheric current sheet Voyager 2 observed from 1 to 33.6 au, 1977 to 1990, in 48 s magnetic field data, each fitted with a Harris current sheet model. Each event runs from the crossing's start to its end as the table gives them; for five crossings (14, 23, 43, 48, 52) the table's end comes before its start, so the event runs from the earlier to the later time and `end_before_start` says so. Attributes: the paper's sequence number, the crossing time at the sheet's centre, the Euler angles alpha and beta of the sheet normal relative to the local frame (rad), and the amplitude of the magnetic field change (nT). Converted once from the machine-readable Table 2 of the paper.",
+        credit: "Choi and Lee (2025), Heliospheric Current Sheet Crossings Observed by Voyager 2 across 1-33.6 au, ApJ 987, 59, https://doi.org/10.3847/1538-4357/adde44, licence CC-BY-4.0 (Table 2).",
+        url: "https://doi.org/10.3847/1538-4357/adde44",
+        files: Files::Kept(include_str!("data/choi_2025_voyager2_hcs.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "sbcross-sector-boundary-crossings",
+        folder: "Literature/Heliosphere",
+        name: "Sector boundary crossings at L1, 1995-2025 (SBCross, Heinemann et al. 2026)",
+        about: "The SBCross catalog: 1,076 crossings of heliospheric sector boundaries (the heliospheric current sheet, its plasma sheet and surrounding halo) found automatically near Earth from 1995 to 2025, in Wind/3DP 255 eV suprathermal electron pitch angle distributions and the magnetic field azimuth of hourly OMNI data; the successor of Svalgaard's list. Each event runs from the crossing's start to its end, to the hour. Attributes: the polarity change (+,- or -,+); the duration (h) and thickness (km); the average and spread of the solar wind speed (km/s), density and peak density (cm^-3), magnetic field (nT) and plasma beta; the confidence (high: found in both the electron and the field data; moderate: only in the electron data; low: only in the field data); and whether a CME of the Richardson and Cane list is associated (within 12 h), with `cme_position` before, after or overlapping. Read on each run from the static dataset on Zenodo; https://sbcross.helsinki.fi keeps it up to date but did not answer when this list was made.",
+        credit: "Heinemann, Temmer, Owens, Kilpua, Farrugia and Price (2026), Detection and Statistics of Large-scale Sector Boundary Crossings in the Solar Wind: The SBCross Catalog, ApJ 1012, 160, https://doi.org/10.3847/1538-4357/aeb926 (licence CC-BY-4.0); dataset https://doi.org/10.5281/zenodo.22078280, licence CC-BY-4.0.",
+        url: "https://doi.org/10.5281/zenodo.22078280",
+        files: Files::Remote(&[
+            "https://zenodo.org/api/records/22078280/files/event_summary_v3_19082026.csv/content",
+        ]),
+        read: sbcross,
+        part: "",
+    },
+    List {
+        key: "wso-hcs-tilt",
+        folder: "Literature/Sun",
+        name: "Tilt angle of the heliospheric current sheet, WSO, per Carrington rotation",
+        about: "The maximum latitude the computed heliospheric current sheet reaches in each Carrington rotation since 1976, from the Wilcox Solar Observatory, read again on each run. Each event is one rotation, from its start to the next rotation's start (the last one lasts a synodic rotation, 27.2753 days); `carrington_rotation` is its number. Two potential field models: the radial model, with a radial boundary condition at the photosphere and a source surface at 3.25 solar radii, gives r_av_deg, r_n_deg and r_s_deg (the average, northern and southern extent, degrees); the classic model, with a line-of-sight boundary condition and a polar field correction, gives l_av_deg, l_n_deg and l_s_deg, which WSO says probably give the better estimate. WSO warns that the last rotation may rest on incomplete data.",
+        credit: "Wilcox Solar Observatory, Computed Tilt Angle of the Heliospheric Current Sheet, http://wso.stanford.edu/Tilts.html (no licence stated); cite Hoeksema (1995), The Large-Scale Structure of the Heliospheric Current Sheet During the Ulysses Epoch, Space Science Reviews 72, 137-148, https://doi.org/10.1007/BF00768770.",
+        url: "http://wso.stanford.edu/Tilts.html",
+        files: Files::Remote(&["http://wso.stanford.edu/Tilts.html"]),
+        read: wso_tilts,
         part: "",
     },
     List {
@@ -2036,6 +2093,151 @@ fn tums_item(row: TumsRow) -> Result<Item, String> {
     Ok(point(row.id(), at, attributes))
 }
 
+/// SBCross's columns, as their attributes are named; the times, `CME` and its position are
+/// read apart.
+const SBCROSS_COLUMNS: [(&str, &str); 13] = [
+    ("Polarity", "polarity"),
+    ("Duration (hours)", "duration_h"),
+    ("Thickness (km)", "thickness_km"),
+    ("Velocity Avg (km/s)", "speed_avg_km_s"),
+    ("Velocity Std (km/s)", "speed_std_km_s"),
+    ("Density Avg (cm^-3)", "density_avg_cm3"),
+    ("Density Std (cm^-3)", "density_std_cm3"),
+    ("Peak Density (cm^-3)", "density_peak_cm3"),
+    ("B Field Avg (nT)", "b_avg_nt"),
+    ("B Field Std (nT)", "b_std_nt"),
+    ("Beta Avg", "beta_avg"),
+    ("Beta Std", "beta_std"),
+    ("Confidence", "confidence"),
+];
+
+/// The SBCross catalogue's CSV: a sector boundary crossing per row, from `Start Time` to `End
+/// Time` (UT, to the hour). `CME` (y/n) becomes `cme`, and `CME Position` (b, a, o) where the
+/// associated CME lies: before, after or overlapping. An empty cell is left out.
+fn sbcross(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    let mut reader = csv::ReaderBuilder::new().from_reader(text.as_bytes());
+    let headers = reader.headers().map_err(|error| error.to_string())?.clone();
+    let column = |name: &str| {
+        headers
+            .iter()
+            .position(|header| header == name)
+            .ok_or_else(|| format!("SBCross has no column {name}"))
+    };
+    let (start_at, stop_at) = (column("Start Time")?, column("End Time")?);
+    let (cme_at, position_at) = (column("CME")?, column("CME Position")?);
+    let columns = SBCROSS_COLUMNS
+        .iter()
+        .map(|(header, name)| Ok((column(header)?, *name)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let time = |cell: Option<&str>| {
+        let cell = cell.unwrap_or_default();
+        Timestamp::parse(&format!("{}:00Z", cell.replace(' ', "T")))
+            .ok_or_else(|| format!("SBCross: {cell:?} is not a time"))
+    };
+    reader
+        .records()
+        .map(|record| {
+            let record = record.map_err(|error| error.to_string())?;
+            let (start, stop) = (time(record.get(start_at))?, time(record.get(stop_at))?);
+            let mut attributes = Map::new();
+            for (at, name) in &columns {
+                if let Some(cell) = record.get(*at).and_then(value) {
+                    attributes.insert((*name).to_owned(), cell);
+                }
+            }
+            attributes.insert("cme".into(), Value::Bool(record.get(cme_at) == Some("y")));
+            let position = match record.get(position_at) {
+                Some("b") => Some("before"),
+                Some("a") => Some("after"),
+                Some("o") => Some("overlap"),
+                _ => None,
+            };
+            if let Some(position) = position {
+                attributes.insert("cme_position".into(), Value::from(position));
+            }
+            Ok(Item {
+                id: record.get(start_at).unwrap_or_default().to_owned(),
+                start,
+                stop,
+                attributes,
+            })
+        })
+        .collect()
+}
+
+/// One synodic Carrington rotation, 27.2753 days, in microseconds.
+const CARRINGTON_ROTATION_MICROS: i128 = 2_356_585_920_000;
+
+/// WSO's HCS tilt page: a line per Carrington rotation, `CR 1642  1976:05:27 15h` then the
+/// radial model's average, northern and southern extent and the classic model's (degrees).
+/// A rotation lasts until the next one starts, or one synodic rotation when the next row is
+/// not the next rotation (the last one).
+fn wso_tilts(text: &str, _part: &str) -> Result<Vec<Item>, String> {
+    const COLUMNS: [&str; 6] = [
+        "r_av_deg", "r_n_deg", "r_s_deg", "l_av_deg", "l_n_deg", "l_s_deg",
+    ];
+    let rows: Vec<(i64, Timestamp, Map<String, Value>)> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("CR "))
+        .map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let [number, date, hour, values @ ..] = fields.as_slice() else {
+                return Err(format!("a WSO tilt row has too few fields: CR {line}"));
+            };
+            let rotation: i64 = number
+                .parse()
+                .map_err(|_| format!("CR {line}: not a rotation"))?;
+            let at = Timestamp::parse(&format!(
+                "{}T{}:00:00Z",
+                date.replace(':', "-"),
+                hour.trim_end_matches('h')
+            ))
+            .ok_or_else(|| format!("CR {line}: not a start date"))?;
+            if values.len() != COLUMNS.len() {
+                return Err(format!("CR {line}: expected {} values", COLUMNS.len()));
+            }
+            let mut attributes = Map::new();
+            attributes.insert("carrington_rotation".into(), Value::from(rotation));
+            for (name, value) in COLUMNS.iter().zip(values) {
+                let value: f64 = value
+                    .parse()
+                    .map_err(|_| format!("CR {line}: {value} is not a number"))?;
+                attributes.insert((*name).into(), Value::from(value));
+            }
+            Ok((rotation, at, attributes))
+        })
+        .collect::<Result<_, String>>()?;
+    if rows.is_empty() {
+        return Err("no Carrington rotation in the WSO tilt page".to_owned());
+    }
+    let ends: Vec<Option<Timestamp>> = rows
+        .iter()
+        .zip(rows.iter().skip(1).map(Some).chain([None]))
+        .map(|((rotation, _, _), next)| match next {
+            Some((following, at, _)) if *following == rotation + 1 => Some(*at),
+            _ => None,
+        })
+        .collect();
+    rows.into_iter()
+        .zip(ends)
+        .map(|((rotation, start, attributes), end)| {
+            let stop = match end {
+                Some(end) => end,
+                None => {
+                    Timestamp::from_unix_micros(start.unix_micros() + CARRINGTON_ROTATION_MICROS)
+                        .ok_or_else(|| format!("CR {rotation} ends out of range"))?
+                }
+            };
+            Ok(Item {
+                id: format!("CR {rotation}"),
+                start,
+                stop,
+                attributes,
+            })
+        })
+        .collect()
+}
+
 /// A table kept in this crate: a header, `start` and `stop` in RFC 3339, then the attributes.
 fn kept_table(text: &str, _part: &str) -> Result<Vec<Item>, String> {
     timed_csv(text, "start", "stop")
@@ -3577,6 +3779,90 @@ mod tests {
                 .iter()
                 .any(|list| list.key == "mms-foreshock-bubbles-turner")
         );
+    }
+
+    #[test]
+    fn the_ma_cmes_are_tables_one_and_two_as_printed() {
+        let stealth = kept_table(include_str!("data/ma_2010_stealth_cmes.csv"), "").unwrap();
+        let with_lcs = kept_table(include_str!("data/ma_2010_cmes_with_lcs.csv"), "").unwrap();
+        assert_eq!(
+            (stealth.len(), with_lcs.len()),
+            (11, 23),
+            "34 Earth-sided CMEs"
+        );
+        assert_eq!(stealth[0].start, at("2009-01-07T17:37:00Z"));
+        assert_eq!(
+            stealth[0].attributes["character"],
+            json!("Cup-shaped, blowout")
+        );
+        assert_eq!(
+            stealth[1].attributes["disk_cme_time"],
+            json!("2009-01-09T04:07:00Z")
+        );
+        assert_eq!(with_lcs[22].attributes["lcs"], json!("Filament eruption"));
+        assert_eq!(with_lcs[9].attributes["disk_width_deg"], json!(160.0));
+    }
+
+    #[test]
+    fn the_voyager_crossings_run_forward_even_when_the_table_does_not() {
+        let crossings = kept_table(include_str!("data/choi_2025_voyager2_hcs.csv"), "").unwrap();
+        assert_eq!(crossings.len(), 188);
+        let fourteenth = &crossings[13];
+        assert_eq!(fourteenth.start, at("1978-03-27T20:44:52Z"));
+        assert_eq!(fourteenth.stop, at("1978-03-27T21:18:11Z"));
+        assert_eq!(fourteenth.attributes["end_before_start"], json!("yes"));
+        assert_eq!(crossings[187].attributes["seq"], json!(188.0));
+    }
+
+    #[test]
+    fn a_sbcross_row_is_a_sector_boundary_crossing() {
+        let crossings =
+            sbcross(include_str!("../../tests/fixtures/relay/sbcross.csv"), "").unwrap();
+        assert_eq!(crossings.len(), 5);
+        assert_eq!(crossings[0].start, at("1995-01-02T04:00:00Z"));
+        assert_eq!(crossings[0].stop, at("1995-01-02T07:00:00Z"));
+        let first = &crossings[0].attributes;
+        assert_eq!(first["polarity"], json!("+,-"));
+        assert_eq!(first["confidence"], json!("low"));
+        assert_eq!(first["cme"], json!(false));
+        assert!(!first.contains_key("cme_position"), "no CME, no position");
+        assert_eq!(first["speed_avg_km_s"], json!(342.8));
+        assert_eq!(crossings[1].attributes["cme_position"], json!("overlap"));
+        assert_eq!(crossings[2].attributes["cme_position"], json!("before"));
+        assert!(
+            !crossings[3].attributes.contains_key("thickness_km"),
+            "empty: left out"
+        );
+        assert!(sbcross("Start Time,End Time\nnot a time,x\n", "").is_err());
+    }
+
+    #[test]
+    fn a_wso_tilt_row_is_its_carrington_rotation() {
+        let page = include_str!("../../tests/fixtures/relay/wso_tilts.html");
+        let rotations = wso_tilts(page, "").unwrap();
+        assert_eq!(rotations.len(), 4);
+        assert_eq!(rotations[0].start, at("1976-05-27T15:00:00Z"));
+        assert_eq!(
+            rotations[0].stop,
+            at("1976-06-23T21:00:00Z"),
+            "to the next rotation"
+        );
+        assert_eq!(rotations[0].attributes["carrington_rotation"], json!(1642));
+        assert_eq!(rotations[0].attributes["l_s_deg"], json!(-15.5));
+        let lasts = |item: &Item| item.stop.unix_micros() - item.start.unix_micros();
+        assert_eq!(
+            lasts(&rotations[2]),
+            2_356_585_920_000,
+            "1645 is not the next row"
+        );
+        let last = &rotations[3];
+        assert_eq!(last.attributes["carrington_rotation"], json!(2302));
+        assert_eq!(
+            lasts(last),
+            2_356_585_920_000,
+            "the last one lasts a rotation"
+        );
+        assert!(wso_tilts("<html>no table</html>", "").is_err());
     }
 
     #[test]

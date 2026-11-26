@@ -1,0 +1,12 @@
+start,stop,nr,note,pa_deg,width_deg,speed_km_s,spacecraft,character,disk_spacecraft,disk_character,disk_note,disk_cme_time,disk_pa_deg,disk_width_deg,disk_speed_km_s
+2009-01-07T17:37:00Z,2009-01-07T17:37:00Z,1,**c,94,22,208,A,"Cup-shaped, blowout",B,"Faint, slow",,,,,
+2009-01-08T20:00:00Z,2009-01-08T20:00:00Z,2,*c,101,32,208,A,"Bulb, blowout",B,Faint,,2009-01-09T04:07:00Z,237,32,178
+2009-05-09T05:38:00Z,2009-05-09T05:38:00Z,3,**,270,38,192,B mid,"Faint, cup-shaped",A mid,"Faint, slow, bulb",,,,,
+2009-06-13T09:37:00Z,2009-06-13T09:37:00Z,4,**,81,32,164,A,"Distinct, bulb",B,"Faint, narrow",,2009-06-13T14:08:00Z,287,12,192
+2009-06-30T22:38:00Z,2009-06-30T22:38:00Z,5,**,260,34,192,B mid,"Faint, bulb",A mid,"Faint, bulb",c,2009-06-30T13:37:00Z,90,30,155
+2009-07-13T10:37:00Z,2009-07-13T10:37:00Z,6,**,95,8,126,A,"Bulb, blowout",B,"Faint, narrow, slow",,,,,
+2009-07-15T18:07:00Z,2009-07-15T18:07:00Z,7,**,99,8,164,A mid,"Narrow, blowout",B mid,"Faint, slow",,,,,
+2009-07-31T06:07:00Z,2009-07-31T06:07:00Z,8,,79,36,284,A mid,Faint,B mid,"Faint, broad",,2009-07-31T11:08:00Z,282,34,200
+2009-08-14T19:38:00Z,2009-08-14T19:38:00Z,9,*a,277,10,192,B mid,"Faint, narrow",A mid,"Faint, slow, narrow",,,,,
+2009-08-19T11:54:00Z,2009-08-19T11:54:00Z,10,**c,90,30,113,A,"Bulb, blowout",B,"Very faint, slow",,,,,
+2009-08-25T10:39:00Z,2009-08-25T10:39:00Z,11,**,77,36,222,A,"Distinct, helical",B,Faint,c,2009-08-25T16:54:00Z,277,20,228
