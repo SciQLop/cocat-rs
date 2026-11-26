@@ -65,7 +65,7 @@ import cocat_rs as cc
 |---|---|
 | `project.search("tag:shock confidence:>=0.8")` | matching events, in time order |
 | `project.create_smart_catalogue("name", "query")` | a catalogue that updates itself |
-| `catalogue.query` | a smart catalogue's search, as it was typed (`start:>2018` stays `start:>2018`), whatever it searches: all events, `query_source`, or the public catalogues (`searches_public`). A rule set as JSON reads back printed. |
+| `catalogue.query` | a smart catalogue's search, as it was typed (`start:>2018` stays `start:>2018`), whatever it searches: all events, `query_source`, or the public catalogues (`searches_public`). A rule set as JSON reads back printed. A `catalogue:` naming a public catalogue reads back by its name, asked of the server once; offline, by its id (`catalogue:public.amda.sharedcatalog_21`), which reads as the same search. |
 | `catalogue.set_query("query", source=other)` | search the events of another catalogue; `catalogue.query_source` reads it back |
 | `catalogue.rule = None` | remove the search: the catalogue keeps the events it lists |
 | `catalogue.materialize("name")` | a frozen copy of a smart catalogue |

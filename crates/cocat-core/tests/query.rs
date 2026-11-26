@@ -668,3 +668,52 @@ fn a_search_reads_back_as_it_was_typed() {
         Some("catalogue:\"Bow shocks\"")
     );
 }
+
+/// The public catalogues as the server lists them, for a search of all of them.
+fn public_catalogues() -> Vec<(String, String)> {
+    vec![(
+        "public.amda.sharedcatalog_21".to_owned(),
+        "BepiCoordObs_Windows_of_Opportunities".to_owned(),
+    )]
+}
+
+/// What a user typed in SciQLop's search box over the public catalogues: a date, a public
+/// catalogue, an attribute whose name has a space, and NOT a phrase with dashes.
+const PUBLIC_TYPED: &str = r#"start:>=2020-01-01 catalogue:"BepiCoordObs_Windows_of_Opportunities" "Col 1":Parker NOT "Col 1":"Cone--Parker""#;
+
+#[test]
+fn a_public_search_reads_back_as_typed_with_the_public_names() {
+    let predicate = query::parse(PUBLIC_TYPED, &public_catalogues()).unwrap();
+    let rule = query::public_rule(&predicate);
+    assert_eq!(
+        query::where_text(&rule, Some(PUBLIC_TYPED), &public_catalogues()).as_deref(),
+        Some(PUBLIC_TYPED)
+    );
+    let printed = query::where_text(&rule, None, &public_catalogues()).unwrap();
+    let again = query::parse(&printed, &public_catalogues()).unwrap();
+    assert_eq!(
+        query::public_rule(&again),
+        rule,
+        "the printed search reads as the rule"
+    );
+}
+
+#[test]
+fn without_the_public_names_a_public_search_prints_its_catalogue_by_id() {
+    let predicate = query::parse(PUBLIC_TYPED, &public_catalogues()).unwrap();
+    let rule = query::public_rule(&predicate);
+
+    let printed = query::where_text(&rule, Some(PUBLIC_TYPED), &catalogues())
+        .expect("a search, not the rule's JSON");
+
+    assert!(
+        printed.contains("public.amda.sharedcatalog_21"),
+        "{printed}"
+    );
+    let again = query::parse(&printed, &catalogues()).unwrap();
+    assert_eq!(
+        query::public_rule(&again),
+        rule,
+        "{printed} reads as the rule"
+    );
+}

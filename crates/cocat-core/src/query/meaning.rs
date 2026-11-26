@@ -245,7 +245,9 @@ impl Meaning<'_> {
         }
     }
 
-    /// A catalogue by name, or by uuid for one the room no longer names.
+    /// A catalogue by name, or by id for one the names given do not hold: a uuid the room no
+    /// longer names, or a public catalogue's `public.<key>` when the public names are not at
+    /// hand (offline), so a printed search still reads back as its rule.
     fn catalogue(&self, term: &Term) -> Result<Predicate> {
         let scalar = match term {
             Term::Single(None | Some(Op::Eq), scalar) => scalar,
@@ -262,7 +264,9 @@ impl Meaning<'_> {
             .collect();
         match named.as_slice() {
             [uuid] => Ok(Predicate::InCatalogue(Some((*uuid).clone()))),
-            [] if uuid::Uuid::parse_str(&scalar.text).is_ok() => {
+            [] if uuid::Uuid::parse_str(&scalar.text).is_ok()
+                || crate::room_id::is_public_id(&scalar.text) =>
+            {
                 Ok(Predicate::InCatalogue(Some(scalar.text.clone())))
             }
             [] => Err(self.error(

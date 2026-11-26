@@ -756,15 +756,26 @@ impl Catalogue {
     /// `None` when there is no rule or it has no search form (the time operations: merge,
     /// shift, tile, window, closest, set algebra).
     #[getter]
-    fn query(&self) -> Result<Option<String>> {
-        let doc = self.room.doc();
-        let txn = doc.transact();
-        let catalogue = model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
-        let typed = model::search_text(&txn, &self.uuid);
-        let names = model::catalogue_names(&txn);
-        Ok(catalogue
-            .rule
-            .and_then(|rule| query::where_text(&rule, typed.as_deref(), &names)))
+    fn query(&self, py: Python<'_>) -> Result<Option<String>> {
+        let (rule, typed, mut names) = {
+            let doc = self.room.doc();
+            let txn = doc.transact();
+            let catalogue =
+                model::catalogue(&txn, &self.uuid).ok_or_else(|| unknown("catalogue"))?;
+            let typed = model::search_text(&txn, &self.uuid);
+            (catalogue.rule, typed, model::catalogue_names(&txn))
+        };
+        let Some(rule) = rule else {
+            return Ok(None);
+        };
+        let text = query::where_text(&rule, typed.as_deref(), &names);
+        if (typed.is_some() && text == typed) || public_predicate(&rule).is_none() {
+            return Ok(text);
+        }
+        // A search of the public catalogues names them as the server does, as it was typed.
+        let room = &self.room;
+        names.extend(py.detach(|| block_on(room.public_names()))?);
+        Ok(query::where_text(&rule, typed.as_deref(), &names))
     }
 
     /// Makes this catalogue the search `text` over all events.
