@@ -26,7 +26,7 @@ you may find:
 
 - NASA's **DONKI** space weather database: flares, CMEs, solar energetic particles,
   interplanetary shocks, geomagnetic storms…
-- the **CDAW** SOHO/LASCO CME catalogue, Wind/STEREO WAVES type II bursts, and the intense
+- the **CDAW** SOHO/LASCO CME catalogue, Wind/STEREO WAVES type II and type IV bursts, and the intense
   geomagnetic storms (Dst at or below -100 nT) with their solar and interplanetary causes;
 - **AMDA**'s shared catalogues;
 - **HELIO4CAST** ICMECAT, one catalogue per spacecraft, and its companion lists;

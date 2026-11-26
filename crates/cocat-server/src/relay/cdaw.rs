@@ -1,12 +1,13 @@
 //! CDAW, the NASA GSFC Coronal Mass Ejection Data Center: the SOHO/LASCO CME catalogue, the
-//! list of type II radio bursts seen by Wind/WAVES and STEREO/WAVES, and the list of intense
-//! geomagnetic storms with their solar and interplanetary causes.
+//! lists of type II and type IV radio bursts seen by Wind/WAVES and STEREO/WAVES, and the list
+//! of intense geomagnetic storms with their solar and interplanetary causes.
 //!
-//! All lists are plain text. LASCO's is a file with one CME per line; the others are HTML
-//! pages holding one `<pre>` block, its links flattened to their text. All are read by
-//! splitting each line on whitespace: only the last column, the remarks, contains spaces, and
-//! it comes after the fixed ones. A line the lists cannot be read from is an error, not a
-//! skipped row: a layout change must fail the run rather than silently shrink the catalogue.
+//! LASCO's list is a file with one CME per line; the type II and storm lists are HTML pages
+//! holding one `<pre>` block, its links flattened to their text. Those are read by splitting
+//! each line on whitespace: only the last column, the remarks, contains spaces, and it comes
+//! after the fixed ones. The type IV list is a spreadsheet saved as an HTML table, one burst
+//! per row. A line the lists cannot be read from is an error, not a skipped row: a layout
+//! change must fail the run rather than silently shrink the catalogue.
 
 use std::collections::HashMap;
 
@@ -74,6 +75,36 @@ const TYPE_II: List = List {
     ],
 };
 
+const TYPE_IV: List = List {
+    key: "type4",
+    name: "WAVES type IV bursts",
+    description: "Interplanetary (decameter-hectometric) type IV radio bursts seen by Wind/WAVES and STEREO A and B/WAVES since 1997, each with a metric counterpart, and their CMEs, from the CDAW catalogue, https://cdaw.gsfc.nasa.gov/CME_list/radio/type4/TypeIV_catalog_desc.pdf. Each event starts at the burst and lasts its duration at 14 MHz, as seen by the spacecraft that saw it longest. Attributes: the lowest frequency reached (MHz); moving or stationary, overall and per spacecraft; the spacecraft that saw it best and all that saw it; the STEREO separations from Earth and the source's azimuth seen from each (degrees); the event quality SxIy (shape, intensity, 1 to 3) and data quality WxAyBz (Wind, STEREO A, B: 0 no data, 1 poor, 2 good); the associated LASCO CME's time, flare location and mean speed (km/s); the solar cycle; whether a DH type II burst goes with it. Mohan, Gopalswamy, Kumari, Akiyama and Sindhuja (2024), Interplanetary Type IV Solar Radio Bursts: A Comprehensive Catalog and Statistical Results, ApJ 971, 86, https://doi.org/10.3847/1538-4357/ad5315, licence CC-BY-4.0.",
+    url: "https://cdaw.gsfc.nasa.gov/CME_list/radio/type4/DHtypeIV_catalog.htm",
+    data_url: "https://cdaw.gsfc.nasa.gov/CME_list/radio/type4/DHtypeIV_catalog.htm",
+    columns: &[
+        "duration_min",
+        "end_freq_mhz",
+        "motion",
+        "wind_motion",
+        "sta_motion",
+        "stb_motion",
+        "best_view",
+        "spacecraft",
+        "stb_earth_angle_deg",
+        "sta_earth_angle_deg",
+        "source_wind_fov_deg",
+        "source_sta_fov_deg",
+        "source_stb_fov_deg",
+        "event_quality",
+        "data_quality",
+        "cme_date_time",
+        "flare_location",
+        "cme_speed_km_s",
+        "solar_cycle",
+        "dh_type_ii",
+    ],
+};
+
 const STORMS: List = List {
     key: "dst100",
     name: "Intense geomagnetic storms",
@@ -124,6 +155,9 @@ const TYPE_II_COLUMNS: usize = 15;
 /// Storm date and hour, Dst, driver, CME speed, source date, time, location and region,
 /// shock date and time, driver start day and time, end day and time, V1, V2, VBz, Bz.
 const STORM_COLUMNS: usize = 19;
+
+/// The type IV table's cells per burst row.
+const TYPE_IV_COLUMNS: usize = 23;
 /// The storm list's speeds and fields after the driver's end: token index and attribute.
 const STORM_MEASURES: [(usize, &str); 4] = [
     (15, "v1_km_s"),
@@ -200,6 +234,89 @@ fn type_ii_event(row: &Row) -> Result<(String, EventRecord), String> {
     insert(a, "cme_speed_km_s", number(t[13]));
     insert(a, "remarks", text(&t[TYPE_II_COLUMNS..].join(" ")));
     Ok((format!("{} {}", t[0], t[1]), record))
+}
+
+fn parse_type_iv(page: &str) -> Result<Vec<EventRecord>, String> {
+    let html = Html::parse_document(page);
+    let (row, cell) = (selector("tr")?, selector("td, th")?);
+    let events = html
+        .select(&row)
+        .map(|row| {
+            row.select(&cell)
+                .map(|cell| cell.text().collect::<Vec<_>>().join(" "))
+                .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<Vec<String>>()
+        })
+        .filter(|cells| {
+            cells
+                .first()
+                .is_some_and(|first| dated(first, "00:00").is_some())
+        })
+        .map(|cells| type_iv_event(&cells))
+        .collect::<Result<Vec<_>, _>>()?;
+    non_empty(with_occurrences(TYPE_IV.key, events))
+}
+
+fn type_iv_event(cells: &[String]) -> Result<(String, EventRecord), String> {
+    let line = || cells.join(" | ");
+    if cells.len() < TYPE_IV_COLUMNS {
+        return Err(format!("type IV row has too few columns: {}", line()));
+    }
+    let t: Vec<&str> = cells.iter().map(String::as_str).collect();
+    let start = dated(t[0], t[1]).ok_or_else(|| format!("type IV row has no start: {}", line()))?;
+    let minutes: i64 = t[2]
+        .parse()
+        .map_err(|_| format!("type IV row has no duration: {}", line()))?;
+    let stop = Timestamp::from_unix_micros(start.unix_micros() + i128::from(minutes) * 60_000_000)
+        .ok_or_else(|| format!("type IV row ends out of range: {}", line()))?;
+    let mut record = EventRecord::new(String::new(), start, stop);
+    let a = &mut record.attributes;
+    insert(a, "duration_min", number(t[2]));
+    insert(a, "end_freq_mhz", number(t[3]));
+    insert(a, "motion", motion(t[4]));
+    insert(a, "wind_motion", motion(t[5]));
+    insert(a, "sta_motion", motion(t[6]));
+    insert(a, "stb_motion", motion(t[7]));
+    insert(a, "best_view", text(t[8]));
+    insert(a, "spacecraft", text(t[9]));
+    insert(a, "stb_earth_angle_deg", number(t[10]));
+    insert(a, "sta_earth_angle_deg", number(t[11]));
+    insert(a, "source_wind_fov_deg", number(t[12]));
+    insert(a, "source_sta_fov_deg", number(t[13]));
+    insert(a, "source_stb_fov_deg", number(t[14]));
+    insert(a, "event_quality", text(t[15]));
+    insert(a, "data_quality", text(t[16]));
+    insert(
+        a,
+        "cme_date_time",
+        moment(dated_to_the_second(t[17], t[18])),
+    );
+    insert(a, "flare_location", text(t[19]));
+    insert(a, "cme_speed_km_s", number(t[20]));
+    insert(a, "solar_cycle", number(t[21]));
+    insert(a, "dh_type_ii", yes_or_no(t[22]));
+    Ok((format!("{} {}", t[0], t[1]), record))
+}
+
+fn selector(css: &str) -> Result<Selector, String> {
+    Selector::parse(css).map_err(|error| format!("{css}: {error}"))
+}
+
+/// `M` or `S`: a moving or stationary type IV burst; `NA` when that spacecraft did not see it.
+fn motion(token: &str) -> Option<Value> {
+    match token {
+        "M" => Some(Value::from("moving")),
+        "S" => Some(Value::from("stationary")),
+        _ => None,
+    }
+}
+
+fn yes_or_no(token: &str) -> Option<Value> {
+    match token {
+        "Y" => Some(Value::Bool(true)),
+        "N" => Some(Value::Bool(false)),
+        _ => None,
+    }
 }
 
 fn parse_storms(page: &str) -> Result<Vec<EventRecord>, String> {
@@ -373,6 +490,12 @@ fn dated(day: &str, clock: &str) -> Option<Timestamp> {
     stamp(date, minutes_of(clock).ok()? * 60).ok()
 }
 
+/// A full date and a time to the second, like a type IV burst's CME.
+fn dated_to_the_second(day: &str, clock: &str) -> Option<Timestamp> {
+    let date = Date::parse(day, format_description!("[year]/[month]/[day]")).ok()?;
+    stamp(date, seconds_of(clock).ok()?).ok()
+}
+
 fn moment(at: Option<Timestamp>) -> Option<Value> {
     Some(Value::String(at?.rfc3339().ok()?))
 }
@@ -469,6 +592,7 @@ impl Provider for Cdaw {
             fetch_list(http, &LASCO, parse_lasco).await?,
             fetch_list(http, &TYPE_II, parse_type_ii).await?,
             fetch_list(http, &STORMS, parse_storms).await?,
+            fetch_list(http, &TYPE_IV, parse_type_iv).await?,
         ])
     }
 }
@@ -481,6 +605,7 @@ mod tests {
 
     const LASCO_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_univ_all_head.txt");
     const TYPE_II_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_waves_type2.html");
+    const TYPE_IV_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_type4.htm");
     const STORMS_FIXTURE: &str = include_str!("../../tests/fixtures/relay/cdaw_dst100.html");
 
     fn at(text: &str) -> Timestamp {
@@ -512,6 +637,7 @@ mod tests {
             (&LASCO, parse_lasco(LASCO_FIXTURE).unwrap()),
             (&TYPE_II, parse_type_ii(TYPE_II_FIXTURE).unwrap()),
             (&STORMS, parse_storms(STORMS_FIXTURE).unwrap()),
+            (&TYPE_IV, parse_type_iv(TYPE_IV_FIXTURE).unwrap()),
         ];
         for (list, events) in lists {
             for key in events.iter().flat_map(|event| event.attributes.keys()) {
@@ -588,6 +714,56 @@ mod tests {
         assert_eq!(pair[1].uuid, event_uuid("lasco", "1996/01/30 05:56:07#1"));
         assert_eq!(pair[0].attributes["central_pa_deg"], json!(79));
         assert_eq!(pair[1].attributes["central_pa_deg"], json!(272));
+    }
+
+    #[test]
+    fn a_type_iv_row_lasts_its_duration_at_14_mhz() {
+        let bursts = parse_type_iv(TYPE_IV_FIXTURE).unwrap();
+        assert_eq!(bursts.len(), 7, "header and blank rows are not bursts");
+        let first = &bursts[0];
+
+        assert_eq!(first.uuid, event_uuid("type4", "1997/11/06 12:29"));
+        assert_eq!(first.start, at("1997-11-06T12:29:00Z"));
+        assert_eq!(first.stop, at("1997-11-06T12:54:00Z"));
+        let expected = json!({
+            "duration_min": 25, "end_freq_mhz": 4.2, "motion": "stationary",
+            "wind_motion": "stationary", "best_view": "Wind", "spacecraft": "Wind",
+            "source_wind_fov_deg": 63, "event_quality": "S2I3", "data_quality": "W2A0B0",
+            "cme_date_time": "1997-11-06T12:20:00Z", "flare_location": "S18W63",
+            "cme_speed_km_s": 1556, "solar_cycle": 23, "dh_type_ii": true,
+        });
+        assert_eq!(Value::Object(first.attributes.clone()), expected);
+    }
+
+    #[test]
+    fn a_type_iv_row_seen_by_stereo_keeps_every_view() {
+        let bursts = parse_type_iv(TYPE_IV_FIXTURE).unwrap();
+        let last = bursts.last().unwrap();
+
+        assert_eq!(last.stop, at("2024-10-09T06:00:00Z"));
+        let a = &last.attributes;
+        assert_eq!(a["sta_motion"], json!("stationary"));
+        assert!(!a.contains_key("stb_motion"), "NA: no STEREO B");
+        assert_eq!(a["spacecraft"], json!("Wind;STA"));
+        assert_eq!(a["stb_earth_angle_deg"], json!(-29.1));
+        assert_eq!(a["source_stb_fov_deg"], json!(37.1));
+        let no_flare = bursts
+            .iter()
+            .find(|b| b.start == at("2016-04-18T00:55:00Z"));
+        assert!(!no_flare.unwrap().attributes.contains_key("flare_location"));
+        let no_speed = bursts
+            .iter()
+            .find(|b| b.start == at("1997-12-12T22:44:00Z"));
+        assert!(
+            !no_speed.unwrap().attributes.contains_key("cme_speed_km_s"),
+            "nan"
+        );
+    }
+
+    #[test]
+    fn a_type_iv_row_it_cannot_read_fails_the_run() {
+        let broken = TYPE_IV_FIXTURE.replacen(">25<", ">twenty<", 1);
+        assert!(parse_type_iv(&broken).is_err());
     }
 
     #[test]
