@@ -27,6 +27,7 @@ ODD = [
     dict(BEPI, id="public.odd.quote", name='Say "hi"', count=1),
     dict(BEPI, id="public.odd.unicode", name="Événements solaires", count=1),
     dict(BEPI, id="public.odd.same", name="Same name", count=1),
+    dict(BEPI, id="public.other.cme", name="DONKI CMEs", count=3),
 ]
 
 # As typed in SciQLop's search box, "Search in: Public catalogues".
@@ -144,7 +145,7 @@ def test_every_name_completion_offers_reads_in_its_scope(tmp_path, server, scope
     url, asked, _ = server
     asked["odd"] = True
     project = opened(tmp_path, url)
-    for name in ["jet candidates", 'Say "hi"', "Événements", "Same name"]:
+    for name in ["jet candidates", 'Say "hi"', "Événements", "Same name", "Twice", "Twice"]:
         project.create_catalogue(name=name)
     source = project.create_catalogue(name="Source") if scope == "this catalogue" else None
     public = scope == "public catalogues"

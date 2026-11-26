@@ -127,13 +127,33 @@ impl Vocabulary {
     /// project's, as a search of the public catalogues does: those names (id, name), each
     /// once, sorted.
     pub fn naming(self, catalogues: &[(String, String)]) -> Self {
-        let names: std::collections::BTreeSet<&String> =
-            catalogues.iter().map(|(_, name)| name).collect();
         Self {
-            catalogues: names.into_iter().cloned().collect(),
+            catalogues: nameable(catalogues),
             ..self
         }
     }
+}
+
+/// What `catalogue:` can name among these (id, name), sorted: each name once, but the ids of
+/// catalogues sharing a name, since a search refuses a name that is not one catalogue's.
+pub fn nameable(catalogues: &[(String, String)]) -> Vec<String> {
+    let mut seen = BTreeMap::<&str, usize>::new();
+    for (_, name) in catalogues {
+        *seen.entry(name).or_default() += 1;
+    }
+    let mut words: Vec<String> = catalogues
+        .iter()
+        .filter(|(_, name)| seen[name.as_str()] > 1)
+        .map(|(id, _)| id.clone())
+        .chain(
+            seen.iter()
+                .filter(|(_, count)| **count == 1)
+                .map(|(name, _)| (*name).to_owned()),
+        )
+        .collect();
+    words.sort();
+    words.dedup();
+    words
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -461,13 +481,26 @@ mod completion_tests {
         let inserts: Vec<String> = found.suggestions.into_iter().map(|s| s.insert).collect();
         assert_eq!(
             inserts,
-            ["catalogue:BepiCoordObs ", "catalogue:\"DONKI CMEs\" "]
+            [
+                "catalogue:BepiCoordObs ",
+                "catalogue:public.donki.cme ",
+                "catalogue:public.other.cme "
+            ]
         );
         assert_eq!(
             vocabulary.tags,
             self::vocabulary().tags,
             "only the names change"
         );
+    }
+
+    #[test]
+    fn a_name_several_catalogues_share_is_offered_as_their_ids() {
+        let pairs: Vec<(String, String)> = [("u2", "Dup"), ("u1", "Dup"), ("u3", "Solo")]
+            .iter()
+            .map(|(id, name)| ((*id).into(), (*name).into()))
+            .collect();
+        assert_eq!(nameable(&pairs), ["Solo", "u1", "u2"]);
     }
 
     fn inserts(text: &str) -> Vec<String> {

@@ -173,10 +173,7 @@ pub fn words_mask<T: ReadTxn>(txn: &T, text: &str, probes: &[Probe]) -> Vec<bool
 /// What the room holds that a search can name, for completions: tags, the authors of live
 /// events, catalogue names and attribute keys, each sorted.
 pub fn vocabulary<T: ReadTxn>(txn: &T) -> Vocabulary {
-    let catalogues: BTreeSet<String> = catalogue_names(txn)
-        .into_iter()
-        .map(|(_, name)| name)
-        .collect();
+    let catalogues = crate::query::search_box::nameable(&catalogue_names(txn));
     let types = attribute_types(txn);
     let texts: Vec<String> = types
         .iter()
@@ -203,7 +200,7 @@ pub fn vocabulary<T: ReadTxn>(txn: &T) -> Vocabulary {
     Vocabulary {
         tags: words.tags.into_iter().collect(),
         authors: words.authors.into_iter().collect(),
-        catalogues: catalogues.into_iter().collect(),
+        catalogues,
         attributes: types.into_keys().collect(),
         attribute_values,
     }
