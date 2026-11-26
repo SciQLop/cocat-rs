@@ -182,3 +182,15 @@ def test_without_a_list_of_public_catalogues_no_name_is_called_a_mistake(tmp_pat
         project.preview(typed, public=True)
     assert project.vocabulary(public=True)["catalogues"] == [], "nothing to offer"
     project.close()
+
+
+# Vibe, 2026-11-26: a project catalogue named like the public one a search names made the
+# getter read both lists at once, find the name twice, and give no text.
+def test_a_public_search_reads_back_beside_a_project_catalogue_of_the_same_name(tmp_path, server):
+    url, _, _ = server
+    project = opened(tmp_path, url)
+    project.create_catalogue(name=BEPI["name"])
+    smart = project.create_smart_catalogue("Bepi shocks", TYPED, public=True)
+
+    assert smart.query == TYPED
+    project.close()

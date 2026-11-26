@@ -763,7 +763,7 @@ impl Catalogue {
     /// shift, tile, window, closest, set algebra).
     #[getter]
     fn query(&self, py: Python<'_>) -> Result<Option<String>> {
-        let (rule, typed, mut names) = {
+        let (rule, typed, project_names) = {
             let doc = self.room.doc();
             let txn = doc.transact();
             let catalogue =
@@ -774,13 +774,17 @@ impl Catalogue {
         let Some(rule) = rule else {
             return Ok(None);
         };
-        let text = query::where_text(&rule, typed.as_deref(), &names);
-        if (typed.is_some() && text == typed) || public_predicate(&rule).is_none() {
-            return Ok(text);
+        if public_predicate(&rule).is_none() {
+            return Ok(query::where_text(&rule, typed.as_deref(), &project_names));
         }
-        // A search of the public catalogues names them as the server does, as it was typed.
+        // A search of the public catalogues names them as the server does, never as the
+        // project does; one naming none reads without asking the server.
+        let unnamed = query::where_text(&rule, typed.as_deref(), &[]);
+        if typed.is_some() && unnamed == typed {
+            return Ok(unnamed);
+        }
         let room = &self.room;
-        names.extend(py.detach(|| block_on(room.public_names()))?);
+        let names = py.detach(|| block_on(room.public_names()))?;
         Ok(query::where_text(&rule, typed.as_deref(), &names))
     }
 
