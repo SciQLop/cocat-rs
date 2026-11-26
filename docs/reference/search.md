@@ -5,8 +5,9 @@ The box above the events searches as you type. The same search works in Python w
 
 ## Plain words
 
-Type a word: cocat finds the events whose tags, status, author or attributes contain it, or
-whose start time begins with it.
+Type a word: cocat finds the events whose tags, status, author or attribute values contain it,
+or whose start time begins with it. To find the events that have an attribute, write
+`_exists_:name`.
 
 - `shock` – anything mentioning shock
 - `2015-03` – events starting in March 2015
