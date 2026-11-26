@@ -1022,7 +1022,7 @@ pub struct Words {
 impl Words {
     pub fn new(text: &str) -> Self {
         let text = text.trim().to_lowercase();
-        let words = text.split_whitespace().map(str::to_owned).collect();
+        let words = phrases(&text);
         Self { text, words }
     }
 
@@ -1030,6 +1030,18 @@ impl Words {
         let start = start_text(shown.start);
         start.starts_with(&self.text) || self.words.iter().all(|word| word_in(shown, &start, word))
     }
+}
+
+/// The words of a text, a quoted phrase as one word, as the search reads it.
+fn phrases(text: &str) -> Vec<String> {
+    text.split('"')
+        .enumerate()
+        .flat_map(|(at, part)| match at % 2 {
+            1 => vec![part.trim().to_owned()],
+            _ => part.split_whitespace().map(str::to_owned).collect(),
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
 }
 
 fn word_in(shown: &Shown<'_>, start: &str, word: &str) -> bool {
@@ -1059,6 +1071,25 @@ pub fn start_text(nanos: i64) -> String {
 mod words_tests {
     use super::*;
     use serde_json::json;
+
+    /// Vibe, 2026-11-26: the filter kept the quotes, so a phrase the search found filtered
+    /// the table to nothing.
+    #[test]
+    fn a_quoted_phrase_is_one_word() {
+        let attributes: Map<String, serde_json::Value> =
+            serde_json::from_value(json!({"note": "bow shock ahead"})).unwrap();
+        let shown = Shown {
+            start: 0,
+            tags: &[],
+            status: Status::Reviewed,
+            author: None,
+            attributes: &attributes,
+        };
+        let keeps = |text: &str| Words::new(text).matches(&shown);
+        assert!(keeps(r#""bow shock""#));
+        assert!(keeps(r#""Bow Shock" ahead"#));
+        assert!(!keeps(r#""shock bow""#));
+    }
 
     #[test]
     fn every_word_must_match_a_shown_value_or_begin_the_start() {
