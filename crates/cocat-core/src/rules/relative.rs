@@ -62,8 +62,9 @@ fn step(offset: &str) -> Option<Step> {
         '+' => 1,
         _ => return None,
     };
-    let unit = offset.chars().last()?;
-    let digits = &offset[1..offset.len() - unit.len_utf8()];
+    let rest = &offset[1..];
+    let unit = rest.chars().last()?;
+    let digits = &rest[..rest.len() - unit.len_utf8()];
     if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
@@ -84,7 +85,9 @@ mod tests {
         for good in ["", "-7d", "+1h", "-30s", "-2m", "-1M", "+3y"] {
             assert!(is_offset(good), "{good}");
         }
-        for bad in ["7d", "-d", "-7", "-7w", "-1.5d", "now", "- 7d", "-7dd"] {
+        for bad in [
+            "7d", "-d", "-7", "-7w", "-1.5d", "now", "- 7d", "-7dd", "-", "+",
+        ] {
             assert!(!is_offset(bad), "{bad}");
         }
     }
