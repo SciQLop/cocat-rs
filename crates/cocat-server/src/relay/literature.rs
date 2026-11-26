@@ -117,7 +117,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 110] = [
+static LISTS: [List; 111] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -414,6 +414,17 @@ static LISTS: [List; 110] = [
         credit: "Turner, Liu, Wilson et al. (2020), Microscopic, Multipoint Characterization of Foreshock Bubbles With Magnetospheric Multiscale (MMS), JGR Space Physics 125, e2019JA027707, https://doi.org/10.1029/2019JA027707, licence CC-BY-4.0 (Table 3).",
         url: "https://doi.org/10.1029/2019JA027707",
         files: Files::Kept(include_str!("data/turner_2020_magnetic_holes.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-foreshock-bubbles-lee",
+        folder: "Literature/Earth",
+        name: "MMS foreshock bubbles, 2017-2019 (Lee et al. 2023)",
+        about: "Twenty-three foreshock bubbles observed by MMS, used to study how they accelerate ions. Each event is the bubble time, to the minute. Attributes, in the paper's order: the bubble number; the depletions inside the bubble as ratios to the ambient values, B_min/B_0, V_X,min/V_X,0 and n_min/n_0; the heating, T_max/T_0; the increased field and density on the compressional boundary, B_max/B_0 and n_max/n_0; the distance from the model bow shock of Merka et al. (2005), D_bs (Earth radii); the solar wind Alfvén Mach number M_A; and the proton flux enhancement during the bubble, (D - B)/B. Nine of these bubbles are also in the Turner et al. (2020) list. Converted once from Table 1 of the paper.",
+        credit: "Lee, Sibeck, Omidi et al. (2023), Ion Acceleration by Foreshock Bubbles: Magnetospheric Multiscale Observations, JGR Space Physics 128, e2023JA031770, https://doi.org/10.1029/2023JA031770, Table 1; copyright AGU (no open licence): the event times and values are given here with this citation.",
+        url: "https://doi.org/10.1029/2023JA031770",
+        files: Files::Kept(include_str!("data/lee_2023_foreshock_bubbles.csv")),
         read: kept_table,
         part: "",
     },
@@ -3275,6 +3286,24 @@ mod tests {
                 .about
                 .contains("not solar wind magnetic holes")
         );
+    }
+
+    #[test]
+    fn the_lee_bubbles_are_twenty_three_points_at_their_minute() {
+        let items = kept_table(include_str!("data/lee_2023_foreshock_bubbles.csv"), "").unwrap();
+        assert_eq!(items.len(), 23);
+        assert_eq!(items[0].start, at("2017-01-30T07:37:00Z"));
+        assert_eq!(items[0].stop, items[0].start);
+        assert_eq!(items[1].attributes["vx_min_over_vx0"], json!(0.03));
+        assert_eq!(
+            items[14].attributes["proton_flux_enhancement"],
+            json!(-0.06)
+        );
+        assert_eq!(items[22].start, at("2019-01-25T06:50:00Z"));
+        let list = LISTS
+            .iter()
+            .find(|list| list.key == "mms-foreshock-bubbles-lee");
+        assert!(list.unwrap().credit.contains("no open licence"));
     }
 
     #[test]
