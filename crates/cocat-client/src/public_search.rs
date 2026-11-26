@@ -16,6 +16,11 @@ use crate::projects::api_request;
 /// The most events one search brings; `total` says how many there are in all.
 pub const PUBLIC_LIMIT: usize = 10_000;
 
+/// How long a search of the public catalogues is waited for: the server scans every public
+/// event, seconds on a large server; past this it is not answering, and the answer last kept,
+/// if any, is shown instead.
+const PUBLIC_SEARCH_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The folder, in the client's cache folder, that keeps the answers.
 const ANSWERS: &str = "public-searches";
 
@@ -117,12 +122,23 @@ enum Fetched {
 async fn fetch(
     url: &str,
     cookie: &str,
+    asked: &(&str, String),
+    held: Option<&str>,
+) -> Result<Fetched, LoginError> {
+    fetch_within(url, cookie, asked, held, PUBLIC_SEARCH_WAIT).await
+}
+
+async fn fetch_within(
+    url: &str,
+    cookie: &str,
     (name, value): &(&str, String),
     held: Option<&str>,
+    wait: std::time::Duration,
 ) -> Result<Fetched, LoginError> {
     let limit = PUBLIC_LIMIT.to_string();
     let mut request = api_request(Method::GET, url, cookie, &["public", "events"])?
-        .query(&[(*name, value.as_str()), ("limit", limit.as_str())]);
+        .query(&[(*name, value.as_str()), ("limit", limit.as_str())])
+        .timeout(wait);
     if let Some(held) = held {
         request = request.header(header::IF_NONE_MATCH, held);
     }
@@ -198,5 +214,28 @@ mod tests {
             kept_public(PublicQuery::Text("tag:wave"), cache.path()),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    /// Vibe, 2026-11-26: a server that took the request and never answered held the search,
+    /// and the SciQLop worker asking it, forever.
+    #[tokio::test]
+    async fn a_server_that_never_answers_is_given_up() {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", silent.local_addr().unwrap());
+        let asked = ("q", "tag:shock".to_owned());
+        let began = Instant::now();
+
+        let answer = fetch_within(&url, "cookie", &asked, None, Duration::from_millis(300)).await;
+
+        assert!(answer.is_err());
+        assert!(began.elapsed() < Duration::from_secs(5));
+        drop(silent);
     }
 }
