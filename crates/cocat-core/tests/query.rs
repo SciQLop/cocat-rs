@@ -717,3 +717,28 @@ fn without_the_public_names_a_public_search_prints_its_catalogue_by_id() {
         "{printed} reads as the rule"
     );
 }
+
+/// Vibe, 2026-11-26: a range that ends before it starts read, and found nothing, silently.
+#[test]
+fn a_range_that_ends_before_it_starts_is_refused() {
+    for text in [
+        "confidence:[0.5 TO 0.2]",
+        "start:[2021 TO 2019]",
+        "start:[2020-01-01 TO 2019-01-01]",
+    ] {
+        assert!(
+            refused(text).to_string().contains("ends before it starts"),
+            "{text}"
+        );
+    }
+    let attribute = query::parse("density:[10 TO 2]", &catalogues()).unwrap_err();
+    assert!(attribute.to_string().contains("ends before it starts"));
+    for text in [
+        "confidence:[0.2 TO 0.5]",
+        "start:[2019 TO 2019]",
+        "start:[now-7d TO now]",
+        "duration:[1h TO 2d]",
+    ] {
+        read(text);
+    }
+}

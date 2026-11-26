@@ -158,9 +158,16 @@ impl Meaning<'_> {
         let cmp = |op, value| Predicate::Cmp(field.to_owned(), op, value);
         match term {
             Term::Single(op, scalar) => Ok(cmp(op.unwrap_or(Op::Eq), read(scalar)?)),
-            Term::Range(low, high) => {
-                let low = (!low.is_open()).then(|| read(low)).transpose()?;
-                let high = (!high.is_open()).then(|| read(high)).transpose()?;
+            Term::Range(low_at, high_at) => {
+                let low = (!low_at.is_open()).then(|| read(low_at)).transpose()?;
+                let high = (!high_at.is_open()).then(|| read(high_at)).transpose()?;
+                let first = low.as_ref().and_then(Value::as_f64);
+                let last = high.as_ref().and_then(Value::as_f64);
+                if let (Some(first), Some(last)) = (first, last)
+                    && last < first
+                {
+                    return Err(self.error(&high_at.at, backwards(low_at, high_at)));
+                }
                 let bounds = [
                     low.map(|low| cmp(Op::Ge, low)),
                     high.map(|high| cmp(Op::Le, high)),
@@ -193,9 +200,16 @@ impl Meaning<'_> {
                     cmp(op, value)
                 }
             }),
-            Term::Range(low, high) => {
-                let low = (!low.is_open()).then(|| read(low)).transpose()?;
-                let high = (!high.is_open()).then(|| read(high)).transpose()?;
+            Term::Range(low_at, high_at) => {
+                let low = (!low_at.is_open()).then(|| read(low_at)).transpose()?;
+                let high = (!high_at.is_open()).then(|| read(high_at)).transpose()?;
+                let first = low.as_ref().and_then(Time::first);
+                let last = high.as_ref().and_then(Time::last);
+                if let (Some(first), Some(last)) = (first, last)
+                    && last < first
+                {
+                    return Err(self.error(&high_at.at, backwards(low_at, high_at)));
+                }
                 let bound = |op, time: Time| {
                     let (op, value) = time.bound(op);
                     cmp(op, value)
@@ -354,6 +368,22 @@ pub enum Time {
 impl Time {
     /// The comparison `op` means against this time: `>` a span is from its end on, `<=` a
     /// span is before its end.
+    /// The first nanosecond it covers, unless it is relative to now.
+    fn first(&self) -> Option<i64> {
+        match self {
+            Time::Instant(value) => value.as_i64(),
+            Time::Span(low, _) => Some(*low),
+        }
+    }
+
+    /// The last nanosecond it covers, unless it is relative to now.
+    fn last(&self) -> Option<i64> {
+        match self {
+            Time::Instant(value) => value.as_i64(),
+            Time::Span(_, high) => Some(high - 1),
+        }
+    }
+
     fn bound(self, op: Op) -> (Op, Value) {
         match (self, op) {
             (Time::Instant(value), op) => (op, value),
@@ -362,6 +392,13 @@ impl Time {
             (Time::Span(low, _), op) => (op, low.into()),
         }
     }
+}
+
+fn backwards(low: &Scalar, high: &Scalar) -> String {
+    format!(
+        "the range ends before it starts: {} comes before {}",
+        high.text, low.text
+    )
 }
 
 pub fn time(text: &str) -> Option<Time> {
