@@ -44,7 +44,8 @@ you may find:
   MMS burst selections, magnetopause crossings and the crossings with multiple X-lines (Fuselier et
   al. 2026), magnetosheath turbulence and its reconnecting current sheets (Stawarz et al. 2022),
   reconnecting current sheets at the bow shock (Gingell et al. 2020) and magnetosheath intervals
-  (Wang et al. 2021); MMS1 solar wind, foreshock, magnetosheath and magnetosphere
+  (Wang et al. 2021), foreshock bubbles and the magnetic holes inside them (Turner et al. 2020);
+  MMS1 solar wind, foreshock, magnetosheath and magnetosphere
   intervals, 2015-2026, from our own run of the Olshevsky et al. (2021) classifier (each
   description says how the run differs from the paper); Cluster flux transfer events (Fear et al. 2012); Svalgaard's
   interplanetary sector boundaries from ground magnetometers, 1947-1978; ISGI's geomagnetic

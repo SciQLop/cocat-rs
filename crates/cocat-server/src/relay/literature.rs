@@ -117,7 +117,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 108] = [
+static LISTS: [List; 110] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -392,6 +392,28 @@ static LISTS: [List; 108] = [
         credit: "Fuselier et al. (2026), Multiple Reconnection X-Lines at the Earth's Magnetopause in the Presence of Magnetosheath Flow, JGR Space Physics 131, e2025JA034839, https://doi.org/10.1029/2025JA034839, licence CC-BY-4.0 (Table 1).",
         url: "https://doi.org/10.1029/2025JA034839",
         files: Files::Kept(include_str!("data/fuselier_2026_multiple_xlines.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-foreshock-bubbles-turner",
+        folder: "Literature/Earth",
+        name: "MMS foreshock bubbles, 2017-2019 (Turner et al. 2020)",
+        about: "Ten foreshock bubbles observed by MMS, with ARTEMIS upstream, used to characterise their structure at ion and electron scales. Each event starts at the bubble time, to the minute, and lasts its duration. Attributes join Tables 1 and 2 of the paper: the solar wind Alfvén and fast Mach numbers and beta, the magnetic field (nT) and velocity (km/s) in GSE downstream and upstream of the IMF discontinuity, the discontinuity normal and how it was found, whether the motional electric field points into the discontinuity on either side, the shock or compression at each side, the upstream boundary normal and speed (km/s), the number of magnetic holes in the core, the expansion speed (km/s), size (Earth radii), age (s) and distance travelled since formation (Earth radii). The last event has no multispacecraft analysis (MMS in a string of pearls): its expansion speed, age and distance are not given. Converted once from Tables 1 and 2 of the paper.",
+        credit: "Turner, Liu, Wilson et al. (2020), Microscopic, Multipoint Characterization of Foreshock Bubbles With Magnetospheric Multiscale (MMS), JGR Space Physics 125, e2019JA027707, https://doi.org/10.1029/2019JA027707, licence CC-BY-4.0 (Tables 1 and 2).",
+        url: "https://doi.org/10.1029/2019JA027707",
+        files: Files::Kept(include_str!("data/turner_2020_foreshock_bubbles.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "mms-magnetic-holes-in-foreshock-bubbles-turner",
+        folder: "Literature/Earth",
+        name: "Magnetic holes inside MMS foreshock bubbles (Turner et al. 2020)",
+        about: "Twenty-five deep magnetic holes (|B| < 1 nT) inside the foreshock bubbles of Turner et al. (2020), found in the bubble cores: these are not solar wind magnetic holes. Each event starts at the hole time, to 0.1 s, and lasts its crossing time (0.05 to 0.9 s). Attributes: the hole velocity in GSE and speed (km/s) from multispacecraft timing, the crossing time (s) and the size estimate (km). Converted once from Table 3 of the paper.",
+        credit: "Turner, Liu, Wilson et al. (2020), Microscopic, Multipoint Characterization of Foreshock Bubbles With Magnetospheric Multiscale (MMS), JGR Space Physics 125, e2019JA027707, https://doi.org/10.1029/2019JA027707, licence CC-BY-4.0 (Table 3).",
+        url: "https://doi.org/10.1029/2019JA027707",
+        files: Files::Kept(include_str!("data/turner_2020_magnetic_holes.csv")),
         read: kept_table,
         part: "",
     },
@@ -3218,6 +3240,40 @@ mod tests {
             LISTS
                 .iter()
                 .any(|list| list.key == "mms-multiple-xlines-fuselier")
+        );
+    }
+
+    #[test]
+    fn the_turner_bubbles_join_tables_one_and_two_and_last_their_duration() {
+        let items = kept_table(include_str!("data/turner_2020_foreshock_bubbles.csv"), "").unwrap();
+        assert_eq!(items.len(), 10);
+        assert_eq!(items[0].start, at("2017-12-18T12:56:00Z"));
+        assert_eq!(items[0].stop, at("2017-12-18T12:56:52Z"));
+        assert_eq!(items[0].attributes["sw_fast_mach"], json!(7.7));
+        assert_eq!(items[0].attributes["magnetic_holes_in_core"], json!(6.0));
+        assert_eq!(items[8].attributes["age_s"], json!(275.0));
+        assert!(!items[9].attributes.contains_key("age_s"));
+        assert!(
+            LISTS
+                .iter()
+                .any(|list| list.key == "mms-foreshock-bubbles-turner")
+        );
+    }
+
+    #[test]
+    fn the_turner_magnetic_holes_last_their_crossing_time() {
+        let items = kept_table(include_str!("data/turner_2020_magnetic_holes.csv"), "").unwrap();
+        assert_eq!(items.len(), 25);
+        assert_eq!(items[1].start, at("2019-01-08T11:47:36.3Z"));
+        assert_eq!(items[1].stop, at("2019-01-08T11:47:36.35Z"));
+        assert_eq!(items[1].attributes["size_km"], json!(8.8));
+        let list = LISTS
+            .iter()
+            .find(|list| list.key == "mms-magnetic-holes-in-foreshock-bubbles-turner");
+        assert!(
+            list.unwrap()
+                .about
+                .contains("not solar wind magnetic holes")
         );
     }
 
