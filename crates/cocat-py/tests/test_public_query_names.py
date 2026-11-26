@@ -3,6 +3,7 @@
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -42,6 +43,10 @@ def server():
             path = self.path.split("?")[0].rstrip("/")
             if path.endswith("/api/public"):
                 asked["list"] += 1
+                if asked.get("refuse"):
+                    self.send_error(503)
+                    return
+                time.sleep(asked.get("slow", 0))
                 body = [BEPI, *ODD] if asked.get("odd") else [BEPI]
             elif path.endswith("/api/public/events"):
                 body = {"total": 0, "indexing": 0, "events": []}
@@ -151,4 +156,29 @@ def test_every_name_completion_offers_reads_in_its_scope(tmp_path, server, scope
     for term in offered:
         assert project.query_kind(term, public=public) == "rule", f"{term} offered, checked broken"
         project.parse_query(term, source=source, public=public)  # what the search reads
+    project.close()
+
+
+# A server counting its public catalogues after a start lists them in more than 5 s: the check
+# then read no names at all and called every public catalogue a mistake.
+def test_a_slow_list_of_public_catalogues_is_waited_for(tmp_path, server):
+    url, asked, _ = server
+    asked["slow"] = 6
+    project = opened(tmp_path, url)
+
+    assert project.query_kind(f'catalogue:"{BEPI["name"]}"', public=True) == "rule"
+    project.close()
+
+
+def test_without_a_list_of_public_catalogues_no_name_is_called_a_mistake(tmp_path, server):
+    url, asked, _ = server
+    asked["refuse"] = True
+    project = opened(tmp_path, url)
+    typed = f'catalogue:"{BEPI["name"]}"'
+
+    with pytest.raises(RuntimeError, match="public catalogues"):
+        project.query_kind(typed, public=True)
+    with pytest.raises(RuntimeError, match="public catalogues"):
+        project.preview(typed, public=True)
+    assert project.vocabulary(public=True)["catalogues"] == [], "nothing to offer"
     project.close()

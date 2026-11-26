@@ -119,9 +119,13 @@ type PublicNames = (Instant, Vec<(String, String)>);
 /// answer; the public catalogues themselves change a few times a day.
 pub const PUBLIC_FRESH: Duration = Duration::from_secs(60);
 
-/// How long the public catalogues' names are waited for: they are asked while a search is
-/// shown, so a server that does not answer leaves the search printed by id, not frozen.
+/// How long the public catalogues' names are waited for to print a saved search: a server
+/// that does not answer leaves the search printed by id, not frozen.
 const PUBLIC_NAMES_WAIT: Duration = Duration::from_secs(5);
+
+/// How long they are waited for to read a search of them, check it or complete it: a server
+/// counting its public catalogues after a start takes seconds to list them.
+const PUBLIC_LIST_WAIT: Duration = Duration::from_secs(60);
 
 /// What the sync task and the document observers share.
 pub(crate) struct Inner {
@@ -433,27 +437,38 @@ impl Room {
         *lock(&self.public_names) = None;
     }
 
+    /// The public catalogues' (id, name), to print a saved search of them as it was typed:
+    /// [`Room::listed_public_names`], waited for 5 s at most; empty when unknown.
+    pub async fn public_names(&self) -> Vec<(String, String)> {
+        self.public_names_within(PUBLIC_NAMES_WAIT)
+            .await
+            .unwrap_or_default()
+    }
+
     /// The public catalogues' (id, name): the one list a search of them, its check and its
     /// completions read `catalogue:` with. Asked again once [`PUBLIC_FRESH`] has passed, as
-    /// the answers are; when the server cannot answer, the last list kept, or none.
-    pub async fn public_names(&self) -> Vec<(String, String)> {
+    /// the answers are; when the server cannot answer, the last list kept. None with no
+    /// server, or when it never listed them.
+    pub async fn listed_public_names(&self) -> Option<Vec<(String, String)>> {
+        self.public_names_within(PUBLIC_LIST_WAIT).await
+    }
+
+    async fn public_names_within(&self, wait: Duration) -> Option<Vec<(String, String)>> {
         let kept = lock(&self.public_names).clone();
         if let Some((read, names)) = &kept
             && read.elapsed() < PUBLIC_FRESH
         {
-            return names.clone();
+            return Some(names.clone());
         }
-        let Some((url, cookie)) = self.server() else {
-            return Vec::new();
-        };
+        let (url, cookie) = self.server()?;
         let listed = crate::public_catalogues(&url, &cookie);
-        match tokio::time::timeout(PUBLIC_NAMES_WAIT, listed).await {
+        match tokio::time::timeout(wait, listed).await {
             Ok(Ok(listed)) => {
                 let names: Vec<_> = listed.into_iter().map(|c| (c.id, c.name)).collect();
                 *lock(&self.public_names) = Some((Instant::now(), names.clone()));
-                names
+                Some(names)
             }
-            Ok(Err(_)) | Err(_) => kept.map(|(_, names)| names).unwrap_or_default(),
+            Ok(Err(_)) | Err(_) => kept.map(|(_, names)| names),
         }
     }
 

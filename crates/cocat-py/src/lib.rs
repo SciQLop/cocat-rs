@@ -454,14 +454,25 @@ fn rule_of_search(
 /// The rule searching the public catalogues: `catalogue:` names them from the one list their
 /// completions and `query_kind` read too.
 fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
+    let names = listed_public_names(py, room)?;
+    let predicate = query::parse(text, &names).map_err(query_error)?;
+    Ok(query::public_rule(&predicate))
+}
+
+/// The public catalogues' (id, name) a search of them reads; an error, not an empty list,
+/// when there is no server or it never listed them, so no name is called a mistake.
+fn listed_public_names(py: Python<'_>, room: &ClientRoom) -> Result<Vec<(String, String)>> {
     if room.server().is_none() {
         return Err(PyRuntimeError::new_err(
             "sign in to search the public catalogues (connect the project, or Project.use_server)",
         ));
     }
-    let names = py.detach(|| block_on(room.public_names()))?;
-    let predicate = query::parse(text, &names).map_err(query_error)?;
-    Ok(query::public_rule(&predicate))
+    py.detach(|| block_on(room.listed_public_names()))?
+        .ok_or_else(|| {
+            PyRuntimeError::new_err(
+                "the server did not list the public catalogues: try again when it answers",
+            )
+        })
 }
 
 fn event_uuid(event: &Bound<'_, PyAny>) -> Result<String> {
@@ -1545,10 +1556,10 @@ impl Project {
     }
 
     /// The (id, name) of the catalogues a search's `catalogue:` names: this project's, or
-    /// the public ones, asked of the server once (empty when it cannot answer).
+    /// the public ones as the server lists them.
     fn catalogue_names(&self, py: Python<'_>, public: bool) -> Result<Vec<(String, String)>> {
         match public {
-            true => py.detach(|| block_on(self.room.public_names())),
+            true => listed_public_names(py, &self.room),
             false => Ok(model::catalogue_names(&self.room.doc().transact())),
         }
     }
@@ -2011,7 +2022,8 @@ impl Project {
     fn vocabulary(&self, py: Python<'_>, public: bool) -> Result<Py<PyAny>> {
         let mut found = model::vocabulary(&self.room.doc().transact());
         if public {
-            found = found.naming(&self.catalogue_names(py, true)?);
+            let listed = py.detach(|| block_on(self.room.listed_public_names()))?;
+            found = found.naming(&listed.unwrap_or_default());
         }
         let vocabulary = PyDict::new(py);
         vocabulary.set_item("tags", found.tags)?;
