@@ -89,11 +89,12 @@ pub fn listing(side: Side, saved: Saved<'_>, text: &str) -> Listing {
 }
 
 /// The search the server runs through the public catalogues for the page, if any: the box's
-/// on that side, else the catalogue's own when it searches them.
-pub fn public_query(side: Side, saved: Saved<'_>, text: &str) -> Option<String> {
+/// on that side, else the catalogue's own when it searches them. A box with a `mistake` asks
+/// nothing: a search the server would refuse or read otherwise gives no count to show.
+pub fn public_query(side: Side, saved: Saved<'_>, text: &str, mistake: bool) -> Option<String> {
     let text = text.trim();
     match (side, saved) {
-        (Side::Public, _) => (!text.is_empty()).then(|| text.to_owned()),
+        (Side::Public, _) => (!text.is_empty() && !mistake).then(|| text.to_owned()),
         (Side::Filter, Some((saved, true))) => Some(saved.to_owned()),
         _ => None,
     }
@@ -143,13 +144,25 @@ mod listing_tests {
     fn the_public_catalogues_are_searched_by_the_server_beside_the_picked_events() {
         assert_eq!(listing(Side::Public, None, "tag:x"), Listing::Picked);
         assert_eq!(
-            public_query(Side::Public, None, " tag:x ").as_deref(),
+            public_query(Side::Public, None, " tag:x ", false).as_deref(),
             Some("tag:x")
         );
-        assert_eq!(public_query(Side::Public, None, " "), None);
+        assert_eq!(public_query(Side::Public, None, " ", false), None);
         assert_eq!(
-            public_query(Side::Search, Some(("tag:x", true)), "tag:y"),
+            public_query(Side::Search, Some(("tag:x", true)), "tag:y", false),
             None
+        );
+    }
+
+    #[test]
+    fn a_text_with_a_mistake_asks_the_server_nothing() {
+        let named = r#"start:>2024 catalogue:"jet candidates""#;
+        assert_eq!(public_query(Side::Public, None, named, true), None);
+        let saved = Some(("tag:x", true));
+        assert_eq!(
+            public_query(Side::Filter, saved, "tag:(", true).as_deref(),
+            Some("tag:x"),
+            "a filter's mistake leaves the catalogue's own search"
         );
     }
 
@@ -157,9 +170,12 @@ mod listing_tests {
     fn a_catalogue_searching_them_holds_what_the_server_finds_under_any_filter() {
         let saved = Some(("tag:x", true));
         assert_eq!(
-            public_query(Side::Filter, saved, "wave").as_deref(),
+            public_query(Side::Filter, saved, "wave", false).as_deref(),
             Some("tag:x")
         );
-        assert_eq!(public_query(Side::Filter, Some(("tag:x", false)), ""), None);
+        assert_eq!(
+            public_query(Side::Filter, Some(("tag:x", false)), "", false),
+            None
+        );
     }
 }

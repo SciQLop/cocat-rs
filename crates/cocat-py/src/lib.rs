@@ -451,20 +451,15 @@ fn rule_of_search(
     }
 }
 
-/// The rule searching the public catalogues, whose names `catalogue:` takes from the server.
+/// The rule searching the public catalogues: `catalogue:` names them from the one list their
+/// completions and `query_kind` read too.
 fn public_rule(py: Python<'_>, room: &ClientRoom, text: &str) -> Result<Value> {
-    let Some((url, cookie)) = room.server() else {
+    if room.server().is_none() {
         return Err(PyRuntimeError::new_err(
             "sign in to search the public catalogues (connect the project, or Project.use_server)",
         ));
-    };
-    let listed = py
-        .detach(|| block_on(cocat_client::public_catalogues(&url, &cookie)))?
-        .map_err(http_error)?;
-    let names: Vec<(String, String)> = listed
-        .into_iter()
-        .map(|catalogue| (catalogue.id, catalogue.name))
-        .collect();
+    }
+    let names = py.detach(|| block_on(room.public_names()))?;
     let predicate = query::parse(text, &names).map_err(query_error)?;
     Ok(query::public_rule(&predicate))
 }
@@ -1548,6 +1543,15 @@ impl Project {
     fn read_search(&self, text: &str) -> Result<cocat_core::rules::Predicate> {
         project_search(&self.room.doc().transact(), text)
     }
+
+    /// The (id, name) of the catalogues a search's `catalogue:` names: this project's, or
+    /// the public ones, asked of the server once (empty when it cannot answer).
+    fn catalogue_names(&self, py: Python<'_>, public: bool) -> Result<Vec<(String, String)>> {
+        match public {
+            true => py.detach(|| block_on(self.room.public_names())),
+            false => Ok(model::catalogue_names(&self.room.doc().transact())),
+        }
+    }
 }
 
 /// How many catalogues and events the project holds, the trash included.
@@ -1988,19 +1992,27 @@ impl Project {
         Ok(search_box::mask_array(py, mask))
     }
 
-    /// What the text in a search box is, its catalogue names read in this project:
-    /// `"empty"`, `"words"`, `"rule"` or `"broken"`.
-    fn query_kind(&self, text: &str) -> &'static str {
-        let names = model::catalogue_names(&self.room.doc().transact());
-        search_box::kind_of(text, &names)
+    /// What the text in a search box is: `"empty"`, `"words"`, `"rule"` or `"broken"`. Its
+    /// `catalogue:` names this project's catalogues, or with `public=True` the public ones.
+    #[pyo3(signature = (text, public=false))]
+    fn query_kind(&self, py: Python<'_>, text: &str, public: bool) -> Result<&'static str> {
+        Ok(search_box::kind_of(
+            text,
+            &self.catalogue_names(py, public)?,
+        ))
     }
 
     /// What a search can name here, for `cocat_rs.complete`: `tags`, `authors` (of live
     /// events), `catalogues` (names) and `attributes` (keys), each sorted, and
     /// `attribute_values`: per text attribute, the values of live events, the most frequent
-    /// first, at most 200.
-    fn vocabulary(&self, py: Python<'_>) -> Result<Py<PyAny>> {
-        let found = model::vocabulary(&self.room.doc().transact());
+    /// first, at most 200. With `public=True`, `catalogues` are the public catalogues' names,
+    /// which a search of them takes.
+    #[pyo3(signature = (public=false))]
+    fn vocabulary(&self, py: Python<'_>, public: bool) -> Result<Py<PyAny>> {
+        let mut found = model::vocabulary(&self.room.doc().transact());
+        if public {
+            found = found.naming(&self.catalogue_names(py, true)?);
+        }
         let vocabulary = PyDict::new(py);
         vocabulary.set_item("tags", found.tags)?;
         vocabulary.set_item("authors", found.authors)?;

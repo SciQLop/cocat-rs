@@ -20,6 +20,14 @@ BEPI = {
     "count": 1174,
 }
 
+# More public catalogues, with names a search must quote; one shares a project catalogue's name.
+ODD = [
+    dict(BEPI, id="public.donki.cme", name="DONKI CMEs", count=10),
+    dict(BEPI, id="public.odd.quote", name='Say "hi"', count=1),
+    dict(BEPI, id="public.odd.unicode", name="Événements solaires", count=1),
+    dict(BEPI, id="public.odd.same", name="Same name", count=1),
+]
+
 # As typed in SciQLop's search box, "Search in: Public catalogues".
 TYPED = 'start:>=2020-01-01 catalogue:"BepiCoordObs_Windows_of_Opportunities" "Col 1":Parker NOT "Col 1":"Cone--Parker"'
 
@@ -34,7 +42,7 @@ def server():
             path = self.path.split("?")[0].rstrip("/")
             if path.endswith("/api/public"):
                 asked["list"] += 1
-                body = [BEPI]
+                body = [BEPI, *ODD] if asked.get("odd") else [BEPI]
             elif path.endswith("/api/public/events"):
                 body = {"total": 0, "indexing": 0, "events": []}
             else:
@@ -94,3 +102,53 @@ def test_without_the_server_the_search_still_reads_as_a_search(tmp_path, server)
     reread = offline.create_smart_catalogue("Again", text)
     assert reread.rule["where"] == rule["where"], f"{text!r} reads as the same rule"
     offline.close()
+
+
+# SciQLop, "Search in: Public catalogues", 2026-11-26: `catalogue:` offered the project's own
+# catalogues, which the public search then refused ("No catalogue is named “jet candidates”").
+
+
+def test_in_the_public_scope_completion_offers_the_public_catalogues(tmp_path, server):
+    url, _, _ = server
+    project = opened(tmp_path, url)
+    project.create_catalogue(name="jet candidates")
+
+    public = project.vocabulary(public=True)
+    found = cc.complete("start:>2024 catalogue:", 22, public)
+
+    assert public["catalogues"] == [BEPI["name"]]
+    assert [s["insert"] for s in found["suggestions"]] == [f"catalogue:{BEPI['name']} "]
+    assert project.vocabulary()["catalogues"] == ["jet candidates"], "the project scope is unchanged"
+    project.close()
+
+
+def test_in_the_public_scope_the_text_reads_with_the_public_names(tmp_path, server):
+    url, _, _ = server
+    project = opened(tmp_path, url)
+    project.create_catalogue(name="jet candidates")
+
+    assert project.query_kind(f'start:>2024 catalogue:"{BEPI["name"]}"', public=True) == "rule"
+    assert project.query_kind('start:>2024 catalogue:"jet candidates"', public=True) == "broken"
+    assert project.query_kind('start:>2024 catalogue:"jet candidates"') == "rule", "project scope"
+    assert project.query_kind(f'catalogue:"{BEPI["name"]}"') == "broken", "project scope"
+    project.close()
+
+
+@pytest.mark.parametrize("scope", ["this catalogue", "all events", "public catalogues"])
+def test_every_name_completion_offers_reads_in_its_scope(tmp_path, server, scope):
+    url, asked, _ = server
+    asked["odd"] = True
+    project = opened(tmp_path, url)
+    for name in ["jet candidates", 'Say "hi"', "Événements", "Same name"]:
+        project.create_catalogue(name=name)
+    source = project.create_catalogue(name="Source") if scope == "this catalogue" else None
+    public = scope == "public catalogues"
+
+    found = cc.complete("start:>2024 catalogue:", 22, project.vocabulary(public=public))
+    offered = [s["insert"].strip() for s in found["suggestions"]]
+
+    assert len(offered) == (len(ODD) + 1 if public else len(project.catalogues())), offered
+    for term in offered:
+        assert project.query_kind(term, public=public) == "rule", f"{term} offered, checked broken"
+        project.parse_query(term, source=source, public=public)  # what the search reads
+    project.close()

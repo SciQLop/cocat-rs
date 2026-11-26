@@ -104,12 +104,15 @@ pub struct Room {
     server: Mutex<Option<(String, String)>>,
     /// The last answer of each search of the public catalogues, and when it was read.
     public_answers: Mutex<HashMap<(&'static str, String), PublicAnswer>>,
-    /// The public catalogues' (id, name) as the server listed them, asked once per server.
-    public_names: Mutex<Option<Vec<(String, String)>>>,
+    /// The public catalogues' (id, name) as the server last listed them, and when.
+    public_names: Mutex<Option<PublicNames>>,
 }
 
 /// An answer of the public catalogues, and when it was read.
 type PublicAnswer = (Instant, crate::PublicSearch);
+
+/// The public catalogues' (id, name), and when the server listed them.
+type PublicNames = (Instant, Vec<(String, String)>);
 
 /// How long an answer of the public catalogues is shown before the server is asked again.
 /// A smart catalogue is read after every edit of its project, which never changes this
@@ -430,25 +433,28 @@ impl Room {
         *lock(&self.public_names) = None;
     }
 
-    /// The public catalogues' (id, name), for a search of them to name them as it was
-    /// typed: asked of the server once, then kept until the server changes. Empty with no
-    /// server, or when it could not answer.
+    /// The public catalogues' (id, name): the one list a search of them, its check and its
+    /// completions read `catalogue:` with. Asked again once [`PUBLIC_FRESH`] has passed, as
+    /// the answers are; when the server cannot answer, the last list kept, or none.
     pub async fn public_names(&self) -> Vec<(String, String)> {
-        if let Some(names) = lock(&self.public_names).clone() {
-            return names;
+        let kept = lock(&self.public_names).clone();
+        if let Some((read, names)) = &kept
+            && read.elapsed() < PUBLIC_FRESH
+        {
+            return names.clone();
         }
-        let names = match self.server() {
-            Some((url, cookie)) => {
-                let listed = crate::public_catalogues(&url, &cookie);
-                match tokio::time::timeout(PUBLIC_NAMES_WAIT, listed).await {
-                    Ok(Ok(listed)) => listed.into_iter().map(|c| (c.id, c.name)).collect(),
-                    Ok(Err(_)) | Err(_) => Vec::new(),
-                }
-            }
-            None => Vec::new(),
+        let Some((url, cookie)) = self.server() else {
+            return Vec::new();
         };
-        *lock(&self.public_names) = Some(names.clone());
-        names
+        let listed = crate::public_catalogues(&url, &cookie);
+        match tokio::time::timeout(PUBLIC_NAMES_WAIT, listed).await {
+            Ok(Ok(listed)) => {
+                let names: Vec<_> = listed.into_iter().map(|c| (c.id, c.name)).collect();
+                *lock(&self.public_names) = Some((Instant::now(), names.clone()));
+                names
+            }
+            Ok(Err(_)) | Err(_) => kept.map(|(_, names)| names).unwrap_or_default(),
+        }
     }
 
     /// What `query` finds in the public catalogues, as the server last answered: asked again

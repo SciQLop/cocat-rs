@@ -152,13 +152,12 @@ fn CatalogueView(
     let own =
         Memo::new(move |_| public_names.with(|public| own_search(&reader, &shown.get(), public)));
     let reader = room.clone();
-    let parsed = Memo::new(move |_| {
-        let names = match boxed.side.get() {
-            Side::Public => public_names.get(),
-            _ => reader.read(|txn| cocat_core::model::catalogue_names(txn)),
-        };
-        query.with(|text| search::read(text, &names))
+    // The one list `catalogue:` reads in the box's scope: its check and its completions.
+    let scope_names = Signal::derive(move || match boxed.side.get() {
+        Side::Public => public_names.get(),
+        _ => reader.read(|txn| cocat_core::model::catalogue_names(txn)),
     });
+    let parsed = Memo::new(move |_| query.with(|text| search::read(text, &scope_names.get())));
     let hits = Memo::new(move |_| parsed.with(|parsed| query.with(|text| Hits::of(parsed, text))));
     let saved = Memo::new(move |_| own.get().flatten().map(|own| (own.text, own.public)));
     let how = Memo::new(move |_| {
@@ -174,7 +173,8 @@ fn CatalogueView(
             let saved = saved
                 .as_ref()
                 .map(|(text, public)| (text.as_str(), *public));
-            query.with(|text| public_query(boxed.side.get(), saved, text))
+            let mistake = parsed.with(|parsed| matches!(parsed, Query::Broken(_)));
+            query.with(|text| public_query(boxed.side.get(), saved, text, mistake))
         })
     });
     let found = fetch_public(asked);
@@ -214,7 +214,10 @@ fn CatalogueView(
     }));
     let with_search = Signal::derive(move || match how.get() {
         Listing::Members => own.with(|own| matches!(own, Some(Some(_)))),
-        Listing::Preview | Listing::Picked => query.with(|text| !text.trim().is_empty()),
+        Listing::Preview | Listing::Picked => {
+            let mistake = parsed.with(|parsed| matches!(parsed, Query::Broken(_)));
+            !mistake && query.with(|text| !text.trim().is_empty())
+        }
     });
     let period = RwSignal::new(kept.period);
     let sorting = RwSignal::new((SortKey::Start, false));
@@ -336,7 +339,8 @@ fn CatalogueView(
             <Heading about counts members rename/>
             <div class="tools">
                 <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
-                    <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())>
+                    <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())
+                        names=scope_names>
                         <SearchIcon/>
                     </SearchBox>
                 </Show>

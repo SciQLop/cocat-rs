@@ -122,6 +122,20 @@ pub struct Vocabulary {
     pub attribute_values: BTreeMap<String, Vec<String>>,
 }
 
+impl Vocabulary {
+    /// The vocabulary of a search whose `catalogue:` names other catalogues than the
+    /// project's, as a search of the public catalogues does: those names (id, name), each
+    /// once, sorted.
+    pub fn naming(self, catalogues: &[(String, String)]) -> Self {
+        let names: std::collections::BTreeSet<&String> =
+            catalogues.iter().map(|(_, name)| name).collect();
+        Self {
+            catalogues: names.into_iter().cloned().collect(),
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Suggestion {
     /// What replaces the word being typed.
@@ -432,6 +446,28 @@ mod completion_tests {
             attributes: vec!["density".into(), "speed".into()],
             attribute_values: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn a_public_search_completes_the_public_catalogues_not_the_projects() {
+        let public = vec![
+            ("public.donki.cme".into(), "DONKI CMEs".into()),
+            ("public.amda.sharedcatalog_21".into(), "BepiCoordObs".into()),
+            ("public.other.cme".into(), "DONKI CMEs".into()),
+        ];
+        let vocabulary = vocabulary().naming(&public);
+        let text = "start:>2024 catalogue:";
+        let found = complete(text, text.chars().count(), &vocabulary).unwrap();
+        let inserts: Vec<String> = found.suggestions.into_iter().map(|s| s.insert).collect();
+        assert_eq!(
+            inserts,
+            ["catalogue:BepiCoordObs ", "catalogue:\"DONKI CMEs\" "]
+        );
+        assert_eq!(
+            vocabulary.tags,
+            self::vocabulary().tags,
+            "only the names change"
+        );
     }
 
     fn inserts(text: &str) -> Vec<String> {

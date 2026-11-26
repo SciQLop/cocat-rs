@@ -494,9 +494,14 @@ pub fn SearchBuilder(
     }
 }
 
-/// What the project holds that a search can name: read when the completions open.
-fn vocabulary(room: &Room) -> Vocabulary {
-    room.read(|txn| model::vocabulary(txn))
+/// What the project holds that a search can name: read when the completions open. Its
+/// catalogues are the `names` the box's check reads, when it is given them.
+fn vocabulary(room: &Room, names: Option<Vec<(String, String)>>) -> Vocabulary {
+    let found = room.read(|txn| model::vocabulary(txn));
+    match names {
+        Some(names) => found.naming(&names),
+        None => found,
+    }
 }
 
 /// The search box: it suggests fields and the project's own values as one types, and holds
@@ -512,6 +517,10 @@ pub fn SearchBox(
     /// In the preview: the box shows its text but takes none.
     #[prop(optional)]
     frozen: bool,
+    /// The catalogues (id, name) `catalogue:` names in the box's scope, as its check reads
+    /// them: the public ones when it searches them.
+    #[prop(optional, into)]
+    names: MaybeProp<Vec<(String, String)>>,
     children: Children,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
@@ -523,7 +532,7 @@ pub fn SearchBox(
         let room = room.clone();
         Memo::new(move |_| room.read(|txn| model::attribute_types(txn).into_keys().collect()))
     };
-    let words = Memo::new(move |_| open.get().then(|| vocabulary(&room)));
+    let words = Memo::new(move |_| open.get().then(|| vocabulary(&room, names.get())));
     let completion = Memo::new(move |_| {
         let vocabulary = words.get()?;
         query.with(|text| complete(text, cursor.get(), &vocabulary))

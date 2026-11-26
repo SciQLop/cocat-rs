@@ -91,11 +91,11 @@ What the browser's filter box does, for an app that shows events in a table:
 
 | Call | Gives |
 |---|---|
-| `project.query_kind(text)` | `"empty"`, `"words"`, `"rule"` or `"broken"` |
+| `project.query_kind(text, public=False)` | `"empty"`, `"words"`, `"rule"` or `"broken"`; with `public=True`, `catalogue:` names a public catalogue, as in a search of them |
 | `project.matches("tag:shock", uuids, source=None)` | a numpy bool mask aligned to `uuids`: what a smart catalogue with that search would hold; `(start, stop)` for an interval with no uuid |
 | `project.filter_words("shock alice", uuids)` | the plain-words filter's mask |
 | `cc.pieces(text)` | the text in parts to colour; joined, they give the text back |
-| `project.vocabulary()` | `tags`, `authors`, `catalogues`, `attributes`, and `attribute_values`: per text attribute, its values, the most frequent first, at most 200 |
+| `project.vocabulary(public=False)` | `tags`, `authors`, `catalogues`, `attributes`, and `attribute_values`: per text attribute, its values, the most frequent first, at most 200; with `public=True`, `catalogues` are the public catalogues' names, asked of the server once |
 | `cc.complete(text, cursor, project.vocabulary())` | suggestions for the word at the cursor: `OR`/`NOT`, fields, attributes (quoted when the name needs it), and values, an attribute's included |
 | `cc.accept(text, completion, suggestion)` | the new text and cursor |
 | `cc.presets("me@lab.fr")` | the preset searches, as `name` and `query` |
