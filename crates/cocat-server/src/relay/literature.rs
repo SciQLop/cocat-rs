@@ -152,7 +152,7 @@ macro_rules! lpp_mms_run {
     };
 }
 
-static LISTS: [List; 130] = [
+static LISTS: [List; 131] = [
     List {
         key: "juno-magnetopause",
         folder: "Literature/Jupiter",
@@ -460,6 +460,17 @@ static LISTS: [List; 130] = [
         credit: "Lee, Sibeck, Omidi et al. (2023), Ion Acceleration by Foreshock Bubbles: Magnetospheric Multiscale Observations, JGR Space Physics 128, e2023JA031770, https://doi.org/10.1029/2023JA031770, Table 1; copyright AGU (no open licence): the event times and values are given here with this citation.",
         url: "https://doi.org/10.1029/2023JA031770",
         files: Files::Kept(include_str!("data/lee_2023_foreshock_bubbles.csv")),
+        read: kept_table,
+        part: "",
+    },
+    List {
+        key: "sdo-cme-directions-direcd",
+        folder: "Literature/Sun",
+        name: "CME directions from coronal dimmings, Solar Cycle 25 (DIRECD, Jain et al. 2026)",
+        about: "Thirty-one coronal mass ejections of Solar Cycle 25 (2021-2026) whose 3D direction the DIRECD method infers from the coronal dimming they leave in SDO/AIA 211 Å images. Each event starts and ends with the dimming's impulsive phase. Attributes join Tables 1 and 3 of the paper by event number: the event number, the heliographic latitude and longitude of the associated flare (deg), the height of the best-fit cone (solar radii), the 3D inclination and its projections onto the meridional and equatorial planes with their errors (deg; positive north and west), whether SDO quick-look data were used, the CME speed (km/s), the angular miss distance between source and deflection plane (deg), and the Dst peak time, observed and predicted Dst (nT). Three events have no speed or Dst. The catalog's 33 earlier events, from Jain et al. (2025), are not in these tables. Converted once from Tables 1 and 3 of the paper.",
+        credit: "Jain, Podladchikova, Dissauer, Veronig and Razquin (2026), The DIRECD Coronal Mass Ejection Direction Catalog: Three-dimensional Propagation Inferred from Coronal Dimmings, ApJS 286, 64, https://doi.org/10.3847/1538-4365/ae9d52, licence CC-BY-4.0 (Tables 1 and 3).",
+        url: "https://doi.org/10.3847/1538-4365/ae9d52",
+        files: Files::Kept(include_str!("data/jain_2026_direcd.csv")),
         read: kept_table,
         part: "",
     },
@@ -3554,6 +3565,27 @@ mod tests {
             LISTS
                 .iter()
                 .any(|list| list.key == "mms-foreshock-bubbles-turner")
+        );
+    }
+
+    #[test]
+    fn the_direcd_cmes_join_tables_one_and_three_and_last_their_dimming() {
+        let items = kept_table(include_str!("data/jain_2026_direcd.csv"), "").unwrap();
+        assert_eq!(items.len(), 31);
+        assert_eq!(items[0].start, at("2021-09-28T05:23:00Z"));
+        assert_eq!(items[0].stop, at("2021-09-28T07:52:00Z"));
+        assert_eq!(items[0].attributes["inclination_deg"], json!(8.1));
+        assert_eq!(items[0].attributes["dst_observed_nt"], json!(-31.0));
+        assert_eq!(items[22].stop, at("2025-05-31T00:51:00Z"), "past midnight");
+        assert!(
+            !items[8].attributes.contains_key("cme_speed_km_s"),
+            "no speed in Table 3"
+        );
+        assert_eq!(items[26].attributes["quick_look_data"], json!("yes"));
+        assert!(
+            LISTS
+                .iter()
+                .any(|list| list.key == "sdo-cme-directions-direcd")
         );
     }
 

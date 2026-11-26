@@ -67,7 +67,8 @@ you may find:
   STEREO-A and L1 counterparts (Allen et al. 2021); SEP events above 30 MeV since 1956 and the
   GSEP GOES list; ICMEs at Mercury (Winslow et al. 2015); Van Allen Probes EMIC waves (Inglis et
   al. 2024; Remya et al. 2023); the HELIO type III radio bursts at Wind and STEREO,
-  1996-2011; the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004); and TUMS,
+  1996-2011; the 3D directions of Solar Cycle 25 CMEs from their coronal dimmings (DIRECD,
+  Jain et al. 2026); the substorm onsets IMAGE-FUV saw in 2000-2002 (Frey et al. 2004); and TUMS,
   UNAM's database of transient upstream mesoscale structures (SLAMS, hot flow anomalies,
   foreshock bubbles, cavities, cavitons, density holes) at Earth, Mars, Mercury, Venus, Saturn
   and Jupiter, one list per type and planet, kept up to date from the site.
