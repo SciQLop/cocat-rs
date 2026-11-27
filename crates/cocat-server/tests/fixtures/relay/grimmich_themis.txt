@@ -1,0 +1,33 @@
+################################################################################################
+#
+#  Dayside magnetopause crossings (MPCs) identified in Time History of Events and
+#  Macroscale Interactions during Substorms (THEMIS) five spacecraft data
+#  between 2007 and mid-2022.
+#
+#  THEMIS measurements retrieved from http://themis.ssl.berkeley.edu/data/themis
+#  via the PySpedas package https://github.com/spedas/pyspedas.
+#
+#  The description of the identification process using a Random Forest Classifier
+#  can be found in section 3 of:
+#    Grimmich, N., Plaschke, F., Archer, M. O., Heyner, D., Mieth, J. Z. D., Nakamura, R., & Sibeck, D. G. (2023).
+#    Study of extreme magnetopause distortions under varying solar wind conditions.
+#    Journal of Geophysical Research: Space Physics, 128, e2023JA031603. https://doi.org/10.1029/2023JA031603.
+#
+#  The columns contain:
+#    column 1: MPC number
+#    column 2: identified crossing time in UT
+#    column 3: observing spacecraft
+#    column 4: prediction probability of the crossing
+#    column 5: stand-off distance of MP during the observation
+#    column 6: deviation of the stand-off distance from the Shue et al. (1998) model
+#    column 7: latitude postion of the observing spacecraft in degree
+#    column 8: longitude postion of the observing spacecraft in degree
+#    column 9: radial position of the observing spacecraft in Earth radii
+#
+################################################################################################
+No.	Timestamp	Probe	Probability	R0	Delta_R0	Lat_ang	Lon_ang	r_sc
+0	2007-03-23 23:39:24	thd	0.868	7.375	-2.215	-10.74	85.182	10.503
+1	2007-03-23 23:39:48	thb	0.97	7.294	-2.296	-10.635	84.544	10.328
+2	2007-03-23 23:40:00	tha	0.972	7.17	-2.411	-10.516	83.608	10.06
+80	2007-04-08 21:47:24	tha	0.974			-13.071	88.067	14.495
+184291	2022-05-28 17:42:12	the	0.711	8.65	-1.561	5.306	-87.067	12.41

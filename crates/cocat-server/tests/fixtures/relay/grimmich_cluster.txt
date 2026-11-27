@@ -1,0 +1,42 @@
+##############################################################################################################################
+#
+#  Magnetopause crossings (MPCs) identified in the Cluster spacecraft data between 2001 and 2020.
+#
+#  Cluster measurements retrieved from the Cluster Science Archive https://csa.esac.esa.int/csa-web/
+#  via the PySpedas package https://github.com/spedas/pyspedas.
+#
+#  The description of the identification process using a Random Forest Classifier
+#  can be found in section 2 of:
+#    Grimmich, N., Plaschke, F., Escoubet, C. P., Grison, B., Archer, M. O., Nakamura, R., & Sibeck, D. G., Constantinescu, O. D. (2024).
+#    The Cluster Spacecraft's View of the Motion of the High-Latitude Magnetopause.
+#    Annales Geophysicae.
+#
+#  The columns contain:
+#    column 1: MPC number
+#    column 2: Identified crossing time in UT
+#    column 3: Observing spacecraft (C1 or C3)
+#    column 4: Prediction probability of the crossing
+#    column 5: Mean value of the CIS-HIA quality flags for the plasma moment and energy flux density data around the MPC
+#	       See https://www.cosmos.esa.int/web/csa/documentation for more information on the quality flags
+#	       After 2014 no flags available column filled with default 2
+#    column 6: Type of MPC, depending on the movement from one region to the other (either inbound or outbound)
+#    column 7: AGSE X-coordinate of the observing spacecraft in Earth radii
+#    column 8: AGSE Y-coordinate of the observing spacecraft in Earth radii
+#    column 9: AGSE Z-coordinate of the observing spacecraft in Earth radii
+#    column 10: Radial position of the observing spacecraft in Earth radii
+#    column 11: Latitude postion of the observing spacecraft in degrees
+#    column 12: Longitude postion of the observing spacecraft in degrees
+#    column 13: Magnetic latitude (SM coordinates) position of the observing spacecraft in degrees
+#    column 14: Magnetic local time of the observing spacecraft
+#    column 15: Stand-off distance of the MP during the observation in Earth radii
+#    column 16: Deviation of the stand-off distance from the Shue et al. (1998) model prediction in Earth radii
+#
+##############################################################################################################################
+No.	Timestamp	Probe	Probability	DataQuality	Type	x_agse	y_agse	z_agse	r_sc	Lat_ang	Lon_ang	MLAT	MLT	R0	Delta_R0
+0	2001-02-02 14:33:00	C3	0.636	2.75	outbound	6.962	6.814	9.174	13.382	43.281	44.384	44.117	14.345		
+1	2001-02-02 14:34:00	C1	0.576	2.75	outbound	6.919	6.791	9.251	13.401	43.658	44.465	44.536	14.338		
+2	2001-02-02 14:35:00	C1	0.568	2.75	inbound	6.937	6.799	9.251	13.414	43.605	44.421	44.52	14.335		
+20	2001-02-04 21:41:00	C1	0.921	2.875	inbound	4.943	5.66	9.112	11.811	50.485	48.869	54.831	12.649		
+102	2001-02-16 20:01:00	C3	0.952	3.0	outbound	6.985	4.671	9.098	12.385	47.274	33.768	52.991	12.191	10.735	-1.231
+8249	2003-10-24 15:25:00	C1	0.775	2.75	outbound	2.312	2.016	-7.804	8.385	-68.541	41.084	-74.914	10.006	6.106	-1.436
+38321	2020-05-19 08:44:00	C1	0.949	2.0	inbound	4.712	-6.77	-7.279	11.001	-41.428	-55.161	-33.924	9.351	9.015	-1.119

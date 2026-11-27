@@ -1749,7 +1749,7 @@ fn number<T: std::str::FromStr>(text: &str, what: &str) -> Result<T, String> {
 }
 
 /// The value of a cell, a number when it reads as one; nothing for a missing one.
-fn value(text: &str) -> Option<Value> {
+pub(super) fn value(text: &str) -> Option<Value> {
     let text = text.trim();
     (!catcsv::missing(text))
         .then(|| catcsv::number_or_text(text))

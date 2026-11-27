@@ -9,6 +9,7 @@ pub mod cactus;
 pub mod catcsv;
 pub mod cdaw;
 pub mod donki;
+pub mod grimmich;
 pub mod grmb;
 pub mod helio4cast;
 pub mod icmecat;
@@ -43,13 +44,18 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_REDIRECTS: usize = 5;
 /// The other host a provider's host may redirect to: a data repository serving its files
 /// from its own storage, as Recherche Data Gouv sends ONERA's to an S3 bucket.
-const STORAGE: [(&str, &str); 2] = [
+const STORAGE: [(&str, &str); 3] = [
     (
         "entrepot.recherche.data.gouv.fr",
         "prod-onera.opens3r-tls.stockage.inrae.fr",
     ),
     // Each file sits in a bucket of its own: any subdomain of the storage host.
     ("ndownloader.figshare.com", "r2.cloudflarestorage.com"),
+    // OSF's file server in Frankfurt hands each download to a signed object storage URL.
+    (
+        "files.de-1.osf.io",
+        "objectstorage.eu-frankfurt-1.oraclecloud.com",
+    ),
 ];
 
 /// One list a provider publishes: a public catalogue `public.<provider>.<key>` holding one
@@ -116,6 +122,7 @@ pub fn providers() -> Vec<Arc<dyn Provider>> {
         Arc::new(stix::Stix),
         Arc::new(cactus::Cactus),
         Arc::new(grmb::Grmb),
+        Arc::new(grimmich::Grimmich),
         Arc::new(helio4cast::Helio4cast),
         Arc::new(pmod::Pmod),
         Arc::new(onera::Onera),
@@ -595,6 +602,24 @@ mod tests {
         assert!(!follows(
             &storage,
             &[url("https://cdaw.gsfc.nasa.gov/CME_list/a.txt")]
+        ));
+    }
+
+    #[test]
+    fn osf_hands_its_downloads_to_its_object_storage() {
+        let asked = url("https://files.de-1.osf.io/v1/resources/b6kux/providers/osfstorage/1");
+        let storage = url(
+            "https://idvyorynw6xy.compat.objectstorage.eu-frankfurt-1.oraclecloud.com/cos-prod-osf-1-files-fra/f7ad",
+        );
+
+        assert!(follows(&storage, std::slice::from_ref(&asked)));
+        assert!(!follows(
+            &url("https://objectstorage.eu-frankfurt-1.oraclecloud.com.evil.example/a"),
+            std::slice::from_ref(&asked)
+        ));
+        assert!(!follows(
+            &storage,
+            &[url("https://zenodo.org/api/records/1/files/a/content")]
         ));
     }
 

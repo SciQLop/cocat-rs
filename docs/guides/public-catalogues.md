@@ -33,6 +33,9 @@ you may find:
 - **Solar Orbiter STIX** flares;
 - the SIDC's automatic **CACTus** CME detections;
 - the Cluster **GRMB** and Solar Orbiter **PMOD** lists;
+- about 220,000 **magnetopause crossings** that a machine learning classifier found in THEMIS
+  (2007-2022) and Cluster (2001-2020) data (Grimmich et al. 2023, 2024), the lists Klingenstein
+  et al. (2025) fit the subsolar stand-off distance to;
 - **ONERA**'s ICME, sheath and SIR lists from OMNI, their radiation belt electron
   enhancements back to 1868, and the detections of Nguyen et al. (2025).
 - **Published lists**, under *Literature*: event lists deposited with papers or by mission
