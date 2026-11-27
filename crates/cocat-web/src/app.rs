@@ -76,7 +76,8 @@ fn failure(message: String) -> impl IntoView {
 fn Shell(config: RoomConfig) -> impl IntoView {
     let projects = Projects::new(config, read_notice());
     provide_context(projects);
-    crate::views::webmcp::offer_tools(projects);
+    let queries = crate::views::queries::QueryLog::new();
+    crate::views::webmcp::offer_tools(projects, queries);
     projects.reload();
     // The shell lives as long as the page: nothing to remove the listeners for.
     let _ = window_event_listener(leptos::ev::popstate, move |_| projects.arrived());
@@ -84,7 +85,7 @@ fn Shell(config: RoomConfig) -> impl IntoView {
     let on_index = Memo::new(move |_| projects.route.with(Route::is_public_index));
     let at_home = Memo::new(move |_| projects.route.with(|route| *route == Route::Home));
     let opened = Memo::new(move |_| projects.open.with(|config| config.room_id.clone()));
-    move || {
+    let space = move || {
         if at_home.get() {
             return view! { <HomeSpace/> }.into_any();
         }
@@ -95,6 +96,10 @@ fn Shell(config: RoomConfig) -> impl IntoView {
             let config = projects.open.get_untracked();
             view! { <App config/> }.into_any()
         })
+    };
+    view! {
+        {space}
+        <crate::views::queries::QueryPanel log=queries/>
     }
 }
 

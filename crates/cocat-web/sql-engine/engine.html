@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SQL engine</title>
+<script>addEventListener("message", function start(event) {
+  if (event.source !== parent || !event.data || event.data.type !== "engine") return;
+  removeEventListener("message", start);
+  var script = document.createElement("script");
+  script.src = URL.createObjectURL(new Blob([event.data.code], {type: "text/javascript"}));
+  document.head.append(script);
+});
+parent.postMessage({type: "ready"}, "*");</script>

@@ -55,9 +55,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p cocat-web --target wasm32-unknown-unknown -- -D warnings
       - run: cargo install trunk --version 0.22.1 --locked
+      # The SQL engine's DuckDB-wasm and Arrow files, pinned by hash; trunk copies them.
+      - run: ./fetch-duckdb.sh
+        working-directory: crates/cocat-web
       # trunk downloads the wasm-bindgen that Cargo.lock pins, and wasm-opt.
       - run: trunk build --release
         working-directory: crates/cocat-web
+
+  browser:
+    name: SQL engine in a browser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m venv .venv
+      - run: .venv/bin/pip install maturin pytest playwright
+      - run: .venv/bin/python -m playwright install --with-deps --only-shell chromium
+      # The tests start the server binary and write public catalogues through cocat_rs.
+      - run: cargo build -p cocat-server
+      - run: .venv/bin/maturin develop -m crates/cocat-py/Cargo.toml
+      - run: cargo install trunk --version 0.22.1 --locked
+      - run: ./fetch-duckdb.sh && trunk build
+        working-directory: crates/cocat-web
+      - run: .venv/bin/python -m pytest crates/cocat-web/e2e
 
   python:
     name: Python ${{ matrix.python }}
@@ -76,7 +102,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m venv .venv
       # duckdb runs the survey's SQL (test_survey_sql.py), at the browser engine's version.
-      - run: .venv/bin/pip install maturin pytest pytest-asyncio numpy keyring platformdirs pandas polars 'tscat>=0.5,<0.6' duckdb==1.4.4
+      - run: .venv/bin/pip install maturin pytest pytest-asyncio numpy keyring platformdirs pandas polars 'tscat>=0.5,<0.6' duckdb==2.0.1
       # The suite starts the server binary, so it has to exist before pytest runs.
       - run: cargo build --workspace
       - run: .venv/bin/maturin develop -m crates/cocat-py/Cargo.toml

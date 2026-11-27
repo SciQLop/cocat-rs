@@ -3,7 +3,8 @@
 //! reads `/api/public/events`.
 //!
 //! A snapshot is a manifest and the files it names. Each file's name carries a hash of its
-//! bytes, so a browser keeps it forever; the manifest changes when a catalogue does. The
+//! bytes, so a browser keeps it forever; the manifest changes when a catalogue does, soon
+//! after: a request for it starts the rewrite when the catalogues changed. The
 //! files are written from each catalogue's JSON-lines file, which the public search keeps
 //! up to date: no room is loaded for them.
 
@@ -34,7 +35,7 @@ const MANIFEST: &str = "manifest.json";
 /// The manifest before the current one: its files stay, for a page that loaded it.
 const PREVIOUS: &str = "manifest.previous.json";
 /// Changes when the files' layout does, so an unchanged server still rewrites them.
-const LAYOUT: &str = "1";
+const LAYOUT: &str = "2";
 /// How often the server rewrites the snapshot, when a catalogue changed.
 const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 const NOT_A_FILE: &str = "No such snapshot file";
@@ -58,8 +59,8 @@ pub struct Manifest {
     pub version: String,
     /// When it was written (RFC 3339).
     pub created: String,
-    /// `events.parquet`, `catalogues.parquet`, `attributes/<catalogue id>.parquet` and
-    /// `survey.sql`.
+    /// `events`, `catalogues` and `attributes/<catalogue id>`, each as `.parquet` and
+    /// `.arrow`, and `survey.sql`.
     pub files: BTreeMap<String, FileEntry>,
 }
 
@@ -101,7 +102,10 @@ async fn manifest(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let manifest = match read_manifest(&folder(&state), MANIFEST) {
-        Some(manifest) => manifest,
+        Some(manifest) => {
+            refresh_if_changed(&state, &manifest.version).await;
+            manifest
+        }
         None => refresh(&state).await.map_err(|error| {
             tracing::warn!(%error, "the public snapshot could not be written");
             ApiError::Internal
@@ -139,10 +143,10 @@ async fn file(
     let bytes = tokio::fs::read(folder(&state).join(&name))
         .await
         .map_err(|_| not_found())?;
-    let kind = if name.ends_with(".parquet") {
-        "application/vnd.apache.parquet"
-    } else {
-        "text/plain; charset=utf-8"
+    let kind = match name.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("parquet") => "application/vnd.apache.parquet",
+        Some("arrow") => "application/vnd.apache.arrow.file",
+        _ => "text/plain; charset=utf-8",
     };
     Ok((
         [
@@ -163,7 +167,7 @@ fn is_file_name(name: &str) -> bool {
     let Some((_, hash)) = stem.rsplit_once('-') else {
         return false;
     };
-    matches!(ext, "parquet" | "sql")
+    matches!(ext, "parquet" | "arrow" | "sql")
         && hash.len() == 16
         && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
         && !name.starts_with('.')
@@ -182,17 +186,55 @@ fn read_manifest(folder: &Path, name: &str) -> Option<Manifest> {
 
 /// Writes a new snapshot when a catalogue changed since the last one; the current one
 /// otherwise.
+/// Writes a new snapshot when a catalogue changed since the last one; the current one
+/// otherwise.
 pub async fn refresh(state: &AppState) -> Result<Manifest, SnapshotError> {
     let _writing = WRITING.lock().await;
-    let mut catalogues = Vec::new();
+    let (version, catalogues) = wanted(state).await?;
+    let folder = folder(state);
+    if let Some(current) = read_manifest(&folder, MANIFEST).filter(|m| m.version == version) {
+        return Ok(current);
+    }
     let mut paths = Vec::new();
+    for catalogue in &catalogues {
+        paths.push(crate::public_search::current_snapshot(state, &catalogue.id).await?);
+    }
+    let manifest =
+        tokio::task::spawn_blocking(move || publish(&folder, version, &catalogues, &paths))
+            .await
+            .map_err(std::io::Error::other)??;
+    Ok(manifest)
+}
+
+/// Starts writing a new snapshot in the background when the catalogues changed since
+/// `version`, unless one is being written. The visitor gets the current one meanwhile.
+async fn refresh_if_changed(state: &AppState, version: &str) {
+    let changed = match wanted(state).await {
+        Ok((wanted, _)) => wanted != version,
+        Err(error) => {
+            tracing::warn!(%error, "the public catalogues could not be listed");
+            false
+        }
+    };
+    if changed && WRITING.try_lock().is_ok() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = refresh(&state).await {
+                tracing::warn!(%error, "the public snapshot could not be written");
+            }
+        });
+    }
+}
+
+/// The catalogues a snapshot written now would hold, and its version: a hash of the layout,
+/// survey.sql, and each catalogue's room file stamp and index entry. Cheap: no room is read.
+async fn wanted(state: &AppState) -> Result<(String, Vec<write::Catalogue>), SnapshotError> {
+    let mut catalogues = Vec::new();
     let mut version = Sha256::new();
     version.update(LAYOUT);
     version.update(SURVEY);
     for (room, relay) in store::public_index(&state.pool).await? {
-        let path = crate::public_search::current_snapshot(state, &room.id).await?;
         let stamp = file_stamp(state, &room.id);
-        paths.push(path);
         let catalogue = write::Catalogue {
             id: room.id,
             name: room.name,
@@ -218,16 +260,10 @@ pub async fn refresh(state: &AppState) -> Result<Manifest, SnapshotError> {
         ))?);
         catalogues.push(catalogue);
     }
-    let version = format!("{:x}", version.finalize())[..16].to_owned();
-    let folder = folder(state);
-    if let Some(current) = read_manifest(&folder, MANIFEST).filter(|m| m.version == version) {
-        return Ok(current);
-    }
-    let manifest =
-        tokio::task::spawn_blocking(move || publish(&folder, version, &catalogues, &paths))
-            .await
-            .map_err(std::io::Error::other)??;
-    Ok(manifest)
+    Ok((
+        format!("{:x}", version.finalize())[..16].to_owned(),
+        catalogues,
+    ))
 }
 
 /// Writes the files, then the manifest over the last one, then drops the files neither

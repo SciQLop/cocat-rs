@@ -7,6 +7,9 @@
   <link data-trunk rel="rust" data-bin="cocat-web" data-wasm-opt="z">
   <link data-trunk rel="css" href="style.css">
   <link data-trunk rel="copy-file" href="../cocat-server/static/mark.png">
+  <!-- The SQL engine (sql-engine/vendor/ comes from fetch-duckdb.sh) and the page's side of it. -->
+  <link data-trunk rel="copy-dir" href="sql-engine">
+  <script src="sql-engine/bridge.js" defer></script>
   <link rel="icon" type="image/png" href="mark.png">
 </head>
 <body></body>

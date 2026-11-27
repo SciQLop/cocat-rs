@@ -849,7 +849,9 @@ version = "0.12.12"
 dependencies = [
  "argon2",
  "arrow-array",
+ "arrow-ipc",
  "arrow-schema",
+ "arrow-select",
  "askama",
  "async-trait",
  "axum",

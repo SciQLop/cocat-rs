@@ -39,8 +39,13 @@ def snapshot(folder, events):
 
 
 def survey(folder):
+    """survey.sql over the snapshot in `folder`, with the tables a host defines before it."""
     db = duckdb.connect()
-    db.execute(f"SET file_search_path = '{folder}'")
+    db.execute(f"""
+        CREATE VIEW catalogues AS FROM read_parquet('{folder}/catalogues.parquet');
+        CREATE VIEW events AS FROM read_parquet('{folder}/events.parquet');
+        CREATE MACRO attribute_rows(id) AS TABLE FROM read_parquet('{folder}/attributes/' || id || '.parquet');
+    """)
     db.execute(SURVEY.read_text())
     return db
 

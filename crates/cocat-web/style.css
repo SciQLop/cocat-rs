@@ -1824,3 +1824,80 @@ a.home-project:hover { color: var(--accent); }
   background: var(--accent-soft);
   border-bottom: 2px solid var(--accent);
 }
+
+/* Queries an AI agent ran through the page's SQL tools: a drawer on the right, over the page,
+   that scrolls on its own. Folded, only its header shows. */
+.query-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(70vh, 720px);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(20, 30, 50, 0.16);
+  font-size: 13px;
+}
+.query-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.query-panel > header button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.query-panel > header button.icon {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.query-panel .queries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+.query-panel .query {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--row-rule);
+}
+.query-panel .query-meta { margin: 0 0 6px; color: var(--muted); }
+.query-panel .query-sql {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-quiet);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.query-panel .query-error { margin: 0; color: var(--danger); }
+.query-panel .query-result { max-height: 240px; overflow: auto; }
+.query-panel table { border-collapse: collapse; font-size: 12px; }
+.query-panel th,
+.query-panel td {
+  padding: 3px 8px;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--row-rule);
+}
+.query-panel th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 600; }

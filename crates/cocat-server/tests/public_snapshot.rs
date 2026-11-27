@@ -1,6 +1,8 @@
 //! `/api/public/snapshot`: the public catalogues as Parquet files that a browser queries with
 //! SQL (docs/design/browser-sql-analysis.md). Public data only, published fields only.
 
+use arrow_array::RecordBatch;
+use arrow_ipc::reader::FileReader as ArrowReader;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
@@ -204,6 +206,22 @@ fn rows(bytes: &Bytes) -> Vec<Map<String, Value>> {
         .collect()
 }
 
+fn parquet_batches(bytes: &Bytes) -> Vec<RecordBatch> {
+    ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+        .unwrap()
+        .build()
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+fn arrow_batches(bytes: &Bytes) -> Vec<RecordBatch> {
+    ArrowReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
 /// A private room, a shared room and a public catalogue, each with events by people.
 async fn mixed_world() -> (World, String, Vec<String>) {
     let world = World::start().await;
@@ -289,13 +307,16 @@ async fn the_snapshot_holds_public_data_and_published_fields_only() {
             .iter()
             .filter(|(name, _)| name.starts_with("attributes/"))
             .count(),
-        1
+        2,
+        "one catalogue has attributes: its Parquet and its Arrow file"
     );
 
     for (name, bytes) in &files {
         let raw = String::from_utf8_lossy(bytes);
         let decoded = if name.ends_with(".parquet") {
             serde_json::to_string(&rows(bytes)).unwrap()
+        } else if name.ends_with(".arrow") {
+            format!("{:?}", arrow_batches(bytes))
         } else {
             raw.to_string()
         };
@@ -311,15 +332,24 @@ async fn the_snapshot_holds_public_data_and_published_fields_only() {
             );
             assert!(!text.contains("secret"), "{name} holds a private attribute");
         }
-        if !name.ends_with(".parquet") {
+        let found = if name.ends_with(".parquet") {
+            columns(bytes)
+        } else if name.ends_with(".arrow") {
+            arrow_batches(bytes)[0]
+                .schema()
+                .fields()
+                .iter()
+                .map(|field| field.name().clone())
+                .collect()
+        } else {
             continue;
-        }
-        let allowed: Vec<&str> = match name.as_str() {
-            "events.parquet" => EVENT_COLUMNS.to_vec(),
-            "catalogues.parquet" => CATALOGUE_COLUMNS.to_vec(),
+        };
+        let allowed: Vec<&str> = match name.split_once('.').map_or("", |(stem, _)| stem) {
+            "events" => EVENT_COLUMNS.to_vec(),
+            "catalogues" => CATALOGUE_COLUMNS.to_vec(),
             _ => vec!["_event", "_uuid", "quality", "spacecraft", "speed"],
         };
-        assert_eq!(columns(bytes), allowed, "{name}");
+        assert_eq!(found, allowed, "{name}");
     }
 }
 
@@ -372,6 +402,65 @@ async fn events_and_their_attributes_join_on_the_event_number() {
         listed["attributes_file"],
         manifest["files"][format!("attributes/{shocks}.parquet")]["name"]
     );
+}
+
+#[tokio::test]
+async fn each_parquet_file_has_an_arrow_twin_for_the_browser_engine() {
+    let (world, _, _) = mixed_world().await;
+    let manifest = world.manifest().await;
+    let files = world.files(&manifest).await;
+    let parquet: Vec<_> = files
+        .iter()
+        .filter(|(name, _)| name.ends_with(".parquet"))
+        .collect();
+    assert_eq!(parquet.len(), 3);
+    for (name, bytes) in parquet {
+        let twin = name.replace(".parquet", ".arrow");
+        let (_, arrow) = files.iter().find(|(other, _)| *other == twin).unwrap();
+        let from_parquet = arrow_select::concat::concat_batches(
+            &parquet_batches(bytes)[0].schema(),
+            &parquet_batches(bytes),
+        )
+        .unwrap();
+        let from_arrow = arrow_select::concat::concat_batches(
+            &arrow_batches(arrow)[0].schema(),
+            &arrow_batches(arrow),
+        )
+        .unwrap();
+        assert_eq!(from_arrow, from_parquet, "{twin}");
+        assert!(
+            manifest["files"][&twin]["name"]
+                .as_str()
+                .unwrap()
+                .ends_with(".arrow"),
+            "{twin}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_change_reaches_the_manifest_soon_after_without_waiting_for_the_hour() {
+    let (world, shocks, _) = mixed_world().await;
+    let first = world.manifest().await;
+    world.append(&shocks, &[("e9", "2020-01-09T00:00:00Z", None, json!({}))]);
+    let mut seen = first.clone();
+    for _ in 0..100 {
+        seen = world.manifest().await;
+        if seen["version"] != first["version"] {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_ne!(
+        seen["version"], first["version"],
+        "a request starts the rewrite"
+    );
+    let files = world.files(&seen).await;
+    let events = files
+        .iter()
+        .find(|(name, _)| name == "events.parquet")
+        .unwrap();
+    assert_eq!(rows(&events.1).len(), 3);
 }
 
 #[tokio::test]

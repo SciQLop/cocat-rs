@@ -13,10 +13,13 @@ use wasm_bindgen_futures::future_to_promise;
 
 use crate::agent_tools::{self, OPEN, SEARCH};
 use crate::api;
+use crate::projects::api_url;
 use crate::public::PublicCatalogue;
+use crate::sql_tools::{self, DESCRIBE, MEMORY_LIMIT, RUN_SQL, TIMEOUT_MS, VOCABULARY_SQL};
 use crate::views::projects::Projects;
+use crate::views::queries::QueryLog;
 
-pub fn offer_tools(projects: Projects) {
+pub fn offer_tools(projects: Projects, log: QueryLog) {
     let Some(context) = model_context() else {
         return;
     };
@@ -26,7 +29,10 @@ pub fn offer_tools(projects: Projects) {
     let Some(register) = register.dyn_ref::<Function>() else {
         return;
     };
-    for definition in agent_tools::definitions() {
+    for definition in agent_tools::definitions()
+        .into_iter()
+        .chain(sql_tools::definitions())
+    {
         let Some(name) = definition["name"].as_str().map(str::to_owned) else {
             continue;
         };
@@ -38,7 +44,7 @@ pub fn offer_tools(projects: Projects) {
             let (input, name) = (from_js(&input), name.clone());
             future_to_promise(async move {
                 // An answer the agent reads says what went wrong; a rejection would not.
-                let answer = run(projects, &name, &input)
+                let answer = run(projects, log, &name, &input)
                     .await
                     .unwrap_or_else(|error| serde_json::json!({ "error": error }));
                 // A string of JSON: Brave's Leo reads a tool's result as text, and the spec
@@ -70,18 +76,88 @@ fn refused(name: &str, error: &JsValue) {
     web_sys::console::warn_2(&message.into(), error);
 }
 
-async fn run(projects: Projects, name: &str, input: &Value) -> Result<Value, String> {
-    let all = api::read::<Vec<PublicCatalogue>>(&projects.api(), &["public"])
-        .await
-        .map_err(|error| error.to_string())?;
+async fn run(
+    projects: Projects,
+    log: QueryLog,
+    name: &str,
+    input: &Value,
+) -> Result<Value, String> {
     match name {
-        SEARCH => agent_tools::search(&all, input),
+        SEARCH => agent_tools::search(&public_catalogues(projects).await?, input),
         OPEN => {
+            let all = public_catalogues(projects).await?;
             let catalogue = agent_tools::chosen(&all, input)?;
             projects.switch(&catalogue.project());
             Ok(serde_json::json!({"opened": catalogue.id, "name": catalogue.name}))
         }
+        RUN_SQL => {
+            let (sql, rows) = sql_tools::sql_input(input).inspect_err(|why| {
+                let sql = input.get("sql").and_then(Value::as_str).unwrap_or_default();
+                log.record(RUN_SQL, sql, &serde_json::json!({ "error": why }));
+            })?;
+            let raw = query(projects, &sql, rows).await;
+            log.record(RUN_SQL, &sql, &raw);
+            Ok(sql_tools::answer(&raw))
+        }
+        DESCRIBE => {
+            let attributes_sql = sql_tools::catalogue_sql(input)?;
+            let vocabulary = query(projects, VOCABULARY_SQL, 500).await;
+            log.record(DESCRIBE, VOCABULARY_SQL, &vocabulary);
+            let attributes = match attributes_sql {
+                Some(sql) => {
+                    let found = query(projects, &sql, 3).await;
+                    log.record(DESCRIBE, &sql, &found);
+                    Some(found)
+                }
+                None => None,
+            };
+            Ok(sql_tools::description(&vocabulary, attributes.as_ref()))
+        }
         _ => Err(format!("no tool {name}")),
+    }
+}
+
+async fn public_catalogues(projects: Projects) -> Result<Vec<PublicCatalogue>, String> {
+    api::read::<Vec<PublicCatalogue>>(&projects.api(), &["public"])
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The engine's answer to `sql`, through the page's side of it (`sql-engine/bridge.js`):
+/// rows, or an error and its kind.
+async fn query(projects: Projects, sql: &str, max_rows: u64) -> Value {
+    let failed = |error: String| serde_json::json!({ "error": error, "kind": "start" });
+    let Some(snapshot) = api_url(&projects.api(), &["public", "snapshot"]) else {
+        return failed("no snapshot address".into());
+    };
+    let options = serde_json::json!({
+        "snapshot": snapshot,
+        "maxRows": max_rows,
+        "timeoutMs": TIMEOUT_MS,
+        "memoryLimit": MEMORY_LIMIT,
+    });
+    let Some(bridge) = web_sys::window()
+        .and_then(|window| Reflect::get(&window, &"cocatSql".into()).ok())
+        .filter(JsValue::is_object)
+    else {
+        return failed("this page has no SQL engine".into());
+    };
+    let Ok(run) = Reflect::get(&bridge, &"query".into()).and_then(|run| run.dyn_into::<Function>())
+    else {
+        return failed("this page has no SQL engine".into());
+    };
+    let Some(options) = to_js(&options) else {
+        return failed("bad options".into());
+    };
+    let Ok(promise) = run
+        .call2(&bridge, &JsValue::from_str(sql), &options)
+        .and_then(|answer| answer.dyn_into::<Promise>())
+    else {
+        return failed("the SQL engine refused the query".into());
+    };
+    match wasm_bindgen_futures::JsFuture::from(promise).await {
+        Ok(answer) => from_js(&answer),
+        Err(error) => failed(format!("{error:?}")),
     }
 }
 
