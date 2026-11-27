@@ -39,13 +39,33 @@ jobs:
             target: aarch64
           - os: windows-latest
             target: x86_64
+          # Native, not cross: this runner is an ARM machine.
+          - os: windows-11-arm
+            target: aarch64
     steps:
       - uses: actions/checkout@v7
+      # The ARM image has no Rust; the other runners have it, or build in maturin's container.
+      - if: matrix.os == 'windows-11-arm'
+        uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Windows'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --out dist -m crates/cocat-py/Cargo.toml
+      # The Python tests that need no server, on the wheel just built: Windows is where
+      # SciQLop users have hit file handling bugs that Linux does not show.
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python -m pip install --prefer-binary dist/*.whl pytest pytest-asyncio pandas polars 'tscat>=0.5,<0.6'
+          cd crates/cocat-py/tests
+          python -m pytest -p no:cacheprovider test_csv.py test_editor.py test_frames.py test_hpevent.py \
+            test_logging.py test_project.py test_search_box.py test_search.py test_shapes.py \
+            test_smart.py test_tfcat.py test_tscat.py test_version.py test_votable.py
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
