@@ -46,30 +46,48 @@ jobs:
       - uses: actions/checkout@v7
       # The ARM image has no Rust; the other runners have it, or build in maturin's container.
       - if: matrix.os == 'windows-11-arm'
-        uses: dtolnay/rust-toolchain@stable
-      - if: runner.os == 'Windows'
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.13"
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca  # stable
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --out dist -m crates/cocat-py/Cargo.toml
-      # The Python tests that need no server, on the wheel just built: Windows is where
-      # SciQLop users have hit file handling bugs that Linux does not show.
-      - if: runner.os == 'Windows'
-        shell: bash
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+
+  # The Python tests that need no server, on each Windows wheel as built: Windows is where
+  # SciQLop users have hit file handling bugs that Linux does not show. A job of its own, so
+  # the test dependencies never run where the uploaded wheels are made.
+  windows-tests:
+    name: Tests on wheel ${{ matrix.os }}
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64
+          - os: windows-11-arm
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+      - shell: bash
         run: |
           python -m pip install --prefer-binary dist/*.whl pytest pytest-asyncio pandas polars 'tscat>=0.5,<0.6'
           cd crates/cocat-py/tests
           python -m pytest -p no:cacheprovider test_csv.py test_editor.py test_frames.py test_hpevent.py \
             test_logging.py test_project.py test_search_box.py test_search.py test_shapes.py \
             test_smart.py test_tfcat.py test_tscat.py test_version.py test_votable.py
-      - uses: actions/upload-artifact@v7
-        with:
-          name: wheels-${{ matrix.os }}-${{ matrix.target }}
-          path: dist
 
   sdist:
     name: sdist
@@ -87,7 +105,7 @@ jobs:
 
   upload:
     name: Upload to PyPI
-    needs: [version, wheels, sdist]
+    needs: [version, wheels, windows-tests, sdist]
     # A manual run builds the wheels to check them; only a version tag uploads.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
