@@ -293,6 +293,21 @@ def test_shapes_travel_through_tscat_and_back(database, project, tmp_path):
     assert again.catalogue(catalogue.uuid).shape_axis == ("pitch angle", "deg")
 
 
+def test_a_non_latin_name_travels_through_our_json_whatever_the_system_encoding(
+    project, tmp_path
+):
+    name = "Магнитопауза 磁気圏"
+    event = project.create_event(start=utc(hours(0)), stop=utc(hours(1)), author="Ёжик")
+    catalogue = project.create_catalogue(name=name, author="Ёжик", events=[event])
+    path = tmp_path / "ours.json"
+    cc_tscat.export_json(project, [catalogue], path)
+
+    assert name in path.read_bytes().decode("utf-8")
+    again = cc.Project.open(str(tmp_path / "again"), "75ca7000-0000-4000-8000-0000000000ab")
+    [back] = cc_tscat.import_json(again, path)
+    assert (back.name, back.author) == (name, "Ёжик")
+
+
 def test_in_catalogue_keeps_its_catalogue_whatever_tscat_reads_back(database, project):
     """tscat 0.5.1 resolves InCatalogue through a lookup that returns its first catalogue;
     the import reads the stored predicate, so the rule names the catalogue it was made for."""
