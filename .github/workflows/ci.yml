@@ -19,6 +19,16 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  windows:
+    name: Windows room files
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Windows refuses some file operations Linux allows; SciQLop users open room files there.
+      - run: cargo test -p cocat-core --lib "store::"
+
   web:
     name: Web bundle
     runs-on: ubuntu-latest

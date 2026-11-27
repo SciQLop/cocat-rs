@@ -2,7 +2,7 @@
 //! the `0.0.1\0` header, then `varuint(len) + update-v1` records.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -167,7 +167,7 @@ impl FileRoomStore {
             .metadata()
             .map_err(|source| io_error(&self.path, source))?
             .len();
-        if let Err(source) = self.file.write_all(&self.pending) {
+        if let Err(source) = write_at_end(&mut self.file, &self.pending) {
             // Half a record defeats tail recovery, so cut it back and keep the records
             // in `pending` for a retry.
             if let Err(error) = self.file.set_len(start) {
@@ -285,11 +285,25 @@ pub fn read_updates(update_dir: &Path, room_id: &str) -> Result<Vec<Bytes>, Stor
 }
 
 fn append_handle(path: &Path) -> Result<File, StoreError> {
+    writable_file(path).map_err(|source| io_error(path, source))
+}
+
+/// Opens a file that `write_at_end` grows and `set_len` may shorten. Not in append mode: on
+/// Windows that mode leaves out the right to shorten the file, and `set_len` fails with
+/// "access denied" (os error 5).
+pub fn writable_file(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(false)
         .open(path)
-        .map_err(|source| io_error(path, source))
+}
+
+/// Writes at the end of a file opened by `writable_file`, wherever an earlier `set_len` or
+/// failed write left its position.
+pub fn write_at_end(file: &mut File, bytes: &[u8]) -> io::Result<()> {
+    file.seek(SeekFrom::End(0))?;
+    file.write_all(bytes)
 }
 
 /// Saves what follows `offset` as `<file>.cut-<unix seconds>`, on the disk before the room
@@ -315,8 +329,7 @@ fn keep_cut_bytes(path: &Path, bytes: &[u8], offset: u64) -> Result<PathBuf, Sto
 
 fn reset_to_header(file: &mut File, path: &Path) -> Result<(), StoreError> {
     file.set_len(0).map_err(|source| io_error(path, source))?;
-    file.write_all(HEADER)
-        .map_err(|source| io_error(path, source))?;
+    write_at_end(file, HEADER).map_err(|source| io_error(path, source))?;
     file.sync_data().map_err(|source| io_error(path, source))
 }
 
@@ -415,6 +428,38 @@ mod tests {
         assert_eq!(store.record_count(), 1);
         let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
         assert_eq!(updates, [record]);
+    }
+
+    // Fails only on Windows (the Windows CI job): a handle opened to append may not shorten
+    // its file there, so a new room file could not be reset to its header (os error 5).
+    #[test]
+    fn a_new_room_file_opens_clears_and_cuts_a_torn_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        store.append(Bytes::from_static(b"old")).unwrap();
+        store.flush().unwrap();
+        store.clear().unwrap();
+        let kept = Bytes::from_static(b"kept");
+        store.append(kept.clone()).unwrap();
+        store.flush().unwrap();
+        let path = store.path().to_owned();
+        drop(store);
+        let mut torn = OpenOptions::new().append(true).open(&path).unwrap();
+        torn.write_all(&[0x40, b't', b'r']).unwrap();
+        drop(torn);
+
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert!(store.truncated_at().is_some());
+        let after = Bytes::from_static(b"after");
+        store.append(after.clone()).unwrap();
+        store.flush().unwrap();
+
+        let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert_eq!(
+            updates,
+            [kept, after],
+            "the record after the cut follows it, with no gap"
+        );
     }
 
     #[test]

@@ -1,12 +1,12 @@
 //! Who wrote each room record and when, in a side file beside the room file (`<room>.y.h`),
 //! so the room file format stays the one Python reads. One fixed-size entry per record.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
-use cocat_core::store::room_file;
+use cocat_core::store::{self, room_file};
 use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -102,10 +102,7 @@ pub struct StampFile {
 impl StampFile {
     /// Cuts a torn last entry, so the entries appended after it stay aligned.
     pub fn open(update_dir: &Path, room_id: &str) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(stamps_file(update_dir, room_id))?;
+        let file = store::writable_file(&stamps_file(update_dir, room_id))?;
         let len = file.metadata()?.len();
         let whole = len - len % ENTRY as u64;
         if whole != len {
@@ -134,7 +131,7 @@ impl StampFile {
             return Ok(());
         }
         let start = self.file.metadata()?.len();
-        if let Err(error) = self.file.write_all(&self.pending) {
+        if let Err(error) = store::write_at_end(&mut self.file, &self.pending) {
             let _ = self.file.set_len(start);
             return Err(error);
         }
@@ -186,6 +183,8 @@ pub fn valid_stamps(records: &[Bytes], stamps: Vec<Stamp>) -> Vec<Option<Stamp>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::OpenOptions;
+    use std::io::Write;
 
     #[test]
     fn a_stamp_round_trips_through_the_file() {
