@@ -39,6 +39,8 @@ const LAYOUT: &str = "1";
 const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 const NOT_A_FILE: &str = "No such snapshot file";
 const IMMUTABLE: &str = "private, max-age=31536000, immutable";
+/// The survey's method, which the browser and the survey notebook both run on the files.
+const SURVEY: &str = include_str!("../../sql/survey.sql");
 
 /// One snapshot is written at a time, whichever server state asks.
 static WRITING: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
@@ -56,7 +58,8 @@ pub struct Manifest {
     pub version: String,
     /// When it was written (RFC 3339).
     pub created: String,
-    /// `events.parquet`, `catalogues.parquet` and `attributes/<catalogue id>.parquet`.
+    /// `events.parquet`, `catalogues.parquet`, `attributes/<catalogue id>.parquet` and
+    /// `survey.sql`.
     pub files: BTreeMap<String, FileEntry>,
 }
 
@@ -185,6 +188,7 @@ pub async fn refresh(state: &AppState) -> Result<Manifest, SnapshotError> {
     let mut paths = Vec::new();
     let mut version = Sha256::new();
     version.update(LAYOUT);
+    version.update(SURVEY);
     for (room, relay) in store::public_index(&state.pool).await? {
         let path = crate::public_search::current_snapshot(state, &room.id).await?;
         let stamp = file_stamp(state, &room.id);
@@ -236,7 +240,12 @@ fn publish(
 ) -> Result<Manifest, SnapshotError> {
     std::fs::create_dir_all(folder)?;
     let events: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
-    let files = write::snapshot(catalogues, &events, &|file| hashed_name(file).0)?;
+    let mut files = write::snapshot(catalogues, &events, &|file| hashed_name(file).0)?;
+    files.push(write::Written {
+        logical: "survey.sql".into(),
+        stem: "survey".into(),
+        bytes: SURVEY.as_bytes().to_vec(),
+    });
     let mut entries = BTreeMap::new();
     for file in &files {
         let (name, sha256) = hashed_name(file);
@@ -294,12 +303,13 @@ fn prune(folder: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Rewrites the snapshot every `REFRESH_EVERY`, when a catalogue changed.
+/// Rewrites the snapshot when the server starts, then every `REFRESH_EVERY`, when a
+/// catalogue or the survey's method changed.
 pub fn spawn_refresher(state: AppState) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Not at start: the indexer is busy then, and a request writes a missing snapshot.
-        let first = tokio::time::Instant::now() + REFRESH_EVERY;
-        let mut ticker = tokio::time::interval_at(first, REFRESH_EVERY);
+        // At start too: a new release may bring a new survey.sql. The catalogues' own files
+        // are rewritten through the indexer's queue, so this never loads a room twice.
+        let mut ticker = tokio::time::interval(REFRESH_EVERY);
         loop {
             ticker.tick().await;
             if let Err(error) = refresh(&state).await {

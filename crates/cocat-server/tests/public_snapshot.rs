@@ -375,6 +375,21 @@ async fn events_and_their_attributes_join_on_the_event_number() {
 }
 
 #[tokio::test]
+async fn the_snapshot_carries_the_survey_method() {
+    let (world, _, _) = mixed_world().await;
+    let manifest = world.manifest().await;
+    let files = world.files(&manifest).await;
+    let (_, survey) = files.iter().find(|(name, _)| name == "survey.sql").unwrap();
+    assert_eq!(survey.as_ref(), include_bytes!("../sql/survey.sql"));
+    assert!(
+        manifest["files"]["survey.sql"]["name"]
+            .as_str()
+            .unwrap()
+            .ends_with(".sql")
+    );
+}
+
+#[tokio::test]
 async fn the_snapshot_needs_an_account_and_serves_only_its_own_files() {
     let (world, _, _) = mixed_world().await;
     let (status, _) = world

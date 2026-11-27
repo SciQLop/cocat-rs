@@ -1,6 +1,7 @@
 # Design: ask the public catalogues anything, in the browser
 
-Status: design note, nothing built. Written 2026-11-27.
+Status: design note, written 2026-11-27. Steps 1 and 2 of section 6 are built: the snapshot
+writer and `survey.sql`. Section 7 says what the build changed in this note.
 
 ## The goal
 
@@ -22,9 +23,9 @@ The plan, agreed earlier:
 
 ## The short version
 
-- The snapshot is small. All 441 public catalogues (1.65 M events) fit in a 21 MB events
-  file. The attributes add 56 MB, split into one file per catalogue, loaded only when a
-  query needs them.
+- The snapshot is small. All 441 public catalogues (1.65 M events) fit in a 31 MB events
+  file, as the server writes it. The attributes add 59 MB, split into one file per catalogue,
+  loaded only when a query needs them.
 - The engine runs in a sandboxed iframe with an opaque origin. It has no network at all:
   the page fetches every file and hands the bytes over. DuckDB's own network switch is off
   too, and locked.
@@ -48,8 +49,9 @@ Four kinds of files, all public data, all read-only:
 | `attributes/<catalogue>.parquet` | one per event with attributes | `_event`, `_uuid`, then the catalogue's own attribute columns, typed. |
 | `survey.sql` | — | The shared rules, views and macros (section 2). |
 
-`events.parquet` is sorted by catalogue, then start. The integer `event` id joins it to the
-attribute files. The event uuid lives only in the attribute files: as text it would more than
+`events.parquet` holds the catalogues one after the other, in the order of the public index,
+each sorted by start. The integer `event` id joins it to the attribute files. It numbers the
+events of one snapshot only: the next snapshot may number them differently. The event uuid lives only in the attribute files: as text it would more than
 double the events file (see the measurements).
 
 `observer_raw` is the one attribute pulled into the events file. It is the first of the
@@ -84,7 +86,12 @@ The writer fixes the types so they cannot drift between snapshots:
 I measured them on the local mirror of cocat-dev (2026-11-26 copy: 441 catalogues, 1,646,781
 events). I used DuckDB 2.0.1 natively, Parquet with zstd compression.
 
-| File | Size |
+The server writes the files with arrow-rs, and they come out larger: `events.parquet` is
+31 MB, the 247 attribute files 59 MB, 93 MB in all with the rest. arrow-rs's default encodings
+are less compact than DuckDB's. Delta encoding of the times and ids is the first thing to try
+if the size matters.
+
+| File (written by DuckDB) | Size |
 |---|---|
 | `events.parquet` (fields above, integer id, no uuid) | 20.9 MB |
 | same, with the uuid as text | 50.4 MB |
@@ -125,19 +132,24 @@ The server already keeps one JSON-lines file of live events per public catalogue
 that file when the room changes (`public_search.rs`, the `public-index` folder). The Parquet
 writer reads those files. It does not load rooms again.
 
-- A background task rebuilds a catalogue's attribute file when its JSON-lines file changes.
-  It rebuilds `events.parquet` and `catalogues.parquet` at most once an hour.
-- Each build writes new hash-named files, then swaps `manifest.json`. A page that loaded an
-  older manifest keeps working on the older files until it reloads. We keep the files of the
-  last two manifests.
+- The server rewrites the snapshot when it starts, then every hour, if a catalogue or
+  `survey.sql` changed. The snapshot's version is a hash of every catalogue's file stamp and
+  index entry, and of `survey.sql`. A rewrite takes about 30 s for all 441 catalogues.
+- Each file is named by a hash of its bytes. An attribute file whose catalogue did not change
+  keeps its name, so a browser keeps its cached copy.
+- Each rewrite writes the new files, then swaps `manifest.json`. A page that loaded an older
+  manifest keeps working on the older files until it reloads. The files of the last two
+  manifests are kept.
 - `manifest.json` carries the snapshot time. The query panel shows it ("data as of …").
+- Routes: `GET /api/public/snapshot` gives the manifest; `GET /api/public/snapshot/<name>`
+  gives a file. Both need a signed-in account, like `/api/public/events`.
 
 Writer crates: [`arrow`](https://crates.io/crates/arrow) and
 [`parquet`](https://crates.io/crates/parquet) (arrow-rs). The server does not need DuckDB.
 
 ### Memory in the browser
 
-- The buffers: 21 MB of events, plus each attribute file opened (6 MB at most).
+- The buffers: 31 MB of events, plus each attribute file opened (6 MB at most).
 - The engine queries the Parquet bytes directly. It never copies them into tables. Loading
   all events into a DuckDB table took 520 MB natively, far too much for a tab.
 - `memory_limit` is set to 1 GB. DuckDB-wasm honours it: its spill tests set 128 MB
@@ -174,21 +186,23 @@ CREATE TABLE tolerances (theme VARCHAR, hours DOUBLE);   -- the survey's TOLERAN
 CREATE TABLE chance_shifts (days DOUBLE);                -- -61.9, -19.1, 13.3, 40.7
 ```
 
-There is one trap. DuckDB uses RE2 regular expressions and the survey uses Python's `re`. The
-first step is a one-off check that both give the same theme and observer for all 441
-catalogues. After that, the Python rules are deleted.
+There was one trap. DuckDB uses RE2 regular expressions and the survey used Python's `re`. The
+one-off check passed: RE2 gives the same phenomenon, observer, label and source for all 441
+catalogues. The Python rules are deleted.
 
 Both sides must run the same DuckDB version: the wasm build pins one, and the notebook pins
 the matching `duckdb` Python package.
 
 ### What `survey.sql` defines
 
-Views, ready to query:
+Tables and views, ready to query. The two per-catalogue tables are computed once, when the
+file runs (1.5 s natively). Recomputing them in every query made the matching ten times
+slower.
 
-| View | Columns beyond the raw files | Survey step |
+| Name | Columns beyond the raw files | Survey step |
 |---|---|---|
-| `catalogue_tags` | `theme`, `observer`, `label`, `first`, `last`, `covers` (share of its span covered), `wrapped` | 2, 5 |
-| `clean_events` | `start`/`stop` with the 2^32-second wrap undone, `observer` (per event), `theme`, `duration_h` | 2, 3 |
+| `catalogue_tags` (table) | `theme`, `observer`, `short_source`, `label`, `n`, `first`, `last`, `covers` (share of its span covered), `wrapped` | 2, 5 |
+| `clean_events` (view) | `start`/`stop` with the 2^32-second wrap undone, `observer` (per event), `catalogue_observer`, `theme`, `label`, `duration_h`, `start_h`/`stop_h`, `repaired` | 2, 3 |
 | `coverage` | per theme and observer: catalogues, events, first and last year, median duration | 5 |
 | `single_list_pairs` | phenomenon and observer pairs held by one catalogue | 5 |
 | `exact_copies` | pairs of catalogues sharing at least 20 % of events to the minute | 6 |
@@ -202,26 +216,34 @@ observer_of(folder VARCHAR, name VARCHAR) -> VARCHAR
 tolerance_h(theme VARCHAR) -> DOUBLE
 
 -- table
-found_in(a, b, observer := NULL, tolerance := NULL, shift_days := 0,
-         after := NULL, before := NULL)
-    -> (compared BIGINT, matched DOUBLE)
-agreement(a, b, observer := NULL, after := NULL, before := NULL)
-    -> (a, b, compared, matched, chance, lift)
-agreement_matrix(theme, observer, after := NULL, before := NULL)
-    -> one agreement row per ordered pair of catalogues
-same_events(theme := NULL, observer := NULL)
+match_rates(phenomenon := NULL, seen_at := NULL, a := NULL, b := NULL,
+            which_themes := 'same', after := NULL, before := NULL)
+    -> per ordered pair and shift: compared, share
+agreement(a := NULL, b := NULL, phenomenon := NULL, seen_at := NULL,
+          which_themes := 'any', after := NULL, before := NULL)
+    -> (theme, observer, a_catalogue, b_catalogue, label_a, label_b, theme_b,
+        compared, matched, chance, lift)
+agreement_matrix(phenomenon, seen_at, after := NULL, before := NULL)
+    -> one agreement row per ordered pair of catalogues of one phenomenon at one observer
+same_events(phenomenon := NULL, seen_at := NULL)
     -> both-way pairs: matched either way >= 50 %, lift >= 3, >= 10 events (the page's table)
-confirmations(theme, observer)
-    -> per catalogue: events checked, only here, only here if shifted, ...
-events_per_year(theme := NULL, observer := NULL)
+confirmations(phenomenon, seen_at)
+    -> per catalogue: events_checked, only_here, only_here_if_shifted, confirmed_by_half, ...
+events_per_year(phenomenon := NULL, seen_at := NULL)
     -> (theme, year, events)
-attributes(catalogue)
-    -> the catalogue's events joined with its attribute file
+attributes(id)
+    -> the catalogue's clean events joined with its attribute file
 ```
 
-`a` and `b` are catalogue ids or exact labels. The tolerance defaults to the phenomenon's.
-`after` and `before` cut both lists to a period. The survey has no such cut, so with them left
-out the macro gives the page's numbers.
+`a` and `b` are catalogue ids or exact labels. The tolerance is the phenomenon's.
+`which_themes` is `'same'` (the survey's comparison), `'different'` (links between
+phenomena) or `'any'`. `after` and `before` cut both lists to a period. The survey has no such
+cut, so with them left out the macros give the page's numbers. The observer parameter is
+`seen_at`, because `at` is a keyword in DuckDB.
+
+The planned `found_in` macro is not there: `agreement` with `a` and `b` answers the same
+question. One check stays in Python: the survey's test of the date repair compares only the
+repaired events of a list, without the span cut, so it keeps its own 15 lines.
 
 ### The matching, in SQL
 
@@ -236,7 +258,7 @@ core of `found_in`, on a table `ev` of times in hours:
 ```sql
 CREATE MACRO found_in_core(a, b, tol_h, shift_h) AS TABLE
 WITH idx AS (
-    SELECT start_h, max(stop_h) OVER (ORDER BY start_h ROWS UNBOUNDED PRECEDING) AS latest_stop
+    SELECT start_h, max(stop_h) OVER (ORDER BY start_h) AS latest_stop
     FROM ev WHERE catalogue = b),
 span AS (SELECT min(start_h) AS first, max(latest_stop) AS last FROM idx),
 mine AS (
@@ -252,11 +274,23 @@ Each ordered pair was compared unshifted and with the four chance shifts: 40 rat
 Every rate was identical: the same counts, and a difference of 0.0. Natively it took 0.25 s,
 against 0.13 s for numpy. (Scratch script, not committed.)
 
+The window must use the default RANGE frame, as above, not `ROWS UNBOUNDED PRECEDING`. With
+ROWS, events that start together get different running stops, and the ASOF join may pick the
+wrong one. numpy's search goes past all of them. The first sketch had ROWS and was right only
+by luck.
+
+In `survey.sql` the join carries integer unit and pair numbers, not text. With text, matching
+every same-phenomenon pair at once took over 6 GB. With numbers it takes 4.5 s and about
+3.7 GB at a 2 GB DuckDB limit, natively. The cross-phenomenon links (survey section 10) take
+37 s, one phenomenon at a time. A browser must never ask for all pairs at once: the tools
+should send one phenomenon, or one pair.
+
 Table macros are in the [CREATE MACRO docs](https://duckdb.org/docs/stable/sql/statements/create_macro).
 
 ### Worked examples
 
-The numbers below come from the 2026-11-26 survey data. They show what the AI would get.
+The numbers below come from the 2026-11-26 survey data. They show what the AI would get. All
+five queries were run as written on the server's snapshot, and gave these numbers.
 
 **"Do the Cluster bow shock lists agree after 2010?"**
 
@@ -300,10 +334,10 @@ The raw rows under the answer let a user spot this.
 **Outside the survey: "Do bigger flares last longer?"**
 
 ```sql
-SELECT left(a.goes_class, 1) AS class, count(*) AS flares,
-       median(epoch(stop - start)) / 60 AS median_minutes
-FROM attributes('public.stix.flares') a
-WHERE a.goes_class IS NOT NULL
+SELECT left(goes_class, 1) AS class, count(*) AS flares,
+       round(median(duration_h) * 60, 1) AS median_minutes
+FROM attributes('public.stix.flares')
+WHERE goes_class IS NOT NULL
 GROUP BY class ORDER BY class;
 ```
 
@@ -329,19 +363,38 @@ This needs no macro at all. Many questions will look like this.
 ### How the survey page reuses it
 
 The notebook keeps its charts and its hand-written findings. Only its data and method
-change.
+changed.
 
-1. It downloads the snapshot from the server: `manifest.json`, then the files. Today it
-   signs in and opens every room through cocat-rs. That code goes away.
-2. It opens native DuckDB and runs `survey.sql`.
-3. Each section becomes a query: `coverage`, `single_list_pairs`, `same_events()`,
-   `agreement_matrix()`, `confirmations()`, `exact_copies`. pandas only receives results to
-   plot.
-4. The page prints the snapshot version. The AI's query panel shows the same version. Equal
-   versions mean equal numbers.
+1. It downloads the snapshot from the server: `manifest.json`, then the files whose hash
+   changed. It no longer opens every room through cocat-rs.
+2. It opens native DuckDB (1.4.4, the browser engine's core version) and runs the
+   `survey.sql` that came with the snapshot. `COCAT_SURVEY_SQL` points it at a local copy
+   while the rules are edited.
+3. Each section is a query: `catalogue_tags`, `clean_events`, `coverage`,
+   `single_list_pairs`, `exact_copies`, `agreement()`, `same_events()`, `confirmations()`.
+   pandas only receives results to plot.
+4. A run takes 66 s and 5 GB at most, against 58 s and 2.2 GB before.
 
-A test in cocat-rs runs `survey.sql` on a small fixture snapshot and checks a few known
-numbers. A browser test runs the same queries in DuckDB-wasm and expects the same numbers.
+To get the page's numbers to the last bit, `survey.sql` copies three pandas habits:
+
+- a duration in seconds is whole seconds plus the microseconds over 1e6 (`seconds()`);
+- a median is rounded half to even (`round_even`);
+- the chance rate adds the four shifted rates in order, then divides (`chance_share()`).
+
+The check: the old notebook on its own data, against the new one on the server's snapshot.
+Every table matched: catalogues and tags, all 1.65 M events, coverage, single lists, all 2,340
+pairs, the 358 same-event pairs, 145 confirmations, 112 copies, 318 links, per-year counts,
+the 22 added catalogues. On the page, every number is the same. Three things moved, none of
+them a number:
+
+- the date in the footer;
+- 164 of the 358 same-event pairs show A and B the other way round. The old run ordered a
+  pair by catalogue uuid, and the snapshot names catalogues by public id;
+- in two confirmation charts, bars tied at 0 % come in another order.
+
+`crates/cocat-py/tests/test_survey_sql.py` runs `survey.sql` on a small snapshot made in the
+test: tags, per-event observers, the date repair, matching, same events, events per year. A
+browser test that runs the same queries in DuckDB-wasm comes with step 3.
 
 ## 3. Tools
 
@@ -625,6 +678,10 @@ false` plus `allowed_paths` admits registered buffers is read from core source, 
 wasm. It is the first thing the prototype checks. If it fails, the CSP still blocks the
 network. But then local file functions need their own guard.
 
+**Matching everything at once is heavy.** See the matching section: gigabytes natively for
+all pairs. `memory_limit` keeps DuckDB's buffers in check, but the process grows past it. The
+tools must ask for one phenomenon or one pair, and their descriptions must say so.
+
 **Typed attribute columns can change type** when a source changes. The fixed type rules limit
 this. A query that worked yesterday can still fail on a renamed column. The answer shows the
 error and the snapshot version.
@@ -654,14 +711,25 @@ heavy, and the panel should say so before it loads.
 ## 6. What to build first
 
 1. **The snapshot writer** in cocat-server: Parquet from the existing JSON-lines files, the
-   manifest, and the rule-3 test on a database with private rooms. This alone already helps:
-   the survey can switch to it.
+   manifest, and the rule-3 test on a database with private rooms. *Built.*
 2. **`survey.sql`**: rules as tables, the views and macros, and the RE2 equality check.
    Then switch the survey notebook to the snapshot plus `survey.sql`. The page's numbers must
-   not move.
+   not move. *Built: they did not.*
 3. **The sandbox engine**: iframe, CSP, DuckDB-wasm, the settings lock. Start with the rule-1
    and rule-4 tests, run headless in Chromium through Playwright. Check the `allowed_paths`
    question on day one.
 4. **`describe_data` and `run_sql`**, with the query panel. Try them with Leo in Brave, with
    the WebMCP flag.
 5. **`plot`**, with the Vega lockdown and its tests.
+
+## 7. What the build changed in this note
+
+- Sizes: the server's files are larger than DuckDB's (31 MB of events, not 21 MB).
+- Refresh: the whole snapshot is rewritten when anything changed, at start and hourly, not
+  file by file. Unchanged files keep their hashed names.
+- `catalogue_tags` is a table, not a view, and a `catalogue_rules` table holds the rules'
+  answer per catalogue.
+- Macro names and parameters: `seen_at` for the observer, `which_themes`, `match_rates`; no
+  `found_in`.
+- The ASOF window needs the RANGE frame; the matching carries numbers, not text.
+- pandas parity needs three small macros (durations, rounding, the chance mean).
