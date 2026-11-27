@@ -5,6 +5,7 @@ edit_uri: edit/main/docs/
 
 exclude_docs: |
   superpowers/
+  design/
 
 theme:
   name: material
