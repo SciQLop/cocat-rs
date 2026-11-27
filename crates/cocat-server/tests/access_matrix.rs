@@ -167,6 +167,14 @@ const ROWS: &[Row] = &[
     row("POST", "/api/rooms", Guard::SignedIn, Style::Api),
     row("GET", "/api/public", Guard::SignedIn, Style::Api),
     row("GET", "/api/public/events", Guard::SignedIn, Style::Api),
+    row("GET", "/api/public/snapshot", Guard::SignedIn, Style::Api),
+    row(
+        "GET",
+        "/api/public/snapshot/{name}",
+        Guard::SignedIn,
+        Style::Api,
+    )
+    .tolerant(),
     row("POST", "/api/public", Guard::Curator, Style::Api),
     row("PATCH", "/api/public/{public}", Guard::Curator, Style::Api),
     row(

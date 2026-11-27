@@ -57,8 +57,13 @@ scraper = "0.29.0"
 csv = "1"
 flate2 = "1"
 tar = "0.4"
+parquet = { version = "60.2.0", default-features = false, features = ["arrow", "zstd"] }
+arrow-array = "60.2.0"
+arrow-schema = "60.2.0"
 
 [dev-dependencies]
+# `json` reads rows back as JSON in the snapshot tests.
+parquet = { version = "60.2.0", default-features = false, features = ["arrow", "zstd", "json"] }
 palette = "0.7"
 proptest = "1"
 tempfile = "3"

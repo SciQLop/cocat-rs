@@ -402,6 +402,7 @@ async fn serve(host: &str, port: u16, update_dir: &Path, db_path: &Path) -> Resu
     let _round_deadlines = crate::rounds::spawn_deadlines(state.clone());
     let _relay_schedule = crate::relay::schedule::spawn_scheduler(state.clone());
     let _public_indexer = crate::public_search::spawn_indexer(state.clone());
+    let _public_snapshot = crate::public_snapshot::spawn_refresher(state.clone());
     let address = listener.local_addr()?;
     println!("listening on {address}");
     tracing::info!(%address, "cocat-server serving");
