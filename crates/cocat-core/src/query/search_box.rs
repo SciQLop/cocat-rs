@@ -421,7 +421,7 @@ fn kind_rank(kind: &str) -> u8 {
 /// The values a field takes, for a word `field:value` being typed.
 fn values(field: &str, typed: &str, vocabulary: &Vocabulary) -> Vec<Suggestion> {
     let (op, typed) = split_operator(typed);
-    let typed = typed.trim_start_matches('"').to_lowercase();
+    let typed = typed.trim_matches('"').to_lowercase();
     let statuses: Vec<String> = STATUSES_SHOWN
         .iter()
         .map(|name| (*name).to_owned())
@@ -549,6 +549,32 @@ mod completion_tests {
             catalogues: vec!["Bow shocks".into(), "Solitons".into()],
             attributes: vec!["density".into(), "speed".into()],
             attribute_values: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_closed_quote_still_completes_the_value() {
+        let vocabulary = Vocabulary {
+            attribute_values: BTreeMap::from([(
+                "region_name".to_owned(),
+                vec!["Magnetosheath".to_owned(), "Lobe".to_owned()],
+            )]),
+            attributes: vec!["region_name".into()],
+            ..Default::default()
+        };
+        let offered = |text: &str| -> Vec<String> {
+            complete(text, text.chars().count(), &vocabulary)
+                .map(|found| found.suggestions.into_iter().map(|s| s.insert).collect())
+                .unwrap_or_default()
+        };
+
+        for text in [
+            "region_name:Ma",
+            "region_name:\"Ma",
+            "region_name:\"Ma\"",
+            "region_name:Ma\"",
+        ] {
+            assert_eq!(offered(text), ["region_name:Magnetosheath "], "{text}");
         }
     }
 
