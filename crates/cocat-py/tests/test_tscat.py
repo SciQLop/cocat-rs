@@ -23,9 +23,12 @@ def hours(n):
 
 @pytest.fixture
 def database(tmp_path, monkeypatch):
-    """A tscat database of its own: tscat keeps it under appdirs' user data directory,
-    which XDG_DATA_HOME sets on Linux; tscat opens it on first use."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "tscat-data"))
+    """A tscat database of its own, which tscat opens on first use. tscat asks appdirs for
+    its folder, and appdirs reads XDG_DATA_HOME on Linux only: on Windows and macOS every
+    test would share the user's real tscat database, so the folder is patched instead."""
+    monkeypatch.setattr(
+        tscat.orm_sqlalchemy, "user_data_dir", lambda name: str(tmp_path / "tscat-data" / name)
+    )
     monkeypatch.setattr(tscat.base, "_backend", None)
     yield tscat
     if tscat.base._backend is not None:
