@@ -591,14 +591,14 @@ def _remembered_projects(folder: Path, server: str) -> list[SimpleNamespace]:
 
 def _read_json(path: Path, default: Any) -> Any:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default
 
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value))
+    path.write_text(json.dumps(value), encoding="utf-8")
 
 
 def _folder_name(server: str) -> str:
