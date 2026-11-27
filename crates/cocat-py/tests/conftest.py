@@ -1,3 +1,4 @@
+import os
 import socket
 import subprocess
 import time
@@ -53,6 +54,10 @@ class Server:
 
 @pytest.fixture
 def server(tmp_path):
+    # Opt-in only: the wheel tests on Windows have no server binary. Missing it otherwise
+    # must fail, not skip.
+    if os.environ.get("COCAT_NO_SERVER") == "1":
+        pytest.skip("COCAT_NO_SERVER=1: no cocat-server to start")
     port = free_port()
     database = tmp_path / "cocat.db"
     updates = tmp_path / "updates"
