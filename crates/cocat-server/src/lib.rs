@@ -30,6 +30,7 @@ pub mod password;
 pub mod presence;
 pub mod public_api;
 pub mod public_search;
+pub mod public_snapshot;
 pub mod ratelimit;
 pub mod relay;
 pub mod room;

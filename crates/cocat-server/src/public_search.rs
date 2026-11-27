@@ -449,11 +449,28 @@ async fn found(
 }
 
 #[derive(Debug, thiserror::Error)]
-enum SnapshotError {
+pub enum SnapshotError {
     #[error(transparent)]
     Room(#[from] crate::room::RoomError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// The snapshot file of `room_id` as its room file is now, rewritten first when it is out of
+/// date: by the indexer's queue, so a room is never loaded twice at once.
+pub(crate) async fn current_snapshot(
+    state: &AppState,
+    room_id: &str,
+) -> Result<PathBuf, SnapshotError> {
+    let stamp = file_stamp(state, room_id);
+    let path = snapshot_path(state, room_id);
+    if snapshot_stamp(&path).as_deref() == Some(stamp.as_str()) {
+        return Ok(path);
+    }
+    let mut done = state.rooms.public_index().rebuild(state, room_id);
+    let _ = done.wait_for(|done| *done).await;
+    // The room changed again meanwhile, or the rewrite failed: write it here, and say why not.
+    snapshot(state, room_id, &file_stamp(state, room_id)).await
 }
 
 /// The snapshot file of `room_id` as its room file is at `stamp`: its first line names the
