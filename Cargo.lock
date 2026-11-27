@@ -669,7 +669,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "cocat-client"
-version = "0.12.10"
+version = "0.12.11"
 dependencies = [
  "axum",
  "bytes",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "cocat-core"
-version = "0.12.10"
+version = "0.12.11"
 dependencies = [
  "bm25",
  "bytes",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "cocat-py"
-version = "0.12.10"
+version = "0.12.11"
 dependencies = [
  "cocat-client",
  "cocat-core",
@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "cocat-server"
-version = "0.12.10"
+version = "0.12.11"
 dependencies = [
  "argon2",
  "askama",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "cocat-web"
-version = "0.12.10"
+version = "0.12.11"
 dependencies = [
  "base64 0.22.1",
  "cocat-core",
