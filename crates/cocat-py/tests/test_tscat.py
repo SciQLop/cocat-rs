@@ -129,6 +129,12 @@ def tscat_member_uuids(catalogue):
     return {event.uuid for event in tscat.get_events(catalogue)[0]}
 
 
+def test_each_test_gets_a_tscat_database_of_its_own(database, tmp_path):
+    database.create_event(hours(0), hours(1), author="alice")
+    database.save()
+    assert tscat.base.backend().engine.url.database.startswith(str(tmp_path))
+
+
 def test_every_event_field_imports(filled, project):
     cc_tscat.import_database(project)
     events = tscat_events()

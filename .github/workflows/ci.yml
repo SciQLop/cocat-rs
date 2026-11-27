@@ -29,6 +29,20 @@ jobs:
       # Windows refuses some file operations Linux allows; SciQLop users open room files there.
       - run: cargo test -p cocat-core --lib "store::"
 
+  windows-tscat:
+    name: Windows tscat import
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # SciQLop users on Windows import their old tscat catalogues.
+      - run: python -m pip install ./crates/cocat-py pytest pytest-asyncio pandas polars 'tscat>=0.5,<0.6'
+      - run: python -m pytest -p no:cacheprovider crates/cocat-py/tests/test_tscat.py
+
   web:
     name: Web bundle
     runs-on: ubuntu-latest
