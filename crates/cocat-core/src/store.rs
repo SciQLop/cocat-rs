@@ -417,6 +417,38 @@ mod tests {
         assert_eq!(updates, [record]);
     }
 
+    // Fails only on Windows (the Windows CI job): a handle opened to append may not shorten
+    // its file there, so a new room file could not be reset to its header (os error 5).
+    #[test]
+    fn a_new_room_file_opens_clears_and_cuts_a_torn_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        store.append(Bytes::from_static(b"old")).unwrap();
+        store.flush().unwrap();
+        store.clear().unwrap();
+        let kept = Bytes::from_static(b"kept");
+        store.append(kept.clone()).unwrap();
+        store.flush().unwrap();
+        let path = store.path().to_owned();
+        drop(store);
+        let mut torn = OpenOptions::new().append(true).open(&path).unwrap();
+        torn.write_all(&[0x40, b't', b'r']).unwrap();
+        drop(torn);
+
+        let (mut store, _) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert!(store.truncated_at().is_some());
+        let after = Bytes::from_static(b"after");
+        store.append(after.clone()).unwrap();
+        store.flush().unwrap();
+
+        let (_, updates) = FileRoomStore::open(dir.path(), "room").unwrap();
+        assert_eq!(
+            updates,
+            [kept, after],
+            "the record after the cut follows it, with no gap"
+        );
+    }
+
     #[test]
     fn a_sync_clears_the_dirty_flag() {
         let dir = tempfile::tempdir().unwrap();
