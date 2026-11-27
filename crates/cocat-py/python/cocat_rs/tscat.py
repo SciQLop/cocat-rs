@@ -58,7 +58,7 @@ def _stored_predicates(tscat):
 
 def import_json(project, path):
     """Imports a file tscat's `export_json` wrote. Returns the imported catalogues."""
-    return _import(project, Path(path).read_text())
+    return _import(project, Path(path).read_text(encoding="utf-8"))
 
 
 def export_json(project, catalogues, path):
@@ -66,7 +66,7 @@ def export_json(project, catalogues, path):
     catalogue is written with its current members as events and no predicate; derived
     intervals are left out, having no uuid."""
     catalogues = [_catalogue(project, catalogue) for catalogue in _listify(catalogues)]
-    Path(path).write_text(export_tscat_json(catalogues))
+    Path(path).write_text(export_tscat_json(catalogues), encoding="utf-8")
 
 
 def _import(project, text):
