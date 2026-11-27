@@ -153,6 +153,13 @@ fn CatalogueView(
             .public
             .with(|all| all.as_deref().and_then(public_events::attributes))
     });
+    let public_values = Memo::new(move |_| {
+        projects.public.with(|all| {
+            all.as_deref()
+                .map(public_events::attribute_values)
+                .unwrap_or_default()
+        })
+    });
     let reader = room.clone();
     let own =
         Memo::new(move |_| public_names.with(|public| own_search(&reader, &shown.get(), public)));
@@ -363,7 +370,8 @@ fn CatalogueView(
                 <Show when=move || matches!(shown.get(), Route::Catalogue(_) | Route::Trash | Route::AllEvents)>
                     <SearchBox query building placeholder own=Signal::derive(move || boxed.searching())
                         names=scope_names
-                        scope_attributes=Signal::derive(move || (boxed.side.get() == Side::Public).then(|| public_attributes.get()).flatten())>
+                        scope_attributes=Signal::derive(move || (boxed.side.get() == Side::Public).then(|| public_attributes.get()).flatten())
+                        scope_values=Signal::derive(move || public_values.get())>
                         <SearchIcon/>
                     </SearchBox>
                 </Show>

@@ -266,7 +266,7 @@ pub async fn public_index(
 ) -> Result<Vec<(PublicRoom, Option<RelayedRow>)>, DbError> {
     let rows: Vec<IndexRow> = sqlx::query_as(
         "SELECT room.id, room.name, room.folder, room.source, room.description,
-           room.public_count, room.counted_file, room.public_attributes,
+           room.public_count, room.counted_file, room.public_attributes, room.public_values,
            relay_catalogue.provider AS relay_provider, relay_catalogue.key AS relay_key,
            relay_catalogue.published AS relay_published,
            relay_catalogue.refreshed_at AS relay_refreshed_at, relay_catalogue.url AS relay_url

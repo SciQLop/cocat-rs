@@ -51,6 +51,11 @@ def server():
                 body = [BEPI, *ODD] if asked.get("odd") else [BEPI]
                 if asked.get("attributes"):
                     body = [dict(entry, attributes=["Col 1", "speed"]) for entry in body]
+                if asked.get("values"):
+                    body = [
+                        dict(BEPI, attributes=["region_name"], attribute_values={"region_name": ["Magnetosheath", "Magnetopause Transition"]}),
+                        dict(BEPI, id="public.grmb.c2", name="C2 regions", attributes=["region_name"], attribute_values={"region_name": ["Plasmasheet", "Magnetosheath"]}),
+                    ]
             elif path.endswith("/api/public/events"):
                 body = {"total": 0, "indexing": 0, "events": []}
             else:
@@ -238,4 +243,25 @@ def test_a_server_that_lists_no_attribute_keys_refuses_no_name(tmp_path, server)
     project = opened(tmp_path, url)
 
     assert project.query_kind("auhtor:alice", public=True) == "rule"
+    project.close()
+
+
+# SciQLop, "Search in: Public catalogues", 2026-11-27: `region_name:Ma` offered nothing, though
+# the public events shown carried "Magnetosheath" and "Magnetopause Transition".
+
+
+def test_in_the_public_scope_completion_offers_the_public_attribute_values(tmp_path, server):
+    url, asked, _ = server
+    asked["values"] = True
+    project = opened(tmp_path, url)
+
+    vocabulary = project.vocabulary(public=True)
+    assert vocabulary["attribute_values"]["region_name"] == [
+        "Magnetosheath",
+        "Magnetopause Transition",
+        "Plasmasheet",
+    ], "the catalogues' values merged, each once, in the order listed"
+    text = "start:>2023 AND region_name:Ma"
+    offered = [s["insert"] for s in cc.complete(text, len(text), vocabulary)["suggestions"]]
+    assert offered == ["region_name:Magnetosheath ", 'region_name:"Magnetopause Transition" ']
     project.close()

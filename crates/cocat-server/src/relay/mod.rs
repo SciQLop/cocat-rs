@@ -447,6 +447,7 @@ async fn place(
         public_count: None,
         counted_file: None,
         public_attributes: None,
+        public_values: None,
     };
     let followed = store::relayed(&state.pool, room).await?.is_some();
     let created = db::create_public_room(&state.pool, &public, None).await?;

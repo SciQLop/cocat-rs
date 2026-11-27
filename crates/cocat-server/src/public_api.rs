@@ -2,6 +2,8 @@
 //! the new ones and changes to what the index says, which only curators make. Each is a
 //! project, opened like any other.
 
+use std::collections::BTreeMap;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -58,6 +60,10 @@ struct PublicOut {
     /// The attribute keys its events carry, which a search of the public catalogues can
     /// name; `null` when it could not be read.
     attributes: Option<Vec<String>>,
+    /// The values of its text attributes that take at most 50 different ones, by key, the
+    /// most frequent first, which the completions of a search of the public catalogues
+    /// offer; `null` when not read.
+    attribute_values: Option<BTreeMap<String, Vec<String>>>,
     /// The provider it follows; `null` for a catalogue people keep.
     relay: Option<RelayOut>,
 }
@@ -238,7 +244,11 @@ async fn out(
         .rooms
         .room_changed(&room.id)
         .and_then(|at| OffsetDateTime::from(at).format(&Rfc3339).ok());
-    let (count, attributes) = counted(state, &room).await;
+    let Counted {
+        count,
+        attributes,
+        values,
+    } = counted(state, &room).await;
     PublicOut {
         id: room.id,
         name: room.name,
@@ -249,32 +259,52 @@ async fn out(
         changed,
         count,
         attributes,
+        attribute_values: values,
         relay: relay.map(RelayOut::from),
     }
 }
 
-/// The events the catalogue holds and the attribute keys they carry: those stored while the
-/// room file is the one they were read from, else read afresh and stored for the next look.
-/// A failed read answers what is stored.
+/// What the index says of a catalogue's events: how many, the attribute keys they carry and
+/// the values of the text ones; each `None` when it could not be read.
+struct Counted {
+    count: Option<i64>,
+    attributes: Option<Vec<String>>,
+    values: Option<BTreeMap<String, Vec<String>>>,
+}
+
+/// The catalogue's events counted: as stored while the room file is the one they were read
+/// from, else read afresh and stored for the next look. A failed read answers what is stored.
 // simplify: the index counts each changed catalogue while it answers, so the first look after
 // a bulk import loads every room the import wrote, once. Count when a room unloads instead if
 // that wait shows.
-async fn counted(state: &AppState, room: &PublicRoom) -> (Option<i64>, Option<Vec<String>>) {
-    let stored = (room.public_count, stored_attributes(room));
+async fn counted(state: &AppState, room: &PublicRoom) -> Counted {
+    let stored = Counted {
+        count: room.public_count,
+        attributes: stored_attributes(room),
+        values: room
+            .public_values
+            .as_deref()
+            .and_then(|values| serde_json::from_str(values).ok()),
+    };
     let file = file_stamp(state, &room.id);
-    if room.counted_file.as_deref() == Some(file.as_str()) && stored.1.is_some() {
+    let complete = stored.attributes.is_some() && stored.values.is_some();
+    if room.counted_file.as_deref() == Some(file.as_str()) && complete {
         return stored;
     }
     let read = state
         .rooms
         .read(&room.id, |doc| {
             let txn = doc.transact();
-            (model::live_event_count(&txn), model::attribute_keys(&txn))
+            (
+                model::live_event_count(&txn),
+                model::attribute_keys(&txn),
+                pickable(model::vocabulary(&txn).attribute_values),
+            )
         })
         .await;
-    let (count, attributes) = match read {
-        Ok((count, attributes)) => match i64::try_from(count) {
-            Ok(count) => (count, attributes),
+    let (count, attributes, values) = match read {
+        Ok((count, attributes, values)) => match i64::try_from(count) {
+            Ok(count) => (count, attributes, values),
             Err(_) => return stored,
         },
         Err(error) => {
@@ -282,11 +312,27 @@ async fn counted(state: &AppState, room: &PublicRoom) -> (Option<i64>, Option<Ve
             return stored;
         }
     };
-    let kept = db::store_public_count(&state.pool, &room.id, count, &attributes, &file).await;
+    let kept =
+        db::store_public_count(&state.pool, &room.id, count, &attributes, &values, &file).await;
     if let Err(error) = kept {
         tracing::warn!(room = %room.id, %error, "the public catalogue count was not stored");
     }
-    (Some(count), Some(attributes))
+    Counted {
+        count: Some(count),
+        attributes: Some(attributes),
+        values: Some(values),
+    }
+}
+
+/// How many different values a catalogue's text attribute may take for the index to list
+/// them: a list one picks from (regions, missions, types). More is free text (notes, links,
+/// file names), whose values would make the index of cocat-dev's catalogues six times bigger.
+const PICKABLE_VALUES: usize = 50;
+
+/// The values of the text attributes that are lists one picks from.
+fn pickable(mut values: BTreeMap<String, Vec<String>>) -> BTreeMap<String, Vec<String>> {
+    values.retain(|_, values| values.len() <= PICKABLE_VALUES);
+    values
 }
 
 /// The attribute keys stored with the room's last count.
@@ -320,6 +366,7 @@ fn checked(body: NewPublic) -> Result<PublicRoom, ApiError> {
         public_count: None,
         counted_file: None,
         public_attributes: None,
+        public_values: None,
     })
 }
 

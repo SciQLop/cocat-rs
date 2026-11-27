@@ -892,6 +892,7 @@ async fn proposing_a_change_to_a_catalogue_with_a_long_name_names_the_copy_withi
         public_count: None,
         counted_file: None,
         public_attributes: None,
+        public_values: None,
     };
     assert!(
         db::create_public_room(&world.state.pool, &room, Some(world.curator))
@@ -1067,6 +1068,7 @@ async fn a_copy_of_a_public_catalogue_with_a_long_name_names_its_project_within_
         public_count: None,
         counted_file: None,
         public_attributes: None,
+        public_values: None,
     };
     assert!(
         db::create_public_room(&world.state.pool, &room, Some(world.curator))
@@ -1334,6 +1336,7 @@ async fn described(world: &World, description: &str) -> String {
         public_count: None,
         counted_file: None,
         public_attributes: None,
+        public_values: None,
     };
     assert!(
         db::create_public_room(&world.state.pool, &room, Some(world.curator))

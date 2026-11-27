@@ -2050,7 +2050,8 @@ impl Project {
     /// events), `catalogues` (names) and `attributes` (keys), each sorted, and
     /// `attribute_values`: per text attribute, the values of live events, the most frequent
     /// first, at most 200. With `public=True`, `catalogues` are the public catalogues' names,
-    /// which a search of them takes.
+    /// which a search of them takes, and `attributes` and `attribute_values` their events'
+    /// (values only of attributes taking at most 50 different ones in a catalogue).
     #[pyo3(signature = (public=false))]
     fn vocabulary(&self, py: Python<'_>, public: bool) -> Result<Py<PyAny>> {
         let mut found = model::vocabulary(&self.room.doc().transact());
@@ -2059,7 +2060,7 @@ impl Project {
             let listing = listing.unwrap_or_default();
             found = found.naming(&listing.names);
             if let Some(attributes) = listing.attributes {
-                found = found.with_attributes(attributes);
+                found = found.with_attributes(attributes, listing.attribute_values);
             }
         }
         let vocabulary = PyDict::new(py);

@@ -23,6 +23,10 @@ pub struct PublicCatalogue {
     /// `None` when the server did not read them.
     #[serde(default)]
     pub attributes: Option<Vec<String>>,
+    /// The values of its text attributes, by key, the most frequent first, for the
+    /// completions; `None` when the server did not read them.
+    #[serde(default)]
+    pub attribute_values: Option<std::collections::BTreeMap<String, Vec<String>>>,
     /// The provider it follows, when the server keeps it in step with one.
     #[serde(default)]
     pub relay: Option<Relay>,
@@ -265,6 +269,7 @@ mod tests {
             changed: Some("2026-11-08T10:00:00Z".into()),
             count: Some(1),
             attributes: None,
+            attribute_values: None,
             relay: None,
         }
     }

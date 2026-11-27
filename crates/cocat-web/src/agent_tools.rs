@@ -128,6 +128,7 @@ mod tests {
             changed: Some("2026-11-13T10:00:00Z".into()),
             count: Some(146),
             attributes: None,
+            attribute_values: None,
             relay: None,
         }
     }

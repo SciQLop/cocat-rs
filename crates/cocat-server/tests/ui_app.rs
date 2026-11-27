@@ -558,6 +558,7 @@ async fn browse_opens_a_public_catalogue_for_everyone_signed_in() {
         public_count: None,
         counted_file: None,
         public_attributes: None,
+        public_values: None,
     };
     assert!(
         db::create_public_room(&fixture.state.pool, &room, Some(curator))

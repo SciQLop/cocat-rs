@@ -1,6 +1,8 @@
 //! Around the filter box: what is wrong with the search, saving it as a smart catalogue or
 //! into the open one, and the builder that writes a search from rows.
 
+use std::collections::BTreeMap;
+
 use cocat_core::model;
 use cocat_core::query::builder::{Test, clause, field_label, label, search_text, tests};
 use cocat_core::query::{self, FIELDS, Kind};
@@ -500,13 +502,14 @@ fn vocabulary(
     room: &Room,
     names: Option<Vec<(String, String)>>,
     attributes: Option<Vec<String>>,
+    values: BTreeMap<String, Vec<String>>,
 ) -> Vocabulary {
     let mut found = room.read(|txn| model::vocabulary(txn));
     if let Some(names) = names {
         found = found.naming(&names);
     }
     if let Some(attributes) = attributes {
-        found = found.with_attributes(attributes);
+        found = found.with_attributes(attributes, values);
     }
     found
 }
@@ -532,6 +535,9 @@ pub fn SearchBox(
     /// public catalogues' when it searches them.
     #[prop(optional, into)]
     scope_attributes: MaybeProp<Vec<String>>,
+    /// The values of those attributes' texts, which its completions offer with them.
+    #[prop(optional, into)]
+    scope_values: MaybeProp<BTreeMap<String, Vec<String>>>,
     children: Children,
 ) -> impl IntoView {
     let room = expect_context::<Room>();
@@ -544,8 +550,10 @@ pub fn SearchBox(
         Memo::new(move |_| room.read(|txn| model::attribute_types(txn).into_keys().collect()))
     };
     let words = Memo::new(move |_| {
-        open.get()
-            .then(|| vocabulary(&room, names.get(), scope_attributes.get()))
+        open.get().then(|| {
+            let values = scope_values.get().unwrap_or_default();
+            vocabulary(&room, names.get(), scope_attributes.get(), values)
+        })
     });
     let completion = Memo::new(move |_| {
         let vocabulary = words.get()?;

@@ -1245,6 +1245,7 @@ async fn candidates_come_from_a_public_catalogue_too() {
             public_count: None,
             counted_file: None,
             public_attributes: None,
+            public_values: None,
         },
         Some(curator_id),
     )

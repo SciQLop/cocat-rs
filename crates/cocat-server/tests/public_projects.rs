@@ -1088,3 +1088,49 @@ async fn a_public_search_refuses_a_name_no_public_event_has() {
     let (status, found) = search("speed:>800").await;
     assert_eq!((status, found["total"].clone()), (StatusCode::OK, json!(1)));
 }
+
+/// SciQLop, "Search in: Public catalogues", 2026-11-27: `region_name:Ma` offered nothing,
+/// though the table showed "Magnetosheath". The index lists the values of each catalogue's
+/// text attributes, the most frequent first, for the completions to offer; not those of a
+/// free text, which would make the index several times bigger.
+#[tokio::test]
+async fn the_public_index_lists_the_values_of_text_attributes() {
+    let world = World::start().await;
+    let regions = world.public(json!({"name": "C1 regions"})).await;
+    let doc = Doc::new();
+    let update = {
+        let mut txn = doc.transact_mut();
+        let at = Timestamp::parse("2023-01-02T00:00:00Z").unwrap();
+        for (id, name, code) in [
+            ("r1", "Magnetosheath", 10),
+            ("r2", "Magnetosheath", 10),
+            ("r3", "Magnetopause Transition", 9),
+        ] {
+            let mut record = EventRecord::new(id, at, at);
+            record.attributes =
+                serde_json::from_value(json!({"region_name": name, "region_code": code})).unwrap();
+            model::create_event(&mut txn, &record).unwrap();
+        }
+        for n in 0..51 {
+            let mut record = EventRecord::new(format!("n{n}"), at, at);
+            record.attributes =
+                serde_json::from_value(json!({"note": format!("note {n}")})).unwrap();
+            model::create_event(&mut txn, &record).unwrap();
+        }
+        txn.encode_update_v1()
+    };
+    let (mut store, _) = FileRoomStore::open(&world.update_dir, &regions).unwrap();
+    store.append(bytes::Bytes::from(update)).unwrap();
+    store.flush().unwrap();
+
+    let (status, listed) = world
+        .call(Some(world.reader), Method::GET, "/api/public", None)
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        listed[0]["attribute_values"],
+        json!({"region_name": ["Magnetosheath", "Magnetopause Transition"]}),
+        "text values only, the most frequent first; none of a free text (51 different notes)"
+    );
+}

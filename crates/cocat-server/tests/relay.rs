@@ -657,6 +657,7 @@ impl World {
             public_count: None,
             counted_file: None,
             public_attributes: None,
+            public_values: None,
         };
         assert!(
             db::create_public_room(&self.state.pool, &room, Some(self.curator))

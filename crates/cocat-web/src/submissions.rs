@@ -436,6 +436,7 @@ mod tests {
             changed: None,
             count: None,
             attributes: None,
+            attribute_values: None,
             relay: None,
         };
         let index = [
@@ -459,6 +460,7 @@ mod tests {
             changed: None,
             count: None,
             attributes: None,
+            attribute_values: None,
             relay: None,
         };
         let index = [

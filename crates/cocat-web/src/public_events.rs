@@ -1,7 +1,10 @@
 //! A search of every public catalogue, answered by the server (`GET /api/public/events`): the
 //! rows it gives the table, and the names `catalogue:` takes in it.
 
+use std::collections::BTreeMap;
+
 use cocat_core::model::EventRecord;
+use cocat_core::query::search_box::merged_values;
 use serde::Deserialize;
 
 use crate::public::PublicCatalogue;
@@ -55,6 +58,15 @@ pub fn attributes(public: &[PublicCatalogue]) -> Option<Vec<String>> {
     Some(keys.into_iter().cloned().collect())
 }
 
+/// The values of the public catalogues' text attributes, each once, for the completions.
+pub fn attribute_values(public: &[PublicCatalogue]) -> BTreeMap<String, Vec<String>> {
+    merged_values(
+        public
+            .iter()
+            .filter_map(|catalogue| catalogue.attribute_values.as_ref()),
+    )
+}
+
 /// The table's rows, each naming its catalogue (by id when the index does not list it).
 pub fn rows(found: Found, public: &[PublicCatalogue]) -> Vec<Row> {
     let name = |id: &str| {
@@ -91,6 +103,7 @@ mod tests {
             changed: None,
             count: None,
             attributes: None,
+            attribute_values: None,
             relay: None,
         }
     }

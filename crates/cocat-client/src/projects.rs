@@ -97,6 +97,10 @@ pub struct PublicCatalogue {
     /// `None` when the server did not read them (or is older than this field).
     #[serde(default)]
     pub attributes: Option<Vec<String>>,
+    /// The values of its text attributes, by key, the most frequent first, for the
+    /// completions; `None` when the server did not read them (or is older than this field).
+    #[serde(default)]
+    pub attribute_values: Option<std::collections::BTreeMap<String, Vec<String>>>,
 }
 
 /// What a new public catalogue says; `key` makes its id `public.<key>`.

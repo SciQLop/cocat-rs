@@ -227,6 +227,7 @@ impl ScriptList {
             public_count: None,
             counted_file: None,
             public_attributes: None,
+            public_values: None,
         }
     }
 }

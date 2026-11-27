@@ -1029,6 +1029,7 @@ async fn create_public(
             public_count: None,
             counted_file: None,
             public_attributes: None,
+            public_values: None,
         };
         if db::create_public_room(&state.pool, &room, Some(curator)).await? {
             return Ok(room);

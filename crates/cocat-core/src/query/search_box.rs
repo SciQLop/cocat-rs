@@ -172,14 +172,35 @@ impl Vocabulary {
 
 impl Vocabulary {
     /// The vocabulary of a search whose attributes are other events' than the project's, as
-    /// a search of the public catalogues is: those keys, and no values known for them.
-    pub fn with_attributes(self, attributes: Vec<String>) -> Self {
+    /// a search of the public catalogues is: those keys and those text values.
+    pub fn with_attributes(
+        self,
+        attributes: Vec<String>,
+        attribute_values: BTreeMap<String, Vec<String>>,
+    ) -> Self {
         Self {
             attributes,
-            attribute_values: BTreeMap::new(),
+            attribute_values,
             ..self
         }
     }
+}
+
+/// The text values of several catalogues' attributes as one vocabulary's: each value once, in
+/// the order the catalogues and their lists give, as many as a project's vocabulary keeps.
+pub fn merged_values<'a>(
+    listed: impl IntoIterator<Item = &'a BTreeMap<String, Vec<String>>>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut merged = BTreeMap::<String, Vec<String>>::new();
+    for (key, values) in listed.into_iter().flatten() {
+        let kept = merged.entry(key.clone()).or_default();
+        for value in values {
+            if kept.len() < crate::model::ATTRIBUTE_VALUES_KEPT && !kept.contains(value) {
+                kept.push(value.clone());
+            }
+        }
+    }
+    merged
 }
 
 /// What `catalogue:` can name among these (id, name), sorted: each name once, but the ids of
@@ -529,6 +550,43 @@ mod completion_tests {
             attributes: vec!["density".into(), "speed".into()],
             attribute_values: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn the_catalogues_values_merge_each_once_in_their_order() {
+        let listed = |pairs: &[(&str, &[&str])]| -> BTreeMap<String, Vec<String>> {
+            pairs
+                .iter()
+                .map(|(key, values)| {
+                    (
+                        key.to_string(),
+                        values.iter().map(|v| v.to_string()).collect(),
+                    )
+                })
+                .collect()
+        };
+        let c1 = listed(&[("region_name", &["Magnetosheath", "Magnetopause Transition"])]);
+        let c2 = listed(&[
+            ("region_name", &["Plasmasheet", "Magnetosheath"]),
+            ("mission", &["C2"]),
+        ]);
+
+        assert_eq!(
+            merged_values([&c1, &c2]),
+            listed(&[
+                ("mission", &["C2"]),
+                (
+                    "region_name",
+                    &["Magnetosheath", "Magnetopause Transition", "Plasmasheet"]
+                ),
+            ])
+        );
+        let many: Vec<String> = (0..300).map(|n| n.to_string()).collect();
+        let free = BTreeMap::from([("note".to_owned(), many)]);
+        assert_eq!(
+            merged_values([&free])["note"].len(),
+            crate::model::ATTRIBUTE_VALUES_KEPT
+        );
     }
 
     #[test]

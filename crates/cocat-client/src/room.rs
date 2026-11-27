@@ -119,6 +119,9 @@ pub struct PublicListing {
     /// Every attribute key their events carry, sorted; `None` unless the server sent each
     /// catalogue's (an older server sends none).
     pub attributes: Option<Vec<String>>,
+    /// The values of their text attributes, each once, for the completions: those of the
+    /// catalogues the server sent them for.
+    pub attribute_values: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl PublicListing {
@@ -131,8 +134,17 @@ impl PublicListing {
                 let keys: std::collections::BTreeSet<String> = keys.into_iter().flatten().collect();
                 keys.into_iter().collect()
             });
+        let attribute_values = cocat_core::query::search_box::merged_values(
+            listed
+                .iter()
+                .filter_map(|catalogue| catalogue.attribute_values.as_ref()),
+        );
         let names = listed.into_iter().map(|c| (c.id, c.name)).collect();
-        Self { names, attributes }
+        Self {
+            names,
+            attributes,
+            attribute_values,
+        }
     }
 }
 
