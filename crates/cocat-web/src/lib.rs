@@ -32,6 +32,7 @@ pub mod rule_text;
 pub mod search;
 pub mod session;
 pub mod sharing;
+pub mod sql_tools;
 pub mod stats;
 pub mod submissions;
 pub mod sync;

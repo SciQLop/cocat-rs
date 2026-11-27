@@ -273,6 +273,54 @@ async fn app_files_are_served_and_dotdot_is_refused() {
     }
 }
 
+/// The SQL engine's page as the web crate ships it.
+const ENGINE: &str = include_str!("../../cocat-web/sql-engine/engine.html");
+
+#[tokio::test]
+async fn the_sql_engine_page_is_sandboxed_with_no_network() {
+    let mut fixture = Fixture::start().await;
+    let web = bundle(&fixture);
+    fs::create_dir_all(web.join("sql-engine")).unwrap();
+    fs::write(web.join("sql-engine/engine.html"), ENGINE).unwrap();
+    fs::write(web.join("sql-engine/engine.js"), "// engine").unwrap();
+    fixture.state.web_dir = Some(web);
+
+    let page = fixture.get("/ui/app/sql-engine/engine.html", None).await;
+    assert_eq!(page.status(), StatusCode::OK);
+    let policy = header_of(&page, header::CONTENT_SECURITY_POLICY).to_owned();
+    let directives: Vec<&str> = policy.split(';').map(str::trim).collect();
+    for expected in [
+        "sandbox allow-scripts",
+        "default-src 'none'",
+        "worker-src blob:",
+        "connect-src blob:",
+    ] {
+        assert!(directives.contains(&expected), "{expected} in {policy}");
+    }
+    let script = ENGINE
+        .split_once("<script>")
+        .and_then(|(_, rest)| rest.split_once("</script>"))
+        .unwrap()
+        .0;
+    let hash = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        <sha2::Sha256 as sha2::Digest>::digest(script.as_bytes()),
+    );
+    let scripts = directives
+        .iter()
+        .find(|directive| directive.starts_with("script-src "))
+        .unwrap();
+    assert_eq!(
+        *scripts,
+        format!("script-src 'sha256-{hash}' blob: 'wasm-unsafe-eval'"),
+        "only the page's own bootstrap runs inline"
+    );
+    assert_eq!(header_of(&page, header::X_CONTENT_TYPE_OPTIONS), "nosniff");
+
+    let other = fixture.get("/ui/app/sql-engine/engine.js", None).await;
+    assert_eq!(header_of(&other, header::CONTENT_SECURITY_POLICY), "");
+}
+
 #[tokio::test]
 async fn without_a_web_dir_browse_says_not_installed() {
     let mut fixture = Fixture::start().await;

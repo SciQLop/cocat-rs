@@ -1,7 +1,8 @@
 # Design: ask the public catalogues anything, in the browser
 
-Status: design note, written 2026-11-27. Steps 1 and 2 of section 6 are built: the snapshot
-writer and `survey.sql`. Section 7 says what the build changed in this note.
+Status: design note, written 2026-11-27. Steps 1 to 4 of section 6 are built: the snapshot
+writer, `survey.sql`, the sandboxed engine and the two SQL tools with their query panel.
+Sections 7 and 8 say what the build changed in this note.
 
 ## The goal
 
@@ -367,7 +368,7 @@ changed.
 
 1. It downloads the snapshot from the server: `manifest.json`, then the files whose hash
    changed. It no longer opens every room through cocat-rs.
-2. It opens native DuckDB (1.4.4, the browser engine's core version) and runs the
+2. It opens native DuckDB (2.0.1, the browser engine's version) and runs the
    `survey.sql` that came with the snapshot. `COCAT_SURVEY_SQL` points it at a local copy
    while the rules are edited.
 3. Each section is a query: `catalogue_tags`, `clean_events`, `coverage`,
@@ -473,9 +474,9 @@ SET lock_configuration = true;
 - Once external access is off, `read_parquet`, `COPY` and `ATTACH` cannot reach anything
   outside the allowed list. The allowed list itself can no longer change.
 - On DuckDB 2.x, add `SET allow_extension_repositories = 'forbidden'` (new in 2.0, same guide).
-- The bundle links json, parquet and icu statically
-  ([extension_config_wasm.cmake](https://github.com/duckdb/duckdb-wasm/blob/main/extension_config_wasm.cmake)).
-  Nothing has to be loaded.
+- ~~The bundle links json, parquet and icu statically.~~ Wrong (section 8): the published
+  builds link only `core_functions` and `nanoarrow`, and fetch everything else at run time.
+  The engine reads Arrow IPC with `read_arrow`, which needs nothing.
 - Autoload is on by default in wasm
   ([extensions](https://duckdb.org/docs/stable/clients/wasm/extensions)), hence the explicit
   off.
@@ -669,8 +670,10 @@ and the [untrusted annotation](https://webmachinelearning.github.io/webmcp/#miti
 - npm `next` is `1.33.1-dev124.0` (DuckDB 2.0.1). It opens OPFS on every `db.open()`, which
   fails in an opaque origin ([#2302](https://github.com/duckdb/duckdb-wasm/issues/2302)). The
   fix ([#2313](https://github.com/duckdb/duckdb-wasm/pull/2313)) is not merged.
-- Start on `1.33.1-dev57.0`, pin `duckdb==1.4.4` in the notebook, and move both to 2.x once
-  #2313 ships.
+- ~~Start on `1.33.1-dev57.0`.~~ Built on `1.33.1-dev124.0` (DuckDB 2.0.1) instead, with
+  `duckdb==2.0.1` in the notebook and CI: dev57 is DuckDB 1.5.4, not 1.4.4, and needs ICU
+  and Parquet from the network. The OPFS failure is avoided in the frame: the worker is
+  started without `navigator.storage.getDirectory`, so DuckDB does not ask (section 8).
 - Write the macros in syntax both versions accept. 2.0 warns on `->` lambdas.
 
 **DuckDB's settings on registered files are unverified.** Whether `enable_external_access =
@@ -733,3 +736,49 @@ heavy, and the panel should say so before it loads.
   `found_in`.
 - The ASOF window needs the RANGE frame; the matching carries numbers, not text.
 - pandas parity needs three small macros (durations, rounding, the chance mean).
+
+## 8. What steps 3 and 4 changed in this note
+
+Built: the engine (`crates/cocat-web/sql-engine/`), its pinned third-party files
+(`fetch-duckdb.sh`), the page's side (`bridge.js`), the tools (`src/sql_tools.rs`,
+`views/webmcp.rs`) and the query panel (`views/queries.rs`). Tested in headless Chromium
+(`crates/cocat-web/e2e`, 26 tests) and with Brave 158's own WebMCP.
+
+What the note had wrong, and what was done instead:
+
+- **No DuckDB-wasm build reads Parquet offline.** `1.33.1-dev57.0` is DuckDB 1.5.4 and links
+  only `core_functions`; `1.33.1-dev124.0` (DuckDB 2.0.1) links `core_functions` and
+  `nanoarrow`. Parquet, JSON and ICU come from extensions.duckdb.org when first used, and the
+  frame's CSP refuses that (seen: the ICU download blocked). So the server writes each table a
+  second time as Arrow IPC, and the frame reads it with `read_arrow`.
+- **nanoarrow cannot read compressed Arrow files** ("Compression type … not supported by this
+  build of nanoarrow"). The Arrow files are uncompressed; the catalogue and status columns are
+  dictionaries. On the mirror: `events.arrow` is 98 MB on disk and about 18 MB gzip on the
+  wire (the server's HTTP compression). The snapshot is 389 MB on disk with both formats.
+- **survey.sql names no file.** Each host defines `catalogues`, `events` and
+  `attribute_rows(id)` before it runs: Parquet in Python, Arrow in the browser. Its date-repair
+  limit avoids ICU (`make_timestamp(epoch_us(now()))`).
+- **DuckDB 2.0.1, not 1.4.4,** with the OPFS bug (#2302) side-stepped: the frame starts the
+  worker with `StorageManager.prototype.getDirectory` undefined; DuckDB then skips OPFS, which
+  an opaque origin does not have anyway. Python follows: `duckdb==2.0.1`. Under 2.0.1 the
+  page's numbers still match the old notebook's; the median needed numpy's rounding written
+  out (`round_even(x * 100, 0) / 100`).
+- **The `allowed_paths` question:** files registered before or after the lock are readable
+  through `read_arrow` with `allowed_paths` (events, catalogues) and `allowed_directories`
+  (`attributes/`). A bare file name (`FROM 'x.arrow'`) is no longer resolved after the lock:
+  queries name `read_arrow(...)` or the views.
+- **`INSTALL` is a no-op in DuckDB-wasm:** it answers Success and downloads nothing, even with
+  `allow_extension_repositories = 'forbidden'`. `LOAD` fails, and the test checks both.
+- **Freshness:** the snapshot was served stale for up to an hour. Now a manifest request that
+  sees changed catalogues starts the rewrite in the background.
+- **Out of memory:** DuckDB's own "Out of Memory Error" leaves the engine usable; only a
+  WebAssembly trap restarts it. A start that never answers fails after 60 s.
+- **Memory in the tab is higher than planned.** On the mirror, Chromium's renderer and worker
+  processes held 1.1 GB once the engine started (the debug app bundle, the 98 MB events file,
+  DuckDB), and 2.2 GB after matching every pair of the plasma-region lists. The 1 GB
+  `memory_limit` bounds DuckDB's buffers, not the WebAssembly heap, which never shrinks. The
+  tab stayed alive. Loading the Parquet extension from our own server (by answering the
+  worker's download itself) would cut the events file to 31 MB: the next thing to try.
+- **Timings on the mirror:** the first call starts the engine in about 7 s; most questions
+  answer in under 1.5 s; one phenomenon's full agreement matrix takes up to 9 s.
+

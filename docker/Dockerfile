@@ -1,7 +1,7 @@
 FROM fedora:43 AS build
 
 RUN dnf install -y cargo rust rust-std-static-wasm32-unknown-unknown gcc gcc-c++ make \
-        ca-certificates openssl-devel pkgconf-pkg-config \
+        ca-certificates openssl openssl-devel pkgconf-pkg-config curl tar \
     && dnf clean all
 
 # trunk fetches the wasm-bindgen that Cargo.lock pins, and wasm-opt, on its first build.
@@ -11,7 +11,8 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 RUN cargo build --release -p cocat-server --locked
-RUN cd crates/cocat-web && trunk build --release --locked
+# The SQL engine's DuckDB-wasm and Arrow files, pinned by hash: not in git, too large.
+RUN cd crates/cocat-web && ./fetch-duckdb.sh && trunk build --release --locked
 
 FROM fedora:43
 

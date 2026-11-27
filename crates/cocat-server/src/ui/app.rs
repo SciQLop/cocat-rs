@@ -17,6 +17,13 @@ use crate::ui::frame::{self, Flash, Frame, RequireUser, ShareLink};
 use crate::{AppState, db};
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// The SQL engine's page (docs/design/browser-sql-analysis.md, section 4): a sandbox with an
+/// opaque origin, where only its own bootstrap runs inline and everything else must come as a
+/// `blob:` the page hands over. No host at all, ours included, can be fetched from it.
+const ENGINE_PAGE: &str = "/sql-engine/engine.html";
+const ENGINE_POLICY: &str = "sandbox allow-scripts; default-src 'none'; \
+    script-src 'sha256-0E+ZfaMMGFGHn9Tnz8gioRBA+UDJdPVfJXoQo98CH7Y=' blob: 'wasm-unsafe-eval'; \
+    worker-src blob:; connect-src blob:; img-src blob: data:; base-uri 'none'; form-action 'none'";
 
 /// What the app reads from its head, all of it escaped by the template.
 #[derive(Template)]
@@ -207,6 +214,7 @@ pub(crate) async fn file(State(state): State<AppState>, mut request: Request) ->
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let engine_page = path.path() == ENGINE_PAGE;
     *request.uri_mut() = path;
     let cache = if fingerprinted(request.uri().path()) {
         IMMUTABLE
@@ -221,9 +229,18 @@ pub(crate) async fn file(State(state): State<AppState>, mut request: Request) ->
         Ok(response) => {
             let mut response = response.map(Body::new);
             if response.status().is_success() {
-                response
-                    .headers_mut()
-                    .insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+                let headers = response.headers_mut();
+                headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+                if engine_page {
+                    headers.insert(
+                        header::CONTENT_SECURITY_POLICY,
+                        HeaderValue::from_static(ENGINE_POLICY),
+                    );
+                    headers.insert(
+                        header::X_CONTENT_TYPE_OPTIONS,
+                        HeaderValue::from_static("nosniff"),
+                    );
+                }
             }
             response
         }

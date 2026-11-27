@@ -4,3 +4,4 @@
 __pycache__/
 bench/work/
 crates/cocat-web/dist/
+crates/cocat-web/sql-engine/vendor/

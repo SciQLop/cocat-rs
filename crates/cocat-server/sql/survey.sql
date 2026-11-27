@@ -3,8 +3,10 @@
 -- https://sciqlop.lpp.polytechnique.fr/catalogues/). So both give the same numbers.
 -- Design: docs/design/browser-sql-analysis.md, section 2.
 --
--- It reads the snapshot files by their names in the manifest: 'catalogues.parquet',
--- 'events.parquet', 'attributes/<catalogue>.parquet'. Times are UTC.
+-- It names no file. Before it runs, the host defines the snapshot's tables from the files it
+-- has: views `catalogues` and `events`, and a table macro `attribute_rows(id)` giving one
+-- catalogue's attribute file. Python reads the Parquet files, the browser the Arrow ones.
+-- Times are UTC.
 --
 -- The rules are data: ordered regular expressions (RE2), the first match wins. When a
 -- catalogue is misplaced, add a rule or an override, then check that no other one moved.
@@ -151,7 +153,8 @@ CREATE OR REPLACE MACRO default_tolerance_h() AS 1.0::DOUBLE;
 CREATE OR REPLACE MACRO dense_share() AS 0.5::DOUBLE;
 -- An event of a catalogue with dates after 2100, after now + 1 year, was stored as an unsigned
 -- 32-bit count of seconds from before 1970: it goes back 2^32 seconds.
-CREATE OR REPLACE MACRO wrap_limit() AS (now() AT TIME ZONE 'UTC') + INTERVAL 1 YEAR;
+-- In core functions only: the browser's engine has no time zone extension (ICU).
+CREATE OR REPLACE MACRO wrap_limit() AS make_timestamp(epoch_us(now())) + INTERVAL 1 YEAR;
 
 CREATE OR REPLACE MACRO hours(t) AS epoch_us(t) / 3.6e9;
 
@@ -196,8 +199,6 @@ CREATE OR REPLACE MACRO tolerance_h(phenomenon) AS
 CREATE OR REPLACE MACRO is_science(phenomenon) AS
     NOT starts_with(phenomenon, 'Operations') AND phenomenon NOT IN (SELECT theme FROM not_science);
 
-CREATE OR REPLACE VIEW catalogues AS FROM 'catalogues.parquet';
-CREATE OR REPLACE VIEW events AS FROM 'events.parquet';
 
 -- What the rules say about each catalogue. A table: computed once, read by every query.
 CREATE OR REPLACE TABLE catalogue_rules AS
@@ -271,7 +272,8 @@ LEFT JOIN counts n USING (catalogue) LEFT JOIN density d USING (label);
 CREATE OR REPLACE VIEW coverage AS
 SELECT theme, observer, count(DISTINCT catalogue) AS catalogues, count(*) AS events,
     year(min(start)) AS "from", year(max(start)) AS "to",
-    round_even(median(duration_h), 2) AS median_duration_h
+    -- As numpy rounds: scale, round half to even, scale back.
+    round_even(median(duration_h) * 100, 0) / 100 AS median_duration_h
 FROM clean_events GROUP BY theme, observer;
 
 -- Phenomenon and observer pairs held by one catalogue: they cannot be cross-checked against
@@ -290,7 +292,7 @@ GROUP BY theme, year ORDER BY theme, year;
 -- A catalogue's events joined with its attributes, typed as its own columns.
 CREATE OR REPLACE MACRO attributes(id) AS TABLE
 SELECT e.*, a.* EXCLUDE (_event)
-FROM clean_events e JOIN read_parquet('attributes/' || id || '.parquet') a ON a._event = e.event;
+FROM clean_events e JOIN attribute_rows(id) a ON a._event = e.event;
 
 -- Catalogue pairs that share events to the minute: copies of one list. 'of_smaller' is the
 -- share of the smaller one.

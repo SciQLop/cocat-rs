@@ -1,16 +1,25 @@
-//! The Parquet files of a snapshot, written from each public catalogue's JSON-lines file
+//! The files of a snapshot, written from each public catalogue's JSON-lines file
 //! (`public_search`). Only the fields listed here leave the server: no author, no creation
 //! time, no origin, no products, no shape.
+//!
+//! Each table is written twice, from the same batches: as Parquet, which Python and most
+//! tools read, and as Arrow IPC, which the browser's DuckDB reads without any extension
+//! (its builds load Parquet support from the network, which the page's sandbox refuses).
+//! The Arrow files are not compressed: that DuckDB cannot read compressed ones. HTTP
+//! compression shrinks them on the wire, and the repeated text columns are dictionaries.
 
 use std::io::BufRead as _;
 use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::builder::{ListBuilder, StringBuilder};
+use arrow_array::types::{Int8Type, Int32Type};
 use arrow_array::{
     ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray,
     TimestampMicrosecondArray,
 };
+use arrow_array::{DictionaryArray, Int8Array, Int32Array};
+use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use cocat_core::model::EventRecord;
 use parquet::arrow::ArrowWriter;
@@ -52,29 +61,48 @@ pub fn snapshot(
     events: &[&Path],
     named: &dyn Fn(&Written) -> String,
 ) -> Result<Vec<Written>, WriteError> {
-    let mut sink = EventSink::new()?;
+    let ids: Vec<&str> = catalogues
+        .iter()
+        .map(|catalogue| catalogue.id.as_str())
+        .collect();
+    let mut sink = EventSink::new(&ids)?;
     let mut files = Vec::new();
     let mut rows = Vec::new();
     for (catalogue, path) in catalogues.iter().zip(events) {
         let records = read_events(path)?;
         let first = sink.next;
-        sink.push(&catalogue.id, &records)?;
-        let attributes = attribute_file(&catalogue.id, first, &records)?;
+        sink.push(&records)?;
+        let attributes = attribute_batch(first, &records)?
+            .map(|batch| {
+                written(
+                    &format!("attributes/{}", catalogue.id),
+                    &catalogue.id,
+                    &batch,
+                )
+            })
+            .transpose()?
+            .unwrap_or_default();
         let keys = attribute_keys(&records);
-        let file_name = attributes.as_ref().map(named);
+        let file_name = attributes.first().map(named);
         files.extend(attributes);
         rows.push((records.len() as i64, keys, file_name));
     }
+    let (parquet, arrow) = sink.finish()?;
     files.push(Written {
         logical: "events.parquet".into(),
         stem: "events".into(),
-        bytes: sink.finish()?,
+        bytes: parquet,
     });
     files.push(Written {
-        logical: "catalogues.parquet".into(),
-        stem: "catalogues".into(),
-        bytes: catalogue_file(catalogues, &rows)?,
+        logical: "events.arrow".into(),
+        stem: "events".into(),
+        bytes: arrow,
     });
+    files.extend(written(
+        "catalogues",
+        "catalogues",
+        &catalogue_batch(catalogues, &rows)?,
+    )?);
     Ok(files)
 }
 
@@ -115,12 +143,25 @@ fn properties() -> WriterProperties {
         .build()
 }
 
-fn to_parquet(batch: &RecordBatch) -> Result<Vec<u8>, WriteError> {
-    let mut bytes = Vec::new();
-    let mut writer = ArrowWriter::try_new(&mut bytes, batch.schema(), Some(properties()))?;
-    writer.write(batch)?;
-    writer.close()?;
-    Ok(bytes)
+/// `batch` as `<logical>.parquet` and `<logical>.arrow`, Parquet first.
+fn written(logical: &str, stem: &str, batch: &RecordBatch) -> Result<Vec<Written>, WriteError> {
+    let mut parquet = ArrowWriter::try_new(Vec::new(), batch.schema(), Some(properties()))?;
+    parquet.write(batch)?;
+    let mut arrow = FileWriter::try_new(Vec::new(), &batch.schema())?;
+    arrow.write(batch)?;
+    arrow.finish()?;
+    Ok(vec![
+        Written {
+            logical: format!("{logical}.parquet"),
+            stem: stem.to_owned(),
+            bytes: parquet.into_inner()?,
+        },
+        Written {
+            logical: format!("{logical}.arrow"),
+            stem: stem.to_owned(),
+            bytes: arrow.into_inner()?,
+        },
+    ])
 }
 
 fn micros(at: cocat_core::time::Timestamp) -> i64 {
@@ -131,37 +172,62 @@ fn timestamp() -> DataType {
     DataType::Timestamp(TimeUnit::Microsecond, None)
 }
 
-/// The events file, written one catalogue at a time so a row group is all that is held.
+/// An event's status, in the order of the dictionary every batch shares.
+const STATUSES: [&str; 6] = [
+    "preliminary",
+    "confirmed",
+    "reviewed",
+    "final",
+    "rejected",
+    "deleted",
+];
+
+/// The events files, written one catalogue at a time so a row group is all that is held.
+/// The catalogue and status columns are dictionaries with the same values in every batch:
+/// an Arrow file allows one dictionary per column.
 struct EventSink {
-    writer: ArrowWriter<Vec<u8>>,
+    parquet: ArrowWriter<Vec<u8>>,
+    arrow: FileWriter<Vec<u8>>,
     schema: Arc<Schema>,
+    catalogues: ArrayRef,
+    statuses: ArrayRef,
+    at: i32,
     next: i64,
 }
 
 impl EventSink {
-    fn new() -> Result<Self, WriteError> {
+    fn new(catalogues: &[&str]) -> Result<Self, WriteError> {
         let tags = DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)));
+        let text = |keys: DataType| DataType::Dictionary(Box::new(keys), Box::new(DataType::Utf8));
         let schema = Arc::new(Schema::new(vec![
             Field::new("event", DataType::Int64, false),
-            Field::new("catalogue", DataType::Utf8, false),
+            Field::new("catalogue", text(DataType::Int32), false),
             Field::new("start", timestamp(), false),
             Field::new("stop", timestamp(), false),
-            Field::new("status", DataType::Utf8, false),
+            Field::new("status", text(DataType::Int8), true),
             Field::new("confidence", DataType::Float64, true),
             Field::new("start_err", DataType::Float64, true),
             Field::new("stop_err", DataType::Float64, true),
             Field::new("tags", tags, false),
             Field::new("observer_raw", DataType::Utf8, true),
         ]));
-        let writer = ArrowWriter::try_new(Vec::new(), Arc::clone(&schema), Some(properties()))?;
+        let parquet = ArrowWriter::try_new(Vec::new(), Arc::clone(&schema), Some(properties()))?;
+        let arrow = FileWriter::try_new(Vec::new(), &schema)?;
         Ok(Self {
-            writer,
+            parquet,
+            arrow,
             schema,
+            catalogues: Arc::new(StringArray::from_iter_values(catalogues)),
+            statuses: Arc::new(StringArray::from_iter_values(STATUSES)),
+            at: 0,
             next: 1,
         })
     }
 
-    fn push(&mut self, catalogue: &str, events: &[EventRecord]) -> Result<(), WriteError> {
+    /// The events of the next catalogue, in the order `new` named them.
+    fn push(&mut self, events: &[EventRecord]) -> Result<(), WriteError> {
+        let catalogue = self.at;
+        self.at += 1;
         if events.is_empty() {
             return Ok(());
         }
@@ -177,14 +243,20 @@ impl EventSink {
         }
         let columns: Vec<ArrayRef> = vec![
             Arc::new(Int64Array::from(numbers)),
-            Arc::new(StringArray::from(vec![catalogue; events.len()])),
+            Arc::new(DictionaryArray::<Int32Type>::try_new(
+                Int32Array::from(vec![catalogue; events.len()]),
+                Arc::clone(&self.catalogues),
+            )?),
             Arc::new(TimestampMicrosecondArray::from_iter_values(
                 events.iter().map(|event| micros(event.start)),
             )),
             Arc::new(TimestampMicrosecondArray::from_iter_values(
                 events.iter().map(|event| micros(event.stop)),
             )),
-            Arc::new(StringArray::from_iter_values(events.iter().map(status))),
+            Arc::new(DictionaryArray::<Int8Type>::try_new(
+                Int8Array::from_iter(events.iter().map(status)),
+                Arc::clone(&self.statuses),
+            )?),
             Arc::new(Float64Array::from_iter(events.iter().map(|e| e.confidence))),
             Arc::new(Float64Array::from_iter(events.iter().map(|e| e.start_err))),
             Arc::new(Float64Array::from_iter(events.iter().map(|e| e.stop_err))),
@@ -196,20 +268,27 @@ impl EventSink {
             }))),
         ];
         let batch = RecordBatch::try_new(Arc::clone(&self.schema), columns)?;
-        self.writer.write(&batch)?;
+        self.parquet.write(&batch)?;
+        self.arrow.write(&batch)?;
         Ok(())
     }
 
-    fn finish(self) -> Result<Vec<u8>, WriteError> {
-        Ok(self.writer.into_inner()?)
+    /// The Parquet file and the Arrow file.
+    fn finish(mut self) -> Result<(Vec<u8>, Vec<u8>), WriteError> {
+        self.arrow.finish()?;
+        Ok((self.parquet.into_inner()?, self.arrow.into_inner()?))
     }
 }
 
-fn status(event: &EventRecord) -> String {
-    match serde_json::to_value(event.status) {
-        Ok(Value::String(status)) => status,
-        _ => String::new(),
-    }
+/// The status's place in `STATUSES`.
+fn status(event: &EventRecord) -> Option<i8> {
+    let Ok(Value::String(status)) = serde_json::to_value(event.status) else {
+        return None;
+    };
+    STATUSES
+        .iter()
+        .position(|known| *known == status)
+        .and_then(|at| i8::try_from(at).ok())
 }
 
 /// The catalogue's observer attribute: the first of `OBSERVER_KEYS` an event carries.
@@ -290,13 +369,9 @@ fn column(values: &[Option<&Value>]) -> (DataType, ArrayRef) {
     }
 }
 
-/// The attribute file of one catalogue: a row per event that has attributes, a typed
-/// column per key. `None` when no event has any.
-fn attribute_file(
-    catalogue: &str,
-    first: i64,
-    events: &[EventRecord],
-) -> Result<Option<Written>, WriteError> {
+/// The attributes of one catalogue: a row per event that has attributes, a typed column per
+/// key. `None` when no event has any.
+fn attribute_batch(first: i64, events: &[EventRecord]) -> Result<Option<RecordBatch>, WriteError> {
     let carrying: Vec<(i64, &EventRecord)> = (first..)
         .zip(events)
         .filter(|(_, event)| !event.attributes.is_empty())
@@ -331,18 +406,16 @@ fn attribute_file(
         fields.push(Field::new(name, data_type, true));
         columns.push(array);
     }
-    let batch = RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)?;
-    Ok(Some(Written {
-        logical: format!("attributes/{catalogue}.parquet"),
-        stem: catalogue.to_owned(),
-        bytes: to_parquet(&batch)?,
-    }))
+    Ok(Some(RecordBatch::try_new(
+        Arc::new(Schema::new(fields)),
+        columns,
+    )?))
 }
 
-fn catalogue_file(
+fn catalogue_batch(
     catalogues: &[Catalogue],
     rows: &[(i64, Vec<String>, Option<String>)],
-) -> Result<Vec<u8>, WriteError> {
+) -> Result<RecordBatch, WriteError> {
     let text = |pick: &dyn Fn(&Catalogue) -> Option<&str>| -> ArrayRef {
         Arc::new(StringArray::from_iter(catalogues.iter().map(pick)))
     };
@@ -384,5 +457,5 @@ fn catalogue_file(
             rows.iter().map(|row| row.2.as_deref()),
         )),
     ];
-    to_parquet(&RecordBatch::try_new(Arc::new(schema), columns)?)
+    Ok(RecordBatch::try_new(Arc::new(schema), columns)?)
 }
