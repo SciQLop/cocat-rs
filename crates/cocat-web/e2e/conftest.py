@@ -67,7 +67,7 @@ def wait_for_snapshot(url, cookie, ids):
     rewrite once they changed."""
     import json
 
-    wanted = {f"attributes/{id}.arrow" for id in ids}
+    wanted = {f"attributes/{id}.parquet" for id in ids}
     for _ in range(300):
         request = urllib.request.Request(f"{url}/api/public/snapshot")
         request.add_header("cookie", f"fastapiusersauth={cookie}")

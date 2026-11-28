@@ -60,7 +60,6 @@ tar = "0.4"
 parquet = { version = "60.2.0", default-features = false, features = ["arrow", "zstd"] }
 arrow-array = "60.2.0"
 arrow-schema = "60.2.0"
-arrow-ipc = "60.2.0"
 
 [dev-dependencies]
 # `json` reads rows back as JSON in the snapshot tests.
@@ -70,7 +69,6 @@ proptest = "1"
 tempfile = "3"
 tokio-tungstenite = "0.30"
 tower = { version = "0.5", features = ["util"] }
-arrow-select = "60.2.0"
 
 [lints]
 workspace = true

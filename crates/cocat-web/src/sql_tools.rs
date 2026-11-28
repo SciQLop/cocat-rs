@@ -20,6 +20,11 @@ const CELL_CHARS: usize = 200;
 const ANSWER_BYTES: usize = 64 * 1024;
 pub const TIMEOUT_MS: u32 = 15_000;
 pub const MEMORY_LIMIT: &str = "1GB";
+/// The engine is dropped, and its memory given back, after a query that left its WebAssembly
+/// memory past this (it never shrinks), and after this long without a query. Starting one
+/// takes a few seconds; on the full snapshot it holds about 500 MB once started.
+pub const RECYCLE_MB: u32 = 640;
+pub const IDLE_MS: u32 = 120_000;
 
 /// The macros that compare catalogues pairwise, and the arguments that do not narrow them.
 const PAIRWISE: [&str; 3] = ["agreement", "match_rates", "same_events"];

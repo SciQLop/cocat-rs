@@ -7,8 +7,12 @@ import pytest
 from conftest import sql
 
 
+def engine_frames(page):
+    return [frame for frame in page.frames if frame.url.endswith("/sql-engine/engine.html")]
+
+
 def engine_frame(page):
-    return next(frame for frame in page.frames if frame.url.endswith("/sql-engine/engine.html"))
+    return engine_frames(page)[0]
 
 
 def test_queries_run_on_the_snapshot_and_its_survey_tables(page, server):
@@ -25,7 +29,7 @@ def test_an_attribute_file_is_fetched_when_a_query_names_it_after_the_lock(page,
     answer = sql(page, server, f"SELECT spacecraft, count(*) AS n FROM attributes('{a}') GROUP BY ALL")
     assert answer.get("error") is None, answer
     assert answer["rows"] == [["C1", 12]]
-    plain = sql(page, server, f"SELECT count(*) FROM read_arrow('attributes/{server['ids']['b']}.arrow')")
+    plain = sql(page, server, f"SELECT count(*) FROM read_parquet('attributes/{server['ids']['b']}.parquet')")
     assert plain["rows"] == [[12]], plain
 
 
@@ -107,3 +111,29 @@ def test_a_query_past_the_memory_limit_fails_clearly_and_the_page_lives(page, se
     assert "memory" in answer["error"].lower(), answer
     assert page.evaluate("1 + 1") == 2
     assert sql(page, server, "SELECT 42")["rows"] == [[42]]
+
+
+def test_a_swapped_engine_file_is_refused(page, server):
+    # The Parquet extension runs inside DuckDB: the page checks its hash before handing it
+    # over, so a server (or a cache) that serves other bytes starts no engine.
+    page.route("**/sql-engine/vendor/parquet.duckdb_extension.wasm",
+               lambda route: route.fulfill(body=b"\0asm\1\0\0\0 other bytes"))
+    answer = sql(page, server, "SELECT 42")
+    assert answer["kind"] == "start", answer
+    assert "parquet.duckdb_extension.wasm is not the pinned file" in answer["error"], answer
+    assert engine_frames(page) == []
+
+
+def test_the_engine_is_dropped_after_a_query_that_grew_it_and_the_next_one_starts_anew(page, server):
+    grown = sql(page, server, "SELECT count(*) FROM events", recycleMB=1)
+    assert grown["rows"] == [[25]], grown
+    assert grown["heapBytes"] > 2**20
+    page.wait_for_function("() => !document.querySelector('iframe[title=\"SQL engine\"]')")
+    assert sql(page, server, "SELECT 42", recycleMB=4096)["rows"] == [[42]]
+    assert len(engine_frames(page)) == 1
+
+
+def test_an_idle_engine_is_dropped(page, server):
+    assert sql(page, server, "SELECT 42", idleMs=500)["rows"] == [[42]]
+    page.wait_for_function("() => !document.querySelector('iframe[title=\"SQL engine\"]')", timeout=5000)
+    assert sql(page, server, "SELECT 43")["rows"] == [[43]]

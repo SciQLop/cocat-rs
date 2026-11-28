@@ -476,7 +476,7 @@ SET lock_configuration = true;
 - On DuckDB 2.x, add `SET allow_extension_repositories = 'forbidden'` (new in 2.0, same guide).
 - ~~The bundle links json, parquet and icu statically.~~ Wrong (section 8): the published
   builds link only `core_functions` and `nanoarrow`, and fetch everything else at run time.
-  The engine reads Arrow IPC with `read_arrow`, which needs nothing.
+  We serve the Parquet extension ourselves and the page hands it to the engine (section 9).
 - Autoload is on by default in wasm
   ([extensions](https://duckdb.org/docs/stable/clients/wasm/extensions)), hence the explicit
   off.
@@ -782,3 +782,48 @@ What the note had wrong, and what was done instead:
 - **Timings on the mirror:** the first call starts the engine in about 7 s; most questions
   answer in under 1.5 s; one phenomenon's full agreement matrix takes up to 9 s.
 
+## 9. Tab memory, and the Parquet extension served by us
+
+Measured on the mirror (441 catalogues, 1.65 M events), headless Chromium, the sum of the
+PSS of its processes. Same three steps each time: the engine's first query, describe_data's
+query, then `agreement_matrix('Plasma regions (where the spacecraft is)', 'Earth
+(magnetosphere)')` (138 pairs, the largest matrix that fits in 1 GB).
+
+| Step | Arrow (bdc0a0f) | Parquet + recycling |
+|---|---|---|
+| Page loaded | 245 MB | 252 MB |
+| Engine started | 1,130 MB | 1,035 MB |
+| After describe_data | 1,130 MB | 1,035 MB |
+| Right after the matrix | 2,215 MB | 2,029 MB |
+| 3 s after the matrix | 2,215 MB (stays) | 494 MB |
+| After 2 min idle | 2,215 MB (stays) | page only |
+
+What we learned:
+
+- **The Arrow copy was not the main cost.** Dropping it saved about 100 MB. The rest is
+  DuckDB's WebAssembly memory, which grows with a query and never shrinks: about 490 MB once
+  survey.sql has run (its per-catalogue windows over every event), 1,065 MB after the matrix.
+  DuckDB itself reports almost nothing held: the memory is free inside the heap, not given
+  back.
+- **Only dropping the engine gives it back.** So the page drops it after a query that left
+  its heap past 640 MB, and after 2 minutes without a query (`RECYCLE_MB`, `IDLE_MS` in
+  `sql_tools.rs`; the engine reports its heap size with each answer). The next query starts
+  a new engine: about 6 s.
+- **The extension, served by us.** DuckDB loads an extension with one synchronous
+  XMLHttpRequest from its worker. The worker's prelude replaces XMLHttpRequest: it answers
+  only an extension the page handed over (once), and refuses every other URL. The page
+  fetches `parquet.duckdb_extension.wasm` from our own bundle and checks its sha256 against
+  the one pinned in `bridge.js`, as for DuckDB's other files; a mismatch starts no engine
+  (tested). `fetch-duckdb.sh` downloads it from extensions.duckdb.org at build time
+  (v2.0.1, wasm_eh), pinned by the same hash. DuckDB checks its signature too.
+- **The files shrank.** Parquet only, with the event number, start and stop as deltas (they
+  were dictionaries of mostly distinct values): `events.parquet` 32 MB → 11.7 MB, the
+  whole snapshot 406 MB → 68 MB on disk.
+- **The engine stays a dev build.** npm's own `latest` tag is a dev build (1.33.1-dev57.0);
+  the last tagged release, 1.32.0 (December 2025), is DuckDB 1.4.3. It starts in the same
+  memory, but it runs out of its 1 GB on the plasma-region matrix that 2.0.1 answers, and it
+  lacks `allow_extension_repositories`. So: 1.33.1-dev124.0 (npm `next`, DuckDB 2.0.1),
+  pinned by hash, as before.
+- **Peak:** a big query still takes the tab to about 2 GB for its few seconds: the 1 GB
+  `memory_limit` plus DuckDB's working memory outside its buffers. A lower limit would refuse
+  that matrix.

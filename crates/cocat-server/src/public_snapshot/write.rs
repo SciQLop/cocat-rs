@@ -2,11 +2,8 @@
 //! (`public_search`). Only the fields listed here leave the server: no author, no creation
 //! time, no origin, no products, no shape.
 //!
-//! Each table is written twice, from the same batches: as Parquet, which Python and most
-//! tools read, and as Arrow IPC, which the browser's DuckDB reads without any extension
-//! (its builds load Parquet support from the network, which the page's sandbox refuses).
-//! The Arrow files are not compressed: that DuckDB cannot read compressed ones. HTTP
-//! compression shrinks them on the wire, and the repeated text columns are dictionaries.
+//! Every table is one Parquet file, which Python, the browser's DuckDB (its Parquet extension
+//! is served by us, see cocat-web/fetch-duckdb.sh) and most tools read.
 
 use std::io::BufRead as _;
 use std::path::Path;
@@ -19,12 +16,12 @@ use arrow_array::{
     TimestampMicrosecondArray,
 };
 use arrow_array::{DictionaryArray, Int8Array, Int32Array};
-use arrow_ipc::writer::FileWriter;
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use cocat_core::model::EventRecord;
 use parquet::arrow::ArrowWriter;
-use parquet::basic::{Compression, ZstdLevel};
+use parquet::basic::{Compression, Encoding, ZstdLevel};
 use parquet::file::properties::WriterProperties;
+use parquet::schema::types::ColumnPath;
 use serde_json::Value;
 
 /// The attributes the survey reads an event's observer from, first found wins.
@@ -33,6 +30,10 @@ const ROW_GROUP: usize = 128 * 1024;
 /// The columns every attribute file starts with; an attribute of the same name gets a `_`.
 const EVENT_KEY: &str = "_event";
 const UUID_KEY: &str = "_uuid";
+/// Each file's columns of sorted, mostly distinct integers: as deltas they take a fifth of
+/// the room a dictionary takes. By file, as an attribute may share an events column's name.
+const EVENT_DELTAS: &[&str] = &["event", "start", "stop"];
+const ATTRIBUTE_DELTAS: &[&str] = &[EVENT_KEY];
 
 /// One public catalogue as the snapshot describes it.
 pub struct Catalogue {
@@ -78,30 +79,25 @@ pub fn snapshot(
                     &format!("attributes/{}", catalogue.id),
                     &catalogue.id,
                     &batch,
+                    ATTRIBUTE_DELTAS,
                 )
             })
-            .transpose()?
-            .unwrap_or_default();
+            .transpose()?;
         let keys = attribute_keys(&records);
-        let file_name = attributes.first().map(named);
+        let file_name = attributes.as_ref().map(named);
         files.extend(attributes);
         rows.push((records.len() as i64, keys, file_name));
     }
-    let (parquet, arrow) = sink.finish()?;
     files.push(Written {
         logical: "events.parquet".into(),
         stem: "events".into(),
-        bytes: parquet,
+        bytes: sink.finish()?,
     });
-    files.push(Written {
-        logical: "events.arrow".into(),
-        stem: "events".into(),
-        bytes: arrow,
-    });
-    files.extend(written(
+    files.push(written(
         "catalogues",
         "catalogues",
         &catalogue_batch(catalogues, &rows)?,
+        &[],
     )?);
     Ok(files)
 }
@@ -136,32 +132,34 @@ fn read_events(path: &Path) -> Result<Vec<EventRecord>, WriteError> {
     Ok(events)
 }
 
-fn properties() -> WriterProperties {
-    WriterProperties::builder()
+fn properties(deltas: &[&str]) -> WriterProperties {
+    deltas
+        .iter()
+        .fold(WriterProperties::builder(), |builder, name| {
+            let column = ColumnPath::from(*name);
+            builder
+                .set_column_dictionary_enabled(column.clone(), false)
+                .set_column_encoding(column, Encoding::DELTA_BINARY_PACKED)
+        })
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_max_row_group_row_count(Some(ROW_GROUP))
         .build()
 }
 
-/// `batch` as `<logical>.parquet` and `<logical>.arrow`, Parquet first.
-fn written(logical: &str, stem: &str, batch: &RecordBatch) -> Result<Vec<Written>, WriteError> {
-    let mut parquet = ArrowWriter::try_new(Vec::new(), batch.schema(), Some(properties()))?;
+/// `batch` as `<logical>.parquet`, with `deltas` as delta-encoded columns.
+fn written(
+    logical: &str,
+    stem: &str,
+    batch: &RecordBatch,
+    deltas: &[&str],
+) -> Result<Written, WriteError> {
+    let mut parquet = ArrowWriter::try_new(Vec::new(), batch.schema(), Some(properties(deltas)))?;
     parquet.write(batch)?;
-    let mut arrow = FileWriter::try_new(Vec::new(), &batch.schema())?;
-    arrow.write(batch)?;
-    arrow.finish()?;
-    Ok(vec![
-        Written {
-            logical: format!("{logical}.parquet"),
-            stem: stem.to_owned(),
-            bytes: parquet.into_inner()?,
-        },
-        Written {
-            logical: format!("{logical}.arrow"),
-            stem: stem.to_owned(),
-            bytes: arrow.into_inner()?,
-        },
-    ])
+    Ok(Written {
+        logical: format!("{logical}.parquet"),
+        stem: stem.to_owned(),
+        bytes: parquet.into_inner()?,
+    })
 }
 
 fn micros(at: cocat_core::time::Timestamp) -> i64 {
@@ -182,12 +180,10 @@ const STATUSES: [&str; 6] = [
     "deleted",
 ];
 
-/// The events files, written one catalogue at a time so a row group is all that is held.
-/// The catalogue and status columns are dictionaries with the same values in every batch:
-/// an Arrow file allows one dictionary per column.
+/// The events file, written one catalogue at a time so a row group is all that is held.
+/// The catalogue and status columns are dictionaries with the same values in every batch.
 struct EventSink {
     parquet: ArrowWriter<Vec<u8>>,
-    arrow: FileWriter<Vec<u8>>,
     schema: Arc<Schema>,
     catalogues: ArrayRef,
     statuses: ArrayRef,
@@ -211,11 +207,13 @@ impl EventSink {
             Field::new("tags", tags, false),
             Field::new("observer_raw", DataType::Utf8, true),
         ]));
-        let parquet = ArrowWriter::try_new(Vec::new(), Arc::clone(&schema), Some(properties()))?;
-        let arrow = FileWriter::try_new(Vec::new(), &schema)?;
+        let parquet = ArrowWriter::try_new(
+            Vec::new(),
+            Arc::clone(&schema),
+            Some(properties(EVENT_DELTAS)),
+        )?;
         Ok(Self {
             parquet,
-            arrow,
             schema,
             catalogues: Arc::new(StringArray::from_iter_values(catalogues)),
             statuses: Arc::new(StringArray::from_iter_values(STATUSES)),
@@ -269,14 +267,11 @@ impl EventSink {
         ];
         let batch = RecordBatch::try_new(Arc::clone(&self.schema), columns)?;
         self.parquet.write(&batch)?;
-        self.arrow.write(&batch)?;
         Ok(())
     }
 
-    /// The Parquet file and the Arrow file.
-    fn finish(mut self) -> Result<(Vec<u8>, Vec<u8>), WriteError> {
-        self.arrow.finish()?;
-        Ok((self.parquet.into_inner()?, self.arrow.into_inner()?))
+    fn finish(self) -> Result<Vec<u8>, WriteError> {
+        Ok(self.parquet.into_inner()?)
     }
 }
 
