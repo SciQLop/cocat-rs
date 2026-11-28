@@ -73,7 +73,7 @@ values, and which mistakes stop the server at startup. The ones an operator sets
 
 | Group | Variables | What for |
 |---|---|---|
-| Public address | `COCAT_PUBLIC_URL`, `COCAT_PROXY_PREFIX` | the scheme and host users reach; the path the proxy mounts the server under. Mailed links, provider redirects and the sign-in links apps show are built from both. |
+| Public address | `COCAT_PUBLIC_URL`, `COCAT_PROXY_PREFIX`, `COCAT_PROXY_PREFIX_ALIASES` | the scheme and host users reach; the path the proxy mounts the server under; the paths it was mounted under before (see [Moving to a new prefix](#moving-to-a-new-prefix)). Mailed links, provider redirects and the sign-in links apps show are built from the first two. |
 | Proxy | `COCAT_TRUSTED_PROXIES` | how many proxies stand in front, so rate limits see the real client. The image sets 1. |
 | Secret | `COCAT_SECRET` | signs mailed links and the provider sign-in cookie. Unset, the server keeps one in `/db/cocat-rs.db.secret`: back it up with the database. |
 | Mail | `COCAT_SMTP_HOST`, `COCAT_SMTP_PORT`, `COCAT_SMTP_STARTTLS`, `COCAT_SMTP_USERNAME`, `COCAT_SMTP_PASSWORD`, `COCAT_MAIL_FROM`, `COCAT_MAIL_DIR` | see [Mail](#mail) |
@@ -116,6 +116,20 @@ To serve the server at the root of its own host, use `location /`,
 
 Then check that `https://cocat.example.org/cocat/docs` shows the API documentation and
 `/cocat/ui/login` the sign-in page.
+
+### Moving to a new prefix
+
+To move the server from `/cocat-dev/` to `/cocat/` without breaking open pages, bookmarks
+and links already mailed:
+
+1. Keep a proxy `location` for the old prefix, stripping it the same way, next to the new one.
+2. Set `COCAT_PROXY_PREFIX=/cocat` and `COCAT_PROXY_PREFIX_ALIASES=/cocat-dev`.
+
+Links the server builds from then on use `/cocat`. A page still open under `/cocat-dev`
+whose session expires sends its visitor to sign in, and they come back under `/cocat`.
+The session cookie is not tied to a path, so a visitor signed in under one prefix is
+signed in under the other. Provider sign-in redirects use the new prefix: register it with
+each provider first.
 
 ### Protecting sign-up from bots
 

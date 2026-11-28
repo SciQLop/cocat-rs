@@ -17,6 +17,8 @@ pub use cocat_core::room_id::path_segment as segment;
 pub struct Links {
     origin: String,
     prefix: String,
+    /// Prefixes the server was reached under before, which `prefixed` swaps for `prefix`.
+    aliases: Vec<String>,
     /// What every page tells visitors in a banner, such as a coming move.
     notice: Notice,
 }
@@ -54,6 +56,7 @@ impl Links {
         Ok(Links {
             origin: origin(&env("COCAT_PUBLIC_URL").unwrap_or_default())?,
             prefix: prefix(&env("COCAT_PROXY_PREFIX").unwrap_or_default()),
+            aliases: aliases(&env("COCAT_PROXY_PREFIX_ALIASES").unwrap_or_default()),
             notice: Notice::default(),
         })
     }
@@ -92,16 +95,19 @@ impl Links {
     ///
     /// The prefix is stripped by the proxy before the request reaches the server, so a
     /// path taken from a request or from a `next` parameter names the route without it;
-    /// a path this server built already has it.
+    /// a path this server built already has it. A path under an old prefix, from a page
+    /// opened before the prefix moved, gets the current one in its place.
     pub fn prefixed(&self, path: &str) -> String {
-        let carries = path == self.prefix
-            || path
-                .strip_prefix(&self.prefix)
-                .is_some_and(|rest| rest.starts_with('/'));
-        if self.prefix.is_empty() || carries {
-            path.to_owned()
-        } else {
-            format!("{}{}", self.prefix, path)
+        let moved = self
+            .aliases
+            .iter()
+            .find_map(|alias| under(path, alias))
+            .filter(|rest| !rest.starts_with("//"));
+        match moved {
+            Some("") => format!("{}/", self.prefix),
+            Some(rest) => format!("{}{rest}", self.prefix),
+            None if under(path, &self.prefix).is_some() => path.to_owned(),
+            None => format!("{}{path}", self.prefix),
         }
     }
 
@@ -160,6 +166,21 @@ fn origin(configured: &str) -> Result<String, LinksError> {
     Ok(format!("{scheme}://{authority}"))
 }
 
+/// The rest of `path` after `prefix`, when `path` is `prefix` itself or a path below it.
+fn under<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    path.strip_prefix(prefix)
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// `COCAT_PROXY_PREFIX_ALIASES`, a comma-separated list, each entry normalised like the prefix.
+fn aliases(configured: &str) -> Vec<String> {
+    configured
+        .split(',')
+        .map(prefix)
+        .filter(|alias| !alias.is_empty())
+        .collect()
+}
+
 /// `COCAT_PROXY_PREFIX` as `/prefix`, or empty, as Python's `prefix.py` normalises it.
 fn prefix(configured: &str) -> String {
     let stripped = configured.trim().trim_matches('/');
@@ -197,6 +218,47 @@ mod tests {
             Some("https://cocat.example.org/cocat-dev".to_owned())
         );
         assert_eq!(links("", "cocat-dev").public_base(), None);
+    }
+
+    fn moved(prefix: &str, aliases: &str) -> Links {
+        Links::from_env(&|name| match name {
+            "COCAT_PROXY_PREFIX" => Some(prefix.to_owned()),
+            "COCAT_PROXY_PREFIX_ALIASES" => Some(aliases.to_owned()),
+            _ => None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn an_old_prefix_is_swapped_for_the_current_one() {
+        let links = moved("cocat", " /cocat-dev/ , old,,");
+        assert_eq!(links.prefixed("/cocat-dev/ui/x?a=1#b"), "/cocat/ui/x?a=1#b");
+        assert_eq!(links.prefixed("/old/ui/x"), "/cocat/ui/x");
+        assert_eq!(links.prefixed("/cocat-dev"), "/cocat/");
+    }
+
+    #[test]
+    fn a_path_without_a_prefix_gets_it_once() {
+        let links = moved("cocat", "cocat-dev");
+        assert_eq!(links.prefixed("/ui/x"), "/cocat/ui/x");
+        assert_eq!(links.prefixed("/cocat/ui/x"), "/cocat/ui/x");
+    }
+
+    #[test]
+    fn a_longer_name_is_not_an_alias() {
+        let links = moved("cocat", "cocat-dev");
+        assert_eq!(links.prefixed("/cocat-devx/ui"), "/cocat/cocat-devx/ui");
+    }
+
+    #[test]
+    fn swapping_to_no_prefix_never_leaves_a_host_path() {
+        let links = moved("", "cocat-dev");
+        assert_eq!(links.prefixed("/cocat-dev/ui/x"), "/ui/x");
+        assert_eq!(links.prefixed("/cocat-dev"), "/");
+        assert_eq!(
+            links.prefixed("/cocat-dev//evil.com"),
+            "/cocat-dev//evil.com"
+        );
     }
 
     #[test]

@@ -174,11 +174,17 @@ impl Fixture {
         self.post(&path, None, &form).await
     }
 
-    fn with_prefix(mut self, prefix: &str) -> Self {
-        let prefix = prefix.to_owned();
-        self.state.links =
-            Links::from_env(&move |name| (name == "COCAT_PROXY_PREFIX").then(|| prefix.clone()))
-                .unwrap();
+    fn with_prefix(self, prefix: &str) -> Self {
+        self.with_links(&[("COCAT_PROXY_PREFIX", prefix)])
+    }
+
+    fn with_links(mut self, env: &[(&str, &str)]) -> Self {
+        self.state.links = Links::from_env(&|name| {
+            env.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        })
+        .unwrap();
         self
     }
 
@@ -599,6 +605,26 @@ async fn next_carrying_the_prefix_is_not_doubled() {
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(location(&response), "/cocat-dev/ui/rooms?tag=a#top");
+}
+
+#[tokio::test]
+async fn next_under_an_old_prefix_moves_to_the_current_one() {
+    let fixture = Fixture::start().await.with_links(&[
+        ("COCAT_PROXY_PREFIX", "/cocat"),
+        ("COCAT_PROXY_PREFIX_ALIASES", "cocat-dev"),
+    ]);
+    fixture.verified("member@example.org").await;
+
+    let response = fixture
+        .login(
+            "member@example.org",
+            PASSWORD,
+            Some("/cocat-dev/ui/rooms/x/browse"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&response), "/cocat/ui/rooms/x/browse");
 }
 
 #[tokio::test]
