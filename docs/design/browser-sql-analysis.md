@@ -827,3 +827,30 @@ What we learned:
 - **Peak:** a big query still takes the tab to about 2 GB for its few seconds: the 1 GB
   `memory_limit` plus DuckDB's working memory outside its buffers. A lower limit would refuse
   that matrix.
+
+## 10. Step 5: the plot tool, and the CSV download
+
+Built as section 3 and rule 5 say, with three changes:
+
+- **`plot` takes `sql` and `spec`,** not a query id: the page runs the query (up to 5,000
+  rows) and draws its rows. The agent reads only `shown`, `rows_plotted` and `warnings`,
+  never the chart or the rows.
+- **Vega runs in its own frame, not the engine's.** Each chart opens a fresh frame from the
+  same `engine.html` (same CSP: blob: scripts only, no eval, no connection) and starts
+  `chart.js` in it, then throws it away. A chart never waits for an engine that was just
+  recycled, and keeps nothing between charts. No vega-embed: Vega-Lite compiles the spec,
+  `vega.parse(…, {ast: true})` and `vega-interpreter` evaluate expressions, and
+  `view.toSVG()` gives SVG text. vega 6.4.0, vega-lite 6.5.0, vega-interpreter 2.3.2, pinned
+  by hash in `fetch-duckdb.sh` and `bridge.js`.
+- **The page shows the chart as an image** (`<img src="data:image/svg+xml,…">`): an SVG
+  image runs no script and loads nothing. The SVG is never inserted as markup.
+
+Lockdown, in order: a spec holding `url`, `href` or `usermeta` anywhere is refused before
+Vega loads; Vega's loader refuses every URL; Vega's expression parser refuses unknown names
+(`window`, `parent`, `fetch`) and `constructor`; the frame's CSP refuses eval and every
+connection. Tested: data URLs (top level and in a layer), an image URL, an `href`,
+`usermeta`, and five hostile expressions all fail with no request leaving the page.
+
+CSV: each result in the queries panel has a "Download CSV" link, made in the page from the
+rows shown (a `data:` URL, RFC 4180). Text a spreadsheet would run as a formula (`=`, `+`,
+`-`, `@`) starts with `'`; numbers are left alone.

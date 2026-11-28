@@ -20,6 +20,13 @@
   const EXTENSIONS = {
     parquet: ["vendor/parquet.duckdb_extension.wasm", "fa88a43aa7366f3ac3b6d0ea6b3a0292c8da45b06070aabcd56da1233078ebcf"],
   };
+  const CHARTS = {
+    vega: ["vendor/vega.min.js", "8f6a3587cf8d4f42c7e08120e3eb05d067e746d554e39d2dcf52acc0bd5ba28f"],
+    vegaLite: ["vendor/vega-lite.min.js", "83e215e84e308ee8688fa6503ba0f1cf8a3c05c0d61df2841a0b92bf86809e00"],
+    interpreter: ["vendor/vega-interpreter.js", "c0bdb735a63f9276f136e8d90d7fdf5d8e9df8031eb069048fc9975c876fd7f9"],
+  };
+  const CHART_ROWS = 5000;
+  const CHART_MS = 15000;
   const GRACE_MS = 5000;
   const START_MS = 60000;
   const ATTRIBUTE_FILE = /attributes\/([A-Za-z0-9._-]+)\.parquet/;
@@ -30,6 +37,7 @@
 
   let engine = null;
   let idle = null;
+  let chartLibraries = null;
   let queue = Promise.resolve();
   let nextId = 0;
 
@@ -98,14 +106,10 @@
     const fileUrl = (logical) => `${snapshotUrl}/${manifest.files[logical].name}`;
     const assets = await fetchAll(ASSETS);
     const extensions = await fetchAll(EXTENSIONS);
-    const engineCode = await fetchBytes(new URL("engine.js", HERE));
     const files = {};
     for (const logical of ["events.parquet", "catalogues.parquet"]) files[logical] = await fetchBytes(fileUrl(logical));
     const survey = new TextDecoder().decode(await fetchBytes(fileUrl("survey.sql")));
-    const frame = openFrame();
-    await frame.ready;
-    frame.frame.contentWindow.postMessage({ type: "engine", code: new TextDecoder().decode(engineCode) }, "*");
-    await frame.loaded;
+    const frame = await startFrame("engine.js");
     const transfer = [...Object.values(assets), ...Object.values(extensions), ...Object.values(files)];
     const started = await frame.call({ type: "init", assets, extensions, files, survey, memoryLimit }, transfer);
     if (started.error) {
@@ -188,7 +192,41 @@
     return { ...answer.answer, snapshot: running.manifest.version, created: running.manifest.created };
   }
 
+  // Opens a frame like the engine's and starts `file` in it.
+  async function startFrame(file) {
+    const code = await fetchBytes(new URL(file, HERE));
+    const frame = openFrame();
+    await frame.ready;
+    frame.frame.contentWindow.postMessage({ type: "engine", code: new TextDecoder().decode(code) }, "*");
+    await frame.loaded;
+    return frame;
+  }
+
+  // Each chart gets a fresh frame (chart.js), thrown away after: it keeps nothing between
+  // charts, and it never waits for the engine, which may have just been dropped.
+  async function draw(spec, answer) {
+    if (!chartLibraries) chartLibraries = fetchAll(CHARTS).catch((error) => { chartLibraries = null; throw error; });
+    const libraries = await chartLibraries;
+    const frame = await startFrame("chart.js");
+    try {
+      const rows = answer.rows.slice(0, CHART_ROWS);
+      const drawn = await frame.call({ type: "draw", libraries, spec, columns: answer.columns, rows });
+      if (drawn.error) return { error: drawn.error };
+      const warnings = [...drawn.answer.warnings];
+      if (answer.rows.length > CHART_ROWS) warnings.unshift(`only the first ${CHART_ROWS} of ${answer.rows.length} rows are plotted`);
+      if (answer.truncated) warnings.unshift(`the query has more rows than the ${answer.rows.length} fetched: aggregate it`);
+      return { svg: drawn.answer.svg, rowsPlotted: rows.length, warnings };
+    } finally {
+      frame.close();
+    }
+  }
+
   window.cocatSql = {
+    // A Vega-Lite `spec` drawn from `answer` (a query's answer: columns and rows), as
+    // {svg, rowsPlotted, warnings} or {error}.
+    plot(spec, answer) {
+      return withLimit(draw(spec, answer), CHART_MS).catch((error) => ({ error: String((error && error.message) || error) }));
+    },
     // options: snapshot (the manifest's URL), maxRows, timeoutMs, memoryLimit ('1GB'),
     // recycleMB and idleMs (both optional).
     // Answers {columns, types, rows, truncated, elapsedMs, heapBytes, snapshot} or

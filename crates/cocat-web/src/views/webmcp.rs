@@ -16,7 +16,8 @@ use crate::api;
 use crate::projects::api_url;
 use crate::public::PublicCatalogue;
 use crate::sql_tools::{
-    self, DESCRIBE, IDLE_MS, MEMORY_LIMIT, RECYCLE_MB, RUN_SQL, TIMEOUT_MS, VOCABULARY_SQL,
+    self, DESCRIBE, IDLE_MS, MEMORY_LIMIT, PLOT, PLOT_ROWS, RECYCLE_MB, RUN_SQL, TIMEOUT_MS,
+    VOCABULARY_SQL,
 };
 use crate::views::projects::Projects;
 use crate::views::queries::QueryLog;
@@ -101,6 +102,26 @@ async fn run(
             log.record(RUN_SQL, &sql, &raw);
             Ok(sql_tools::answer(&raw))
         }
+        PLOT => {
+            let (sql, spec) = sql_tools::plot_input(input).inspect_err(|why| {
+                let sql = input.get("sql").and_then(Value::as_str).unwrap_or_default();
+                log.record(PLOT, sql, &serde_json::json!({ "error": why }));
+            })?;
+            let mut raw = query(projects, &sql, PLOT_ROWS).await;
+            let drawn = match raw.get("error") {
+                Some(_) => Value::Null,
+                None => bridge_call("plot", &[&spec, &raw]).await,
+            };
+            if let Some(map) = raw.as_object_mut() {
+                match (drawn.get("svg"), drawn.get("error")) {
+                    (Some(svg), _) => map.insert("chart".into(), svg.clone()),
+                    (_, Some(error)) => map.insert("chart_error".into(), error.clone()),
+                    _ => None,
+                };
+            }
+            log.record(PLOT, &sql, &raw);
+            Ok(sql_tools::plot_answer(&raw, &drawn))
+        }
         DESCRIBE => {
             let attributes_sql = sql_tools::catalogue_sql(input)?;
             let vocabulary = query(projects, VOCABULARY_SQL, 500).await;
@@ -128,9 +149,8 @@ async fn public_catalogues(projects: Projects) -> Result<Vec<PublicCatalogue>, S
 /// The engine's answer to `sql`, through the page's side of it (`sql-engine/bridge.js`):
 /// rows, or an error and its kind.
 async fn query(projects: Projects, sql: &str, max_rows: u64) -> Value {
-    let failed = |error: String| serde_json::json!({ "error": error, "kind": "start" });
     let Some(snapshot) = api_url(&projects.api(), &["public", "snapshot"]) else {
-        return failed("no snapshot address".into());
+        return serde_json::json!({ "error": "no snapshot address", "kind": "start" });
     };
     let options = serde_json::json!({
         "snapshot": snapshot,
@@ -140,28 +160,35 @@ async fn query(projects: Projects, sql: &str, max_rows: u64) -> Value {
         "recycleMB": RECYCLE_MB,
         "idleMs": IDLE_MS,
     });
+    bridge_call("query", &[&Value::from(sql), &options]).await
+}
+
+/// `window.cocatSql[method](...arguments)`, awaited: its answer, or `{error, kind: "start"}`.
+async fn bridge_call(method: &str, arguments: &[&Value]) -> Value {
+    let failed = |error: &str| serde_json::json!({ "error": error, "kind": "start" });
     let Some(bridge) = web_sys::window()
         .and_then(|window| Reflect::get(&window, &"cocatSql".into()).ok())
         .filter(JsValue::is_object)
     else {
-        return failed("this page has no SQL engine".into());
+        return failed("this page has no SQL engine");
     };
-    let Ok(run) = Reflect::get(&bridge, &"query".into()).and_then(|run| run.dyn_into::<Function>())
+    let Ok(run) = Reflect::get(&bridge, &method.into()).and_then(|run| run.dyn_into::<Function>())
     else {
-        return failed("this page has no SQL engine".into());
+        return failed("this page has no SQL engine");
     };
-    let Some(options) = to_js(&options) else {
-        return failed("bad options".into());
-    };
+    let arguments: js_sys::Array = arguments
+        .iter()
+        .map(|argument| JSON::parse(&argument.to_string()).unwrap_or(JsValue::NULL))
+        .collect();
     let Ok(promise) = run
-        .call2(&bridge, &JsValue::from_str(sql), &options)
+        .apply(&bridge, &arguments)
         .and_then(|answer| answer.dyn_into::<Promise>())
     else {
-        return failed("the SQL engine refused the query".into());
+        return failed("the SQL engine refused the call");
     };
     match wasm_bindgen_futures::JsFuture::from(promise).await {
         Ok(answer) => from_js(&answer),
-        Err(error) => failed(format!("{error:?}")),
+        Err(error) => failed(&format!("{error:?}")),
     }
 }
 

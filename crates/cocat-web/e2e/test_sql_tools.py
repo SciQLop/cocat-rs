@@ -40,6 +40,7 @@ def test_the_page_registers_the_sql_tools_read_only(agent):
     assert sorted(tools) == [
         ["describe_data", True, True],
         ["open_public_catalogue", True, False],
+        ["plot", True, True],
         ["run_sql", True, True],
         ["search_public_catalogues", True, True],
     ]

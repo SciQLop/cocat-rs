@@ -7,10 +7,14 @@
 //! the tools steer to one phenomenon or one pair before a query runs, and an answer that ran
 //! out of memory says so plainly.
 
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 
 pub const DESCRIBE: &str = "describe_data";
 pub const RUN_SQL: &str = "run_sql";
+pub const PLOT: &str = "plot";
+/// The rows a chart is drawn from, at most.
+pub const PLOT_ROWS: u64 = 5000;
 
 const DEFAULT_ROWS: u64 = 50;
 const MAX_ROWS: u64 = 500;
@@ -89,7 +93,10 @@ WHERE label_a ILIKE '%cluster%' AND label_b ILIKE '%cluster%'
 HAVING count(*) FILTER (WHERE theme = 'ICMEs, magnetic clouds, sheaths') = 0
 - Median duration of STIX flares per GOES class: SELECT left(goes_class, 1) AS class, \
 count(*), median(duration_h) * 60 AS minutes FROM attributes('public.stix.flares') \
-WHERE goes_class IS NOT NULL GROUP BY class ORDER BY class";
+WHERE goes_class IS NOT NULL GROUP BY class ORDER BY class
+- Chart bow shock events per year: plot with sql SELECT year, events FROM \
+events_per_year('Bow shocks') and spec {\"mark\": \"bar\", \"encoding\": {\"x\": {\"field\": \
+\"year\", \"type\": \"ordinal\"}, \"y\": {\"field\": \"events\", \"type\": \"quantitative\"}}}";
 
 /// The phenomena and observers, with how many catalogues and events each pair holds.
 pub const VOCABULARY_SQL: &str = "SELECT theme, observer, count(*) AS catalogues, \
@@ -139,7 +146,54 @@ pub fn definitions() -> Vec<Value> {
             },
             "annotations": {"readOnlyHint": true, "untrustedContentHint": true}
         }),
+        json!({
+            "name": PLOT,
+            "title": "Chart a query's result",
+            "description": "Runs one SQL query, like run_sql, and shows the user a chart of its \
+                rows, drawn from a Vega-Lite spec. The spec has no data: the query's rows are \
+                its data, its columns the field names. Up to 5000 rows; aggregate first. The \
+                agent does not see the chart, only whether it was shown.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "One DuckDB SQL query."},
+                    "spec": {
+                        "type": "object",
+                        "description": "A Vega-Lite spec without data, e.g. {\"mark\": \"bar\", \
+                            \"encoding\": {\"x\": {\"field\": \"year\", \"type\": \"ordinal\"}, \
+                            \"y\": {\"field\": \"events\", \"type\": \"quantitative\"}}}."
+                    }
+                },
+                "required": ["sql", "spec"]
+            },
+            "annotations": {"readOnlyHint": true, "untrustedContentHint": true}
+        }),
     ]
+}
+
+/// plot's query and Vega-Lite spec, or why nothing is drawn.
+pub fn plot_input(input: &Value) -> Result<(String, Value), String> {
+    let (sql, _) = sql_input(input)?;
+    let spec = input
+        .get("spec")
+        .filter(|spec| spec.is_object())
+        .ok_or("give a Vega-Lite spec in spec, as an object, without data")?;
+    Ok((sql, spec.clone()))
+}
+
+/// What the agent reads after a chart: whether the user sees it, or why not.
+pub fn plot_answer(query: &Value, drawn: &Value) -> Value {
+    if query.get("error").is_some() {
+        return answer(query);
+    }
+    match drawn.get("error").and_then(Value::as_str) {
+        Some(error) => json!({"error": format!("The chart was not drawn: {error}")}),
+        None => json!({
+            "shown": true,
+            "rows_plotted": drawn["rowsPlotted"],
+            "warnings": drawn.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        }),
+    }
 }
 
 /// run_sql's query and row cap, or why the query is not run.
@@ -359,6 +413,45 @@ fn attribute_columns(result: &Value) -> Value {
     )
 }
 
+/// A cell as the panel shows it: text, never markup.
+pub fn cell_text(cell: &Value) -> String {
+    match cell {
+        Value::Null => String::new(),
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// A result as CSV text (RFC 4180): the columns, then the rows as shown. Text that a
+/// spreadsheet would run as a formula starts with a `'`: catalogue text is third parties'.
+pub fn csv(result: &Value) -> String {
+    let field = |cell: &Value| {
+        let mut text = cell_text(cell);
+        if cell.is_string() && text.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+            text.insert(0, '\'');
+        }
+        if text.contains([',', '"', '\n', '\r']) {
+            format!("\"{}\"", text.replace('"', "\"\""))
+        } else {
+            text
+        }
+    };
+    let line = |cells: &[Value]| cells.iter().map(field).collect::<Vec<_>>().join(",") + "\r\n";
+    let mut text = line(result["columns"].as_array().map_or(&[], Vec::as_slice));
+    for row in result["rows"].as_array().into_iter().flatten() {
+        text += &line(row.as_array().map_or(&[], Vec::as_slice));
+    }
+    text
+}
+
+/// `text` as a `data:` URL: the page makes the CSV and shows the chart without a request.
+pub fn data_url(media_type: &str, text: &str) -> String {
+    format!(
+        "data:{media_type},{}",
+        utf8_percent_encode(text, NON_ALPHANUMERIC)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +496,45 @@ mod tests {
         ] {
             assert_eq!(steer(sql), None, "{sql}");
         }
+    }
+
+    #[test]
+    fn plot_takes_a_query_and_a_spec_object() {
+        let (sql, spec) =
+            plot_input(&json!({"sql": "SELECT 1 AS n", "spec": {"mark": "bar"}})).unwrap();
+        assert_eq!(
+            (sql.as_str(), spec),
+            ("SELECT 1 AS n", json!({"mark": "bar"}))
+        );
+        assert!(plot_input(&json!({"sql": "SELECT 1", "spec": "bar"})).is_err());
+        assert!(plot_input(&json!({"sql": "SELECT 1"})).is_err());
+        let steered = plot_input(&json!({"sql": "FROM agreement()", "spec": {}})).unwrap_err();
+        assert!(steered.contains("one phenomenon"), "{steered}");
+    }
+
+    #[test]
+    fn a_plot_answer_says_whether_the_chart_is_shown_never_its_rows() {
+        let rows = json!({"columns": ["n"], "rows": [["secret text"]]});
+        let drawn = json!({"svg": "<svg>secret text</svg>", "rowsPlotted": 1, "warnings": []});
+        assert_eq!(
+            plot_answer(&rows, &drawn),
+            json!({"shown": true, "rows_plotted": 1, "warnings": []})
+        );
+        let refused = plot_answer(&rows, &json!({"error": "its spec may not hold \"url\""}));
+        assert!(
+            refused["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("The chart was not drawn")
+        );
+        let failed = plot_answer(
+            &json!({"error": "Out of Memory", "kind": "memory"}),
+            &json!({}),
+        );
+        assert!(
+            failed["error"].as_str().unwrap().contains("more memory"),
+            "{failed}"
+        );
     }
 
     #[test]
@@ -495,6 +627,34 @@ mod tests {
         assert_eq!(
             described["attributes"][1]["samples"],
             json!(["C1.2", "M3.4"])
+        );
+    }
+
+    #[test]
+    fn a_cell_is_plain_text() {
+        assert_eq!(cell_text(&json!("<img src=x>")), "<img src=x>");
+        assert_eq!(cell_text(&json!(null)), "");
+        assert_eq!(cell_text(&json!(2.5)), "2.5");
+        assert_eq!(cell_text(&json!(["a", 1])), "[\"a\",1]");
+    }
+
+    #[test]
+    fn csv_quotes_what_needs_it_and_defuses_formulas_in_text_only() {
+        let result = json!({
+            "columns": ["text", "n"],
+            "rows": [["a,b", 2], ["=1+1", -3], ["say \"hi\"\nthen", null], ["-x", 1.5]],
+        });
+        assert_eq!(
+            csv(&result),
+            "text,n\r\n\"a,b\",2\r\n'=1+1,-3\r\n\"say \"\"hi\"\"\nthen\",\r\n'-x,1.5\r\n"
+        );
+    }
+
+    #[test]
+    fn a_data_url_escapes_everything_that_could_end_it() {
+        assert_eq!(
+            data_url("image/svg+xml", "<svg a=\"#\">"),
+            "data:image/svg+xml,%3Csvg%20a%3D%22%23%22%3E"
         );
     }
 }

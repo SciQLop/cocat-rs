@@ -1888,6 +1888,8 @@ a.home-project:hover { color: var(--accent); }
 }
 .query-panel .query-error { margin: 0; color: var(--danger); }
 .query-panel .query-result { max-height: 240px; overflow: auto; }
+.query-panel .query-chart { display: block; max-width: 100%; height: auto; background: #fff; border-radius: 4px; }
+.query-panel .query-csv { align-self: flex-start; font-size: 0.85em; }
 .query-panel table { border-collapse: collapse; font-size: 12px; }
 .query-panel th,
 .query-panel td {
