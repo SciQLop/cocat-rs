@@ -61,11 +61,11 @@
     Object.fromEntries(await Promise.all(Object.entries(pinned).map(async ([key, file]) => [key, await fetchPinned(file)])));
 
   // The frame, and a call that sends one message and waits for its answer.
-  function openFrame() {
+  function openFrame(title) {
     const frame = document.createElement("iframe");
     frame.setAttribute("sandbox", "allow-scripts");
     frame.hidden = true;
-    frame.title = "SQL engine";
+    frame.title = title;
     frame.src = new URL("engine.html", HERE).href;
     const waiting = new Map();
     const signals = new Map();
@@ -98,7 +98,8 @@
     return { frame, ready, loaded, dead, call, close };
   }
 
-  async function startEngine(snapshotUrl, memoryLimit) {
+  // The frame is opened by the caller, so that a start past its time closes it.
+  async function startEngine(frame, snapshotUrl, memoryLimit) {
     const manifest = await (await fetch(snapshotUrl, { credentials: "same-origin" })).json();
     if (!manifest.files || !manifest.files["events.parquet"]) {
       throw new Error("the server is writing a new snapshot of the catalogues: try again in a minute");
@@ -109,19 +110,24 @@
     const files = {};
     for (const logical of ["events.parquet", "catalogues.parquet"]) files[logical] = await fetchBytes(fileUrl(logical));
     const survey = new TextDecoder().decode(await fetchBytes(fileUrl("survey.sql")));
-    const frame = await startFrame("engine.js");
+    await startIn(frame, "engine.js");
     const transfer = [...Object.values(assets), ...Object.values(extensions), ...Object.values(files)];
     const started = await frame.call({ type: "init", assets, extensions, files, survey, memoryLimit }, transfer);
-    if (started.error) {
-      frame.close();
-      throw new Error(`The SQL engine did not start: ${started.error}`);
-    }
+    if (started.error) throw new Error(`The SQL engine did not start: ${started.error}`);
     return { ...frame, manifest, fileUrl, registered: new Set() };
   }
 
   // A start that never ends would hold every query after it.
   const withLimit = (promise, ms) =>
     Promise.race([promise, new Promise((_, fail) => setTimeout(() => fail(new Error(`no answer in ${ms / 1000} s`)), ms))]);
+
+  function startClosingOnFailure({ snapshot, memoryLimit }) {
+    const frame = openFrame("SQL engine");
+    return withLimit(startEngine(frame, snapshot, memoryLimit), START_MS).catch((error) => {
+      frame.close();
+      throw error;
+    });
+  }
 
   const stop = () => {
     clearTimeout(idle);
@@ -137,7 +143,7 @@
   // Runs `sql` once; a missing attribute file is fetched, handed over and the query run again.
   async function runOnce(sql, options) {
     clearTimeout(idle);
-    if (!engine) engine = withLimit(startEngine(options.snapshot, options.memoryLimit), START_MS);
+    if (!engine) engine = startClosingOnFailure(options);
     let running;
     try {
       running = await engine;
@@ -192,30 +198,82 @@
     return { ...answer.answer, snapshot: running.manifest.version, created: running.manifest.created };
   }
 
-  // Opens a frame like the engine's and starts `file` in it.
-  async function startFrame(file) {
+  // Starts `file` in an opened frame (engine.html).
+  async function startIn(frame, file) {
     const code = await fetchBytes(new URL(file, HERE));
-    const frame = openFrame();
     await frame.ready;
     frame.frame.contentWindow.postMessage({ type: "engine", code: new TextDecoder().decode(code) }, "*");
     await frame.loaded;
-    return frame;
   }
 
-  // Each chart gets a fresh frame (chart.js), thrown away after: it keeps nothing between
-  // charts, and it never waits for the engine, which may have just been dropped.
-  async function draw(spec, answer) {
+  // Each chart gets a fresh frame (chart.js): it keeps nothing between charts, and it never
+  // waits for the engine, which may have just been dropped.
+  async function draw(frame, spec, answer) {
     if (!chartLibraries) chartLibraries = fetchAll(CHARTS).catch((error) => { chartLibraries = null; throw error; });
     const libraries = await chartLibraries;
-    const frame = await startFrame("chart.js");
+    await startIn(frame, "chart.js");
+    const rows = answer.rows.slice(0, CHART_ROWS);
+    const drawn = await frame.call({ type: "draw", libraries, spec, columns: answer.columns, rows });
+    if (drawn.error) return { error: drawn.error };
+    const warnings = [...drawn.answer.warnings];
+    if (answer.rows.length > CHART_ROWS) warnings.unshift(`only the first ${CHART_ROWS} of ${answer.rows.length} rows are plotted`);
+    if (answer.truncated) warnings.unshift(`the query has more rows than the ${answer.rows.length} fetched: aggregate it`);
+    return { svg: drawn.answer.svg, rowsPlotted: rows.length, warnings };
+  }
+
+  // What a chart may not hold: its rows come from the query only, and its work stays in
+  // proportion to them. Checked before any frame starts.
+  // simplify: a deny list of what Vega-Lite 6.5 can generate or multiply. A new generator in a
+  // later Vega-Lite gets through it; then only the time limit stops the chart, and its frame
+  // is dropped with it. Recheck this list when the pinned Vega-Lite changes.
+  const REFUSED_KEYS = {
+    url: "a chart reaches no URL",
+    href: "a chart reaches no URL",
+    usermeta: "a chart takes no embed options",
+    data: "a chart takes its data from the query only",
+    datasets: "a chart takes its data from the query only",
+    sequence: "a chart takes its data from the query only",
+    graticule: "a chart takes its data from the query only",
+    sphere: "a chart takes its data from the query only",
+    flatten: "unnest lists in the SQL query instead",
+  };
+  const AT_MOST = {
+    steps: 200, minsteps: 200, maxsteps: 200, maxbins: 200, tickCount: 100, count: 100, nice: 100,
+    width: 4000, height: 4000, continuousWidth: 4000, continuousHeight: 4000, discreteWidth: 4000, discreteHeight: 4000,
+  };
+  const FOLD_FIELDS = 20;
+  const QUANTILE_STEP = 0.01;
+  const MAKES_ARRAYS = /\b(sequence|pad)\s*\(/;
+
+  function objectProblem(object, parentKey) {
+    for (const [key, value] of Object.entries(object)) {
+      if (key in REFUSED_KEYS) return `its spec may not hold "${key}": ${REFUSED_KEYS[key]}`;
+      if (typeof value === "number" && key in AT_MOST && value > AT_MOST[key]) return `"${key}" is at most ${AT_MOST[key]}`;
+    }
+    if (parentKey === "bin" && "step" in object) return 'a bin takes "maxbins", not "step"';
+    if (object.keyvals && !Array.isArray(object.keyvals)) return '"keyvals" is a list of values';
+    if (Array.isArray(object.fold) && object.fold.length > FOLD_FIELDS) return `"fold" takes at most ${FOLD_FIELDS} fields`;
+    if ("quantile" in object && object.step < QUANTILE_STEP) return `a quantile "step" is at least ${QUANTILE_STEP}`;
+    return undefined;
+  }
+
+  function specProblem(value, parentKey) {
+    if (typeof value === "string") return MAKES_ARRAYS.test(value) ? "an expression may not call sequence() or pad()" : undefined;
+    if (Array.isArray(value)) return value.map((item) => specProblem(item, parentKey)).find(Boolean);
+    if (!value || typeof value !== "object") return undefined;
+    return objectProblem(value, parentKey) || Object.entries(value).map(([key, item]) => specProblem(item, key)).find(Boolean);
+  }
+
+  // The frame opens before the time limit starts and closes whatever happens, so a chart past
+  // its time stops working in the visitor's tab.
+  async function plot(spec, answer, { timeoutMs = CHART_MS } = {}) {
+    const problem = specProblem(spec);
+    if (problem) return { error: problem };
+    const frame = openFrame("Chart");
     try {
-      const rows = answer.rows.slice(0, CHART_ROWS);
-      const drawn = await frame.call({ type: "draw", libraries, spec, columns: answer.columns, rows });
-      if (drawn.error) return { error: drawn.error };
-      const warnings = [...drawn.answer.warnings];
-      if (answer.rows.length > CHART_ROWS) warnings.unshift(`only the first ${CHART_ROWS} of ${answer.rows.length} rows are plotted`);
-      if (answer.truncated) warnings.unshift(`the query has more rows than the ${answer.rows.length} fetched: aggregate it`);
-      return { svg: drawn.answer.svg, rowsPlotted: rows.length, warnings };
+      return await withLimit(draw(frame, spec, answer), timeoutMs);
+    } catch (error) {
+      return { error: String((error && error.message) || error) };
     } finally {
       frame.close();
     }
@@ -223,10 +281,8 @@
 
   window.cocatSql = {
     // A Vega-Lite `spec` drawn from `answer` (a query's answer: columns and rows), as
-    // {svg, rowsPlotted, warnings} or {error}.
-    plot(spec, answer) {
-      return withLimit(draw(spec, answer), CHART_MS).catch((error) => ({ error: String((error && error.message) || error) }));
-    },
+    // {svg, rowsPlotted, warnings} or {error}. options: timeoutMs (optional).
+    plot,
     // options: snapshot (the manifest's URL), maxRows, timeoutMs, memoryLimit ('1GB'),
     // recycleMB and idleMs (both optional).
     // Answers {columns, types, rows, truncated, elapsedMs, heapBytes, snapshot} or

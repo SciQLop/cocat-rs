@@ -1,23 +1,15 @@
 // A chart: Vega-Lite, drawn by Vega in a sandboxed frame made like the SQL engine's
 // (engine.html: opaque origin, a CSP that loads only blob: scripts and connects nowhere), from
 // the rows the page hands over and nothing else (docs/design/browser-sql-analysis.md,
-// section 4, rule 5). A spec naming a URL is refused; Vega's loader refuses every URL anyway;
+// section 4, rule 5). The page refuses a spec naming a URL or data of its own before this frame
+// starts (bridge.js); Vega's loader refuses every URL anyway;
 // expressions run in Vega's interpreter, as the CSP allows no eval. The answer is SVG text,
 // which the page shows as an image: it can run nothing and load nothing.
 "use strict";
 (() => {
   const reply = (message) => parent.postMessage(message, "*");
   const blobUrl = (bytes, type) => URL.createObjectURL(new Blob([bytes], { type }));
-  // What would let a spec reach past the rows: data and image URLs, links, and the embed
-  // options a spec may carry.
-  const REFUSED_KEYS = ["url", "href", "usermeta"];
   const refuse = () => Promise.reject(new Error("a chart reaches no URL"));
-
-  function refusedKey(value) {
-    if (Array.isArray(value)) return value.map(refusedKey).find(Boolean);
-    if (!value || typeof value !== "object") return undefined;
-    return Object.keys(value).find((key) => REFUSED_KEYS.includes(key)) || Object.values(value).map(refusedKey).find(Boolean);
-  }
 
   const loadScript = (bytes) =>
     new Promise((loaded, failed) => {
@@ -52,8 +44,6 @@
   }
 
   async function draw({ libraries, spec, columns, rows }) {
-    const key = refusedKey(spec);
-    if (key) throw new Error(`a chart takes its data from the query only: its spec may not hold "${key}"`);
     const interpreter = await loadVega(libraries);
     const values = rows.map((row) => Object.fromEntries(columns.map((name, at) => [name, row[at]])));
     const warnings = [];
