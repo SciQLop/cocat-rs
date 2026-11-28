@@ -6,6 +6,8 @@
 use leptos::prelude::*;
 use serde_json::Value;
 
+use crate::sql_tools::{cell_text, csv, data_url};
+
 /// A query a tool ran, or would have run, and what the engine answered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryRecord {
@@ -36,15 +38,6 @@ impl Default for QueryLog {
     }
 }
 
-/// A cell as the panel shows it: text, never markup.
-fn cell_text(cell: &Value) -> String {
-    match cell {
-        Value::Null => String::new(),
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
-}
-
 #[component]
 pub fn QueryPanel(log: QueryLog) -> impl IntoView {
     let open = RwSignal::new(true);
@@ -63,7 +56,7 @@ pub fn QueryPanel(log: QueryLog) -> impl IntoView {
                     </header>
                     <Show when=move || open.get()>
                         <ol class="queries">
-                            {move || log.0.get().into_iter().rev().map(|query| view! { <Query query/> }).collect_view()}
+                            {move || log.0.get().into_iter().enumerate().rev().map(|(at, query)| view! { <Query query number=at + 1/> }).collect_view()}
                         </ol>
                     </Show>
                 </aside>
@@ -73,7 +66,7 @@ pub fn QueryPanel(log: QueryLog) -> impl IntoView {
 }
 
 #[component]
-fn Query(query: QueryRecord) -> impl IntoView {
+fn Query(query: QueryRecord, number: usize) -> impl IntoView {
     let result = query.result;
     let summary = match result.get("error").and_then(Value::as_str) {
         Some(_) => "failed".to_owned(),
@@ -101,14 +94,28 @@ fn Query(query: QueryRecord) -> impl IntoView {
             <pre class="query-sql">{query.sql}</pre>
             {match result.get("error").and_then(Value::as_str) {
                 Some(error) => view! { <p class="query-error" role="alert">{error.to_owned()}</p> }.into_any(),
-                None => view! { <ResultTable result/> }.into_any(),
+                None => view! { <Chart result=result.clone()/> <ResultTable result number/> }.into_any(),
             }}
         </li>
     }
 }
 
+/// The chart `plot` drew, as an image: SVG in an `img` runs no script and loads nothing.
 #[component]
-fn ResultTable(result: Value) -> impl IntoView {
+fn Chart(result: Value) -> impl IntoView {
+    let chart = result["chart"]
+        .as_str()
+        .map(|svg| data_url("image/svg+xml", svg));
+    let refused = result["chart_error"].as_str().map(str::to_owned);
+    view! {
+        {chart.map(|src| view! { <img class="query-chart" src=src alt="Chart drawn from this query's rows"/> })}
+        {refused.map(|error| view! { <p class="query-error" role="alert">"No chart: "{error}</p> })}
+    }
+}
+
+#[component]
+fn ResultTable(result: Value, number: usize) -> impl IntoView {
+    let download = data_url("text/csv;charset=utf-8", &csv(&result));
     let columns: Vec<String> = result["columns"]
         .as_array()
         .map(|columns| columns.iter().map(cell_text).collect())
@@ -126,6 +133,7 @@ fn ResultTable(result: Value) -> impl IntoView {
         })
         .unwrap_or_default();
     view! {
+        <a class="link query-csv" href=download download=format!("query-{number}.csv")>"Download CSV"</a>
         <div class="query-result">
             <table>
                 <thead><tr>{columns.into_iter().map(|name| view! { <th>{name}</th> }).collect_view()}</tr></thead>
@@ -139,20 +147,5 @@ fn ResultTable(result: Value) -> impl IntoView {
                 </tbody>
             </table>
         </div>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn a_cell_is_plain_text() {
-        assert_eq!(cell_text(&json!("<img src=x>")), "<img src=x>");
-        assert_eq!(cell_text(&json!(null)), "");
-        assert_eq!(cell_text(&json!(2.5)), "2.5");
-        assert_eq!(cell_text(&json!(["a", 1])), "[\"a\",1]");
     }
 }
