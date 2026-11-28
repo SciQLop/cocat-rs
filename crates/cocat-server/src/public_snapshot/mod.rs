@@ -35,7 +35,7 @@ const MANIFEST: &str = "manifest.json";
 /// The manifest before the current one: its files stay, for a page that loaded it.
 const PREVIOUS: &str = "manifest.previous.json";
 /// Changes when the files' layout does, so an unchanged server still rewrites them.
-const LAYOUT: &str = "2";
+const LAYOUT: &str = "3";
 /// How often the server rewrites the snapshot, when a catalogue changed.
 const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 const NOT_A_FILE: &str = "No such snapshot file";
@@ -59,8 +59,8 @@ pub struct Manifest {
     pub version: String,
     /// When it was written (RFC 3339).
     pub created: String,
-    /// `events`, `catalogues` and `attributes/<catalogue id>`, each as `.parquet` and
-    /// `.arrow`, and `survey.sql`.
+    /// `events.parquet`, `catalogues.parquet`, `attributes/<catalogue id>.parquet` and
+    /// `survey.sql`.
     pub files: BTreeMap<String, FileEntry>,
 }
 
@@ -145,7 +145,6 @@ async fn file(
         .map_err(|_| not_found())?;
     let kind = match name.rsplit_once('.').map(|(_, ext)| ext) {
         Some("parquet") => "application/vnd.apache.parquet",
-        Some("arrow") => "application/vnd.apache.arrow.file",
         _ => "text/plain; charset=utf-8",
     };
     Ok((
@@ -167,7 +166,7 @@ fn is_file_name(name: &str) -> bool {
     let Some((_, hash)) = stem.rsplit_once('-') else {
         return false;
     };
-    matches!(ext, "parquet" | "arrow" | "sql")
+    matches!(ext, "parquet" | "sql")
         && hash.len() == 16
         && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
         && !name.starts_with('.')
@@ -184,8 +183,6 @@ fn read_manifest(folder: &Path, name: &str) -> Option<Manifest> {
     serde_json::from_slice(&std::fs::read(folder.join(name)).ok()?).ok()
 }
 
-/// Writes a new snapshot when a catalogue changed since the last one; the current one
-/// otherwise.
 /// Writes a new snapshot when a catalogue changed since the last one; the current one
 /// otherwise.
 pub async fn refresh(state: &AppState) -> Result<Manifest, SnapshotError> {

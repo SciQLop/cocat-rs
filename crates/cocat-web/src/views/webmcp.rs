@@ -15,7 +15,9 @@ use crate::agent_tools::{self, OPEN, SEARCH};
 use crate::api;
 use crate::projects::api_url;
 use crate::public::PublicCatalogue;
-use crate::sql_tools::{self, DESCRIBE, MEMORY_LIMIT, RUN_SQL, TIMEOUT_MS, VOCABULARY_SQL};
+use crate::sql_tools::{
+    self, DESCRIBE, IDLE_MS, MEMORY_LIMIT, RECYCLE_MB, RUN_SQL, TIMEOUT_MS, VOCABULARY_SQL,
+};
 use crate::views::projects::Projects;
 use crate::views::queries::QueryLog;
 
@@ -135,6 +137,8 @@ async fn query(projects: Projects, sql: &str, max_rows: u64) -> Value {
         "maxRows": max_rows,
         "timeoutMs": TIMEOUT_MS,
         "memoryLimit": MEMORY_LIMIT,
+        "recycleMB": RECYCLE_MB,
+        "idleMs": IDLE_MS,
     });
     let Some(bridge) = web_sys::window()
         .and_then(|window| Reflect::get(&window, &"cocatSql".into()).ok())

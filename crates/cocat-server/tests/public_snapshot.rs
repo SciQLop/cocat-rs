@@ -1,8 +1,6 @@
 //! `/api/public/snapshot`: the public catalogues as Parquet files that a browser queries with
 //! SQL (docs/design/browser-sql-analysis.md). Public data only, published fields only.
 
-use arrow_array::RecordBatch;
-use arrow_ipc::reader::FileReader as ArrowReader;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use bytes::Bytes;
@@ -206,22 +204,6 @@ fn rows(bytes: &Bytes) -> Vec<Map<String, Value>> {
         .collect()
 }
 
-fn parquet_batches(bytes: &Bytes) -> Vec<RecordBatch> {
-    ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
-        .unwrap()
-        .build()
-        .unwrap()
-        .map(Result::unwrap)
-        .collect()
-}
-
-fn arrow_batches(bytes: &Bytes) -> Vec<RecordBatch> {
-    ArrowReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
-        .unwrap()
-        .map(Result::unwrap)
-        .collect()
-}
-
 /// A private room, a shared room and a public catalogue, each with events by people.
 async fn mixed_world() -> (World, String, Vec<String>) {
     let world = World::start().await;
@@ -307,16 +289,14 @@ async fn the_snapshot_holds_public_data_and_published_fields_only() {
             .iter()
             .filter(|(name, _)| name.starts_with("attributes/"))
             .count(),
-        2,
-        "one catalogue has attributes: its Parquet and its Arrow file"
+        1,
+        "one catalogue has attributes"
     );
 
     for (name, bytes) in &files {
         let raw = String::from_utf8_lossy(bytes);
         let decoded = if name.ends_with(".parquet") {
             serde_json::to_string(&rows(bytes)).unwrap()
-        } else if name.ends_with(".arrow") {
-            format!("{:?}", arrow_batches(bytes))
         } else {
             raw.to_string()
         };
@@ -334,13 +314,6 @@ async fn the_snapshot_holds_public_data_and_published_fields_only() {
         }
         let found = if name.ends_with(".parquet") {
             columns(bytes)
-        } else if name.ends_with(".arrow") {
-            arrow_batches(bytes)[0]
-                .schema()
-                .fields()
-                .iter()
-                .map(|field| field.name().clone())
-                .collect()
         } else {
             continue;
         };
@@ -405,37 +378,68 @@ async fn events_and_their_attributes_join_on_the_event_number() {
 }
 
 #[tokio::test]
-async fn each_parquet_file_has_an_arrow_twin_for_the_browser_engine() {
-    let (world, _, _) = mixed_world().await;
+async fn the_snapshot_is_parquet_only_with_numbers_and_times_as_deltas() {
+    let (world, shocks, _) = mixed_world().await;
     let manifest = world.manifest().await;
+    let names: Vec<&String> = manifest["files"].as_object().unwrap().keys().collect();
+    assert!(
+        names
+            .iter()
+            .all(|name| name.ends_with(".parquet") || *name == "survey.sql"),
+        "{names:?}"
+    );
     let files = world.files(&manifest).await;
-    let parquet: Vec<_> = files
-        .iter()
-        .filter(|(name, _)| name.ends_with(".parquet"))
-        .collect();
-    assert_eq!(parquet.len(), 3);
-    for (name, bytes) in parquet {
-        let twin = name.replace(".parquet", ".arrow");
-        let (_, arrow) = files.iter().find(|(other, _)| *other == twin).unwrap();
-        let from_parquet = arrow_select::concat::concat_batches(
-            &parquet_batches(bytes)[0].schema(),
-            &parquet_batches(bytes),
-        )
-        .unwrap();
-        let from_arrow = arrow_select::concat::concat_batches(
-            &arrow_batches(arrow)[0].schema(),
-            &arrow_batches(arrow),
-        )
-        .unwrap();
-        assert_eq!(from_arrow, from_parquet, "{twin}");
-        assert!(
-            manifest["files"][&twin]["name"]
-                .as_str()
+    let file = |name: &str| &files.iter().find(|(n, _)| n == name).unwrap().1;
+    let delta = |name: &str| -> Vec<String> {
+        let metadata =
+            parquet::file::serialized_reader::SerializedFileReader::new(file(name).clone())
                 .unwrap()
-                .ends_with(".arrow"),
-            "{twin}"
-        );
+                .metadata()
+                .clone();
+        metadata.row_groups()[0]
+            .columns()
+            .iter()
+            .filter(|column| {
+                column
+                    .encodings()
+                    .any(|encoding| encoding == parquet::basic::Encoding::DELTA_BINARY_PACKED)
+            })
+            .map(|column| column.column_path().string())
+            .collect()
+    };
+    assert_eq!(delta("events.parquet"), ["event", "start", "stop"]);
+    assert_eq!(delta(&format!("attributes/{shocks}.parquet")), ["_event"]);
+}
+
+#[tokio::test]
+async fn an_attribute_named_like_an_event_column_keeps_its_own_type() {
+    let (world, shocks, _) = mixed_world().await;
+    let first = world.manifest().await;
+    let attributes = json!({"start": 1.5, "stop": 2.5, "event": 3.5});
+    world.append(&shocks, &[("e9", "2020-01-09T00:00:00Z", None, attributes)]);
+    let mut seen = first.clone();
+    for _ in 0..100 {
+        seen = world.manifest().await;
+        if seen["version"] != first["version"] {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    assert_ne!(
+        seen["version"], first["version"],
+        "the snapshot was rewritten"
+    );
+    let files = world.files(&seen).await;
+    let name = format!("attributes/{shocks}.parquet");
+    let file = &files.iter().find(|(n, _)| *n == name).unwrap().1;
+    let row = rows(file)
+        .into_iter()
+        .find(|row| row["_uuid"] == "e9")
+        .unwrap();
+    assert_eq!(
+        (&row["start"], &row["stop"], &row["event"]),
+        (&json!(1.5), &json!(2.5), &json!(3.5))
+    );
 }
 
 #[tokio::test]

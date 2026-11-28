@@ -5,7 +5,7 @@
 --
 -- It names no file. Before it runs, the host defines the snapshot's tables from the files it
 -- has: views `catalogues` and `events`, and a table macro `attribute_rows(id)` giving one
--- catalogue's attribute file. Python reads the Parquet files, the browser the Arrow ones.
+-- catalogue's attribute file, both from the Parquet files.
 -- Times are UTC.
 --
 -- The rules are data: ordered regular expressions (RE2), the first match wins. When a
